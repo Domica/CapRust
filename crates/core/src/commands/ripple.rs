@@ -1,4 +1,4 @@
-//! Ripple insert. Ported from jub0t/Concat#141.
+//! Ripple insert: shifts clips right when a drop would overlap.
 
 use crate::clip::Clip;
 use crate::commands::Command;

@@ -1,4 +1,4 @@
-//! Clear project cache. Ported from jub0t/Concat#75.
+//! Clear project cache — regenerable artwork and waveforms.
 
 use anyhow::Result;
 use std::path::Path;

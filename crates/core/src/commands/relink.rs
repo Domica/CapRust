@@ -1,4 +1,4 @@
-//! Missing media relink. Ported from jub0t/Concat#76.
+//! Missing media relink — updates media paths when files move.
 
 use crate::commands::Command;
 use crate::project::ProjectState;

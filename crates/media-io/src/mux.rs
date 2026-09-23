@@ -1,4 +1,4 @@
-//! Mux PTS ordering. Ported from jub0t/Concat#68.
+//! Mux PTS ordering.
 
 use anyhow::Result;
 use ffmpeg_next as ffmpeg;

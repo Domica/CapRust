@@ -16,5 +16,5 @@ workspace = true
 optional = true
 
 [features]
-default = ["ffmpeg"]
+default = [""]
 ffmpeg = ["dep:ffmpeg-next"]
