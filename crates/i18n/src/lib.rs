@@ -1,9 +1,4 @@
-//! Fluent-based localization (English, Croatian).
-//!
-//! NOTE: FluentBundle<FluentResource> holds a RefCell<TypeMap> internally,
-//! which is neither Send nor Sync. It cannot live in a `static Lazy<...>`.
-//! We use thread_local! instead. egui runs on the main thread, so this
-//! gives us a single cached bundle set per thread with no Sync overhead.
+//! Fluent localization (English, Croatian).
 
 use fluent_bundle::{FluentBundle, FluentResource};
 use std::cell::RefCell;
@@ -47,5 +42,9 @@ pub fn t(key: &str, lang: &str) -> String {
 pub fn detect_locale() -> String {
     sys_locale::get_locale()
         .map(|l| l.split('-').next().unwrap_or("en").to_string())
+        .filter(|l| matches!(l.as_str(), "en" | "hr"))
         .unwrap_or_else(|| "en".into())
 }
+
+/// Available languages shown in the Settings dialog.
+pub const LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("hr", "Hrvatski")];
