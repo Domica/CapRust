@@ -141,8 +141,24 @@ impl Default for ModelRegistry {
 }
 
 impl ModelRegistry {
-    /// Stub: pretend to start a download. Real impl spawns a task that
-    /// fetches from the project CDN and writes into the model cache dir.
+    /// Stub: pretend to start a download into the given folder.
+    /// Real impl will spawn a task that fetches from a CDN.
+    pub fn start_download_in(&mut self, id: &str, target_dir: &std::path::Path) {
+        // Ensure the folder exists so the user sees it in Explorer.
+        let _ = std::fs::create_dir_all(target_dir);
+        let _ = std::fs::write(
+            target_dir.join(format!(".{id}.placeholder")),
+            b"placeholder",
+        );
+        if let Some(m) = self.models.iter_mut().find(|m| m.id == id) {
+            if matches!(m.status, ModelStatus::NotDownloaded | ModelStatus::Error) {
+                m.status = ModelStatus::Downloading;
+                m.progress = 0.0;
+            }
+        }
+    }
+
+    /// Legacy stub — uses the default models dir.
     pub fn start_download(&mut self, id: &str) {
         if let Some(m) = self.models.iter_mut().find(|m| m.id == id) {
             if matches!(m.status, ModelStatus::NotDownloaded | ModelStatus::Error) {

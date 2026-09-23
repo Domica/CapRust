@@ -136,6 +136,8 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
 }
 
 fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
+    // NOTE: download location is read at Settings load; the fake downloader
+    // below will use `models_dir()` from core. Real HTTP comes in Faza D.
     let ids: Vec<String> = models
         .models
         .iter()
@@ -168,6 +170,9 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
                     |ui| match m.status {
                         ModelStatus::NotDownloaded => {
                             if ui.button("⬇ Download").clicked() {
+                                // TODO: capture actual dir from settings — currently
+                                // falls back to core default. Pass settings into
+                                // show_model_group in a follow-up PR.
                                 m.status = ModelStatus::Downloading;
                                 m.progress = 0.0;
                             }
