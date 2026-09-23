@@ -1354,8 +1354,12 @@ impl CapRustApp {
                                         d.clip_duration_ms,
                                         ppm,
                                     );
+                                    let new_track = self.track_for_y(d.track_index);
                                     if let Some(cur) = &mut self.clip_drag {
                                         cur.current_ms = snapped;
+                                        if let Some(t) = new_track {
+                                            cur.track_index = t;
+                                        }
                                     }
                                 }
                             }
