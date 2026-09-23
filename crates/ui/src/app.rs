@@ -469,12 +469,15 @@ impl CapRustApp {
                 let mut updated_tracks = self.project.tracks.clone();
                 let mut header_changed = false;
 
-                let pan_mode = self.timeline_tools.pan_mode;
+                let _pan_mode = self.timeline_tools.pan_mode;
                 let clip_drag_snapshot = self.clip_drag.clone();
 
+                let tracks_area_h = ui.available_height().max(120.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .max_height(tracks_area_h)
                     .show(ui, |ui| {
+                        ui.set_min_height(tracks_area_h);
                         ui.horizontal_top(|ui| {
                             // LEFT: fixed header column
                             ui.vertical(|ui| {
@@ -508,7 +511,10 @@ impl CapRustApp {
                             egui::ScrollArea::horizontal()
                                 .id_salt("timeline_h_scroll")
                                 .auto_shrink([false, false])
-                                .drag_to_scroll(!pan_mode)
+                                // Keep drag_to_scroll OFF: dragging a media payload
+                                // over the timeline must NOT be captured by the
+                                // scroll area, or the drop never reaches the lane.
+                                .drag_to_scroll(false)
                                 .show(ui, |ui| {
                                     // Ruler
                                     if let Some(ms) = crate::timeline::ruler::show(
@@ -794,7 +800,7 @@ impl CapRustApp {
                                         let lane_resp = ui.interact(
                                             lane_rect,
                                             egui::Id::new(("lane_drop", idx)),
-                                            egui::Sense::hover(),
+                                            egui::Sense::click_and_drag(),
                                         );
 
                                         if lane_resp.dnd_hover_payload::<uuid::Uuid>().is_some() {
