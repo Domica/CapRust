@@ -739,7 +739,8 @@ impl CapRustApp {
                 let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                 let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
             } else {
-                tracing::warn!("No caption model ready — download one in Settings → AI Models");
+                tracing::info!("no caption model ready — opening prompt");
+                self.model_prompt = Some(caprust_core::ModelKind::Caption);
             }
         }
         if ev.narration_clicked {
@@ -842,6 +843,7 @@ impl CapRustApp {
                     None
                 };
                 let clip_drag_snapshot = self.clip_drag.clone();
+                let pan_mode = self.timeline_tools.pan_mode;
 
                 // Time/px
                 let total_ms = self.total_duration_ms();
@@ -863,6 +865,16 @@ impl CapRustApp {
                     ctx.request_repaint();
                 }
                 let scroll_x = self.timeline_scroll_x;
+
+                // Pan mode: left-drag inside the timeline scrolls horizontally.
+                if pan_mode {
+                    let drag_delta = ctx.input(|i| i.pointer.delta());
+                    if ctx.input(|i| i.pointer.primary_down()) && drag_delta.x != 0.0 {
+                        self.timeline_scroll_x =
+                            (self.timeline_scroll_x - drag_delta.x).clamp(0.0, max_scroll);
+                        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                    }
+                }
 
                 ui.horizontal_top(|ui| {
                     // LEFT: headers
@@ -1245,7 +1257,8 @@ impl CapRustApp {
                                         ui.ctx()
                                             .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                                     }
-                                    if pointer_on_clip
+                                    if !pan_mode
+                                        && pointer_on_clip
                                         && pointer_down
                                         && clip_drag_snapshot.is_none()
                                     {
