@@ -141,7 +141,7 @@ impl CapRustApp {
             selected_clips: Vec::new(),
             clip_drag: None,
             settings,
-            ffmpeg_status,
+            ffmpeg_status: ffmpeg_status.clone(),
             last_dnd_payload: None,
             recent,
             last_pointer: None,

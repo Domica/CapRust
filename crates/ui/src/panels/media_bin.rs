@@ -234,7 +234,13 @@ impl Default for MediaBinState {
 // Entry
 // ---------------------------------------------------------------------------
 
-pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> Option<Uuid> {
+/// Result of one frame of the media-bin panel.
+pub struct MediaBinOutput {
+    pub dragging: Option<Uuid>,
+    pub newly_imported: Vec<Uuid>,
+}
+
+pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> MediaBinOutput {
     // --- Import buttons ---
     let mut newly_imported: Vec<Uuid> = Vec::new();
     ui.horizontal(|ui| {
@@ -340,10 +346,18 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::new(h_gap, v_gap);
 
+            let project_path_opt: Option<&str> = project.project_path.as_deref();
             for row in sorted.chunks(cols) {
                 ui.horizontal(|ui| {
                     for item in row {
-                        let resp = draw_card(ui, item, card_w, thumb_h, &mut state.thumb_cache);
+                        let resp = draw_card(
+                            ui,
+                            item,
+                            card_w,
+                            thumb_h,
+                            &mut state.thumb_cache,
+                            project_path_opt,
+                        );
                         if resp.drag_started() {
                             dragging = Some(item.id);
                         }
@@ -394,27 +408,44 @@ fn draw_card(
         // Thumbnail rect
         let thumb_rect = Rect::from_min_size(rect.min, Vec2::new(card_w, thumb_h));
 
-        // Base color (per-item placeholder)
-        let base = cache.color_for(item);
-        ui.painter().rect_filled(thumb_rect, 4.0, base);
+        // Try real thumbnail first; fall back to placeholder.
+        let texture = cache.texture_for(ui.ctx(), project_path, item);
 
-        // Slight top-to-bottom darkening for depth
-        let dark = Color32::from_black_alpha(40);
-        let grad_rect = Rect::from_min_max(
-            Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
-            thumb_rect.max,
-        );
-        ui.painter().rect_filled(grad_rect, 4.0, dark);
+        if let Some(tex) = texture {
+            let tex_size = tex.size_vec2();
+            let scale = (thumb_rect.width() / tex_size.x).max(thumb_rect.height() / tex_size.y);
+            let draw_size = tex_size * scale;
+            let frac_x = (thumb_rect.width() / draw_size.x).min(1.0);
+            let frac_y = (thumb_rect.height() / draw_size.y).min(1.0);
+            let uv_min = Pos2::new((1.0 - frac_x) / 2.0, (1.0 - frac_y) / 2.0);
+            let uv_max = Pos2::new(1.0 - uv_min.x, 1.0 - uv_min.y);
+            ui.painter().image(
+                tex.id(),
+                thumb_rect,
+                Rect::from_min_max(uv_min, uv_max),
+                Color32::WHITE,
+            );
+        } else {
+            // Placeholder: hashed color + icon
+            let base = cache.color_for(item);
+            ui.painter().rect_filled(thumb_rect, 4.0, base);
 
-        // Kind icon, centered, big
-        let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
-        ui.painter().text(
-            thumb_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            item.kind.icon(),
-            FontId::proportional(icon_size),
-            Color32::from_white_alpha(230),
-        );
+            let dark = Color32::from_black_alpha(40);
+            let grad_rect = Rect::from_min_max(
+                Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
+                thumb_rect.max,
+            );
+            ui.painter().rect_filled(grad_rect, 4.0, dark);
+
+            let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
+            ui.painter().text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                item.kind.icon(),
+                FontId::proportional(icon_size),
+                Color32::from_white_alpha(230),
+            );
+        }
 
         // Border
         let border = if resp.hovered() {
