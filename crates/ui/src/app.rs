@@ -4,6 +4,7 @@ use crate::panels::clip_properties::{PendingEdit, PropertiesState};
 use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
+use crate::preview_player::PreviewPlayer;
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
@@ -77,6 +78,7 @@ pub struct CapRustApp {
     pub model_prompt: Option<caprust_core::ModelKind>,
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    pub preview_player: PreviewPlayer,
     pub job_runner: JobRunner,
 }
 
@@ -151,6 +153,7 @@ impl CapRustApp {
             model_prompt: None,
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
+            preview_player: PreviewPlayer::new(),
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
