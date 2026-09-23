@@ -2,9 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum AspectRatio {
     Landscape16x9,
+    #[default]
     Portrait9x16,
     Portrait4x5,
     Square1x1,
@@ -47,11 +48,5 @@ impl AspectRatio {
             Self::Cinema2x1,
             Self::Widescreen21x9,
         ]
-    }
-}
-
-impl Default for AspectRatio {
-    fn default() -> Self {
-        Self::Portrait9x16
     }
 }
