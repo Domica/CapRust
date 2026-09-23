@@ -1,0 +1,117 @@
+//! Generic command to edit any subset of clip fields.
+
+use crate::clip::Clip;
+use crate::commands::Command;
+use crate::project::ProjectState;
+use anyhow::Result;
+use uuid::Uuid;
+
+pub struct SetClipCommand {
+    pub clip_id: Uuid,
+    pub start_time_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub speed: Option<f32>,
+    pub reversed: Option<bool>,
+    pub flip_h: Option<bool>,
+    pub flip_v: Option<bool>,
+    pub volume_db: Option<f32>,
+    pub track_index: Option<usize>,
+    before: Option<Clip>,
+}
+
+impl SetClipCommand {
+    pub fn new(clip_id: Uuid) -> Self {
+        Self {
+            clip_id,
+            start_time_ms: None,
+            duration_ms: None,
+            speed: None,
+            reversed: None,
+            flip_h: None,
+            flip_v: None,
+            volume_db: None,
+            track_index: None,
+            before: None,
+        }
+    }
+
+    pub fn speed(mut self, v: f32) -> Self {
+        self.speed = Some(v);
+        self
+    }
+    pub fn reversed(mut self, v: bool) -> Self {
+        self.reversed = Some(v);
+        self
+    }
+    pub fn flip_h(mut self, v: bool) -> Self {
+        self.flip_h = Some(v);
+        self
+    }
+    pub fn flip_v(mut self, v: bool) -> Self {
+        self.flip_v = Some(v);
+        self
+    }
+    pub fn volume_db(mut self, v: f32) -> Self {
+        self.volume_db = Some(v);
+        self
+    }
+    pub fn start_time_ms(mut self, v: u64) -> Self {
+        self.start_time_ms = Some(v);
+        self
+    }
+    pub fn duration_ms(mut self, v: u64) -> Self {
+        self.duration_ms = Some(v);
+        self
+    }
+    pub fn track_index(mut self, v: usize) -> Self {
+        self.track_index = Some(v);
+        self
+    }
+}
+
+impl Command for SetClipCommand {
+    fn execute(&mut self, state: &mut ProjectState) -> Result<()> {
+        let Some(c) = state.clips.iter_mut().find(|c| c.id == self.clip_id) else {
+            return Ok(());
+        };
+        self.before = Some(c.clone());
+        if let Some(v) = self.start_time_ms {
+            c.start_time_ms = v;
+        }
+        if let Some(v) = self.duration_ms {
+            c.duration_ms = v;
+        }
+        if let Some(v) = self.speed {
+            c.speed = v;
+        }
+        if let Some(v) = self.reversed {
+            c.reversed = v;
+        }
+        if let Some(v) = self.flip_h {
+            c.flip_h = v;
+        }
+        if let Some(v) = self.flip_v {
+            c.flip_v = v;
+        }
+        if let Some(v) = self.volume_db {
+            c.volume_db = v;
+        }
+        if let Some(v) = self.track_index {
+            c.track_index = v;
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, state: &mut ProjectState) -> Result<()> {
+        if let Some(orig) = self.before.take() {
+            if let Some(c) = state.clips.iter_mut().find(|c| c.id == self.clip_id) {
+                *c = orig;
+            }
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> String {
+        format!("Edit clip {}", self.clip_id)
+    }
+}

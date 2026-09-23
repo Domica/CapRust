@@ -56,6 +56,9 @@ pub struct Clip {
     pub flip_h: bool,
     pub flip_v: bool,
     pub volume_db: f32,
+    /// Original source length. 0 = unlimited (images, text).
+    #[serde(default)]
+    pub source_duration_ms: u64,
 }
 
 impl Clip {
@@ -74,6 +77,7 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            source_duration_ms: dur_ms,
         }
     }
 
@@ -92,6 +96,7 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            source_duration_ms: dur_ms,
         }
     }
 
@@ -110,6 +115,7 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            source_duration_ms: 0,
         }
     }
 
@@ -129,6 +135,7 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            source_duration_ms: 0,
         }
     }
 
@@ -154,6 +161,7 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            source_duration_ms: 0,
         }
     }
 
@@ -180,6 +188,7 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            source_duration_ms: 0,
         }
     }
 
