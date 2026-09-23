@@ -73,6 +73,7 @@ pub struct ClipDrag {
     pub origin_ms: u64,
     pub current_ms: i64,
     pub track_index: usize,
+    pub clip_duration_ms: u64,
 }
 
 impl CapRustApp {
@@ -349,7 +350,92 @@ impl CapRustApp {
     // ---------------------------------------------------------------
     // Timeline events
     // ---------------------------------------------------------------
+    /// Snap a candidate start time to nearby clip edges or the playhead.
+    fn snap_ms(
+        &self,
+        clip_id: uuid::Uuid,
+        _track_idx: usize,
+        candidate_ms: i64,
+        duration_ms: u64,
+        px_per_ms: f32,
+    ) -> i64 {
+        if !self.timeline_tools.snapping || px_per_ms <= 0.0 {
+            return candidate_ms.max(0);
+        }
+        let threshold_ms = (10.0_f32 / px_per_ms).max(1.0) as i64;
+        let cand_start = candidate_ms.max(0);
+        let cand_end = cand_start + duration_ms as i64;
+
+        let mut best_start = cand_start;
+        let mut best_dist = threshold_ms + 1;
+
+        for c in &self.project.clips {
+            if c.id == clip_id {
+                continue;
+            }
+            let s = c.start_time_ms as i64;
+            let e = (c.start_time_ms + c.duration_ms) as i64;
+            for target in [s, e] {
+                let d = (cand_start - target).abs();
+                if d < best_dist {
+                    best_dist = d;
+                    best_start = target;
+                }
+                let d2 = (cand_end - target).abs();
+                if d2 < best_dist {
+                    best_dist = d2;
+                    best_start = (target - duration_ms as i64).max(0);
+                }
+            }
+        }
+        let ph = self.playhead_ms as i64;
+        let d = (cand_start - ph).abs();
+        if d < best_dist {
+            best_dist = d;
+            best_start = ph;
+        }
+        let d2 = (cand_end - ph).abs();
+        if d2 < best_dist {
+            best_start = (ph - duration_ms as i64).max(0);
+        }
+
+        best_start.max(0)
+    }
+
+    /// Pack clips on each track end-to-end when the magnetic timeline is on.
+    fn apply_magnetic(&mut self) {
+        if !self.timeline_tools.magnetic {
+            return;
+        }
+        let track_count = self.project.tracks.len();
+        for t in 0..track_count {
+            let mut indices: Vec<usize> = self
+                .project
+                .clips
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.track_index == t)
+                .map(|(i, _)| i)
+                .collect();
+            if indices.is_empty() {
+                continue;
+            }
+            indices.sort_by_key(|&i| self.project.clips[i].start_time_ms);
+            let mut cursor: u64 = 0;
+            for &i in &indices {
+                self.project.clips[i].start_time_ms = cursor;
+                cursor += self.project.clips[i].duration_ms;
+            }
+        }
+    }
+
     fn handle_timeline_events(&mut self, ev: TimelineToolEvents) {
+        if ev.magnetic_toggled && self.timeline_tools.magnetic {
+            self.apply_magnetic();
+        }
+        if ev.snapping_toggled && self.timeline_tools.snapping {
+            // nothing to do on toggle; snap only matters during drag
+        }
         if ev.undo {
             let _ = self.undo_stack.undo(&mut self.project);
         }
@@ -826,18 +912,37 @@ impl CapRustApp {
                             }
                         }
                         ClipAction::DragStart(id, track_idx, origin) => {
+                            let dur = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|c| c.id == id)
+                                .map(|c| c.duration_ms)
+                                .unwrap_or(3000);
                             self.clip_drag = Some(ClipDrag {
                                 clip_id: id,
                                 origin_ms: origin,
                                 current_ms: origin as i64,
                                 track_index: track_idx,
+                                clip_duration_ms: dur,
                             });
                         }
-                        ClipAction::DragDelta(id, dx, ppm) => {
-                            if let Some(d) = &mut self.clip_drag {
+                        ClipAction::DragDelta(id, dx_total, ppm) => {
+                            // dx_total is the CUMULATIVE drag delta from drag start,
+                            // not a per-frame delta.
+                            if let Some(d) = self.clip_drag.clone() {
                                 if d.clip_id == id && ppm > 0.0 {
-                                    let delta_ms = (dx / ppm) as i64;
-                                    d.current_ms = (d.current_ms + delta_ms).max(0);
+                                    let candidate = d.origin_ms as i64 + (dx_total / ppm) as i64;
+                                    let snapped = self.snap_ms(
+                                        id,
+                                        d.track_index,
+                                        candidate.max(0),
+                                        d.clip_duration_ms,
+                                        ppm,
+                                    );
+                                    if let Some(cur) = &mut self.clip_drag {
+                                        cur.current_ms = snapped;
+                                    }
                                 }
                             }
                         }
@@ -916,6 +1021,7 @@ impl CapRustApp {
                         let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                         let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         self.selected_clips = vec![new_id];
+                        self.apply_magnetic();
                         tracing::info!(
                             "Dropped media {} onto track {} at {}ms",
                             media_id,
