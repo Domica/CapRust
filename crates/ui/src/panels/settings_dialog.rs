@@ -1,5 +1,6 @@
 //! Settings dialog — Appearance, AI Models, Shortcuts, Language, Paths.
 
+use crate::i18n_helper::tr;
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
 use caprust_core::models::{ModelKind, ModelStatus};
 use caprust_core::{detect_ffmpeg, AppSettings, FfmpegStatus, ModelRegistry};
@@ -34,11 +35,11 @@ pub fn show(
     };
 
     ui.horizontal(|ui| {
-        ui.selectable_value(tab, SettingsTab::Appearance, "Appearance");
-        ui.selectable_value(tab, SettingsTab::Models, "AI Models");
-        ui.selectable_value(tab, SettingsTab::Shortcuts, "Shortcuts");
-        ui.selectable_value(tab, SettingsTab::Language, "Language");
-        ui.selectable_value(tab, SettingsTab::Paths, "Paths");
+        ui.selectable_value(tab, SettingsTab::Appearance, tr("set-tab-appearance"));
+        ui.selectable_value(tab, SettingsTab::Models, tr("set-tab-models"));
+        ui.selectable_value(tab, SettingsTab::Shortcuts, tr("set-tab-shortcuts"));
+        ui.selectable_value(tab, SettingsTab::Language, tr("set-tab-language"));
+        ui.selectable_value(tab, SettingsTab::Paths, tr("set-tab-paths"));
     });
     ui.separator();
 
@@ -55,7 +56,7 @@ pub fn show(
     ui.separator();
     ui.horizontal(|ui| {
         let save_btn = egui::Button::new(
-            egui::RichText::new("💾 Save")
+            egui::RichText::new(tr("set-save"))
                 .color(egui::Color32::WHITE)
                 .strong(),
         )
@@ -66,7 +67,7 @@ pub fn show(
         }
 
         if ui
-            .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 32.0)))
+            .add(egui::Button::new(tr("set-cancel")).min_size(egui::vec2(100.0, 32.0)))
             .clicked()
         {
             ev.close = true;
@@ -74,7 +75,7 @@ pub fn show(
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new("Changes save to storage on Save.")
+                egui::RichText::new(tr("set-save-hint"))
                     .small()
                     .color(egui::Color32::from_gray(150)),
             );
@@ -89,11 +90,11 @@ pub fn show(
 // ---------------------------------------------------------------------------
 
 fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
-    ui.label(egui::RichText::new("Appearance").strong());
+    ui.label(egui::RichText::new(tr("set-tab-appearance")).strong());
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
-        ui.label("Mode:");
+        ui.label(tr("set-appearance-mode"));
         for m in ThemeMode::all() {
             ui.selectable_value(&mut theme.mode, m, m.label());
         }
@@ -102,7 +103,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
     ui.add_space(8.0);
 
     ui.horizontal(|ui| {
-        ui.label("Accent:");
+        ui.label(tr("set-appearance-accent"));
         for (name, rgb) in ACCENT_PRESETS {
             let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
             let selected = theme.accent == *rgb;
@@ -130,18 +131,18 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
 
     if theme.mode == ThemeMode::Custom {
         ui.add_space(12.0);
-        ui.label(egui::RichText::new("Custom colors").strong());
+        ui.label(egui::RichText::new(tr("set-appearance-custom")).strong());
         egui::Grid::new("custom_theme_grid")
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Panel background");
+                ui.label(tr("set-appearance-panel"));
                 ui.color_edit_button_srgb(&mut theme.custom_panel);
                 ui.end_row();
-                ui.label("Window background");
+                ui.label(tr("set-appearance-window"));
                 ui.color_edit_button_srgb(&mut theme.custom_window);
                 ui.end_row();
-                ui.label("Text color");
+                ui.label(tr("set-appearance-text"));
                 ui.color_edit_button_srgb(&mut theme.custom_text);
                 ui.end_row();
             });
@@ -149,7 +150,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
 
     ui.add_space(12.0);
     ui.separator();
-    if ui.button("Reset to defaults").clicked() {
+    if ui.button(tr("set-appearance-reset")).clicked() {
         *theme = Theme::default();
     }
 }
@@ -159,7 +160,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
 // ---------------------------------------------------------------------------
 
 fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) {
-    ui.label(egui::RichText::new("AI Models").strong());
+    ui.label(egui::RichText::new(tr("set-models-heading")).strong());
     ui.label(
         egui::RichText::new(format!(
             "Models are downloaded on first use and stored in {}",
@@ -170,11 +171,11 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
     );
     ui.add_space(8.0);
 
-    ui.label(egui::RichText::new("Captions (speech-to-text)").strong());
+    ui.label(egui::RichText::new(tr("set-models-captions")).strong());
     show_model_group(ui, models, ModelKind::Caption);
 
     ui.add_space(12.0);
-    ui.label(egui::RichText::new("Narration (text-to-speech)").strong());
+    ui.label(egui::RichText::new(tr("set-models-narration")).strong());
     show_model_group(ui, models, ModelKind::Narration);
 }
 
@@ -212,7 +213,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| match m.status {
                         ModelStatus::NotDownloaded => {
-                            if ui.button("⬇ Download").clicked() {
+                            if ui.button(tr("set-models-download")).clicked() {
                                 // TODO: capture actual dir from settings — currently
                                 // falls back to core default. Pass settings into
                                 // show_model_group in a follow-up PR.
@@ -228,7 +229,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
                             );
                         }
                         ModelStatus::Ready => {
-                            ui.checkbox(&mut m.enabled, "Enabled");
+                            ui.checkbox(&mut m.enabled, tr("set-models-enabled"));
                         }
                         ModelStatus::Error => {
                             ui.label(
@@ -248,9 +249,9 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
 // ---------------------------------------------------------------------------
 
 fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
-    ui.label(egui::RichText::new("Keyboard shortcuts").strong());
+    ui.label(egui::RichText::new(tr("set-shortcuts-heading")).strong());
     ui.add_space(6.0);
-    ui.checkbox(enable_shortcuts, "Enable keyboard shortcuts");
+    ui.checkbox(enable_shortcuts, tr("set-shortcuts-enable"));
     ui.add_space(10.0);
 
     egui::Grid::new("kbd_shortcuts")
@@ -283,10 +284,10 @@ fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
 // ---------------------------------------------------------------------------
 
 fn show_language(ui: &mut Ui, language: &mut String) {
-    ui.label(egui::RichText::new("Interface language").strong());
+    ui.label(egui::RichText::new(tr("set-language-heading")).strong());
     ui.add_space(6.0);
     ui.label(
-        egui::RichText::new("Applied immediately.")
+        egui::RichText::new(tr("set-language-applied"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
@@ -313,14 +314,14 @@ fn show_language(ui: &mut Ui, language: &mut String) {
 // ---------------------------------------------------------------------------
 
 fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus) {
-    ui.label(egui::RichText::new("AI models folder").strong());
+    ui.label(egui::RichText::new(tr("set-paths-models")).strong());
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut settings.models_dir)
                 .desired_width(360.0)
                 .hint_text("Where AI models are stored…"),
         );
-        if ui.button("Browse…").clicked() {
+        if ui.button(tr("new-button-browse")).clicked() {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 settings.models_dir = dir.to_string_lossy().to_string();
             }
@@ -329,14 +330,11 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
 
     ui.add_space(16.0);
     ui.separator();
-    ui.label(egui::RichText::new("FFmpeg binaries").strong());
+    ui.label(egui::RichText::new(tr("set-paths-ffmpeg")).strong());
     ui.label(
-        egui::RichText::new(
-            "Used for media probing, thumbnail extraction, and export. \
-             Leave empty to auto-detect from PATH.",
-        )
-        .small()
-        .color(egui::Color32::from_gray(150)),
+        egui::RichText::new(tr("set-paths-ffmpeg-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
     );
     ui.add_space(6.0);
 
@@ -357,7 +355,7 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
                 {
                     settings.ffmpeg_path = if p.trim().is_empty() { None } else { Some(p) };
                 }
-                if ui.button("File…").clicked() {
+                if ui.button(tr("new-button-browse")).clicked() {
                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                         settings.ffmpeg_path = Some(f.to_string_lossy().to_string());
                     }
@@ -378,7 +376,7 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
                 {
                     settings.ffprobe_path = if p.trim().is_empty() { None } else { Some(p) };
                 }
-                if ui.button("File…").clicked() {
+                if ui.button(tr("new-button-browse")).clicked() {
                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                         settings.ffprobe_path = Some(f.to_string_lossy().to_string());
                     }
@@ -389,32 +387,32 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        if ui.button("🔍 Detect now").clicked() {
+        if ui.button(tr("set-paths-detect")).clicked() {
             *status = detect_ffmpeg(settings);
         }
         ui.separator();
         match (&status.ffmpeg, &status.ffprobe) {
             (Some(_), Some(_)) => {
                 ui.label(
-                    egui::RichText::new("✅ ffmpeg + ffprobe detected")
+                    egui::RichText::new(tr("set-paths-detected"))
                         .color(egui::Color32::from_rgb(80, 200, 120)),
                 );
             }
             (Some(_), None) => {
                 ui.label(
-                    egui::RichText::new("⚠ ffmpeg found, ffprobe missing")
+                    egui::RichText::new(tr("set-paths-partial"))
                         .color(egui::Color32::from_rgb(230, 180, 90)),
                 );
             }
             (None, Some(_)) => {
                 ui.label(
-                    egui::RichText::new("⚠ ffprobe found, ffmpeg missing")
+                    egui::RichText::new(tr("set-paths-partial"))
                         .color(egui::Color32::from_rgb(230, 180, 90)),
                 );
             }
             (None, None) => {
                 ui.label(
-                    egui::RichText::new("❌ Not detected")
+                    egui::RichText::new(tr("set-paths-not-detected"))
                         .color(egui::Color32::from_rgb(230, 90, 90)),
                 );
             }

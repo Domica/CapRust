@@ -699,6 +699,7 @@ dependencies = [
  "caprust-core",
  "ffmpeg-next",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -712,6 +713,7 @@ dependencies = [
  "caprust-media-io",
  "eframe",
  "egui",
+ "image",
  "rfd",
  "serde",
  "serde_json",
@@ -1798,6 +1800,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

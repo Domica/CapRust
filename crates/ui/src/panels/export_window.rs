@@ -1,5 +1,6 @@
 //! Export video dialog: Summary, Destination, Output, Quality, Advanced.
 
+use crate::i18n_helper::tr;
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
 
@@ -96,21 +97,25 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
     let mut clicked_export = false;
 
     // --- Summary ---
-    ui.label(egui::RichText::new("Summary").strong());
+    ui.label(egui::RichText::new(tr("exp-summary")).strong());
     ui.add_space(4.0);
-    ui.label(format!("Duration: {}", format_duration(duration_ms)));
+    ui.label(format!(
+        "{}: {}",
+        tr("exp-duration"),
+        format_duration(duration_ms)
+    ));
     ui.add_space(12.0);
     ui.separator();
 
     // --- Destination ---
-    ui.label(egui::RichText::new("Destination").strong());
+    ui.label(egui::RichText::new(tr("exp-destination")).strong());
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.destination)
                 .desired_width(280.0)
                 .hint_text("Folder…"),
         );
-        if ui.button("Browse…").clicked() {
+        if ui.button(tr("exp-browse")).clicked() {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 state.destination = dir.to_string_lossy().to_string();
             }
@@ -120,11 +125,11 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
     ui.separator();
 
     // --- Output ---
-    ui.label(egui::RichText::new("Output").strong());
+    ui.label(egui::RichText::new(tr("exp-output")).strong());
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
-        ui.label("Resolution:");
+        ui.label(tr("exp-resolution"));
         egui::ComboBox::from_id_salt("exp_res")
             .selected_text(state.resolution.label())
             .width(240.0)
@@ -136,7 +141,7 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
     });
 
     ui.horizontal(|ui| {
-        ui.label("Frame rate:");
+        ui.label(tr("exp-fps"));
         egui::ComboBox::from_id_salt("exp_fps")
             .selected_text(state.frame_rate.label())
             .width(240.0)
@@ -148,7 +153,7 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
     });
 
     ui.horizontal(|ui| {
-        ui.label("Codec:");
+        ui.label(tr("exp-codec"));
         egui::ComboBox::from_id_salt("exp_codec")
             .selected_text(state.codec.label())
             .width(240.0)
@@ -163,7 +168,7 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
     ui.separator();
 
     // --- Quality ---
-    ui.label(egui::RichText::new("Quality").strong());
+    ui.label(egui::RichText::new(tr("exp-quality")).strong());
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         for q in [QualityTier::Small, QualityTier::Regular, QualityTier::Large] {
@@ -175,13 +180,13 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
     ui.separator();
 
     // --- Advanced toggle ---
-    ui.checkbox(&mut state.advanced, "Advanced options");
+    ui.checkbox(&mut state.advanced, tr("exp-advanced"));
 
     if state.advanced {
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
-            ui.label("Bitrate mode:");
+            ui.label(tr("exp-bitrate"));
             ui.selectable_value(&mut state.rate_mode, RateMode::Vbr, "VBR");
             ui.selectable_value(&mut state.rate_mode, RateMode::Cbr, "CBR");
             if state.rate_mode == RateMode::Cbr {
@@ -194,7 +199,7 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
         });
 
         ui.horizontal(|ui| {
-            ui.label("Color range:");
+            ui.label(tr("exp-color-range"));
             egui::ComboBox::from_id_salt("exp_color_range")
                 .selected_text(state.color_range.label())
                 .width(220.0)
@@ -212,7 +217,7 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
 
     // --- Export button ---
     let btn = egui::Button::new(
-        egui::RichText::new("⬇  Export")
+        egui::RichText::new(tr("exp-button"))
             .size(16.0)
             .color(egui::Color32::WHITE)
             .strong(),

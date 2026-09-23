@@ -1,5 +1,6 @@
 //! Media bin: dense grid, thumbnail cache, dynamic columns based on panel width.
 
+use crate::i18n_helper::tr;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -18,6 +19,13 @@ pub enum MediaSort {
 }
 
 impl MediaSort {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::Added => "added",
+            Self::Name => "name",
+            Self::Type => "type",
+        }
+    }
     pub fn label(&self) -> &'static str {
         match self {
             Self::Added => "Added",
@@ -39,6 +47,14 @@ pub enum MediaFilter {
 }
 
 impl MediaFilter {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Video => "video",
+            Self::Audio => "audio",
+            Self::Image => "image",
+        }
+    }
     pub fn label(&self) -> &'static str {
         match self {
             Self::All => "All",
@@ -97,10 +113,19 @@ impl PreviewSize {
 /// placeholder even across restarts. This is the placeholder layer that will
 /// be replaced by real JPEG thumbnails read from the project cache dir
 /// (see `caprust_core::cache`). For now, it also precomputes nothing heavy.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ThumbnailCache {
     colors: HashMap<Uuid, Color32>,
-    // Later: HashMap<Uuid, egui::TextureHandle> for real JPEG thumbnails.
+    textures: HashMap<Uuid, egui::TextureHandle>,
+}
+
+impl std::fmt::Debug for ThumbnailCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThumbnailCache")
+            .field("colors", &self.colors.len())
+            .field("textures", &self.textures.len())
+            .finish()
+    }
 }
 
 impl ThumbnailCache {
@@ -112,8 +137,41 @@ impl ThumbnailCache {
         self.colors.insert(item.id, c);
         c
     }
+
+    /// Returns the thumbnail texture if a JPEG exists on disk, else None.
+    pub fn texture_for(
+        &mut self,
+        ctx: &egui::Context,
+        project_path: Option<&str>,
+        item: &MediaItem,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(t) = self.textures.get(&item.id) {
+            return Some(t.clone());
+        }
+
+        let project_path = project_path?;
+        let jpg = caprust_core::cache::thumbnail_path(std::path::Path::new(project_path), item.id);
+        if !jpg.is_file() {
+            return None;
+        }
+
+        let bytes = std::fs::read(&jpg).ok()?;
+        let img = image::load_from_memory(&bytes).ok()?;
+        let rgba = img.to_rgba8();
+        let size = [rgba.width() as usize, rgba.height() as usize];
+        let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+        let handle = ctx.load_texture(
+            format!("thumb-{}", item.id),
+            color_img,
+            egui::TextureOptions::LINEAR,
+        );
+        self.textures.insert(item.id, handle.clone());
+        Some(handle)
+    }
+
     pub fn invalidate(&mut self, id: Uuid) {
         self.colors.remove(&id);
+        self.textures.remove(&id);
     }
 }
 
@@ -178,15 +236,16 @@ impl Default for MediaBinState {
 
 pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> Option<Uuid> {
     // --- Import buttons ---
+    let mut newly_imported: Vec<Uuid> = Vec::new();
     ui.horizontal(|ui| {
-        if ui.button("📥 Clips").clicked() {
-            import_with(project, VIDEO_EXTS, "Video");
+        if ui.button(tr("media-import-clips")).clicked() {
+            newly_imported.extend(import_with(project, VIDEO_EXTS, "Video"));
         }
-        if ui.button("🎵 Music").clicked() {
-            import_with(project, AUDIO_EXTS, "Audio");
+        if ui.button(tr("media-import-music")).clicked() {
+            newly_imported.extend(import_with(project, AUDIO_EXTS, "Audio"));
         }
-        if ui.button("🖼 Images").clicked() {
-            import_with(project, IMAGE_EXTS, "Image");
+        if ui.button(tr("media-import-images")).clicked() {
+            newly_imported.extend(import_with(project, IMAGE_EXTS, "Image"));
         }
     });
 
@@ -195,7 +254,11 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // --- Sort + size controls ---
     ui.horizontal(|ui| {
         egui::ComboBox::from_id_salt("media_sort")
-            .selected_text(format!("Sort: {}", state.sort.label()))
+            .selected_text(format!(
+                "{} {}",
+                tr("media-sort-label"),
+                tr(&format!("media-sort-{}", state.sort.key()))
+            ))
             .width(110.0)
             .show_ui(ui, |ui| {
                 for s in MediaSort::all() {
@@ -203,7 +266,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                 }
             });
         ui.separator();
-        ui.label("Show");
+        ui.label(tr("media-filter-label"));
         egui::ComboBox::from_id_salt("media_filter")
             .selected_text(state.filter.label())
             .width(90.0)
@@ -213,7 +276,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                 }
             });
         ui.separator();
-        ui.label("Size");
+        ui.label(tr("media-size-label"));
         for sz in [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large] {
             ui.selectable_value(&mut state.preview, sz, sz.label());
         }
@@ -253,7 +316,10 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     .color(Color32::from_gray(90)),
             );
         });
-        return None;
+        return MediaBinOutput {
+            dragging: None,
+            newly_imported,
+        };
     }
 
     // --- Dynamic column layout ---
@@ -286,7 +352,10 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             }
         });
 
-    dragging
+    MediaBinOutput {
+        dragging,
+        newly_imported,
+    }
 }
 
 fn a_lower(s: &str) -> String {
@@ -311,6 +380,7 @@ fn draw_card(
     card_w: f32,
     thumb_h: f32,
     cache: &mut ThumbnailCache,
+    project_path: Option<&str>,
 ) -> egui::Response {
     let id = egui::Id::new(item.id);
     let payload = item.id;
@@ -443,7 +513,8 @@ fn human_size(bytes: u64) -> String {
 // Import helpers
 // ---------------------------------------------------------------------------
 
-fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) {
+fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> Vec<Uuid> {
+    let mut new_ids = Vec::new();
     if let Some(paths) = rfd::FileDialog::new()
         .add_filter(label, exts)
         .add_filter("All files", &["*"])
@@ -451,13 +522,10 @@ fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) {
     {
         for p in paths {
             let s = p.to_string_lossy().to_string();
-            if let Some(kind) = guess_kind(&s) {
-                project.media.add(&s, kind);
-            } else {
-                // fallback: guess by extension family
-                let kind = guess_kind(&s).unwrap_or(MediaKind::Video);
-                project.media.add(&s, kind);
-            }
+            let kind = guess_kind(&s).unwrap_or(MediaKind::Video);
+            let id = project.media.add(&s, kind);
+            new_ids.push(id);
         }
     }
+    new_ids
 }

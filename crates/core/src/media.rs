@@ -37,6 +37,12 @@ pub struct MediaItem {
     pub size_bytes: u64,
     /// Insertion order — used for "Sort by: Added".
     pub added_at: u64,
+    /// Probe status — set true once ffprobe has run.
+    #[serde(default)]
+    pub probe_done: bool,
+    /// Thumbnail status — set true once the JPEG is on disk.
+    #[serde(default)]
+    pub thumb_done: bool,
 }
 
 impl MediaItem {
@@ -51,9 +57,11 @@ impl MediaItem {
             name,
             path: path.to_string(),
             kind,
-            duration_ms: 0, // filled by ffprobe later
+            duration_ms: 0,
             size_bytes,
             added_at,
+            probe_done: false,
+            thumb_done: false,
         }
     }
 }

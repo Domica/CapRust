@@ -1,103 +1,102 @@
+# App
 app-title = CapRust - Social Video Editor
-add-text = Add Text
-undo = Undo
-redo = Redo
-export = Export
-media-effects = Media & Effects
-properties = Properties
-timeline = Timeline
-preview = Video Preview
-missing-media = { $count } media file(s) not found
-relink-all = Relink All…
-dismiss = Dismiss
-sort-added = Sort: Added
-sort-name = Sort: Name
-sort-type = Sort: Type
+app-tagline = Social-first video editor
 
 # File menu
-file = File
-file-new-project = New Project…
-file-open = Open Project…
-file-save = Save Project
-file-import = Import Media…
-file-export = Export…
-file-clear-cache = Clear Project Cache
-file-settings = Settings…
-file-close-project = Close Project
-file-quit = Quit
+menu-file = File
+menu-file-new = New Project…
+menu-file-open = Open Project…
+menu-file-save = Save Project
+menu-file-save-as = Save As…
+menu-file-import = Import Media…
+menu-file-export = Export…
+menu-file-clear-cache = Clear Project Cache
+menu-file-settings = Settings…
+menu-file-close = Close Project
+menu-file-quit = Quit
 
 # Edit menu
-edit = Edit
-edit-split = Split at Playhead
-edit-delete = Delete Clip
-edit-ripple-delete = Ripple Delete
+menu-edit = Edit
+menu-edit-undo = Undo
+menu-edit-redo = Redo
+menu-edit-split = Split at Playhead
+menu-edit-delete = Delete Clip
+menu-edit-ripple-delete = Ripple Delete
 
 # View menu
-view = View
-view-sort-by = Sort Media by
-view-preview-size = Preview Size
-view-zoom-in = Zoom In
-view-zoom-out = Zoom Out
+menu-view = View
+menu-view-sort = Sort Media by
+menu-view-size = Preview Size
+menu-view-zoom-in = Zoom In
+menu-view-zoom-out = Zoom Out
 
-# Settings
-settings = Settings
-settings-appearance = Appearance
-settings-models = AI Models
-settings-shortcuts = Shortcuts
-settings-language = Language
-settings-paths = Paths
+# Right-click clip menu
+clip-ctx-delete = Delete
+clip-ctx-split = Split at playhead
+clip-ctx-reverse = Reverse
+clip-ctx-mirror-h = Mirror horizontally
+clip-ctx-mirror-v = Mirror vertically
 
-# New project
-new-project = New Project
-new-project-name = Name
-new-project-location = Location
-new-project-format = Format
-new-project-resolution = Base resolution
-new-project-fps = Frame rate
-new-project-create = Create Project
-new-project-quit = Quit
+# New project screen
+new-title = New Project
+new-field-name = Name
+new-field-location = Location
+new-field-format = Format
+new-field-resolution = Base resolution
+new-field-fps = Frame rate
+new-button-browse = Browse…
+new-button-create = Create Project
+new-button-quit = Quit
+new-recent-heading = Recent Projects
+new-recent-empty = No recent projects yet.
+new-recent-open = Open
+new-recent-forget = Forget
+new-recent-delete = Delete
 
 # Media bin
-media-import-clips = Import Clips
-media-import-music = Import Music
-media-import-images = Import Images
+media-heading = Media Library
+media-import-clips = 📥 Clips
+media-import-music = 🎵 Music
+media-import-images = 🖼 Images
+media-sort-label = Sort:
+media-filter-label = Show
+media-size-label = Size
+media-empty-title = No media imported yet.
+media-empty-hint = Click Clips / Music / Images above.
+media-count = { $count } item(s) in library
+media-sort-added = Added
+media-sort-name = Name
+media-sort-type = Type
 media-filter-all = All
 media-filter-video = Video
 media-filter-audio = Audio
 media-filter-image = Image
+media-size-small = S
+media-size-medium = M
+media-size-large = L
 
-# Timeline
-timeline-add-track = Add track
-timeline-pan = Pan tool
-timeline-magnetic = Magnetic timeline
-timeline-snapping = Snap to clips
-timeline-follow = Follow playhead
-timeline-captions = Generate captions
-timeline-narration = Generate narration
-timeline-zoom-in = Zoom in
-timeline-zoom-out = Zoom out
-timeline-zoom-fit = Zoom to fit
+# Timeline toolbar tooltips
+tt-add-track = Add track
+tt-pan = Pan tool (drag to scroll)
+tt-magnetic = Magnetic timeline
+tt-snap = Snap to clips
+tt-follow = Follow playhead
+tt-captions = Generate captions
+tt-narration = Generate narration (TTS)
+tt-zoom-out = Zoom out
+tt-zoom-in = Zoom in
+tt-zoom-fit = Zoom to fit
+tt-undo = Undo
+tt-redo = Redo
 
-# Export
-export-title = Export video
-export-summary = Summary
-export-duration = Duration
-export-destination = Destination
-export-browse = Browse…
-export-output = Output
-export-resolution = Resolution
-export-fps = Frame rate
-export-codec = Codec
-export-quality = Quality
-export-quality-small = Small
-export-quality-regular = Regular
-export-quality-large = Large
-export-advanced = Advanced options
-export-bitrate = Bitrate
-export-color-range = Color range
-export-button = Export
+# Track header tooltips
+tk-lock = Lock
+tk-view = Show in preview
+tk-mute = Mute
+tk-delete = Delete track
 
 # Preview
+preview-heading = Preview
 preview-quality = Quality
 preview-play = Play
 preview-pause = Pause
@@ -105,9 +104,107 @@ preview-back-30 = Back 30 s
 preview-back-5 = Back 5 s
 preview-fwd-5 = Forward 5 s
 preview-fwd-30 = Forward 30 s
+preview-loop = Loop
 
-# Track header
-track-lock = Lock
-track-view = Show in preview
-track-mute = Mute
-track-delete = Delete track
+# Properties panel
+props-heading = Properties
+props-empty = Select a clip to edit its properties.
+props-tab-video = Video
+props-tab-sound = Sound
+props-tab-effects = Effects
+props-video-main = Main
+props-video-speed = Speed
+props-video-mirror = Mirror
+props-video-trim = Trim
+props-field-rotation = Rotation
+props-field-width = Width
+props-field-height = Height
+props-field-speed = Speed
+props-field-custom = Custom
+props-field-reverse = Reverse
+props-mirror-h = Mirror horizontally
+props-mirror-v = Mirror vertically
+props-field-start = Start
+props-field-duration = Duration
+props-field-source = Source
+props-value-unlimited = unlimited
+props-trim-hint = Drag the handles on the clip's edges in the timeline.
+props-sound-volume = Volume
+props-sound-fade = Fade
+props-sound-fade-in = Fade in
+props-sound-fade-out = Fade out
+props-sound-processing = Processing
+props-sound-normalize = Normalize sound
+props-sound-denoise = Decrease noise
+props-sound-boost = Voice volume increase
+props-sound-wip = (Wired in audio-engine PR.)
+props-effects-empty = No effect selected.
+props-effects-hint = Pick a filter, transition, or audio effect from the left panel to attach it to this clip.
+
+# Export window
+exp-title = ⬆  Export video
+exp-summary = Summary
+exp-duration = Duration
+exp-destination = Destination
+exp-browse = Browse…
+exp-output = Output
+exp-resolution = Resolution
+exp-fps = Frame rate
+exp-codec = Codec
+exp-quality = Quality
+exp-quality-small = Small
+exp-quality-regular = Regular
+exp-quality-large = Large
+exp-advanced = Advanced options
+exp-bitrate = Bitrate mode
+exp-color-range = Color range
+exp-button = ⬇  Export
+
+# Settings dialog
+set-title = Settings
+set-tab-appearance = Appearance
+set-tab-models = AI Models
+set-tab-shortcuts = Shortcuts
+set-tab-language = Language
+set-tab-paths = Paths
+set-appearance-mode = Mode:
+set-appearance-accent = Accent:
+set-appearance-custom = Custom colors
+set-appearance-panel = Panel background
+set-appearance-window = Window background
+set-appearance-text = Text color
+set-appearance-reset = Reset to defaults
+set-models-heading = AI Models
+set-models-captions = Captions (speech-to-text)
+set-models-narration = Narration (text-to-speech)
+set-models-download = ⬇ Download
+set-models-enabled = Enabled
+set-shortcuts-heading = Keyboard shortcuts
+set-shortcuts-enable = Enable keyboard shortcuts
+set-language-heading = Interface language
+set-language-applied = Applied immediately.
+set-paths-models = AI models folder
+set-paths-ffmpeg = FFmpeg binaries
+set-paths-ffmpeg-hint = Used for media probing, thumbnail extraction, and export. Leave empty to auto-detect from PATH.
+set-paths-detect = 🔍 Detect now
+set-paths-detected = ✅ ffmpeg + ffprobe detected
+set-paths-partial = ⚠ One binary missing
+set-paths-not-detected = ❌ Not detected
+set-save = 💾 Save
+set-cancel = Cancel
+set-save-hint = Changes save to storage on Save.
+
+# Model prompt dialog
+mp-captions-title = 💬  Captions — choose a model
+mp-narration-title = 🎙  Narration — choose a voice
+mp-intro = This action needs a model. Download one, then click Use.
+mp-use-this = ✓ Use this
+mp-cancel = Cancel
+mp-hint = Downloads go to Settings → Paths → AI models folder.
+
+# Generic
+ok = OK
+cancel = Cancel
+close = Close
+yes = Yes
+no = No
