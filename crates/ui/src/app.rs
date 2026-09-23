@@ -1709,7 +1709,7 @@ impl CapRustApp {
                     _ => None,
                 });
 
-            // Rate-limited state log
+            // Rate-limited state log — every 5 s, less spam.
             {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static LAST: AtomicU64 = AtomicU64::new(0);
@@ -1717,10 +1717,10 @@ impl CapRustApp {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                if now != LAST.load(Ordering::Relaxed) {
+                if now >= LAST.load(Ordering::Relaxed) + 5 {
                     LAST.store(now, Ordering::Relaxed);
-                    tracing::info!(
-                        "preview state: playhead={}ms clips={} clip_info={} ffmpeg={}",
+                    tracing::debug!(
+                        "preview: playhead={}ms clips={} clip={} ffmpeg={}",
                         playhead,
                         self.project.clips.len(),
                         clip_info.is_some(),
