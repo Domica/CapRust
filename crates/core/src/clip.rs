@@ -59,6 +59,9 @@ pub struct Clip {
     /// Original source length. 0 = unlimited (images, text).
     #[serde(default)]
     pub source_duration_ms: u64,
+    /// Links back to the MediaItem this clip was created from, if any.
+    #[serde(default)]
+    pub media_id: Option<Uuid>,
 }
 
 impl Clip {
@@ -78,6 +81,7 @@ impl Clip {
             flip_v: false,
             volume_db: 0.0,
             source_duration_ms: dur_ms,
+            media_id: None,
         }
     }
 
@@ -97,6 +101,7 @@ impl Clip {
             flip_v: false,
             volume_db: 0.0,
             source_duration_ms: dur_ms,
+            media_id: None,
         }
     }
 
@@ -116,6 +121,7 @@ impl Clip {
             flip_v: false,
             volume_db: 0.0,
             source_duration_ms: 0,
+            media_id: None,
         }
     }
 
@@ -136,6 +142,7 @@ impl Clip {
             flip_v: false,
             volume_db: 0.0,
             source_duration_ms: 0,
+            media_id: None,
         }
     }
 
@@ -162,6 +169,7 @@ impl Clip {
             flip_v: false,
             volume_db: 0.0,
             source_duration_ms: 0,
+            media_id: None,
         }
     }
 
@@ -189,6 +197,7 @@ impl Clip {
             flip_v: false,
             volume_db: 0.0,
             source_duration_ms: 0,
+            media_id: None,
         }
     }
 

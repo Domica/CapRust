@@ -128,12 +128,14 @@ impl JobRunner {
                     }
                 }
                 JobResult::ThumbDone { media_id } => {
+                    tracing::info!("job: ThumbDone for {media_id}");
                     if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
                         m.thumb_done = true;
                     }
                     thumbs_ready.push(media_id);
 
-                    // Move temp jpg into project cache
+                    // Copy temp jpg into project cache. rename() fails across
+                    // drives on Windows (temp on C:, project may be on D:/F:).
                     if let Some(proj_path) = project.project_path.clone() {
                         let src = std::env::temp_dir()
                             .join("caprust-thumbs")
@@ -143,9 +145,30 @@ impl JobRunner {
                             media_id,
                         );
                         if let Some(parent) = dst.parent() {
-                            let _ = std::fs::create_dir_all(parent);
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                tracing::error!("create_dir_all {}: {e}", parent.display());
+                                continue;
+                            }
                         }
-                        let _ = std::fs::rename(&src, &dst);
+                        match std::fs::copy(&src, &dst) {
+                            Ok(_) => {
+                                tracing::info!(
+                                    "thumbnail copied: {} → {}",
+                                    src.display(),
+                                    dst.display()
+                                );
+                                let _ = std::fs::remove_file(&src);
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "thumbnail copy failed: {} → {}: {e}",
+                                    src.display(),
+                                    dst.display()
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!("ThumbDone but project_path is None — left in temp");
                     }
                 }
                 JobResult::Failed { media_id, error } => {
