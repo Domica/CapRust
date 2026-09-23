@@ -1,4 +1,4 @@
-//! Settings dialog — Appearance + AI Models.
+//! Settings dialog — Appearance, AI Models, Shortcuts.
 
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
 use caprust_core::models::{ModelKind, ModelStatus};
@@ -10,18 +10,27 @@ pub enum SettingsTab {
     #[default]
     Appearance,
     Models,
+    Shortcuts,
 }
 
-pub fn show(ui: &mut Ui, theme: &mut Theme, models: &mut ModelRegistry, tab: &mut SettingsTab) {
+pub fn show(
+    ui: &mut Ui,
+    theme: &mut Theme,
+    models: &mut ModelRegistry,
+    tab: &mut SettingsTab,
+    enable_shortcuts: &mut bool,
+) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::Appearance, "Appearance");
         ui.selectable_value(tab, SettingsTab::Models, "AI Models");
+        ui.selectable_value(tab, SettingsTab::Shortcuts, "Shortcuts");
     });
     ui.separator();
 
     match tab {
         SettingsTab::Appearance => show_appearance(ui, theme),
         SettingsTab::Models => show_models(ui, models),
+        SettingsTab::Shortcuts => show_shortcuts(ui, enable_shortcuts),
     }
 }
 
@@ -168,5 +177,50 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
                 );
             });
         });
+    }
+}
+
+fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
+    ui.label(egui::RichText::new("Keyboard shortcuts").strong());
+    ui.add_space(6.0);
+    ui.checkbox(enable_shortcuts, "Enable keyboard shortcuts");
+    ui.add_space(10.0);
+
+    ui.label(
+        egui::RichText::new("When enabled:")
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    egui::Grid::new("kbd_shortcuts")
+        .num_columns(2)
+        .spacing([20.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("R");
+            ui.label("Reverse selected clip");
+            ui.end_row();
+            ui.label("H");
+            ui.label("Mirror horizontally");
+            ui.end_row();
+            ui.label("V");
+            ui.label("Mirror vertically");
+            ui.end_row();
+            ui.label("Ctrl+A");
+            ui.label("Select all clips");
+            ui.end_row();
+            ui.label("Delete");
+            ui.label("Delete selected clip");
+            ui.end_row();
+            ui.label("S");
+            ui.label("Split at playhead");
+            ui.end_row();
+        });
+
+    if !*enable_shortcuts {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Shortcuts disabled — options hidden in right-click menu.")
+                .italics()
+                .color(egui::Color32::from_gray(150)),
+        );
     }
 }

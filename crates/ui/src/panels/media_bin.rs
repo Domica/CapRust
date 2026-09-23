@@ -31,6 +31,36 @@ impl MediaSort {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaFilter {
+    All,
+    Video,
+    Audio,
+    Image,
+}
+
+impl MediaFilter {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Video => "Video",
+            Self::Audio => "Audio",
+            Self::Image => "Image",
+        }
+    }
+    pub fn all() -> [Self; 4] {
+        [Self::All, Self::Video, Self::Audio, Self::Image]
+    }
+    pub fn matches(&self, k: MediaKind) -> bool {
+        match self {
+            Self::All => true,
+            Self::Video => k == MediaKind::Video,
+            Self::Audio => k == MediaKind::Audio,
+            Self::Image => k == MediaKind::Image,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewSize {
     Small,
     Medium,
@@ -126,6 +156,7 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color32 {
 
 pub struct MediaBinState {
     pub sort: MediaSort,
+    pub filter: MediaFilter,
     pub preview: PreviewSize,
     pub thumb_cache: ThumbnailCache,
 }
@@ -134,6 +165,7 @@ impl Default for MediaBinState {
     fn default() -> Self {
         Self {
             sort: MediaSort::Added,
+            filter: MediaFilter::All,
             preview: PreviewSize::Medium,
             thumb_cache: ThumbnailCache::default(),
         }
@@ -171,6 +203,16 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                 }
             });
         ui.separator();
+        ui.label("Show");
+        egui::ComboBox::from_id_salt("media_filter")
+            .selected_text(state.filter.label())
+            .width(90.0)
+            .show_ui(ui, |ui| {
+                for f in MediaFilter::all() {
+                    ui.selectable_value(&mut state.filter, f, f.label());
+                }
+            });
+        ui.separator();
         ui.label("Size");
         for sz in [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large] {
             ui.selectable_value(&mut state.preview, sz, sz.label());
@@ -180,7 +222,13 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     ui.separator();
 
     // --- Sorted item list ---
-    let mut sorted: Vec<MediaItem> = project.media.items.clone();
+    let mut sorted: Vec<MediaItem> = project
+        .media
+        .items
+        .iter()
+        .filter(|m| state.filter.matches(m.kind))
+        .cloned()
+        .collect();
     match state.sort {
         MediaSort::Added => sorted.sort_by_key(|m| m.added_at),
         MediaSort::Name => sorted.sort_by_key(|m| a_lower(&m.name)),

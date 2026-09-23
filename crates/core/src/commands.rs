@@ -1,7 +1,10 @@
 //! Command pattern (undo/redo).
 
+pub mod delete_clip;
+pub mod move_clip;
 pub mod relink;
 pub mod ripple;
+pub mod split_clip;
 
 use crate::project::ProjectState;
 use anyhow::Result;
