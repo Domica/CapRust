@@ -9,6 +9,8 @@ pub struct TimelineToolState {
     pub snapping: bool,
     pub captions_enabled: bool,
     pub narration_enabled: bool,
+    /// Auto-scroll timeline to keep the playhead visible during playback.
+    pub follow_playhead: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,6 +21,7 @@ pub struct TimelineToolEvents {
     pub snapping_toggled: bool,
     pub captions_clicked: bool,
     pub narration_clicked: bool,
+    pub follow_toggled: bool,
     pub undo: bool,
     pub redo: bool,
     pub zoom_in: bool,
@@ -26,14 +29,11 @@ pub struct TimelineToolEvents {
     pub zoom_fit: bool,
 }
 
-/// Draws an icon-only button that renders "pressed in" when `active` is true.
 fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bool) -> bool {
     let size = egui::vec2(30.0, 28.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
 
-    let visuals = ui.style().interact_selectable(&resp, active);
     let bg = if active {
-        // "Pressed / recessed" look: darker than panel, subtle inner shadow
         Color32::from_gray(30)
     } else if resp.hovered() && enabled {
         ui.visuals().widgets.hovered.bg_fill
@@ -43,7 +43,6 @@ fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bo
 
     ui.painter().rect_filled(rect, 5.0, bg);
 
-    // inner highlight when pressed
     if active {
         ui.painter().rect_stroke(
             rect.shrink(1.0),
@@ -68,7 +67,6 @@ fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bo
         egui::FontId::proportional(16.0),
         icon_color,
     );
-    let _ = visuals;
 
     if enabled && resp.clicked() {
         true
@@ -78,7 +76,6 @@ fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bo
     }
 }
 
-/// Draws a stateless action button (no active state).
 fn icon_action(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> bool {
     icon_toggle(ui, icon, tooltip, false, enabled)
 }
@@ -93,28 +90,19 @@ pub fn show(
     let mut ev = TimelineToolEvents::default();
 
     ui.horizontal(|ui| {
-        // --- Left: add track ---
+        // --- Add track ---
         if icon_action(ui, "➕", "Add track", true) {
-            ev.add_track = true;
-        }
-        if icon_action(ui, "🛤", "Add track (alt)", true) {
             ev.add_track = true;
         }
         ui.separator();
 
         // --- Pan (tvoj PR) ---
-        if icon_toggle(
-            ui,
-            "✋",
-            "Pan tool (drag to move timeline)",
-            state.pan_mode,
-            true,
-        ) {
+        if icon_toggle(ui, "✋", "Pan tool", state.pan_mode, true) {
             state.pan_mode = !state.pan_mode;
             ev.pan_toggled = true;
         }
 
-        // --- Magnetic timeline ---
+        // --- Magnetic ---
         if icon_toggle(ui, "🧲", "Magnetic timeline", state.magnetic, true) {
             state.magnetic = !state.magnetic;
             ev.magnetic_toggled = true;
@@ -126,15 +114,25 @@ pub fn show(
             ev.snapping_toggled = true;
         }
 
+        // --- Follow playhead (NEW) ---
+        if icon_toggle(
+            ui,
+            "🎯",
+            "Follow playhead (auto-scroll during playback)",
+            state.follow_playhead,
+            true,
+        ) {
+            state.follow_playhead = !state.follow_playhead;
+            ev.follow_toggled = true;
+        }
+
         ui.separator();
 
         // --- Captions ---
-        let cap_enabled = !state.captions_enabled;
-        if icon_action(ui, "💬", "Generate captions", cap_enabled) {
+        if icon_action(ui, "💬", "Generate captions", true) {
             state.captions_enabled = true;
             ev.captions_clicked = true;
         }
-        // --- Narration ---
         if icon_action(ui, "🎙", "Generate narration (TTS)", true) {
             state.narration_enabled = true;
             ev.narration_clicked = true;
