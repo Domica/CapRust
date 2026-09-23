@@ -238,11 +238,13 @@ impl Default for MediaBinState {
 pub struct MediaBinOutput {
     pub dragging: Option<Uuid>,
     pub newly_imported: Vec<Uuid>,
+    pub remove_requested: Vec<Uuid>,
 }
 
 pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> MediaBinOutput {
     // --- Import buttons ---
     let mut newly_imported: Vec<Uuid> = Vec::new();
+    let mut clear_all = false;
     ui.horizontal(|ui| {
         if ui.button(tr("media-import-clips")).clicked() {
             newly_imported.extend(import_with(project, VIDEO_EXTS, "Video"));
@@ -253,7 +255,20 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         if ui.button(tr("media-import-images")).clicked() {
             newly_imported.extend(import_with(project, IMAGE_EXTS, "Image"));
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button(tr("media-clear-all"))
+                .on_hover_text(tr("media-clear-all-tooltip"))
+                .clicked()
+            {
+                clear_all = true;
+            }
+        });
     });
+    if clear_all {
+        project.media.items.clear();
+        tracing::info!("media library cleared");
+    }
 
     ui.separator();
 
@@ -325,6 +340,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         return MediaBinOutput {
             dragging: None,
             newly_imported,
+            remove_requested: Vec::new(),
         };
     }
 
@@ -350,7 +366,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             for row in sorted.chunks(cols) {
                 ui.horizontal(|ui| {
                     for item in row {
-                        let resp = draw_card(
+                        let (resp, should_remove) = draw_card(
                             ui,
                             item,
                             card_w,
@@ -358,6 +374,9 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                             &mut state.thumb_cache,
                             project_path_opt,
                         );
+                        if should_remove {
+                            remove_requested.push(item.id);
+                        }
                         if resp.drag_started() {
                             dragging = Some(item.id);
                         }
@@ -369,6 +388,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     MediaBinOutput {
         dragging,
         newly_imported,
+        remove_requested,
     }
 }
 
@@ -395,9 +415,10 @@ fn draw_card(
     thumb_h: f32,
     cache: &mut ThumbnailCache,
     project_path: Option<&str>,
-) -> egui::Response {
+) -> (egui::Response, bool) {
     let id = egui::Id::new(item.id);
     let payload = item.id;
+    let mut remove_requested = false;
 
     let inner = ui.dnd_drag_source(id, payload, |ui| {
         // Reserve card rect (thumbnail + filename line)
@@ -496,6 +517,40 @@ fn draw_card(
             Color32::from_gray(210),
         );
 
+        // X button (top-right of thumbnail) — visible on hover
+        if resp.hovered() {
+            let btn = 18.0;
+            let x_rect = Rect::from_min_size(
+                Pos2::new(thumb_rect.right() - btn - 3.0, thumb_rect.top() + 3.0),
+                Vec2::splat(btn),
+            );
+            let x_resp = ui.interact(x_rect, egui::Id::new(("rm_media", item.id)), Sense::click());
+            let bg = if x_resp.hovered() {
+                Color32::from_rgb(200, 60, 60)
+            } else {
+                Color32::from_black_alpha(140)
+            };
+            ui.painter().rect_filled(x_rect, 3.0, bg);
+            ui.painter().text(
+                x_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "✕",
+                FontId::proportional(12.0),
+                Color32::WHITE,
+            );
+            if x_resp.clicked() {
+                remove_requested = true;
+            }
+        }
+
+        // Right-click menu
+        resp.context_menu(|ui| {
+            if ui.button(tr("media-remove-one")).clicked() {
+                remove_requested = true;
+                ui.close_menu();
+            }
+        });
+
         resp.on_hover_text(format!(
             "{}\n{} · {} ms\n{}",
             item.path,
@@ -505,7 +560,7 @@ fn draw_card(
         ))
     });
 
-    inner.inner
+    (inner.inner, remove_requested)
 }
 
 fn truncate(s: &str, n: usize) -> String {
