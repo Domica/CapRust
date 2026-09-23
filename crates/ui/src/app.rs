@@ -567,6 +567,13 @@ impl CapRustApp {
                     self.project.aspect_ratio.label(),
                     self.project.frame_rate.label()
                 ));
+                ui.separator();
+                let (kb_txt, kb_col) = if self.settings.enable_shortcuts {
+                    ("⌨ ON", egui::Color32::from_rgb(80, 200, 120))
+                } else {
+                    ("⌨ OFF", egui::Color32::from_rgb(220, 120, 80))
+                };
+                ui.label(egui::RichText::new(kb_txt).color(kb_col).strong());
             });
         });
     }
@@ -879,13 +886,16 @@ impl CapRustApp {
                         },
                     );
 
-                    // === RIGHT: ruler + lanes ===
+                    // === RIGHT: ruler + lanes inside a horizontal ScrollArea ===
                     let lanes_h = ui.available_height();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(content_width, lanes_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
+                    egui::ScrollArea::horizontal()
+                        .id_salt("timeline_h_scroll")
+                        .auto_shrink([false, false])
+                        .drag_to_scroll(false)
+                        .max_height(lanes_h)
+                        .show(ui, |ui| {
                             ui.set_min_width(content_width);
+                            ui.set_min_height(lanes_h);
 
                             // Ruler
                             if let Some(ms) = crate::timeline::ruler::show(
@@ -1223,8 +1233,7 @@ impl CapRustApp {
                             if let Some(top) = top_y_opt {
                                 self.timeline_row_layout = (top, rows_actual);
                             }
-                        },
-                    );
+                        });
                 });
 
                 // ---------------- Apply changes ----------------
@@ -1763,6 +1772,24 @@ impl eframe::App for CapRustApp {
         self.theme.apply(ctx);
 
         // Keyboard shortcuts (only in Editor + when enabled in Settings)
+        // Debug: log the current value of the toggle once per second.
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static LAST: AtomicU64 = AtomicU64::new(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if now != LAST.load(Ordering::Relaxed) {
+                LAST.store(now, Ordering::Relaxed);
+                tracing::info!(
+                    "shortcuts toggle = {} (mode = {:?})",
+                    self.settings.enable_shortcuts,
+                    self.mode
+                );
+            }
+        }
+
         if self.mode == AppMode::Editor && self.settings.enable_shortcuts {
             let events: Vec<egui::Key> = ctx.input(|i| {
                 i.events
@@ -1781,28 +1808,62 @@ impl eframe::App for CapRustApp {
             });
 
             let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+            // Don't hijack keys while typing in a text field.
+            let typing = ctx.wants_keyboard_input();
 
             for k in events {
+                if typing {
+                    continue;
+                }
+                // Re-check per key — Settings may have been toggled mid-frame.
+                if !self.settings.enable_shortcuts {
+                    break;
+                }
                 match k {
                     egui::Key::R => {
+                        tracing::info!(
+                            "Key R pressed (shortcuts={})",
+                            self.settings.enable_shortcuts
+                        );
                         for id in self.selected_clips.clone() {
-                            if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
-                                c.reversed = !c.reversed;
-                            }
+                            let cur = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|c| c.id == id)
+                                .map(|c| c.reversed)
+                                .unwrap_or(false);
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .reversed(!cur);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                     }
                     egui::Key::H => {
                         for id in self.selected_clips.clone() {
-                            if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
-                                c.flip_h = !c.flip_h;
-                            }
+                            let cur = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|c| c.id == id)
+                                .map(|c| c.flip_h)
+                                .unwrap_or(false);
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .flip_h(!cur);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                     }
                     egui::Key::V => {
                         for id in self.selected_clips.clone() {
-                            if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
-                                c.flip_v = !c.flip_v;
-                            }
+                            let cur = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|c| c.id == id)
+                                .map(|c| c.flip_v)
+                                .unwrap_or(false);
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .flip_v(!cur);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                     }
                     egui::Key::Delete | egui::Key::Backspace => {
