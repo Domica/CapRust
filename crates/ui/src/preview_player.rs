@@ -120,8 +120,16 @@ impl PreviewPlayer {
             return;
         }
         let Some(tx) = self.tx.as_ref() else {
+            tracing::warn!("preview: no worker channel");
             return;
         };
+        tracing::info!(
+            "preview: request clip={} at={}ms {}x{}",
+            clip_id,
+            rounded,
+            width,
+            height
+        );
         self.pending = Some(key);
         let _ = tx.send(FrameJob {
             key,
@@ -140,9 +148,16 @@ impl PreviewPlayer {
             if self.pending == Some(res.key) {
                 self.pending = None;
             }
-            if res.error.is_some() {
+            if let Some(e) = res.error.as_ref() {
+                tracing::warn!("preview: decode error — {e}");
                 continue;
             }
+            tracing::info!(
+                "preview: got {} bytes for clip={} at={}ms",
+                res.rgba.len(),
+                res.key.clip_id,
+                res.key.at_ms
+            );
             let w = res.key.width as usize;
             let h = res.key.height as usize;
             let expected = w * h * 4;
