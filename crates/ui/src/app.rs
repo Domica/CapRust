@@ -850,14 +850,17 @@ impl CapRustApp {
                 }
 
                 // ---------------- Two columns side by side ----------------
-                // No ScrollAreas inside the timeline — panel is resizable.
+                // IMPORTANT: capture panel height BEFORE entering
+                // horizontal_top — inside it, available_height() == 0.
+                let full_h = ui.available_height().max(150.0);
                 ui.horizontal_top(|ui| {
                     // === LEFT: header column ===
                     ui.allocate_ui_with_layout(
-                        egui::vec2(header_w, ui.available_height()),
+                        egui::vec2(header_w, full_h),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             ui.set_width(header_w);
+                            ui.set_min_height(full_h);
 
                             // ruler spacer
                             ui.allocate_space(egui::vec2(header_w, ruler_h));
@@ -887,15 +890,15 @@ impl CapRustApp {
                     );
 
                     // === RIGHT: ruler + lanes inside a horizontal ScrollArea ===
-                    let lanes_h = ui.available_height();
                     egui::ScrollArea::horizontal()
                         .id_salt("timeline_h_scroll")
                         .auto_shrink([false, false])
                         .drag_to_scroll(false)
-                        .max_height(lanes_h)
+                        .max_height(full_h)
+                        .min_scrolled_height(full_h)
                         .show(ui, |ui| {
                             ui.set_min_width(content_width);
-                            ui.set_min_height(lanes_h);
+                            ui.set_min_height(full_h);
 
                             // Ruler
                             if let Some(ms) = crate::timeline::ruler::show(
