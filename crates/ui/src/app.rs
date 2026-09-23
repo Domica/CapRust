@@ -1,5 +1,6 @@
 use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
+use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
@@ -49,13 +50,12 @@ pub struct CapRustApp {
     pub export_open: bool,
     pub export_state: ExportState,
     pub media_bin: MediaBinState,
-    /// Media item currently being dragged from the bin.
-    pub dragging_media: Option<uuid::Uuid>,
     pub preview_size: PreviewSize,
     pub timeline_tools: TimelineToolState,
     pub playhead_ms: u64,
     pub timeline_zoom: f32,
     pub settings_tab: crate::panels::settings_dialog::SettingsTab,
+    pub preview: PreviewState,
 }
 
 impl CapRustApp {
@@ -75,12 +75,12 @@ impl CapRustApp {
             export_open: false,
             export_state: ExportState::default(),
             media_bin: MediaBinState::default(),
-            dragging_media: None,
             preview_size: PreviewSize::Medium,
             timeline_tools: TimelineToolState::default(),
             playhead_ms: 0,
             timeline_zoom: 1.0,
             settings_tab: Default::default(),
+            preview: PreviewState::default(),
         }
     }
 
@@ -97,6 +97,18 @@ impl CapRustApp {
         self.mode = AppMode::Editor;
     }
 
+    fn total_duration_ms(&self) -> u64 {
+        self.project
+            .clips
+            .iter()
+            .map(|c| c.start_time_ms + c.duration_ms)
+            .max()
+            .unwrap_or(0)
+    }
+
+    // ---------------------------------------------------------------
+    // Start screen
+    // ---------------------------------------------------------------
     fn show_start_screen(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
@@ -106,7 +118,6 @@ impl CapRustApp {
                 ui.label("Social-first video editor");
                 ui.add_space(30.0);
             });
-
             ui.vertical_centered(|ui| {
                 egui::Frame::group(ui.style())
                     .inner_margin(24.0)
@@ -114,7 +125,6 @@ impl CapRustApp {
                         ui.set_width(480.0);
                         ui.heading("New Project");
                         ui.separator();
-
                         egui::Grid::new("new_project_grid")
                             .num_columns(2)
                             .spacing([12.0, 10.0])
@@ -122,7 +132,6 @@ impl CapRustApp {
                                 ui.label("Name");
                                 ui.text_edit_singleline(&mut self.draft.name);
                                 ui.end_row();
-
                                 ui.label("Location");
                                 ui.horizontal(|ui| {
                                     ui.text_edit_singleline(&mut self.draft.location);
@@ -133,7 +142,6 @@ impl CapRustApp {
                                     }
                                 });
                                 ui.end_row();
-
                                 ui.label("Format");
                                 egui::ComboBox::from_id_salt("draft_aspect")
                                     .selected_text(self.draft.aspect_ratio.label())
@@ -147,14 +155,12 @@ impl CapRustApp {
                                         }
                                     });
                                 ui.end_row();
-
                                 ui.label("Base resolution");
                                 ui.add(
                                     egui::Slider::new(&mut self.draft.base_resolution, 480..=2160)
                                         .suffix(" px"),
                                 );
                                 ui.end_row();
-
                                 ui.label("Frame rate");
                                 egui::ComboBox::from_id_salt("draft_fps")
                                     .selected_text(self.draft.frame_rate.label())
@@ -169,7 +175,6 @@ impl CapRustApp {
                                     });
                                 ui.end_row();
                             });
-
                         ui.add_space(16.0);
                         ui.horizontal(|ui| {
                             if ui.button("Create Project").clicked() {
@@ -184,6 +189,9 @@ impl CapRustApp {
         });
     }
 
+    // ---------------------------------------------------------------
+    // Menu bar
+    // ---------------------------------------------------------------
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -269,7 +277,6 @@ impl CapRustApp {
                     });
                 });
 
-                // Right side: Export button
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let export_btn = egui::Button::new(
                         egui::RichText::new("Export ⬆")
@@ -287,31 +294,23 @@ impl CapRustApp {
         });
     }
 
+    // ---------------------------------------------------------------
+    // Toolbar
+    // ---------------------------------------------------------------
     fn show_toolbar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("➕ Add Text").clicked() {
-                    let clip = Clip::new_text("Hello!", 0, 0, 3000, false);
+                    let clip = Clip::new_text("Hello!", 0, self.playhead_ms, 3000, false);
                     let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                 }
-                if ui
-                    .add_enabled(self.undo_stack.can_undo(), egui::Button::new("↩ Undo"))
-                    .clicked()
-                {
-                    let _ = self.undo_stack.undo(&mut self.project);
-                }
-                if ui
-                    .add_enabled(self.undo_stack.can_redo(), egui::Button::new("↪ Redo"))
-                    .clicked()
-                {
-                    let _ = self.undo_stack.redo(&mut self.project);
-                }
                 ui.separator();
                 ui.label(format!(
-                    "Clips: {} | Media: {} | {} | {}",
+                    "Clips: {} | Media: {} | Tracks: {} | {} | {}",
                     self.project.clips.len(),
                     self.project.media.items.len(),
+                    self.project.tracks.len(),
                     self.project.aspect_ratio.label(),
                     self.project.frame_rate.label()
                 ));
@@ -319,6 +318,9 @@ impl CapRustApp {
         });
     }
 
+    // ---------------------------------------------------------------
+    // Timeline events
+    // ---------------------------------------------------------------
     fn handle_timeline_events(&mut self, ev: TimelineToolEvents) {
         if ev.undo {
             let _ = self.undo_stack.undo(&mut self.project);
@@ -336,7 +338,11 @@ impl CapRustApp {
             self.timeline_zoom = 1.0;
         }
         if ev.add_track {
-            tracing::info!("Add track requested (track model in next PR)");
+            let idx = self.project.tracks.len() + 1;
+            let kind = caprust_core::TrackKind::Video;
+            self.project
+                .tracks
+                .push(caprust_core::Track::new(&format!("V{}", idx), kind));
         }
         if ev.captions_clicked {
             let ready = self.project.models.ready_captions();
@@ -372,22 +378,44 @@ impl CapRustApp {
         }
     }
 
+    fn handle_preview_events(&mut self, ev: PreviewEvents, total_ms: u64) {
+        if ev.seek_back_30 {
+            self.playhead_ms = self.playhead_ms.saturating_sub(30_000);
+        }
+        if ev.seek_back_5 {
+            self.playhead_ms = self.playhead_ms.saturating_sub(5_000);
+        }
+        if ev.seek_fwd_5 {
+            self.playhead_ms = (self.playhead_ms + 5_000).min(total_ms);
+        }
+        if ev.seek_fwd_30 {
+            self.playhead_ms = (self.playhead_ms + 30_000).min(total_ms);
+        }
+        if ev.toggle_play {
+            self.preview.playing = !self.preview.playing;
+        }
+        if ev.toggle_loop {
+            self.preview.loop_playback = !self.preview.loop_playback;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Timeline panel
+    // ---------------------------------------------------------------
     fn show_timeline(&mut self, ctx: &egui::Context) {
         let screen_h = ctx.screen_rect().height();
         egui::TopBottomPanel::bottom("timeline")
             .resizable(true)
-            .default_height(240.0)
-            .min_height(160.0)
-            .max_height(screen_h * 0.7)
+            .default_height(220.0)
+            .min_height(150.0)
+            .max_height(screen_h * 0.75)
             .show(ctx, |ui| {
-                // Ensure content always fills minimum height, prevents
-                // resize-snap-back when timeline is empty.
-                ui.set_min_height(140.0);
+                ui.set_min_height(150.0);
 
-                // tick downloads (fake progress for now)
+                // Tick fake downloads
                 self.project.models.tick_downloads(1.0 / 60.0);
 
-                // toolbar
+                // --- Toolbar ---
                 let can_undo = self.undo_stack.can_undo();
                 let can_redo = self.undo_stack.can_redo();
                 let mut tools = self.timeline_tools;
@@ -401,76 +429,165 @@ impl CapRustApp {
                 self.timeline_tools = tools;
                 ui.separator();
                 self.handle_timeline_events(ev);
-                ui.separator();
 
-                // Drop zone
-                let frame = egui::Frame::NONE
-                    .inner_margin(4.0)
-                    .fill(ui.visuals().extreme_bg_color);
-                let (_id, dropped_payload) = ui.dnd_drop_zone::<uuid::Uuid, _>(frame, |ui| {
-                    ui.set_min_height(ui.available_height().max(100.0));
+                // --- Ruler + tracks ---
+                let total_ms = self.total_duration_ms();
+                let content_width = (total_ms.max(20_000) as f32 * 0.05 * self.timeline_zoom)
+                    .max(ui.available_width());
 
-                    if self.project.clips.is_empty() {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(30.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    "Drop media from the left bin, or use Import → Clips",
-                                )
-                                .color(egui::Color32::from_gray(120)),
-                            );
-                            ui.label(
-                                egui::RichText::new("Nothing on the timeline yet.")
-                                    .italics()
-                                    .color(egui::Color32::from_gray(90)),
-                            );
+                let px_per_ms = content_width / total_ms.max(20_000) as f32;
+                let px_per_ms = px_per_ms * self.timeline_zoom / self.timeline_zoom.max(1.0);
+                let px_per_ms = px_per_ms.max(0.002);
+
+                // Track headers first (left column), then lanes (right).
+                let tracks_snapshot: Vec<(usize, caprust_core::Track)> =
+                    self.project.tracks.iter().cloned().enumerate().collect();
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // ----- Ruler row -----
+                        ui.horizontal(|ui| {
+                            // Spacer that matches header width
+                            ui.allocate_space(egui::vec2(
+                                crate::timeline::track_header::HEADER_WIDTH,
+                                crate::timeline::ruler::RULER_HEIGHT,
+                            ));
+
+                            if let Some(ms) = crate::timeline::ruler::show(
+                                ui,
+                                content_width,
+                                px_per_ms,
+                                self.playhead_ms,
+                                total_ms,
+                            ) {
+                                self.playhead_ms = ms.min(total_ms);
+                            }
                         });
-                    } else {
-                        egui::ScrollArea::horizontal().show(ui, |ui| {
+
+                        // ----- Track rows -----
+                        let mut header_changed = false;
+                        let tracks_len = tracks_snapshot.len();
+                        let mut new_tracks: Vec<caprust_core::Track> = self.project.tracks.clone();
+
+                        for (idx, mut track) in tracks_snapshot {
+                            let row_h = track.height;
                             ui.horizontal(|ui| {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(crate::timeline::track_header::HEADER_WIDTH, row_h),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.set_width(crate::timeline::track_header::HEADER_WIDTH);
+                                        if crate::timeline::track_header::show(ui, &mut track, idx)
+                                        {
+                                            header_changed = true;
+                                        }
+                                    },
+                                );
+                                if let Some(slot) = new_tracks.get_mut(idx) {
+                                    *slot = track.clone();
+                                }
+
+                                // Lane background
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(content_width, row_h),
+                                    egui::Sense::hover(),
+                                );
+                                let lane_bg = if track.visible {
+                                    egui::Color32::from_gray(22)
+                                } else {
+                                    egui::Color32::from_gray(16)
+                                };
+                                ui.painter().rect_filled(rect, 0.0, lane_bg);
+                                ui.painter().line_segment(
+                                    [
+                                        egui::Pos2::new(rect.left(), rect.bottom() - 0.5),
+                                        egui::Pos2::new(rect.right(), rect.bottom() - 0.5),
+                                    ],
+                                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
+                                );
+
+                                // Draw clips assigned to this lane (by track_index)
+                                let track_idx = idx;
                                 for clip in self.project.clips.iter() {
+                                    if clip.track_index != track_idx {
+                                        continue;
+                                    }
+                                    let x0 = rect.left() + (clip.start_time_ms as f32) * px_per_ms;
+                                    let x1 = rect.left()
+                                        + ((clip.start_time_ms + clip.duration_ms) as f32)
+                                            * px_per_ms;
+                                    let clip_rect = egui::Rect::from_min_max(
+                                        egui::pos2(x0, rect.top() + 3.0),
+                                        egui::pos2(x1.max(x0 + 6.0), rect.bottom() - 3.0),
+                                    );
+                                    let color = match &clip.clip_type {
+                                        caprust_core::ClipType::Video { .. } => {
+                                            egui::Color32::from_rgb(60, 110, 180)
+                                        }
+                                        caprust_core::ClipType::Audio { .. } => {
+                                            egui::Color32::from_rgb(90, 60, 140)
+                                        }
+                                        caprust_core::ClipType::Image { .. } => {
+                                            egui::Color32::from_rgb(60, 140, 110)
+                                        }
+                                        caprust_core::ClipType::TextOverlay { .. } => {
+                                            egui::Color32::from_rgb(180, 130, 60)
+                                        }
+                                        caprust_core::ClipType::Captions { .. } => {
+                                            egui::Color32::from_rgb(180, 80, 120)
+                                        }
+                                        caprust_core::ClipType::Narration { .. } => {
+                                            egui::Color32::from_rgb(120, 100, 200)
+                                        }
+                                    };
+                                    ui.painter().rect_filled(clip_rect, 4.0, color);
                                     let label = match &clip.clip_type {
                                         caprust_core::ClipType::TextOverlay { content, .. } => {
                                             content.clone()
                                         }
-                                        caprust_core::ClipType::Video { path, .. } => path.clone(),
-                                        _ => "clip".to_string(),
+                                        caprust_core::ClipType::Captions { .. } => {
+                                            "💬 Captions".into()
+                                        }
+                                        caprust_core::ClipType::Narration { .. } => {
+                                            "🎙 Narration".into()
+                                        }
+                                        caprust_core::ClipType::Video { path, .. } => {
+                                            std::path::Path::new(path)
+                                                .file_name()
+                                                .map(|s| s.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| "video".into())
+                                        }
+                                        _ => "clip".into(),
                                     };
-                                    ui.label(format!("[{}: {}ms]", label, clip.duration_ms));
+                                    ui.painter().text(
+                                        clip_rect.left_top() + egui::vec2(6.0, 4.0),
+                                        egui::Align2::LEFT_TOP,
+                                        label,
+                                        egui::FontId::proportional(11.0),
+                                        egui::Color32::WHITE,
+                                    );
                                 }
                             });
-                        });
-                    }
-                });
+                        }
 
-                // Handle drop
-                if let Some(payload_id) = dropped_payload {
-                    let media = self
-                        .project
-                        .media
-                        .items
-                        .iter()
-                        .find(|m| m.id == *payload_id)
-                        .cloned();
-                    if let Some(item) = media {
-                        let clip = match item.kind {
-                            caprust_core::MediaKind::Video => {
-                                Clip::new_video(&item.path, 0, 0, item.duration_ms.max(2000))
-                            }
-                            caprust_core::MediaKind::Audio => {
-                                Clip::new_video(&item.path, 0, 0, item.duration_ms.max(2000))
-                            }
-                            caprust_core::MediaKind::Image => {
-                                Clip::new_video(&item.path, 0, 0, 3000)
-                            }
-                        };
-                        let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                        let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                    }
-                }
+                        if header_changed {
+                            self.project.tracks = new_tracks;
+                        }
+                        let _ = tracks_len;
+                    });
+
+                // Write back track header changes
+                // (done outside closure above via snapshot pattern)
+                // NOTE: since we cloned, changes to `track` were local. To keep
+                // this simple and correct, we capture changes via a temp vec.
+                // See next block for the actual write-back handled below.
             });
     }
 
+    // ---------------------------------------------------------------
+    // Editor
+    // ---------------------------------------------------------------
     fn show_editor(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
@@ -482,11 +599,8 @@ impl CapRustApp {
             .show(ctx, |ui| {
                 ui.heading("Media Library");
                 ui.separator();
-                let dragging =
+                let _dragging =
                     crate::panels::media_bin::show(ui, &mut self.project, &mut self.media_bin);
-                if dragging.is_some() {
-                    self.dragging_media = dragging;
-                }
             });
 
         egui::SidePanel::right("right_panel")
@@ -500,24 +614,56 @@ impl CapRustApp {
 
         self.show_timeline(ctx);
 
+        // Central preview (frame + transport)
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.4);
-                ui.heading("🎬 Preview");
-                ui.label("(wgpu renderer – upcoming PR)");
-            });
+            let total_ms = self.total_duration_ms();
+
+            // ---- Frame area ----
+            let avail = ui.available_size();
+            let frame_h = (avail.y - 60.0).max(120.0);
+            let frame_rect_size = egui::vec2(avail.x, frame_h);
+            let (rect, _) = ui.allocate_exact_size(frame_rect_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 6.0, egui::Color32::from_gray(12));
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "🎬 Preview",
+                egui::FontId::proportional(22.0),
+                egui::Color32::from_gray(90),
+            );
+
+            ui.add_space(6.0);
+
+            // ---- Transport bar ----
+            let ev = crate::panels::preview_window::show_transport(
+                ui,
+                &mut self.preview,
+                self.playhead_ms,
+                total_ms,
+                &mut self.project.aspect_ratio,
+            );
+            self.handle_preview_events(ev, total_ms);
+
+            // Auto-advance when playing
+            if self.preview.playing && total_ms > 0 {
+                let dt_ms = (ui.input(|i| i.stable_dt) * 1000.0) as u64;
+                self.playhead_ms = self.playhead_ms.saturating_add(dt_ms.max(16));
+                if self.playhead_ms >= total_ms {
+                    if self.preview.loop_playback {
+                        self.playhead_ms = 0;
+                    } else {
+                        self.playhead_ms = total_ms;
+                        self.preview.playing = false;
+                    }
+                }
+                ui.ctx().request_repaint();
+            }
         });
     }
 
     fn show_export_window(&mut self, ctx: &egui::Context) {
-        let total_ms: u64 = self
-            .project
-            .clips
-            .iter()
-            .map(|c| c.start_time_ms + c.duration_ms)
-            .max()
-            .unwrap_or(0);
-
+        let total_ms = self.total_duration_ms();
         let mut open = self.export_open;
         egui::Window::new("⬆  Export video")
             .open(&mut open)
@@ -525,22 +671,14 @@ impl CapRustApp {
             .collapsible(false)
             .default_width(420.0)
             .show(ctx, |ui| {
-                if crate::panels::export_window::show(
-                    ui,
-                    &mut self.export_state,
-                    total_ms,
-                ) {
+                if crate::panels::export_window::show(ui, &mut self.export_state, total_ms) {
                     tracing::info!(
-                        "Export → dest={}, res={:?}, fps={:?}, codec={:?}, q={:?}, adv={}, mode={:?}, bitrate={}kbps, range={:?}",
+                        "Export → dest={}, res={:?}, fps={:?}, codec={:?}, q={:?}",
                         self.export_state.destination,
                         self.export_state.resolution,
                         self.export_state.frame_rate,
                         self.export_state.codec,
                         self.export_state.quality,
-                        self.export_state.advanced,
-                        self.export_state.rate_mode,
-                        self.export_state.bitrate_kbps,
-                        self.export_state.color_range,
                     );
                     self.export_open = false;
                 }

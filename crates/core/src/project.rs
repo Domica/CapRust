@@ -16,6 +16,7 @@ pub struct ProjectState {
     pub project_path: Option<String>,
     pub media: crate::media::MediaLibrary,
     pub models: crate::models::ModelRegistry,
+    pub tracks: Vec<crate::track::Track>,
 }
 
 impl Default for ProjectState {
@@ -33,6 +34,7 @@ impl Default for ProjectState {
             project_path: None,
             media: crate::media::MediaLibrary::default(),
             models: crate::models::ModelRegistry::default(),
+            tracks: crate::track::default_tracks(),
         }
     }
 }
