@@ -1,8 +1,8 @@
-//! Settings dialog — Appearance, AI Models, Shortcuts.
+//! Settings dialog — Appearance, AI Models, Shortcuts, Language, Paths.
 
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
 use caprust_core::models::{ModelKind, ModelStatus};
-use caprust_core::ModelRegistry;
+use caprust_core::{detect_ffmpeg, AppSettings, FfmpegStatus, ModelRegistry};
 use egui::Ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -11,28 +11,39 @@ pub enum SettingsTab {
     Appearance,
     Models,
     Shortcuts,
+    Language,
+    Paths,
 }
 
 pub fn show(
     ui: &mut Ui,
     theme: &mut Theme,
     models: &mut ModelRegistry,
+    settings: &mut AppSettings,
     tab: &mut SettingsTab,
-    enable_shortcuts: &mut bool,
+    ffmpeg_status: &mut FfmpegStatus,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::Appearance, "Appearance");
         ui.selectable_value(tab, SettingsTab::Models, "AI Models");
         ui.selectable_value(tab, SettingsTab::Shortcuts, "Shortcuts");
+        ui.selectable_value(tab, SettingsTab::Language, "Language");
+        ui.selectable_value(tab, SettingsTab::Paths, "Paths");
     });
     ui.separator();
 
     match tab {
         SettingsTab::Appearance => show_appearance(ui, theme),
-        SettingsTab::Models => show_models(ui, models),
-        SettingsTab::Shortcuts => show_shortcuts(ui, enable_shortcuts),
+        SettingsTab::Models => show_models(ui, models, settings),
+        SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
+        SettingsTab::Language => show_language(ui, &mut settings.language),
+        SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Appearance
+// ---------------------------------------------------------------------------
 
 fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
     ui.label(egui::RichText::new("Appearance").strong());
@@ -100,12 +111,16 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
     }
 }
 
-fn show_models(ui: &mut Ui, models: &mut ModelRegistry) {
+// ---------------------------------------------------------------------------
+// AI Models
+// ---------------------------------------------------------------------------
+
+fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) {
     ui.label(egui::RichText::new("AI Models").strong());
     ui.label(
         egui::RichText::new(format!(
             "Models are downloaded on first use and stored in {}",
-            caprust_core::models::models_dir().display()
+            settings.effective_models_dir().display()
         ))
         .small()
         .color(egui::Color32::from_gray(140)),
@@ -180,17 +195,16 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Shortcuts
+// ---------------------------------------------------------------------------
+
 fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
     ui.label(egui::RichText::new("Keyboard shortcuts").strong());
     ui.add_space(6.0);
     ui.checkbox(enable_shortcuts, "Enable keyboard shortcuts");
     ui.add_space(10.0);
 
-    ui.label(
-        egui::RichText::new("When enabled:")
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
     egui::Grid::new("kbd_shortcuts")
         .num_columns(2)
         .spacing([20.0, 6.0])
@@ -214,13 +228,146 @@ fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
             ui.label("Split at playhead");
             ui.end_row();
         });
+}
 
-    if !*enable_shortcuts {
-        ui.add_space(8.0);
+// ---------------------------------------------------------------------------
+// Language
+// ---------------------------------------------------------------------------
+
+fn show_language(ui: &mut Ui, language: &mut String) {
+    ui.label(egui::RichText::new("Interface language").strong());
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new("Changes apply on next launch.")
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(8.0);
+    for (code, name) in caprust_i18n::LANGUAGES {
+        ui.radio_value(language, code.to_string(), *name);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Paths (models dir + ffmpeg)
+// ---------------------------------------------------------------------------
+
+fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus) {
+    ui.label(egui::RichText::new("AI models folder").strong());
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut settings.models_dir)
+                .desired_width(360.0)
+                .hint_text("Where AI models are stored…"),
+        );
+        if ui.button("Browse…").clicked() {
+            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                settings.models_dir = dir.to_string_lossy().to_string();
+            }
+        }
+    });
+
+    ui.add_space(16.0);
+    ui.separator();
+    ui.label(egui::RichText::new("FFmpeg binaries").strong());
+    ui.label(
+        egui::RichText::new(
+            "Used for media probing, thumbnail extraction, and export. \
+             Leave empty to auto-detect from PATH.",
+        )
+        .small()
+        .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(6.0);
+
+    egui::Grid::new("ffmpeg_paths")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("ffmpeg");
+            ui.horizontal(|ui| {
+                let mut p = settings.ffmpeg_path.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut p)
+                            .desired_width(280.0)
+                            .hint_text("auto"),
+                    )
+                    .changed()
+                {
+                    settings.ffmpeg_path = if p.trim().is_empty() { None } else { Some(p) };
+                }
+                if ui.button("File…").clicked() {
+                    if let Some(f) = rfd::FileDialog::new().pick_file() {
+                        settings.ffmpeg_path = Some(f.to_string_lossy().to_string());
+                    }
+                }
+            });
+            ui.end_row();
+
+            ui.label("ffprobe");
+            ui.horizontal(|ui| {
+                let mut p = settings.ffprobe_path.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut p)
+                            .desired_width(280.0)
+                            .hint_text("auto"),
+                    )
+                    .changed()
+                {
+                    settings.ffprobe_path = if p.trim().is_empty() { None } else { Some(p) };
+                }
+                if ui.button("File…").clicked() {
+                    if let Some(f) = rfd::FileDialog::new().pick_file() {
+                        settings.ffprobe_path = Some(f.to_string_lossy().to_string());
+                    }
+                }
+            });
+            ui.end_row();
+        });
+
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if ui.button("🔍 Detect now").clicked() {
+            *status = detect_ffmpeg(settings);
+        }
+        ui.separator();
+        match (&status.ffmpeg, &status.ffprobe) {
+            (Some(_), Some(_)) => {
+                ui.label(
+                    egui::RichText::new("✅ ffmpeg + ffprobe detected")
+                        .color(egui::Color32::from_rgb(80, 200, 120)),
+                );
+            }
+            (Some(_), None) => {
+                ui.label(
+                    egui::RichText::new("⚠ ffmpeg found, ffprobe missing")
+                        .color(egui::Color32::from_rgb(230, 180, 90)),
+                );
+            }
+            (None, Some(_)) => {
+                ui.label(
+                    egui::RichText::new("⚠ ffprobe found, ffmpeg missing")
+                        .color(egui::Color32::from_rgb(230, 180, 90)),
+                );
+            }
+            (None, None) => {
+                ui.label(
+                    egui::RichText::new("❌ Not detected")
+                        .color(egui::Color32::from_rgb(230, 90, 90)),
+                );
+            }
+        }
+    });
+
+    if let (Some(p), _) = (&status.ffmpeg, &status.ffprobe) {
+        ui.add_space(6.0);
         ui.label(
-            egui::RichText::new("Shortcuts disabled — options hidden in right-click menu.")
-                .italics()
-                .color(egui::Color32::from_gray(150)),
+            egui::RichText::new(p)
+                .small()
+                .monospace()
+                .color(egui::Color32::from_gray(140)),
         );
     }
 }

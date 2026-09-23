@@ -6,6 +6,7 @@ use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
 use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
+use caprust_core::settings::AppSettings;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use eframe::egui;
 
@@ -61,7 +62,8 @@ pub struct CapRustApp {
     pub preview: PreviewState,
     pub selected_clips: Vec<uuid::Uuid>,
     pub clip_drag: Option<ClipDrag>,
-    pub enable_shortcuts: bool,
+    pub settings: AppSettings,
+    pub ffmpeg_status: caprust_core::FfmpegStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,12 @@ impl CapRustApp {
             .and_then(|s| s.get_string("theme"))
             .and_then(|s| serde_json::from_str::<Theme>(&s).ok())
             .unwrap_or_default();
+        let settings: AppSettings = cc
+            .storage
+            .and_then(|s| s.get_string("settings"))
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let ffmpeg_status = caprust_core::detect_ffmpeg(&settings);
         Self {
             mode: AppMode::StartScreen,
             project: ProjectState::default(),
@@ -97,7 +105,8 @@ impl CapRustApp {
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
-            enable_shortcuts: true,
+            settings,
+            ffmpeg_status,
         }
     }
 
@@ -719,7 +728,7 @@ impl CapRustApp {
                                             }
 
                                             resp.context_menu(|ui| {
-                                                let del_lbl = if self.enable_shortcuts {
+                                                let del_lbl = if self.settings.enable_shortcuts {
                                                     "Delete  (Del)"
                                                 } else {
                                                     "Delete"
@@ -729,7 +738,7 @@ impl CapRustApp {
                                                         .push(ClipAction::Delete(clip_id));
                                                     ui.close_menu();
                                                 }
-                                                let split_lbl = if self.enable_shortcuts {
+                                                let split_lbl = if self.settings.enable_shortcuts {
                                                     "Split at playhead  (S)"
                                                 } else {
                                                     "Split at playhead"
@@ -742,7 +751,7 @@ impl CapRustApp {
                                                     ui.close_menu();
                                                 }
 
-                                                if self.enable_shortcuts {
+                                                if self.settings.enable_shortcuts {
                                                     ui.separator();
                                                     let c = self
                                                         .project
@@ -785,7 +794,7 @@ impl CapRustApp {
                                                     }
                                                 }
 
-                                                if self.enable_shortcuts {
+                                                if self.settings.enable_shortcuts {
                                                     ui.separator();
                                                     ui.label(
                                                         egui::RichText::new("Right-click options")
@@ -1085,8 +1094,9 @@ impl CapRustApp {
                     ui,
                     &mut self.theme,
                     &mut self.project.models,
+                    &mut self.settings,
                     &mut self.settings_tab,
-                    &mut self.enable_shortcuts,
+                    &mut self.ffmpeg_status,
                 );
             });
         self.settings_open = open;
@@ -1112,7 +1122,7 @@ impl eframe::App for CapRustApp {
         self.theme.apply(ctx);
 
         // Keyboard shortcuts (only in Editor + when enabled in Settings)
-        if self.mode == AppMode::Editor && self.enable_shortcuts {
+        if self.mode == AppMode::Editor && self.settings.enable_shortcuts {
             let events: Vec<egui::Key> = ctx.input(|i| {
                 i.events
                     .iter()
@@ -1192,6 +1202,9 @@ impl eframe::App for CapRustApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if let Ok(json) = serde_json::to_string(&self.theme) {
             storage.set_string("theme", json);
+        }
+        if let Ok(json) = serde_json::to_string(&self.settings) {
+            storage.set_string("settings", json);
         }
     }
 }
