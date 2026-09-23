@@ -6,6 +6,7 @@ pub mod frame_rate;
 pub mod media;
 pub mod models;
 pub mod project;
+pub mod track;
 
 pub use aspect_ratio::*;
 pub use clip::*;
@@ -14,3 +15,4 @@ pub use frame_rate::FrameRate;
 pub use media::{MediaItem, MediaKind, MediaLibrary};
 pub use models::{ModelInfo, ModelKind, ModelRegistry, ModelStatus};
 pub use project::ProjectState;
+pub use track::{Track, TrackKind};
