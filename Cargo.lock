@@ -659,6 +659,8 @@ dependencies = [
  "caprust-media-io",
  "eframe",
  "egui",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
