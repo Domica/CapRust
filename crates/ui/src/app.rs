@@ -67,6 +67,9 @@ pub struct CapRustApp {
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<uuid::Uuid>,
     pub recent: RecentList,
+    pub last_pointer: Option<egui::Pos2>,
+    /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
+    pub timeline_row_layout: (f32, Vec<(usize, f32)>),
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +79,10 @@ pub struct ClipDrag {
     pub current_ms: i64,
     pub track_index: usize,
     pub clip_duration_ms: u64,
+    /// Where the pointer was when drag began (egui space).
+    pub origin_ptr: egui::Pos2,
+    /// Cumulative pointer delta since drag start.
+    pub last_ptr: egui::Pos2,
 }
 
 impl CapRustApp {
@@ -117,7 +124,9 @@ impl CapRustApp {
             settings,
             ffmpeg_status,
             last_dnd_payload: None,
-            recent: recent,
+            recent,
+            last_pointer: None,
+            timeline_row_layout: (0.0, Vec::new()),
         }
     }
 
@@ -625,6 +634,21 @@ impl CapRustApp {
         }
     }
 
+    /// Which track row contains the current pointer Y? Uses the timeline
+    /// geometry cached during the last frame.
+    fn track_for_y(&self, _fallback: usize) -> Option<usize> {
+        let ptr = self.last_pointer?;
+        let (top_y, rows) = self.timeline_row_layout.clone();
+        let mut y = top_y;
+        for (idx, h) in rows {
+            if ptr.y >= y && ptr.y < y + h {
+                return Some(idx);
+            }
+            y += h;
+        }
+        None
+    }
+
     fn handle_timeline_events(&mut self, ev: TimelineToolEvents) {
         if ev.magnetic_toggled && self.timeline_tools.magnetic {
             self.apply_magnetic();
@@ -723,6 +747,7 @@ impl CapRustApp {
                 ui.set_min_height(180.0);
 
                 self.project.models.tick_downloads(1.0 / 60.0);
+                self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
 
                 // ---------------- Toolbar ----------------
                 let can_undo = self.undo_stack.can_undo();
@@ -775,6 +800,24 @@ impl CapRustApp {
                 let px_per_ms = (lanes_w * 0.90 * self.timeline_zoom) / content_ms as f32;
                 let px_per_ms = px_per_ms.max(0.002);
                 let content_width = (content_ms as f32 * px_per_ms).max(lanes_w);
+
+                // Cache row layout so track_for_y() can map pointer Y to a track.
+                {
+                    let mut rows: Vec<(usize, f32)> = Vec::new();
+                    for &idx in &order {
+                        rows.push((idx, updated_tracks[idx].height));
+                    }
+                    // Approximate top Y as pointer-y origin; refined on first frame.
+                    let top_y = ctx
+                        .input(|i| i.pointer.hover_pos())
+                        .map(|p| p.y - 40.0)
+                        .unwrap_or(0.0);
+                    if self.timeline_row_layout.1.is_empty()
+                        || self.timeline_row_layout.1.len() != rows.len()
+                    {
+                        self.timeline_row_layout = (top_y, rows);
+                    }
+                }
 
                 // ---------------- Two columns side by side ----------------
                 // No ScrollAreas inside the timeline — panel is resizable.
@@ -833,6 +876,8 @@ impl CapRustApp {
                             }
 
                             // Lanes
+                            let mut top_y_opt: Option<f32> = None;
+                            let mut rows_actual: Vec<(usize, f32)> = Vec::new();
                             for &idx in &order {
                                 let track = &updated_tracks[idx];
                                 let row_h = track.height;
@@ -841,6 +886,10 @@ impl CapRustApp {
                                     egui::vec2(content_width, row_h),
                                     egui::Sense::hover(),
                                 );
+                                if top_y_opt.is_none() {
+                                    top_y_opt = Some(lane_rect.top());
+                                }
+                                rows_actual.push((idx, row_h));
 
                                 // Background
                                 let lane_bg = if track.visible {
@@ -1069,6 +1118,11 @@ impl CapRustApp {
                                     }
                                 }
                             }
+
+                            // Cache actual row geometry for track_for_y()
+                            if let Some(top) = top_y_opt {
+                                self.timeline_row_layout = (top, rows_actual);
+                            }
                         },
                     );
                 });
@@ -1115,17 +1169,18 @@ impl CapRustApp {
                                 .find(|c| c.id == id)
                                 .map(|c| c.duration_ms)
                                 .unwrap_or(3000);
+                            let ptr = self.last_pointer.unwrap_or_else(|| egui::pos2(0.0, 0.0));
                             self.clip_drag = Some(ClipDrag {
                                 clip_id: id,
                                 origin_ms: origin,
                                 current_ms: origin as i64,
                                 track_index: track_idx,
                                 clip_duration_ms: dur,
+                                origin_ptr: ptr,
+                                last_ptr: ptr,
                             });
                         }
                         ClipAction::DragDelta(id, dx_total, ppm) => {
-                            // dx_total is the CUMULATIVE drag delta from drag start,
-                            // not a per-frame delta.
                             if let Some(d) = self.clip_drag.clone() {
                                 if d.clip_id == id && ppm > 0.0 {
                                     let candidate = d.origin_ms as i64 + (dx_total / ppm) as i64;
@@ -1136,8 +1191,15 @@ impl CapRustApp {
                                         d.clip_duration_ms,
                                         ppm,
                                     );
+                                    // Change track based on Y position of pointer.
+                                    let new_track = self.track_for_y(
+                                        d.track_index, // fallback if unknown
+                                    );
                                     if let Some(cur) = &mut self.clip_drag {
                                         cur.current_ms = snapped;
+                                        if let Some(t) = new_track {
+                                            cur.track_index = t;
+                                        }
                                     }
                                 }
                             }
@@ -1217,7 +1279,7 @@ impl CapRustApp {
                         let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                         let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         self.selected_clips = vec![new_id];
-                        self.apply_magnetic();
+                        // No auto-repack: the user chose where to drop.
                         tracing::info!(
                             "Dropped media {} onto track {} at {}ms",
                             media_id,
@@ -1339,7 +1401,7 @@ impl CapRustApp {
             .collapsible(false)
             .default_width(520.0)
             .show(ctx, |ui| {
-                crate::panels::settings_dialog::show(
+                let ev = crate::panels::settings_dialog::show(
                     ui,
                     &mut self.theme,
                     &mut self.project.models,
@@ -1347,6 +1409,18 @@ impl CapRustApp {
                     &mut self.settings_tab,
                     &mut self.ffmpeg_status,
                 );
+                if ev.save {
+                    // Re-detect ffmpeg with new paths
+                    self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
+                    // Trigger a save next frame (eframe persists via save())
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ));
+                    self.settings_open = false;
+                }
+                if ev.close {
+                    self.settings_open = false;
+                }
             });
         self.settings_open = open;
     }

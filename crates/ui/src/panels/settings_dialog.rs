@@ -15,6 +15,11 @@ pub enum SettingsTab {
     Paths,
 }
 
+pub struct SettingsEvents {
+    pub save: bool,
+    pub close: bool,
+}
+
 pub fn show(
     ui: &mut Ui,
     theme: &mut Theme,
@@ -22,7 +27,12 @@ pub fn show(
     settings: &mut AppSettings,
     tab: &mut SettingsTab,
     ffmpeg_status: &mut FfmpegStatus,
-) {
+) -> SettingsEvents {
+    let mut ev = SettingsEvents {
+        save: false,
+        close: false,
+    };
+
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::Appearance, "Appearance");
         ui.selectable_value(tab, SettingsTab::Models, "AI Models");
@@ -32,13 +42,46 @@ pub fn show(
     });
     ui.separator();
 
-    match tab {
-        SettingsTab::Appearance => show_appearance(ui, theme),
-        SettingsTab::Models => show_models(ui, models, settings),
-        SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
-        SettingsTab::Language => show_language(ui, &mut settings.language),
-        SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
-    }
+    egui::ScrollArea::vertical()
+        .max_height(400.0)
+        .show(ui, |ui| match tab {
+            SettingsTab::Appearance => show_appearance(ui, theme),
+            SettingsTab::Models => show_models(ui, models, settings),
+            SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
+            SettingsTab::Language => show_language(ui, &mut settings.language),
+            SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
+        });
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        let save_btn = egui::Button::new(
+            egui::RichText::new("💾 Save")
+                .color(egui::Color32::WHITE)
+                .strong(),
+        )
+        .fill(egui::Color32::from_rgb(34, 139, 230))
+        .min_size(egui::vec2(120.0, 32.0));
+        if ui.add(save_btn).clicked() {
+            ev.save = true;
+        }
+
+        if ui
+            .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 32.0)))
+            .clicked()
+        {
+            ev.close = true;
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new("Changes save to storage on Save.")
+                    .small()
+                    .color(egui::Color32::from_gray(150)),
+            );
+        });
+    });
+
+    ev
 }
 
 // ---------------------------------------------------------------------------
@@ -243,14 +286,26 @@ fn show_language(ui: &mut Ui, language: &mut String) {
     ui.label(egui::RichText::new("Interface language").strong());
     ui.add_space(6.0);
     ui.label(
-        egui::RichText::new("Changes apply on next launch.")
+        egui::RichText::new("Applied immediately.")
             .small()
             .color(egui::Color32::from_gray(150)),
     );
     ui.add_space(8.0);
-    for (code, name) in caprust_i18n::LANGUAGES {
-        ui.radio_value(language, code.to_string(), *name);
-    }
+
+    let current_name = caprust_i18n::LANGUAGES
+        .iter()
+        .find(|(c, _)| c == language)
+        .map(|(_, n)| *n)
+        .unwrap_or("English");
+
+    egui::ComboBox::from_id_salt("language_picker")
+        .selected_text(current_name)
+        .width(200.0)
+        .show_ui(ui, |ui| {
+            for (code, name) in caprust_i18n::LANGUAGES {
+                ui.selectable_value(language, code.to_string(), *name);
+            }
+        });
 }
 
 // ---------------------------------------------------------------------------
