@@ -1,0 +1,15 @@
+app-title = CapRust - Social Video Editor
+add-text = Add Text
+undo = Undo
+redo = Redo
+export = Export
+media-effects = Media & Effects
+properties = Properties
+timeline = Timeline
+preview = Video Preview
+missing-media = { $count } media file(s) not found
+relink-all = Relink All…
+dismiss = Dismiss
+sort-added = Sort: Added
+sort-name = Sort: Name
+sort-type = Sort: Type

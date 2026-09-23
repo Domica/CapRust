@@ -1,0 +1,12 @@
+[package]
+name = "caprust-i18n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fluent = { workspace = true }
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }
+sys-locale = { workspace = true }
+once_cell = { workspace = true }

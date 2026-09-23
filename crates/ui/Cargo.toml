@@ -1,0 +1,13 @@
+[package]
+name = "caprust-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caprust-core = { path = "../core" }
+caprust-media-io = { path = "../media-io" }
+caprust-i18n = { path = "../i18n" }
+egui = { workspace = true }
+eframe = { workspace = true }
+tracing = { workspace = true }

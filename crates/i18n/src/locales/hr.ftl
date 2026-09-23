@@ -1,0 +1,15 @@
+app-title = CapRust - Uređivač videa za društvene mreže
+add-text = Dodaj tekst
+undo = Poništi
+redo = Ponovi
+export = Izvoz
+media-effects = Mediji i efekti
+properties = Svojstva
+timeline = Vremenska linija
+preview = Pregled videa
+missing-media = { $count } medijskih datoteka nije pronađeno
+relink-all = Ponovno poveži sve…
+dismiss = Odbaci
+sort-added = Sortiraj: Dodano
+sort-name = Sortiraj: Naziv
+sort-type = Sortiraj: Vrsta

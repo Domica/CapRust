@@ -1,0 +1,20 @@
+[package]
+name = "caprust-media-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caprust-core = { path = "../core" }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+[dependencies.ffmpeg-next]
+workspace = true
+optional = true
+
+[features]
+default = ["ffmpeg"]
+ffmpeg = ["dep:ffmpeg-next"]
