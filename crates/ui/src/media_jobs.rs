@@ -47,18 +47,21 @@ impl JobRunner {
                         path,
                         kind,
                     } => {
+                        tracing::info!("job: Probe {} ({:?})", path.display(), kind);
                         // 1) probe
                         let mut duration_ms = 0u64;
                         if let Some(ffprobe) = &ffprobe {
                             match caprust_media_io::ffprobe::probe(ffprobe, &path) {
                                 Ok(p) => {
                                     duration_ms = p.duration_ms;
+                                    tracing::info!("job: probe ok — {}ms", duration_ms);
                                     let _ = tx_result.send(JobResult::ProbeDone {
                                         media_id,
                                         duration_ms,
                                     });
                                 }
                                 Err(e) => {
+                                    tracing::warn!("job: probe failed — {e}");
                                     let _ = tx_result.send(JobResult::Failed {
                                         media_id,
                                         error: e.to_string(),
@@ -77,12 +80,19 @@ impl JobRunner {
                                 let tmp_dir = std::env::temp_dir().join("caprust-thumbs");
                                 let tmp = tmp_dir.join(format!("{media_id}.jpg"));
                                 let at = caprust_media_io::thumbnail::best_frame_time(duration_ms);
-                                if caprust_media_io::thumbnail::extract_jpeg(
+                                match caprust_media_io::thumbnail::extract_jpeg(
                                     ffmpeg, &path, &tmp, at, 320,
-                                )
-                                .is_ok()
-                                {
-                                    let _ = tx_result.send(JobResult::ThumbDone { media_id });
+                                ) {
+                                    Ok(()) => {
+                                        tracing::info!(
+                                            "job: thumbnail extracted to {}",
+                                            tmp.display()
+                                        );
+                                        let _ = tx_result.send(JobResult::ThumbDone { media_id });
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("job: thumbnail failed — {e}");
+                                    }
                                 }
                             }
                         }
