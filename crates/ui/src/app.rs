@@ -1,4 +1,4 @@
-use crate::theme::apply_capcut_theme;
+use crate::theme::Theme;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use eframe::egui;
 
@@ -41,15 +41,24 @@ pub struct CapRustApp {
     pub project: ProjectState,
     pub undo_stack: UndoStack,
     pub draft: NewProjectDraft,
+    pub theme: Theme,
+    pub settings_open: bool,
 }
 
 impl CapRustApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let theme = cc
+            .storage
+            .and_then(|s| s.get_string("theme"))
+            .and_then(|s| serde_json::from_str::<Theme>(&s).ok())
+            .unwrap_or_default();
         Self {
             mode: AppMode::StartScreen,
             project: ProjectState::default(),
             undo_stack: UndoStack::new(),
             draft: NewProjectDraft::default(),
+            theme,
+            settings_open: false,
         }
     }
 
@@ -108,7 +117,7 @@ impl CapRustApp {
                                 ui.horizontal(|ui| {
                                     ui.text_edit_singleline(&mut self.draft.location);
                                     if ui.button("Browse…").clicked() {
-                                        // TODO PR 2: rfd::FileDialog
+                                        // TODO PR 12: rfd::FileDialog
                                     }
                                 });
                                 ui.end_row();
@@ -182,20 +191,20 @@ impl CapRustApp {
                         ui.close_menu();
                     }
                     if ui.button("Open Project…").clicked() {
-                        // TODO PR 2
+                        // TODO PR 12
                         ui.close_menu();
                     }
                     if ui.button("Save Project").clicked() {
-                        // TODO PR 2
+                        // TODO PR 12
                         ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("Import Media…").clicked() {
-                        // TODO PR 3
+                        // TODO PR 12
                         ui.close_menu();
                     }
                     if ui.button("Export…").clicked() {
-                        // TODO PR 4
+                        // TODO PR 12
                         ui.close_menu();
                     }
                     ui.separator();
@@ -209,7 +218,7 @@ impl CapRustApp {
                         ui.close_menu();
                     }
                     if ui.button("Settings…").clicked() {
-                        // TODO PR 8
+                        self.settings_open = true;
                         ui.close_menu();
                     }
                     ui.separator();
@@ -241,31 +250,31 @@ impl CapRustApp {
                     }
                     ui.separator();
                     if ui.button("Split at Playhead").clicked() {
-                        // TODO PR 6
+                        // TODO PR 7
                         ui.close_menu();
                     }
                     if ui.button("Delete Clip").clicked() {
-                        // TODO PR 6
+                        // TODO PR 7
                         ui.close_menu();
                     }
                     if ui.button("Ripple Delete").clicked() {
-                        // TODO PR 6
+                        // TODO PR 7
                         ui.close_menu();
                     }
                 });
 
                 ui.menu_button("View", |ui| {
                     if ui.button("Zoom In").clicked() {
-                        // TODO PR 7
+                        // TODO PR 6
                         ui.close_menu();
                     }
                     if ui.button("Zoom Out").clicked() {
-                        // TODO PR 7
+                        // TODO PR 6
                         ui.close_menu();
                     }
                     ui.separator();
                     ui.menu_button("Sort Media by", |ui| {
-                        ui.label("(wired in PR 7)");
+                        ui.label("(wired in PR 6)");
                     });
                 });
 
@@ -359,11 +368,29 @@ impl CapRustApp {
 
 impl eframe::App for CapRustApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        apply_capcut_theme(ctx);
+        self.theme.apply(ctx);
 
         match self.mode {
             AppMode::StartScreen => self.show_start_screen(ctx),
             AppMode::Editor => self.show_editor(ctx),
+        }
+
+        if self.settings_open {
+            let mut open = true;
+            egui::Window::new("Settings")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    crate::panels::settings_dialog::show(ui, &mut self.theme);
+                });
+            self.settings_open = open;
+        }
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if let Ok(json) = serde_json::to_string(&self.theme) {
+            storage.set_string("theme", json);
         }
     }
 }
