@@ -1651,13 +1651,127 @@ impl CapRustApp {
             let (rect, _) = ui.allocate_exact_size(frame_rect_size, egui::Sense::hover());
             ui.painter()
                 .rect_filled(rect, 6.0, egui::Color32::from_gray(12));
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "🎬 Preview",
-                egui::FontId::proportional(22.0),
-                egui::Color32::from_gray(90),
-            );
+
+            // Target frame size from project aspect
+            let (pw, ph) = self.project.project_dimensions();
+            let (tw, th) = caprust_media_io::player::preview_size(pw, ph, 640);
+
+            // Find video clip under playhead on a visible track
+            let playhead = self.playhead_ms;
+            let clip_info: Option<(uuid::Uuid, String, u64, f32)> = self
+                .project
+                .clips
+                .iter()
+                .find(|c| {
+                    let on_playhead =
+                        playhead >= c.start_time_ms && playhead < c.start_time_ms + c.duration_ms;
+                    if !on_playhead {
+                        return false;
+                    }
+                    let track_visible = self
+                        .project
+                        .tracks
+                        .get(c.track_index)
+                        .map(|t| t.visible)
+                        .unwrap_or(true);
+                    if !track_visible {
+                        return false;
+                    }
+                    matches!(
+                        c.clip_type,
+                        caprust_core::ClipType::Video { .. } | caprust_core::ClipType::Image { .. }
+                    )
+                })
+                .and_then(|c| match &c.clip_type {
+                    caprust_core::ClipType::Video { path, .. }
+                    | caprust_core::ClipType::Image { path, .. } => {
+                        Some((c.id, path.clone(), c.start_time_ms, c.speed))
+                    }
+                    _ => None,
+                });
+
+            // Rate-limited state log
+            {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static LAST: AtomicU64 = AtomicU64::new(0);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if now != LAST.load(Ordering::Relaxed) {
+                    LAST.store(now, Ordering::Relaxed);
+                    tracing::info!(
+                        "preview state: playhead={}ms clips={} clip_info={} ffmpeg={}",
+                        playhead,
+                        self.project.clips.len(),
+                        clip_info.is_some(),
+                        self.ffmpeg_status.ffmpeg.is_some(),
+                    );
+                }
+            }
+
+            // Request frame
+            if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+            {
+                let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
+                self.preview_player.request(
+                    std::path::Path::new(&ffmpeg),
+                    std::path::Path::new(&path),
+                    clip_id,
+                    source_ms,
+                    tw,
+                    th,
+                );
+            }
+
+            // Poll for completed frames
+            self.preview_player.poll(ctx);
+            if self.preview_player.pending.is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+
+            // Render frame or placeholder
+            if let Some(tex) = self.preview_player.texture.as_ref() {
+                let tex_size = tex.size_vec2();
+                let avail_w = rect.width() - 16.0;
+                let avail_h = rect.height() - 16.0;
+                let scale = (avail_w / tex_size.x).min(avail_h / tex_size.y).min(1.0);
+                let draw_size = tex_size * scale;
+                let draw_rect = egui::Rect::from_center_size(rect.center(), draw_size);
+                ui.painter().image(
+                    tex.id(),
+                    draw_rect,
+                    egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            } else {
+                let msg = if self.ffmpeg_status.ffmpeg.is_none() {
+                    "FFmpeg not detected — set it in Settings → Paths"
+                } else if clip_info.is_none() {
+                    if self.project.clips.is_empty() {
+                        "No clips on timeline"
+                    } else {
+                        "Playhead is not over a video clip"
+                    }
+                } else {
+                    "Decoding…"
+                };
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "🎬 Preview",
+                    egui::FontId::proportional(22.0),
+                    egui::Color32::from_gray(90),
+                );
+                ui.painter().text(
+                    rect.center() + egui::vec2(0.0, 26.0),
+                    egui::Align2::CENTER_CENTER,
+                    msg,
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::from_gray(120),
+                );
+            }
 
             ui.add_space(6.0);
 
@@ -1696,8 +1810,6 @@ impl CapRustApp {
             .resizable(false)
             .collapsible(false)
             .default_width(440.0)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .default_pos(ctx.screen_rect().center())
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 if crate::panels::export_window::show(ui, &mut self.export_state, total_ms) {
