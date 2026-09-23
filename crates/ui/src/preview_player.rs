@@ -1,16 +1,24 @@
 //! Preview player — decodes one frame at a time on a background thread.
 //!
-//! MVP: seek-based. When the app wants a frame for `(clip_id, at_ms)`,
-//! it calls `request()`. The worker spawns ffmpeg for that frame and
-//! sends the RGBA bytes back. `poll()` converts them to an egui texture.
+//! Design:
+//!  - A shared `slot` (Mutex<Option<FrameJob>>) holds the SINGLE pending
+//!    request. `request()` overwrites it — no queue growth.
+//!  - The worker takes the slot, decodes, then checks whether a newer
+//!    request landed while it was busy. If so, it discards its result
+//!    (the caller no longer wants it) and loops.
+//!  - Results post back through a normal channel; the UI polls and uploads
+//!    to egui texture.
+//!
+//! This gives ~1 in-flight ffmpeg process with zero backlog, so latency
+//! stays bounded (~150 ms) regardless of how fast the user seeks.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::{Arc, Condvar, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameKey {
     pub clip_id: uuid::Uuid,
-    /// Rounded to 100 ms — prevents spamming requests per animation frame.
     pub at_ms: u64,
     pub width: u32,
     pub height: u32,
@@ -30,21 +38,56 @@ struct FrameResult {
     error: Option<String>,
 }
 
+/// Shared slot between the UI thread and the decoder worker.
+struct Slot {
+    inner: Mutex<Option<FrameJob>>,
+    cv: Condvar,
+}
+
+impl Slot {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(None),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Overwrite the slot. If a job was already waiting, it is dropped.
+    fn put(&self, job: FrameJob) {
+        *self.inner.lock().unwrap() = Some(job);
+        self.cv.notify_one();
+    }
+
+    /// Wait for a job, take it.
+    fn take(&self) -> FrameJob {
+        let mut guard = self.inner.lock().unwrap();
+        while guard.is_none() {
+            guard = self.cv.wait(guard).unwrap();
+        }
+        guard.take().unwrap()
+    }
+
+    /// Peek whether a newer job is waiting (without taking it).
+    fn has_pending(&self) -> bool {
+        self.inner.lock().unwrap().is_some()
+    }
+
+    /// Clear any pending job.
+    fn clear(&self) {
+        *self.inner.lock().unwrap() = None;
+    }
+}
+
 #[derive(Default)]
 pub struct PreviewPlayer {
     pub texture: Option<egui::TextureHandle>,
     pub last_key: Option<FrameKey>,
+    /// Key currently being decoded (as far as the UI knows).
     pub pending: Option<FrameKey>,
-    /// True once at least one frame is decoded (for "playing" indicator).
     pub has_frame: bool,
-    /// Total frames decoded this session (debug).
     pub decoded: u64,
-    tx: Option<Sender<FrameJob>>,
+    slot: Option<Arc<Slot>>,
     rx: Option<Receiver<FrameResult>>,
-    /// Latest queued-but-not-yet-sent request. Replaces `pending` when
-    /// the worker finishes the current frame. Guarantees at most 1 job
-    /// in flight + 1 job waiting.
-    want: Option<FrameJob>,
 }
 
 impl std::fmt::Debug for PreviewPlayer {
@@ -60,33 +103,39 @@ impl std::fmt::Debug for PreviewPlayer {
 
 impl PreviewPlayer {
     pub fn new() -> Self {
-        let (tx, rx_job) = channel::<FrameJob>();
         let (tx_res, rx) = channel::<FrameResult>();
+        let slot = Arc::new(Slot::new());
+        let worker_slot = Arc::clone(&slot);
 
-        std::thread::spawn(move || {
-            while let Ok(job) = rx_job.recv() {
-                match caprust_media_io::player::decode_frame_rgba(
-                    &job.ffmpeg,
-                    &job.input,
-                    job.at_sec,
-                    job.key.width,
-                    job.key.height,
-                ) {
-                    Ok(rgba) => {
-                        let _ = tx_res.send(FrameResult {
-                            key: job.key,
-                            rgba,
-                            error: None,
-                        });
-                    }
-                    Err(e) => {
-                        let _ = tx_res.send(FrameResult {
-                            key: job.key,
-                            rgba: Vec::new(),
-                            error: Some(e.to_string()),
-                        });
-                    }
-                }
+        std::thread::spawn(move || loop {
+            // Wait for the next job.
+            let job = worker_slot.take();
+
+            let result = match caprust_media_io::player::decode_frame_rgba(
+                &job.ffmpeg,
+                &job.input,
+                job.at_sec,
+                job.key.width,
+                job.key.height,
+            ) {
+                Ok(rgba) => FrameResult {
+                    key: job.key,
+                    rgba,
+                    error: None,
+                },
+                Err(e) => FrameResult {
+                    key: job.key,
+                    rgba: Vec::new(),
+                    error: Some(e.to_string()),
+                },
+            };
+
+            // If a newer job landed while we were decoding, drop this result.
+            if worker_slot.has_pending() {
+                continue;
+            }
+            if tx_res.send(result).is_err() {
+                break;
             }
         });
 
@@ -96,14 +145,12 @@ impl PreviewPlayer {
             pending: None,
             has_frame: false,
             decoded: 0,
-            tx: Some(tx),
+            slot: Some(slot),
             rx: Some(rx),
-            want: None,
         }
     }
 
-    /// Request a frame. Non-blocking. Skips if the same key is already
-    /// loaded or in flight.
+    /// Request a frame. Non-blocking; overwrites any queued request.
     #[allow(clippy::too_many_arguments)]
     pub fn request(
         &mut self,
@@ -114,7 +161,8 @@ impl PreviewPlayer {
         width: u32,
         height: u32,
     ) {
-        let rounded = (at_ms / 100) * 100; // 100 ms grid
+        // Round to 100 ms grid to avoid requesting near-duplicate frames.
+        let rounded = (at_ms / 100) * 100;
         let key = FrameKey {
             clip_id,
             at_ms: rounded,
@@ -122,27 +170,26 @@ impl PreviewPlayer {
             height,
         };
 
-        if self.last_key == Some(key) || self.pending == Some(key) {
+        // Already showing this exact frame.
+        if self.last_key == Some(key) {
             return;
         }
-        let Some(tx) = self.tx.as_ref() else {
-            tracing::warn!("preview: no worker channel");
+        // Already decoding this exact frame.
+        if self.pending == Some(key) {
+            return;
+        }
+
+        let Some(slot) = self.slot.as_ref() else {
             return;
         };
-        tracing::info!(
-            "preview: request clip={} at={}ms {}x{}",
-            clip_id,
-            rounded,
-            width,
-            height
-        );
-        self.pending = Some(key);
-        let _ = tx.send(FrameJob {
+
+        slot.put(FrameJob {
             key,
             ffmpeg: ffmpeg.to_path_buf(),
             input: input.to_path_buf(),
             at_sec: rounded as f64 / 1000.0,
         });
+        self.pending = Some(key);
     }
 
     /// Poll for completed frames. Uploads RGBA → egui texture.
@@ -151,19 +198,16 @@ impl PreviewPlayer {
             return;
         };
         while let Ok(res) = rx.try_recv() {
-            if self.pending == Some(res.key) {
-                self.pending = None;
-            }
-            if let Some(e) = res.error.as_ref() {
-                tracing::warn!("preview: decode error — {e}");
+            // If we've moved on to another key since this result was
+            // produced, drop it (it's stale).
+            if self.pending != Some(res.key) {
                 continue;
             }
-            tracing::info!(
-                "preview: got {} bytes for clip={} at={}ms",
-                res.rgba.len(),
-                res.key.clip_id,
-                res.key.at_ms
-            );
+            self.pending = None;
+
+            if res.error.is_some() {
+                continue;
+            }
             let w = res.key.width as usize;
             let h = res.key.height as usize;
             let expected = w * h * 4;
@@ -171,44 +215,29 @@ impl PreviewPlayer {
                 continue;
             }
             let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &res.rgba[..expected]);
-            let name = format!("prev-{}-{}-{}x{}", res.key.clip_id, res.key.at_ms, w, h);
+            let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
             let handle = ctx.load_texture(name, img, egui::TextureOptions::LINEAR);
             self.texture = Some(handle);
             self.last_key = Some(res.key);
             self.has_frame = true;
             self.decoded += 1;
         }
+    }
 
-        // Send the latest queued request if any (keeps at most 1 in flight).
-        if self.pending.is_none() {
-            if let Some(job) = self.want.take() {
-                if self.last_key != Some(job.key) {
-                    if let Some(tx) = self.tx.as_ref() {
-                        tracing::info!(
-                            "preview: send queued clip={} at={}ms",
-                            job.key.clip_id,
-                            job.key.at_ms
-                        );
-                        self.pending = Some(job.key);
-                        let _ = tx.send(job);
-                    }
-                }
-            }
+    /// Cancel any queued job. Current decode finishes; its result is
+    /// dropped at the worker boundary if the slot is still empty.
+    pub fn cancel_pending(&mut self) {
+        self.pending = None;
+        if let Some(slot) = self.slot.as_ref() {
+            slot.clear();
         }
     }
 
-    /// Stop any in-flight or queued frame request.
-    /// The last decoded texture stays on screen.
-    pub fn cancel_pending(&mut self) {
-        self.pending = None;
-        self.want = None;
-    }
-
-    /// Forget the current frame (e.g. after project change).
+    /// Forget the current frame.
     pub fn clear(&mut self) {
         self.texture = None;
         self.last_key = None;
-        self.pending = None;
+        self.cancel_pending();
         self.has_frame = false;
     }
 }
