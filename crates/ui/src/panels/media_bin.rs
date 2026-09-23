@@ -356,6 +356,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     let cols = (((avail + h_gap) / (card_w + h_gap)).floor() as usize).max(1);
 
     let mut dragging: Option<Uuid> = None;
+    let mut remove_requested: Vec<Uuid> = Vec::new();
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
