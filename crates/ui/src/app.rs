@@ -141,8 +141,8 @@ impl CapRustApp {
         };
         self.undo_stack = UndoStack::new();
         self.mode = AppMode::Editor;
-        // Persist initial file + register in recents
-        self.save_project_to_disk();
+        // Do NOT persist yet — user must hit Save (Ctrl+S) first.
+        // This avoids creating a bogus empty .caprust file on every Create.
     }
 
     fn project_file_path(&self) -> Option<std::path::PathBuf> {
@@ -784,6 +784,7 @@ impl CapRustApp {
                 }
                 let pointer_hover = ctx.input(|i| i.pointer.hover_pos());
                 let pointer_released = ctx.input(|i| i.pointer.any_released());
+                let pointer_down = ctx.input(|i| i.pointer.primary_down());
                 let dnd_drop: Option<uuid::Uuid> = if pointer_released {
                     self.last_dnd_payload
                 } else {
@@ -1034,26 +1035,21 @@ impl CapRustApp {
                                     let resp = ui.interact(
                                         clip_rect,
                                         egui::Id::new(("clip", clip_id)),
-                                        egui::Sense::click_and_drag(),
+                                        egui::Sense::click(),
                                     );
 
                                     if resp.clicked() {
                                         pending_actions.push(ClipAction::Select(clip_id));
                                     }
-                                    if resp.drag_started() {
+
+                                    // Manual drag detection: hovered + primary down.
+                                    if resp.hovered()
+                                        && pointer_down
+                                        && clip_drag_snapshot.is_none()
+                                    {
+                                        pending_actions.push(ClipAction::Select(clip_id));
                                         pending_actions
                                             .push(ClipAction::DragStart(clip_id, idx, start_ms));
-                                    }
-                                    if resp.dragged() {
-                                        let dx = resp.drag_delta().x;
-                                        if dx.abs() > 0.1 {
-                                            pending_actions.push(ClipAction::DragDelta(
-                                                clip_id, dx, px_per_ms,
-                                            ));
-                                        }
-                                    }
-                                    if resp.drag_stopped() {
-                                        pending_actions.push(ClipAction::DragEnd(clip_id));
                                     }
 
                                     resp.context_menu(|ui| {
@@ -1116,6 +1112,19 @@ impl CapRustApp {
                                         let t_ms = (rel_x / px_per_ms) as u64;
                                         pending_drop = Some((id, idx, t_ms));
                                     }
+                                }
+                            }
+
+                            // --- Drag continuation ---
+                            if let Some(d) = &clip_drag_snapshot {
+                                if let Some(p) = pointer_hover {
+                                    let dx_total = p.x - d.origin_ptr.x;
+                                    pending_actions.push(ClipAction::DragDelta(
+                                        d.clip_id, dx_total, px_per_ms,
+                                    ));
+                                }
+                                if pointer_released {
+                                    pending_actions.push(ClipAction::DragEnd(d.clip_id));
                                 }
                             }
 
