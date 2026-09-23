@@ -235,6 +235,7 @@ impl Default for MediaBinState {
 // ---------------------------------------------------------------------------
 
 /// Result of one frame of the media-bin panel.
+#[derive(Default)]
 pub struct MediaBinOutput {
     pub dragging: Option<Uuid>,
     pub newly_imported: Vec<Uuid>,

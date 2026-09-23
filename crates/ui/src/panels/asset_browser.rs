@@ -85,67 +85,327 @@ struct Preset {
 // ---------------------------------------------------------------------------
 
 const TRANSITIONS: &[Preset] = &[
-    Preset { id: "none",       label: "None",        icon: "▢", color: [70, 70, 75] },
-    Preset { id: "fade",       label: "Fade",        icon: "◐", color: [120, 90, 160] },
-    Preset { id: "slide_l",    label: "Slide Left",  icon: "←", color: [80, 130, 190] },
-    Preset { id: "slide_r",    label: "Slide Right", icon: "→", color: [80, 130, 190] },
-    Preset { id: "slide_u",    label: "Slide Up",    icon: "↑", color: [80, 130, 190] },
-    Preset { id: "slide_d",    label: "Slide Down",  icon: "↓", color: [80, 130, 190] },
-    Preset { id: "zoom_in",    label: "Zoom In",     icon: "⤢", color: [200, 120, 80] },
-    Preset { id: "zoom_out",   label: "Zoom Out",    icon: "⤡", color: [200, 120, 80] },
-    Preset { id: "wipe_l",     label: "Wipe Left",   icon: "◧", color: [140, 170, 90] },
-    Preset { id: "wipe_r",     label: "Wipe Right",  icon: "◨", color: [140, 170, 90] },
-    Preset { id: "rotate",     label: "Rotate",      icon: "⟳", color: [180, 100, 140] },
-    Preset { id: "blur_t",     label: "Blur Cut",    icon: "❋", color: [110, 110, 130] },
+    Preset {
+        id: "none",
+        label: "None",
+        icon: "▢",
+        color: [70, 70, 75],
+    },
+    Preset {
+        id: "fade",
+        label: "Fade",
+        icon: "◐",
+        color: [120, 90, 160],
+    },
+    Preset {
+        id: "slide_l",
+        label: "Slide Left",
+        icon: "←",
+        color: [80, 130, 190],
+    },
+    Preset {
+        id: "slide_r",
+        label: "Slide Right",
+        icon: "→",
+        color: [80, 130, 190],
+    },
+    Preset {
+        id: "slide_u",
+        label: "Slide Up",
+        icon: "↑",
+        color: [80, 130, 190],
+    },
+    Preset {
+        id: "slide_d",
+        label: "Slide Down",
+        icon: "↓",
+        color: [80, 130, 190],
+    },
+    Preset {
+        id: "zoom_in",
+        label: "Zoom In",
+        icon: "⤢",
+        color: [200, 120, 80],
+    },
+    Preset {
+        id: "zoom_out",
+        label: "Zoom Out",
+        icon: "⤡",
+        color: [200, 120, 80],
+    },
+    Preset {
+        id: "wipe_l",
+        label: "Wipe Left",
+        icon: "◧",
+        color: [140, 170, 90],
+    },
+    Preset {
+        id: "wipe_r",
+        label: "Wipe Right",
+        icon: "◨",
+        color: [140, 170, 90],
+    },
+    Preset {
+        id: "rotate",
+        label: "Rotate",
+        icon: "⟳",
+        color: [180, 100, 140],
+    },
+    Preset {
+        id: "blur_t",
+        label: "Blur Cut",
+        icon: "❋",
+        color: [110, 110, 130],
+    },
 ];
 
 const EFFECTS: &[Preset] = &[
-    Preset { id: "blur",       label: "Blur",         icon: "◌", color: [110, 110, 130] },
-    Preset { id: "vignette",   label: "Vignette",     icon: "◎", color: [60, 50, 60] },
-    Preset { id: "glitch",     label: "Glitch",       icon: "≠", color: [190, 80, 130] },
-    Preset { id: "rgb_split",  label: "RGB Split",    icon: "◍", color: [220, 90, 90] },
-    Preset { id: "shake",      label: "Shake",        icon: "≈", color: [200, 130, 80] },
-    Preset { id: "zoom_pulse", label: "Zoom Pulse",   icon: "◉", color: [220, 160, 60] },
-    Preset { id: "flash",      label: "Flash",        icon: "✷", color: [240, 230, 200] },
-    Preset { id: "mirror",     label: "Mirror",       icon: "◫", color: [90, 150, 190] },
-    Preset { id: "kaleido",    label: "Kaleidoscope", icon: "❋", color: [140, 90, 180] },
-    Preset { id: "old_film",   label: "Old Film",     icon: "▦", color: [160, 140, 100] },
-    Preset { id: "vhs",        label: "VHS",          icon: "▤", color: [130, 150, 100] },
-    Preset { id: "light_leak", label: "Light Leak",   icon: "☀", color: [230, 170, 90] },
-    Preset { id: "particle",   label: "Particle",     icon: "✧", color: [180, 180, 210] },
-    Preset { id: "sparkle",    label: "Sparkle",      icon: "✦", color: [230, 210, 140] },
-    Preset { id: "ghost",      label: "Ghost",        icon: "◊", color: [160, 170, 200] },
-    Preset { id: "lens_flare", label: "Lens Flare",   icon: "◐", color: [240, 200, 130] },
+    Preset {
+        id: "blur",
+        label: "Blur",
+        icon: "◌",
+        color: [110, 110, 130],
+    },
+    Preset {
+        id: "vignette",
+        label: "Vignette",
+        icon: "◎",
+        color: [60, 50, 60],
+    },
+    Preset {
+        id: "glitch",
+        label: "Glitch",
+        icon: "≠",
+        color: [190, 80, 130],
+    },
+    Preset {
+        id: "rgb_split",
+        label: "RGB Split",
+        icon: "◍",
+        color: [220, 90, 90],
+    },
+    Preset {
+        id: "shake",
+        label: "Shake",
+        icon: "≈",
+        color: [200, 130, 80],
+    },
+    Preset {
+        id: "zoom_pulse",
+        label: "Zoom Pulse",
+        icon: "◉",
+        color: [220, 160, 60],
+    },
+    Preset {
+        id: "flash",
+        label: "Flash",
+        icon: "✷",
+        color: [240, 230, 200],
+    },
+    Preset {
+        id: "mirror",
+        label: "Mirror",
+        icon: "◫",
+        color: [90, 150, 190],
+    },
+    Preset {
+        id: "kaleido",
+        label: "Kaleidoscope",
+        icon: "❋",
+        color: [140, 90, 180],
+    },
+    Preset {
+        id: "old_film",
+        label: "Old Film",
+        icon: "▦",
+        color: [160, 140, 100],
+    },
+    Preset {
+        id: "vhs",
+        label: "VHS",
+        icon: "▤",
+        color: [130, 150, 100],
+    },
+    Preset {
+        id: "light_leak",
+        label: "Light Leak",
+        icon: "☀",
+        color: [230, 170, 90],
+    },
+    Preset {
+        id: "particle",
+        label: "Particle",
+        icon: "✧",
+        color: [180, 180, 210],
+    },
+    Preset {
+        id: "sparkle",
+        label: "Sparkle",
+        icon: "✦",
+        color: [230, 210, 140],
+    },
+    Preset {
+        id: "ghost",
+        label: "Ghost",
+        icon: "◊",
+        color: [160, 170, 200],
+    },
+    Preset {
+        id: "lens_flare",
+        label: "Lens Flare",
+        icon: "◐",
+        color: [240, 200, 130],
+    },
 ];
 
 const FILTERS: &[Preset] = &[
-    Preset { id: "none",     label: "None",        icon: "○", color: [80, 80, 80] },
-    Preset { id: "warm",     label: "Warm",        icon: "☀", color: [220, 150, 80] },
-    Preset { id: "cool",     label: "Cool",        icon: "❄", color: [100, 160, 220] },
-    Preset { id: "bw",       label: "B&W",         icon: "◑", color: [120, 120, 120] },
-    Preset { id: "sepia",    label: "Sepia",       icon: "◒", color: [180, 140, 90] },
-    Preset { id: "cinematic",label: "Cinematic",   icon: "🎬", color: [70, 90, 140] },
-    Preset { id: "vintage",  label: "Vintage",     icon: "🕰", color: [180, 150, 110] },
-    Preset { id: "vivid",    label: "Vivid",       icon: "✸", color: [230, 90, 130] },
-    Preset { id: "matte",    label: "Matte",       icon: "◍", color: [150, 150, 160] },
-    Preset { id: "noir",     label: "Noir",        icon: "◼", color: [40, 40, 50] },
-    Preset { id: "sunset",   label: "Sunset",      icon: "◓", color: [230, 110, 80] },
-    Preset { id: "ocean",    label: "Ocean",       icon: "≋", color: [60, 130, 170] },
-    Preset { id: "fade",     label: "Fade",        icon: "◌", color: [180, 180, 190] },
-    Preset { id: "pastel",   label: "Pastel",      icon: "❀", color: [220, 180, 210] },
-    Preset { id: "neon",     label: "Neon",        icon: "✷", color: [90, 240, 200] },
-    Preset { id: "gold",     label: "Golden",      icon: "✦", color: [230, 190, 90] },
+    Preset {
+        id: "none",
+        label: "None",
+        icon: "○",
+        color: [80, 80, 80],
+    },
+    Preset {
+        id: "warm",
+        label: "Warm",
+        icon: "☀",
+        color: [220, 150, 80],
+    },
+    Preset {
+        id: "cool",
+        label: "Cool",
+        icon: "❄",
+        color: [100, 160, 220],
+    },
+    Preset {
+        id: "bw",
+        label: "B&W",
+        icon: "◑",
+        color: [120, 120, 120],
+    },
+    Preset {
+        id: "sepia",
+        label: "Sepia",
+        icon: "◒",
+        color: [180, 140, 90],
+    },
+    Preset {
+        id: "cinematic",
+        label: "Cinematic",
+        icon: "🎬",
+        color: [70, 90, 140],
+    },
+    Preset {
+        id: "vintage",
+        label: "Vintage",
+        icon: "🕰",
+        color: [180, 150, 110],
+    },
+    Preset {
+        id: "vivid",
+        label: "Vivid",
+        icon: "✸",
+        color: [230, 90, 130],
+    },
+    Preset {
+        id: "matte",
+        label: "Matte",
+        icon: "◍",
+        color: [150, 150, 160],
+    },
+    Preset {
+        id: "noir",
+        label: "Noir",
+        icon: "◼",
+        color: [40, 40, 50],
+    },
+    Preset {
+        id: "sunset",
+        label: "Sunset",
+        icon: "◓",
+        color: [230, 110, 80],
+    },
+    Preset {
+        id: "ocean",
+        label: "Ocean",
+        icon: "≋",
+        color: [60, 130, 170],
+    },
+    Preset {
+        id: "fade",
+        label: "Fade",
+        icon: "◌",
+        color: [180, 180, 190],
+    },
+    Preset {
+        id: "pastel",
+        label: "Pastel",
+        icon: "❀",
+        color: [220, 180, 210],
+    },
+    Preset {
+        id: "neon",
+        label: "Neon",
+        icon: "✷",
+        color: [90, 240, 200],
+    },
+    Preset {
+        id: "gold",
+        label: "Golden",
+        icon: "✦",
+        color: [230, 190, 90],
+    },
 ];
 
 const TEXT_STYLES: &[Preset] = &[
-    Preset { id: "default",   label: "Default",      icon: "T",  color: [80, 90, 130] },
-    Preset { id: "bold",      label: "Bold Title",   icon: "B",  color: [160, 60, 60] },
-    Preset { id: "subtitle",  label: "Subtitle",     icon: "s",  color: [80, 120, 160] },
-    Preset { id: "lower",     label: "Lower Third",  icon: "▬",  color: [130, 130, 90] },
-    Preset { id: "quote",     label: "Quote",        icon: "❝",  color: [160, 120, 180] },
-    Preset { id: "caption",   label: "Caption",      icon: "▭",  color: [90, 140, 120] },
-    Preset { id: "glow",      label: "Neon",         icon: "✷",  color: [220, 90, 200] },
-    Preset { id: "handwrite", label: "Handwritten",  icon: "✎",  color: [180, 160, 100] },
+    Preset {
+        id: "default",
+        label: "Default",
+        icon: "T",
+        color: [80, 90, 130],
+    },
+    Preset {
+        id: "bold",
+        label: "Bold Title",
+        icon: "B",
+        color: [160, 60, 60],
+    },
+    Preset {
+        id: "subtitle",
+        label: "Subtitle",
+        icon: "s",
+        color: [80, 120, 160],
+    },
+    Preset {
+        id: "lower",
+        label: "Lower Third",
+        icon: "▬",
+        color: [130, 130, 90],
+    },
+    Preset {
+        id: "quote",
+        label: "Quote",
+        icon: "❝",
+        color: [160, 120, 180],
+    },
+    Preset {
+        id: "caption",
+        label: "Caption",
+        icon: "▭",
+        color: [90, 140, 120],
+    },
+    Preset {
+        id: "glow",
+        label: "Neon",
+        icon: "✷",
+        color: [220, 90, 200],
+    },
+    Preset {
+        id: "handwrite",
+        label: "Handwritten",
+        icon: "✎",
+        color: [180, 160, 100],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -249,9 +509,7 @@ fn preset_grid(
     let filtered: Vec<&Preset> = presets
         .iter()
         .filter(|p| {
-            needle.is_empty()
-                || p.label.to_lowercase().contains(&needle)
-                || p.id.contains(&needle)
+            needle.is_empty() || p.label.to_lowercase().contains(&needle) || p.id.contains(&needle)
         })
         .collect();
 
@@ -286,8 +544,7 @@ fn preset_grid(
 }
 
 fn preset_card(ui: &mut Ui, p: &Preset, card_size: f32) -> bool {
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(card_size, card_size), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(card_size, card_size), Sense::click());
 
     // Background
     let base = Color32::from_rgb(p.color[0], p.color[1], p.color[2]);

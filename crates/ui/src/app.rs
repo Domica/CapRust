@@ -1,5 +1,6 @@
 use crate::i18n_helper::tr;
 use crate::media_jobs::JobRunner;
+use crate::panels::asset_browser::AssetBrowserState;
 use crate::panels::clip_properties::{PendingEdit, PropertiesState};
 use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
@@ -79,6 +80,7 @@ pub struct CapRustApp {
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
+    pub asset_browser: AssetBrowserState,
     pub job_runner: JobRunner,
 }
 
@@ -154,6 +156,7 @@ impl CapRustApp {
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
+            asset_browser: AssetBrowserState::new(),
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
