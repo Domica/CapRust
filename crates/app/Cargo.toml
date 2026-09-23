@@ -1,0 +1,15 @@
+[package]
+name = "caprust-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "caprust-app"
+path = "src/main.rs"
+
+[dependencies]
+caprust-ui = { path = "../ui" }
+eframe = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
