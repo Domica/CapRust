@@ -1,4 +1,18 @@
 //! Audio sample-counter mix.
+//!
+//! OUT-POINT IS IN THE SAMPLE COUNTER, NOT THE FILTERGRAPH.
+//!
+//! Problem: `atrim=start=X:duration=Y` uses source timestamps to close
+//! the input. Source files with broken timestamp series (edit lists,
+//! paused recordings, screen captures) park frames outside the mix.
+//!
+//! Fix: Rust counts how many samples it has fed to the graph for each
+//! input, stamps every frame's PTS from that running counter, and stops
+//! feeding the input after `duration * speed` source seconds.
+//! The graph's `apad` fills the rest with silence until duration ends.
+//!
+//! This makes audio survive files whose timestamps lie.
+//! (Ported from original PR #68 to keep the fix in-tree as reference.)
 
 pub struct MixInputState {
     pub samples_sent: i64,

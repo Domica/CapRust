@@ -1117,6 +1117,46 @@ impl CapRustApp {
                                         color
                                     };
                                     p.rect_filled(clip_rect, 4.0, c);
+
+                                    // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
+                                    let thumb_tex = self
+                                        .project
+                                        .clips
+                                        .iter()
+                                        .find(|cc| cc.id == clip_id)
+                                        .and_then(|cc| cc.media_id)
+                                        .and_then(|mid| self.clip_textures.get(&mid).cloned());
+
+                                    if let Some(tex) = thumb_tex {
+                                        let tex_size = tex.size_vec2();
+                                        let aspect = tex_size.x / tex_size.y.max(1.0);
+                                        let tile_h = clip_rect.height();
+                                        let tile_w = (tile_h * aspect).max(8.0);
+                                        let mut x = clip_rect.left();
+                                        let right = clip_rect.right();
+                                        let mut guard = 0;
+                                        while x < right - 1.0 && guard < 200 {
+                                            let w = (right - x).min(tile_w);
+                                            let tile_rect = egui::Rect::from_min_size(
+                                                egui::pos2(x, clip_rect.top()),
+                                                egui::vec2(w, tile_h),
+                                            );
+                                            let frac = (w / tile_w).min(1.0);
+                                            p.image(
+                                                tex.id(),
+                                                tile_rect,
+                                                egui::Rect::from_min_max(
+                                                    egui::pos2(0.0, 0.0),
+                                                    egui::pos2(frac, 1.0),
+                                                ),
+                                                egui::Color32::from_white_alpha(220),
+                                            );
+                                            x += tile_w;
+                                            guard += 1;
+                                        }
+                                        // Dim overlay so clip-type color stays readable.
+                                        p.rect_filled(clip_rect, 4.0, c.gamma_multiply(0.35));
+                                    }
                                     if self.selected_clips.contains(&clip_id) || is_dragged {
                                         p.rect_stroke(
                                             clip_rect,
