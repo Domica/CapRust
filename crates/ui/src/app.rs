@@ -481,12 +481,9 @@ impl CapRustApp {
                 let _pan_mode = self.timeline_tools.pan_mode;
                 let clip_drag_snapshot = self.clip_drag.clone();
 
-                let tracks_area_h = ui.available_height().max(120.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .max_height(tracks_area_h)
                     .show(ui, |ui| {
-                        ui.set_min_height(tracks_area_h);
                         ui.horizontal_top(|ui| {
                             // LEFT: fixed header column
                             ui.vertical(|ui| {
