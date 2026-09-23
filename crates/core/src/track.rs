@@ -37,12 +37,13 @@ impl TrackKind {
         }
     }
     pub fn default_height(&self) -> f32 {
+        // Two-row header needs ~44px. Give comfortable room.
         match self {
-            Self::Video => 46.0,
-            Self::Overlay => 42.0,
-            Self::Audio => 38.0,
-            Self::Text => 34.0,
-            Self::Captions => 32.0,
+            Self::Video => 56.0,
+            Self::Overlay => 50.0,
+            Self::Audio => 50.0,
+            Self::Text => 46.0,
+            Self::Captions => 46.0,
         }
     }
     /// Overlay + Captions lanes never spawn more than one of their kind.
