@@ -73,6 +73,7 @@ pub struct CapRustApp {
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
     pub properties: PropertiesState,
     pub model_prompt: Option<caprust_core::ModelKind>,
+    pub timeline_scroll_x: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +145,7 @@ impl CapRustApp {
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
             model_prompt: None,
+            timeline_scroll_x: 0.0,
         }
     }
 
@@ -774,11 +776,10 @@ impl CapRustApp {
             .max_height(screen_h * 0.8)
             .show(ctx, |ui| {
                 ui.set_min_height(180.0);
-
                 self.project.models.tick_downloads(1.0 / 60.0);
                 self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
 
-                // ---------------- Toolbar ----------------
+                // Toolbar
                 let can_undo = self.undo_stack.can_undo();
                 let can_redo = self.undo_stack.can_redo();
                 let mut tools = self.timeline_tools;
@@ -791,12 +792,11 @@ impl CapRustApp {
                 );
                 self.timeline_tools = tools;
                 self.handle_timeline_events(ev);
-
                 ui.separator();
 
-                // ---------------- State prep ----------------
                 let header_w = crate::timeline::track_header::HEADER_WIDTH;
                 let ruler_h = crate::timeline::ruler::RULER_HEIGHT;
+                let full_h = ui.available_height().max(150.0);
 
                 let order = caprust_core::track::display_order(&self.project.tracks);
                 let mut updated_tracks = self.project.tracks.clone();
@@ -805,66 +805,51 @@ impl CapRustApp {
                 let mut pending_actions: Vec<ClipAction> = Vec::new();
                 let mut pending_drop: Option<(uuid::Uuid, usize, u64)> = None;
 
-                // DnD: payload type in egui 0.31 is Arc<T>, no downcast needed.
-                let dnd_active: Option<uuid::Uuid> =
-                    egui::DragAndDrop::payload::<uuid::Uuid>(ctx).map(|arc| *arc);
+                // DnD
+                let dnd_active = egui::DragAndDrop::payload::<uuid::Uuid>(ctx).map(|a| *a);
                 if let Some(id) = dnd_active {
                     self.last_dnd_payload = Some(id);
                 }
                 let pointer_hover = ctx.input(|i| i.pointer.hover_pos());
                 let pointer_released = ctx.input(|i| i.pointer.any_released());
                 let pointer_down = ctx.input(|i| i.pointer.primary_down());
-                let dnd_drop: Option<uuid::Uuid> = if pointer_released {
+                let dnd_drop = if pointer_released {
                     self.last_dnd_payload
                 } else {
                     None
                 };
-
                 let clip_drag_snapshot = self.clip_drag.clone();
 
-                // ---------------- Dimensions ----------------
+                // Time/px
                 let total_ms = self.total_duration_ms();
                 let content_ms = (total_ms + 20_000).max(30_000);
-                let avail_w = ui.available_width();
-                let lanes_w = (avail_w - header_w).max(120.0);
-                let px_per_ms = (lanes_w * 0.90 * self.timeline_zoom) / content_ms as f32;
+                let viewport_w = (ui.available_width() - header_w).max(120.0);
+                let px_per_ms = (viewport_w * 0.9 * self.timeline_zoom) / content_ms as f32;
                 let px_per_ms = px_per_ms.max(0.002);
-                let content_width = (content_ms as f32 * px_per_ms).max(lanes_w);
+                let content_width = (content_ms as f32 * px_per_ms).max(viewport_w);
+                let max_scroll = (content_width - viewport_w).max(0.0);
+                self.timeline_scroll_x = self.timeline_scroll_x.clamp(0.0, max_scroll);
 
-                // Cache row layout so track_for_y() can map pointer Y to a track.
-                {
-                    let mut rows: Vec<(usize, f32)> = Vec::new();
-                    for &idx in &order {
-                        rows.push((idx, updated_tracks[idx].height));
-                    }
-                    // Approximate top Y as pointer-y origin; refined on first frame.
-                    let top_y = ctx
-                        .input(|i| i.pointer.hover_pos())
-                        .map(|p| p.y - 40.0)
-                        .unwrap_or(0.0);
-                    if self.timeline_row_layout.1.is_empty()
-                        || self.timeline_row_layout.1.len() != rows.len()
-                    {
-                        self.timeline_row_layout = (top_y, rows);
-                    }
+                // Follow playhead: nudge scroll so playhead stays centered
+                let follow = self.timeline_tools.follow_playhead;
+                let playing = self.preview.playing;
+                if follow && playing {
+                    let ph_px = self.playhead_ms as f32 * px_per_ms;
+                    let target = ph_px - viewport_w * 0.5;
+                    self.timeline_scroll_x = target.clamp(0.0, max_scroll);
+                    ctx.request_repaint();
                 }
+                let scroll_x = self.timeline_scroll_x;
 
-                // ---------------- Two columns side by side ----------------
-                // IMPORTANT: capture panel height BEFORE entering
-                // horizontal_top — inside it, available_height() == 0.
-                let full_h = ui.available_height().max(150.0);
                 ui.horizontal_top(|ui| {
-                    // === LEFT: header column ===
+                    // LEFT: headers
                     ui.allocate_ui_with_layout(
                         egui::vec2(header_w, full_h),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             ui.set_width(header_w);
                             ui.set_min_height(full_h);
-
-                            // ruler spacer
                             ui.allocate_space(egui::vec2(header_w, ruler_h));
-
                             for &idx in &order {
                                 let mut track = updated_tracks[idx].clone();
                                 let row_h = track.height;
@@ -889,26 +874,104 @@ impl CapRustApp {
                         },
                     );
 
-                    // === RIGHT: ruler + lanes inside a horizontal ScrollArea ===
-                    egui::ScrollArea::horizontal()
-                        .id_salt("timeline_h_scroll")
-                        .auto_shrink([false, false])
-                        .drag_to_scroll(false)
-                        .max_height(full_h)
-                        .min_scrolled_height(full_h)
-                        .show(ui, |ui| {
-                            ui.set_min_width(content_width);
+                    // RIGHT: ruler + lanes with manual scroll
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(viewport_w, full_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(viewport_w);
                             ui.set_min_height(full_h);
 
                             // Ruler
-                            if let Some(ms) = crate::timeline::ruler::show(
-                                ui,
-                                content_width,
-                                px_per_ms,
-                                self.playhead_ms,
-                                total_ms,
-                            ) {
-                                pending_actions.push(ClipAction::SetPlayhead(ms));
+                            let (ruler_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(viewport_w, ruler_h),
+                                egui::Sense::click(),
+                            );
+                            let rp = ui.painter_at(ruler_rect);
+                            rp.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(28));
+                            rp.line_segment(
+                                [
+                                    egui::Pos2::new(ruler_rect.left(), ruler_rect.bottom() - 0.5),
+                                    egui::Pos2::new(ruler_rect.right(), ruler_rect.bottom() - 0.5),
+                                ],
+                                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
+                            );
+                            let interval_ms: u64 = {
+                                let cands: &[u64] = &[
+                                    100, 250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000,
+                                    60_000, 120_000, 300_000, 600_000,
+                                ];
+                                let mut c = *cands.last().unwrap();
+                                for &x in cands {
+                                    if (x as f32) * px_per_ms >= 70.0 {
+                                        c = x;
+                                        break;
+                                    }
+                                }
+                                c
+                            };
+                            let first_tick =
+                                ((scroll_x / px_per_ms) as u64 / interval_ms) * interval_ms;
+                            let last_tick = ((scroll_x + viewport_w) / px_per_ms) as u64;
+                            let mut t = first_tick;
+                            while t <= last_tick + interval_ms {
+                                let x = ruler_rect.left() + (t as f32) * px_per_ms - scroll_x;
+                                if x > ruler_rect.right() + 5.0 {
+                                    break;
+                                }
+                                if x >= ruler_rect.left() - 5.0 {
+                                    let th = if t.is_multiple_of(interval_ms * 5) {
+                                        10.0
+                                    } else if t.is_multiple_of(interval_ms * 2) {
+                                        7.0
+                                    } else {
+                                        5.0
+                                    };
+                                    rp.line_segment(
+                                        [
+                                            egui::Pos2::new(x, ruler_rect.bottom() - th),
+                                            egui::Pos2::new(x, ruler_rect.bottom()),
+                                        ],
+                                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(90)),
+                                    );
+                                    if th >= 10.0 {
+                                        let s = t / 1000;
+                                        let mm = (s % 3600) / 60;
+                                        let ss = s % 60;
+                                        rp.text(
+                                            egui::Pos2::new(x + 3.0, ruler_rect.top() + 2.0),
+                                            egui::Align2::LEFT_TOP,
+                                            format!("{mm:02}:{ss:02}"),
+                                            egui::FontId::proportional(10.0),
+                                            egui::Color32::from_gray(170),
+                                        );
+                                    }
+                                }
+                                t += interval_ms;
+                            }
+                            let ph_x =
+                                ruler_rect.left() + self.playhead_ms as f32 * px_per_ms - scroll_x;
+                            if ph_x >= ruler_rect.left() && ph_x <= ruler_rect.right() {
+                                rp.line_segment(
+                                    [
+                                        egui::Pos2::new(ph_x, ruler_rect.top()),
+                                        egui::Pos2::new(ph_x, ruler_rect.bottom()),
+                                    ],
+                                    egui::Stroke::new(
+                                        2.0_f32,
+                                        egui::Color32::from_rgb(230, 70, 70),
+                                    ),
+                                );
+                            }
+                            if ui.input(|i| i.pointer.primary_clicked()) {
+                                if let Some(p) = ui.ctx().pointer_interact_pos() {
+                                    if ruler_rect.contains(p) {
+                                        let ms = ((p.x - ruler_rect.left() + scroll_x) / px_per_ms)
+                                            .max(0.0)
+                                            as u64;
+                                        pending_actions.push(ClipAction::SetPlayhead(ms));
+                                    }
+                                }
                             }
 
                             // Lanes
@@ -917,9 +980,8 @@ impl CapRustApp {
                             for &idx in &order {
                                 let track = &updated_tracks[idx];
                                 let row_h = track.height;
-
                                 let (lane_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(content_width, row_h),
+                                    egui::vec2(viewport_w, row_h),
                                     egui::Sense::hover(),
                                 );
                                 if top_y_opt.is_none() {
@@ -927,17 +989,15 @@ impl CapRustApp {
                                 }
                                 rows_actual.push((idx, row_h));
 
-                                // Background
-                                let lane_bg = if track.visible {
+                                let p = ui.painter_at(lane_rect);
+                                let bg = if track.visible {
                                     egui::Color32::from_gray(22)
                                 } else {
                                     egui::Color32::from_gray(16)
                                 };
-                                ui.painter().rect_filled(lane_rect, 0.0, lane_bg);
-
-                                // Pinned marker
+                                p.rect_filled(lane_rect, 0.0, bg);
                                 if track.pinned {
-                                    ui.painter().line_segment(
+                                    p.line_segment(
                                         [
                                             egui::Pos2::new(
                                                 lane_rect.left(),
@@ -954,9 +1014,7 @@ impl CapRustApp {
                                         ),
                                     );
                                 }
-
-                                // Bottom separator
-                                ui.painter().line_segment(
+                                p.line_segment(
                                     [
                                         egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 0.5),
                                         egui::Pos2::new(
@@ -967,7 +1025,6 @@ impl CapRustApp {
                                     egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
                                 );
 
-                                // Clip rectangles
                                 let clips_here: Vec<(
                                     uuid::Uuid,
                                     u64,
@@ -979,15 +1036,12 @@ impl CapRustApp {
                                     .clips
                                     .iter()
                                     .filter(|c| {
-                                        // If this clip is being dragged, show it on
-                                        // the drag's target track instead of its
-                                        // stored track.
-                                        let drag_track = clip_drag_snapshot
+                                        let dt = clip_drag_snapshot
                                             .as_ref()
                                             .filter(|d| d.clip_id == c.id)
                                             .map(|d| d.track_index);
-                                        match drag_track {
-                                            Some(t) => t == idx,
+                                        match dt {
+                                            Some(tt) => tt == idx,
                                             None => c.track_index == idx,
                                         }
                                     })
@@ -996,26 +1050,36 @@ impl CapRustApp {
                                             .as_ref()
                                             .map(|d| d.clip_id == c.id)
                                             .unwrap_or(false);
-                                        let (start, dur) = if is_dragged {
+                                        let (s, d) = if is_dragged {
                                             let d = clip_drag_snapshot.as_ref().unwrap();
                                             (d.current_ms.max(0) as u64, c.duration_ms)
                                         } else {
                                             (c.start_time_ms, c.duration_ms)
                                         };
-                                        (c.id, start, dur, c.clip_type.clone(), is_dragged)
+                                        (c.id, s, d, c.clip_type.clone(), is_dragged)
                                     })
                                     .collect();
 
                                 for (clip_id, start_ms, dur_ms, ctype, is_dragged) in clips_here {
-                                    let x0 = lane_rect.left() + (start_ms as f32) * px_per_ms;
-                                    let x1 =
-                                        lane_rect.left() + ((start_ms + dur_ms) as f32) * px_per_ms;
-                                    let clip_rect = egui::Rect::from_min_max(
+                                    let x0 =
+                                        lane_rect.left() - scroll_x + start_ms as f32 * px_per_ms;
+                                    let x1 = lane_rect.left() - scroll_x
+                                        + (start_ms + dur_ms) as f32 * px_per_ms;
+                                    if x1 < lane_rect.left() - 30.0 || x0 > lane_rect.right() + 30.0
+                                    {
+                                        continue;
+                                    }
+
+                                    let full_rect = egui::Rect::from_min_max(
                                         egui::pos2(x0, lane_rect.top() + 3.0),
                                         egui::pos2(x1.max(x0 + 8.0), lane_rect.bottom() - 3.0),
                                     );
+                                    let clip_rect = full_rect.intersect(lane_rect);
+                                    if clip_rect.width() < 2.0 {
+                                        continue;
+                                    }
 
-                                    let base_color = match &ctype {
+                                    let color = match &ctype {
                                         caprust_core::ClipType::Video { .. } => {
                                             egui::Color32::from_rgb(60, 110, 180)
                                         }
@@ -1035,23 +1099,20 @@ impl CapRustApp {
                                             egui::Color32::from_rgb(120, 100, 200)
                                         }
                                     };
-                                    let color = if is_dragged {
-                                        base_color.gamma_multiply(1.3)
+                                    let c = if is_dragged {
+                                        color.gamma_multiply(1.3)
                                     } else {
-                                        base_color
+                                        color
                                     };
-                                    ui.painter().rect_filled(clip_rect, 4.0, color);
-
-                                    let selected = self.selected_clips.contains(&clip_id);
-                                    if selected || is_dragged {
-                                        ui.painter().rect_stroke(
+                                    p.rect_filled(clip_rect, 4.0, c);
+                                    if self.selected_clips.contains(&clip_id) || is_dragged {
+                                        p.rect_stroke(
                                             clip_rect,
                                             4.0,
                                             egui::Stroke::new(2.0_f32, egui::Color32::WHITE),
                                             egui::StrokeKind::Inside,
                                         );
                                     }
-
                                     let label = match &ctype {
                                         caprust_core::ClipType::TextOverlay { content, .. } => {
                                             content.clone()
@@ -1071,7 +1132,7 @@ impl CapRustApp {
                                                 .unwrap_or_else(|| "clip".into())
                                         }
                                     };
-                                    ui.painter().text(
+                                    p.text(
                                         clip_rect.left_top() + egui::vec2(6.0, 4.0),
                                         egui::Align2::LEFT_TOP,
                                         label,
@@ -1079,74 +1140,48 @@ impl CapRustApp {
                                         egui::Color32::WHITE,
                                     );
 
-                                    // --- Trim handles ---
-                                    const HANDLE_W: f32 = 6.0;
-                                    if clip_rect.width() > HANDLE_W * 3.0 {
-                                        let left_rect = egui::Rect::from_min_size(
-                                            clip_rect.min,
-                                            egui::vec2(HANDLE_W, clip_rect.height()),
-                                        );
-                                        let right_rect = egui::Rect::from_min_size(
-                                            egui::pos2(clip_rect.max.x - HANDLE_W, clip_rect.min.y),
-                                            egui::vec2(HANDLE_W, clip_rect.height()),
-                                        );
-                                        // Draw subtle handle visual
-                                        ui.painter().rect_filled(
-                                            left_rect,
-                                            2.0,
-                                            egui::Color32::from_white_alpha(60),
-                                        );
-                                        ui.painter().rect_filled(
-                                            right_rect,
-                                            2.0,
-                                            egui::Color32::from_white_alpha(60),
-                                        );
-
-                                        // Interact
-                                        let l_resp = ui.interact(
-                                            left_rect,
-                                            egui::Id::new(("trim_l", clip_id)),
-                                            egui::Sense::click(),
-                                        );
-                                        let r_resp = ui.interact(
-                                            right_rect,
-                                            egui::Id::new(("trim_r", clip_id)),
-                                            egui::Sense::click(),
-                                        );
-
-                                        if (l_resp.hovered() || r_resp.hovered())
-                                            && pointer_down
-                                            && clip_drag_snapshot.is_none()
-                                        {
-                                            pending_actions.push(ClipAction::Select(clip_id));
-                                            pending_actions.push(ClipAction::DragStart(
-                                                clip_id, idx, start_ms,
-                                            ));
-                                            let edge = if l_resp.hovered() {
-                                                Some(TrimEdge::Left)
-                                            } else {
-                                                Some(TrimEdge::Right)
-                                            };
-                                            pending_actions
-                                                .push(ClipAction::SetTrimEdge(clip_id, edge));
-                                        }
-                                    }
-
                                     let resp = ui.interact(
                                         clip_rect,
                                         egui::Id::new(("clip", clip_id)),
                                         egui::Sense::click(),
                                     );
-
                                     if resp.clicked() {
                                         pending_actions.push(ClipAction::Select(clip_id));
                                     }
 
-                                    // Manual drag detection. Uses explicit
-                                    // rect-contains-pointer + primary-down, since
-                                    // resp.hovered() is unreliable while holding
-                                    // the button inside a ScrollArea.
                                     let pointer_on_clip = ui.rect_contains_pointer(clip_rect);
+                                    const TRIM_ZONE: f32 = 8.0;
+                                    let hovered_edge: Option<TrimEdge> =
+                                        if pointer_on_clip && clip_rect.width() > TRIM_ZONE * 3.0 {
+                                            if let Some(pp) = pointer_hover {
+                                                let lz = egui::Rect::from_min_size(
+                                                    clip_rect.min,
+                                                    egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                                );
+                                                let rz = egui::Rect::from_min_size(
+                                                    egui::pos2(
+                                                        clip_rect.max.x - TRIM_ZONE,
+                                                        clip_rect.min.y,
+                                                    ),
+                                                    egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                                );
+                                                if lz.contains(pp) {
+                                                    Some(TrimEdge::Left)
+                                                } else if rz.contains(pp) {
+                                                    Some(TrimEdge::Right)
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+                                    if hovered_edge.is_some() {
+                                        ui.ctx()
+                                            .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                                    }
                                     if pointer_on_clip
                                         && pointer_down
                                         && clip_drag_snapshot.is_none()
@@ -1154,52 +1189,58 @@ impl CapRustApp {
                                         pending_actions.push(ClipAction::Select(clip_id));
                                         pending_actions
                                             .push(ClipAction::DragStart(clip_id, idx, start_ms));
+                                        if let Some(e) = hovered_edge {
+                                            pending_actions
+                                                .push(ClipAction::SetTrimEdge(clip_id, Some(e)));
+                                        }
                                     }
 
                                     resp.context_menu(|ui| {
-                                        let del_lbl = if self.settings.enable_shortcuts {
+                                        let del = if self.settings.enable_shortcuts {
                                             "Delete  (Del)"
                                         } else {
                                             "Delete"
                                         };
-                                        if ui.button(del_lbl).clicked() {
+                                        if ui.button(del).clicked() {
                                             pending_actions.push(ClipAction::Delete(clip_id));
                                             ui.close_menu();
                                         }
-                                        let split_lbl = if self.settings.enable_shortcuts {
+                                        let spl = if self.settings.enable_shortcuts {
                                             "Split at playhead  (S)"
                                         } else {
                                             "Split at playhead"
                                         };
-                                        if ui.button(split_lbl).clicked() {
+                                        if ui.button(spl).clicked() {
                                             pending_actions
                                                 .push(ClipAction::Split(clip_id, self.playhead_ms));
                                             ui.close_menu();
                                         }
-                                        ui.separator();
-                                        if ui.button("Reverse  (R)").clicked() {
-                                            pending_actions
-                                                .push(ClipAction::ToggleReverse(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        if ui.button("Mirror horizontally  (H)").clicked() {
-                                            pending_actions.push(ClipAction::ToggleFlipH(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        if ui.button("Mirror vertically  (V)").clicked() {
-                                            pending_actions.push(ClipAction::ToggleFlipV(clip_id));
-                                            ui.close_menu();
+                                        if self.settings.enable_shortcuts {
+                                            ui.separator();
+                                            if ui.button("Reverse  (R)").clicked() {
+                                                pending_actions
+                                                    .push(ClipAction::ToggleReverse(clip_id));
+                                                ui.close_menu();
+                                            }
+                                            if ui.button("Mirror horizontally  (H)").clicked() {
+                                                pending_actions
+                                                    .push(ClipAction::ToggleFlipH(clip_id));
+                                                ui.close_menu();
+                                            }
+                                            if ui.button("Mirror vertically  (V)").clicked() {
+                                                pending_actions
+                                                    .push(ClipAction::ToggleFlipV(clip_id));
+                                                ui.close_menu();
+                                            }
                                         }
                                     });
                                 }
 
-                                // --- DROP TARGET ---
                                 let hovering = pointer_hover
-                                    .map(|p| lane_rect.contains(p))
+                                    .map(|pp| lane_rect.contains(pp))
                                     .unwrap_or(false);
-
                                 if dnd_active.is_some() && hovering {
-                                    ui.painter().rect_stroke(
+                                    p.rect_stroke(
                                         lane_rect.shrink(2.0),
                                         4.0,
                                         egui::Stroke::new(
@@ -1209,51 +1250,51 @@ impl CapRustApp {
                                         egui::StrokeKind::Inside,
                                     );
                                 }
-
-                                if let (Some(id), Some(ptr)) = (dnd_drop, pointer_hover) {
-                                    if lane_rect.contains(ptr) {
-                                        let rel_x = (ptr.x - lane_rect.left()).max(0.0);
-                                        let t_ms = (rel_x / px_per_ms) as u64;
-                                        pending_drop = Some((id, idx, t_ms));
+                                if let (Some(id), Some(pp)) = (dnd_drop, pointer_hover) {
+                                    if lane_rect.contains(pp) {
+                                        let rel = (pp.x - lane_rect.left() + scroll_x).max(0.0);
+                                        pending_drop = Some((id, idx, (rel / px_per_ms) as u64));
                                     }
                                 }
                             }
 
-                            // --- Drag continuation ---
                             if let Some(d) = &clip_drag_snapshot {
-                                if let Some(p) = pointer_hover {
-                                    let dx_total = p.x - d.origin_ptr.x;
+                                if let Some(pp) = pointer_hover {
                                     pending_actions.push(ClipAction::DragDelta(
-                                        d.clip_id, dx_total, px_per_ms,
+                                        d.clip_id,
+                                        pp.x - d.origin_ptr.x,
+                                        px_per_ms,
                                     ));
                                 }
                                 if pointer_released {
                                     pending_actions.push(ClipAction::DragEnd(d.clip_id));
                                 }
                             }
-
-                            // Cache actual row geometry for track_for_y()
-                            if let Some(top) = top_y_opt {
-                                self.timeline_row_layout = (top, rows_actual);
+                            if let Some(t) = top_y_opt {
+                                self.timeline_row_layout = (t, rows_actual);
                             }
-                        });
+                        },
+                    );
                 });
 
-                // ---------------- Apply changes ----------------
+                let sd = ctx.input(|i| i.raw_scroll_delta);
+                if sd.y.abs() > 0.0 || sd.x.abs() > 0.0 {
+                    let d = if sd.x.abs() > sd.y.abs() { sd.x } else { sd.y };
+                    self.timeline_scroll_x = (self.timeline_scroll_x - d).clamp(0.0, max_scroll);
+                }
+
                 if header_changed {
                     self.project.tracks = updated_tracks;
                 }
-
                 if let Some(idx) = pending_delete_track {
                     if idx < self.project.tracks.len() {
-                        let removed = self.project.tracks.remove(idx);
+                        self.project.tracks.remove(idx);
                         self.project.clips.retain(|c| c.track_index != idx);
                         for c in self.project.clips.iter_mut() {
                             if c.track_index > idx {
                                 c.track_index -= 1;
                             }
                         }
-                        tracing::info!("Deleted track {}", removed.name);
                     }
                 }
 
@@ -1280,8 +1321,8 @@ impl CapRustApp {
                                 }
                             }
                         }
-                        ClipAction::DragStart(id, track_idx, origin) => {
-                            let (dur, src_dur) = self
+                        ClipAction::DragStart(id, ti, o) => {
+                            let (dur, sdr) = self
                                 .project
                                 .clips
                                 .iter()
@@ -1291,37 +1332,30 @@ impl CapRustApp {
                             let ptr = self.last_pointer.unwrap_or_else(|| egui::pos2(0.0, 0.0));
                             self.clip_drag = Some(ClipDrag {
                                 clip_id: id,
-                                origin_ms: origin,
-                                current_ms: origin as i64,
-                                track_index: track_idx,
+                                origin_ms: o,
+                                current_ms: o as i64,
+                                track_index: ti,
                                 clip_duration_ms: dur,
                                 origin_ptr: ptr,
                                 last_ptr: ptr,
                                 trim_edge: None,
-                                source_duration_ms: src_dur,
+                                source_duration_ms: sdr,
                                 origin_duration_ms: dur,
                             });
                         }
-                        ClipAction::DragDelta(id, dx_total, ppm) => {
+                        ClipAction::DragDelta(id, dx, ppm) => {
                             if let Some(d) = self.clip_drag.clone() {
                                 if d.clip_id == id && ppm > 0.0 {
-                                    let candidate = d.origin_ms as i64 + (dx_total / ppm) as i64;
+                                    let cand = d.origin_ms as i64 + (dx / ppm) as i64;
                                     let snapped = self.snap_ms(
                                         id,
                                         d.track_index,
-                                        candidate.max(0),
+                                        cand.max(0),
                                         d.clip_duration_ms,
                                         ppm,
                                     );
-                                    // Change track based on Y position of pointer.
-                                    let new_track = self.track_for_y(
-                                        d.track_index, // fallback if unknown
-                                    );
                                     if let Some(cur) = &mut self.clip_drag {
                                         cur.current_ms = snapped;
-                                        if let Some(t) = new_track {
-                                            cur.track_index = t;
-                                        }
                                     }
                                 }
                             }
@@ -1329,22 +1363,65 @@ impl CapRustApp {
                         ClipAction::DragEnd(id) => {
                             if let Some(d) = self.clip_drag.take() {
                                 if d.clip_id == id {
-                                    let new_ms = d.current_ms.max(0) as u64;
-                                    if new_ms != d.origin_ms {
-                                        let cmd = MoveClipCommand {
-                                            clip_id: id,
-                                            from_ms: d.origin_ms,
-                                            to_ms: new_ms,
+                                    if let Some(edge) = d.trim_edge {
+                                        let dm = d.current_ms - d.origin_ms as i64;
+                                        let (ns, nd) = match edge {
+                                            TrimEdge::Left => (
+                                                (d.origin_ms as i64 + dm).max(0) as u64,
+                                                (d.origin_duration_ms as i64 - dm).max(100) as u64,
+                                            ),
+                                            TrimEdge::Right => {
+                                                let mut nd = (d.origin_duration_ms as i64 + dm)
+                                                    .max(100)
+                                                    as u64;
+                                                if d.source_duration_ms > 0 {
+                                                    nd = nd.min(d.source_duration_ms);
+                                                }
+                                                (d.origin_ms, nd)
+                                            }
                                         };
+                                        let cmd =
+                                            caprust_core::commands::set_clip::SetClipCommand::new(
+                                                id,
+                                            )
+                                            .start_time_ms(ns)
+                                            .duration_ms(nd);
                                         let _ = self
                                             .undo_stack
                                             .execute(Box::new(cmd), &mut self.project);
+                                    } else {
+                                        let nm = d.current_ms.max(0) as u64;
+                                        let nt = d.track_index;
+                                        if nm != d.origin_ms
+                                            || self
+                                                .project
+                                                .clips
+                                                .iter()
+                                                .find(|c| c.id == id)
+                                                .map(|c| c.track_index)
+                                                != Some(nt)
+                                        {
+                                            let cmd = MoveClipCommand {
+                                                clip_id: id,
+                                                from_ms: d.origin_ms,
+                                                to_ms: nm,
+                                            };
+                                            let _ = self
+                                                .undo_stack
+                                                .execute(Box::new(cmd), &mut self.project);
+                                            if let Some(c) =
+                                                self.project.clips.iter_mut().find(|c| c.id == id)
+                                            {
+                                                c.track_index = nt;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                         ClipAction::Delete(id) => {
-                            let cmd = DeleteClipCommand::new(id, false);
+                            let rip = self.timeline_tools.magnetic;
+                            let cmd = DeleteClipCommand::new(id, rip);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                             self.selected_clips.retain(|&x| x != id);
                         }
@@ -1370,14 +1447,13 @@ impl CapRustApp {
                     }
                 }
 
-                // ---------------- Apply drop ----------------
-                if let Some((media_id, track_idx, time_ms)) = pending_drop {
+                if let Some((mid, ti, t)) = pending_drop {
                     let media = self
                         .project
                         .media
                         .items
                         .iter()
-                        .find(|m| m.id == media_id)
+                        .find(|m| m.id == mid)
                         .cloned();
                     if let Some(item) = media {
                         use caprust_core::{Clip, MediaKind};
@@ -1387,33 +1463,19 @@ impl CapRustApp {
                             3000
                         };
                         let clip = match item.kind {
-                            MediaKind::Video => {
-                                Clip::new_video(&item.path, track_idx, time_ms, dur)
-                            }
-                            MediaKind::Audio => {
-                                Clip::new_audio(&item.path, track_idx, time_ms, dur)
-                            }
-                            MediaKind::Image => {
-                                Clip::new_image(&item.path, track_idx, time_ms, dur)
-                            }
+                            MediaKind::Video => Clip::new_video(&item.path, ti, t, dur),
+                            MediaKind::Audio => Clip::new_audio(&item.path, ti, t, dur),
+                            MediaKind::Image => Clip::new_image(&item.path, ti, t, dur),
                         };
-                        let new_id = clip.id;
+                        let nid = clip.id;
                         let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                         let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                        self.selected_clips = vec![new_id];
-                        // No auto-repack: the user chose where to drop.
-                        tracing::info!(
-                            "Dropped media {} onto track {} at {}ms",
-                            media_id,
-                            track_idx,
-                            time_ms
-                        );
+                        self.selected_clips = vec![nid];
                     }
                     self.last_dnd_payload = None;
                 }
             });
     }
-
     fn show_editor(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
