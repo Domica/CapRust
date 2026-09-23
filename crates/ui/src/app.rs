@@ -76,6 +76,7 @@ pub struct CapRustApp {
     pub properties: PropertiesState,
     pub model_prompt: Option<caprust_core::ModelKind>,
     pub timeline_scroll_x: f32,
+    pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub job_runner: JobRunner,
 }
 
@@ -149,6 +150,7 @@ impl CapRustApp {
             properties: PropertiesState::default(),
             model_prompt: None,
             timeline_scroll_x: 0.0,
+            clip_textures: std::collections::HashMap::new(),
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -1485,11 +1487,12 @@ impl CapRustApp {
                         } else {
                             3000
                         };
-                        let clip = match item.kind {
+                        let mut clip = match item.kind {
                             MediaKind::Video => Clip::new_video(&item.path, ti, t, dur),
                             MediaKind::Audio => Clip::new_audio(&item.path, ti, t, dur),
                             MediaKind::Image => Clip::new_image(&item.path, ti, t, dur),
                         };
+                        clip.media_id = Some(item.id);
                         let nid = clip.id;
                         let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                         let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
@@ -1868,8 +1871,35 @@ impl eframe::App for CapRustApp {
         caprust_i18n::set_current_lang(&self.settings.language);
         self.theme.apply(ctx);
 
-        // Drain background jobs (ffprobe results, thumbnails ready)
-        let _ = self.job_runner.drain(&mut self.project);
+        // Drain background jobs (ffprobe results, thumbnails ready).
+        let thumbs_ready = self.job_runner.drain(&mut self.project);
+
+        // Load any newly-ready thumbnails into the timeline texture cache.
+        if let (Some(proj_path), false) =
+            (self.project.project_path.clone(), thumbs_ready.is_empty())
+        {
+            for media_id in thumbs_ready {
+                if self.clip_textures.contains_key(&media_id) {
+                    continue;
+                }
+                let jpg =
+                    caprust_core::cache::thumbnail_path(std::path::Path::new(&proj_path), media_id);
+                if let Ok(bytes) = std::fs::read(&jpg) {
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let rgba = img.to_rgba8();
+                        let size = [rgba.width() as usize, rgba.height() as usize];
+                        let color_img =
+                            egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                        let handle = ctx.load_texture(
+                            format!("clip-{media_id}"),
+                            color_img,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        self.clip_textures.insert(media_id, handle);
+                    }
+                }
+            }
+        }
 
         // Keyboard shortcuts (only in Editor + when enabled in Settings)
         if self.mode == AppMode::Editor && self.settings.enable_shortcuts {
