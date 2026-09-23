@@ -1,3 +1,4 @@
+use crate::panels::clip_properties::{PendingEdit, PropertiesState};
 use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
@@ -70,6 +71,8 @@ pub struct CapRustApp {
     pub last_pointer: Option<egui::Pos2>,
     /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
+    pub properties: PropertiesState,
+    pub model_prompt: Option<caprust_core::ModelKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +86,18 @@ pub struct ClipDrag {
     pub origin_ptr: egui::Pos2,
     /// Cumulative pointer delta since drag start.
     pub last_ptr: egui::Pos2,
+    /// Which edge was grabbed, if trimming.
+    pub trim_edge: Option<TrimEdge>,
+    /// Original duration for the duration cap.
+    pub source_duration_ms: u64,
+    /// Original start (for trim left math).
+    pub origin_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimEdge {
+    Left,
+    Right,
 }
 
 impl CapRustApp {
@@ -127,6 +142,8 @@ impl CapRustApp {
             recent,
             last_pointer: None,
             timeline_row_layout: (0.0, Vec::new()),
+            properties: PropertiesState::default(),
+            model_prompt: None,
         }
     }
 
@@ -206,7 +223,7 @@ impl CapRustApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
+                ui.add_space(((ui.available_height() - 500.0) / 2.0).max(24.0));
                 ui.heading(egui::RichText::new("🎬 CapRust").size(34.0));
                 ui.add_space(4.0);
                 ui.label("Social-first video editor");
@@ -214,6 +231,8 @@ impl CapRustApp {
             });
             // Two columns: left = New Project form, right = Recent
             ui.horizontal_top(|ui| {
+            // Center the two columns horizontally.
+            ui.add_space(((ui.available_width() - 884.0) / 2.0).max(12.0));
                 // LEFT: New Project form (existing)
                 ui.vertical(|ui| {
                     ui.set_min_width(520.0);
@@ -692,22 +711,25 @@ impl CapRustApp {
             }
         }
         if ev.narration_clicked {
-            let ready = self.project.models.ready_narration();
-            if let Some(model) = ready.first() {
-                let model_id = model.id.clone();
-                let voice_id = model.id.clone();
+            let ready: Option<(String, String)> = self
+                .project
+                .models
+                .ready_narration()
+                .first()
+                .map(|m| (m.id.clone(), m.language.clone()));
+            if let Some((model_id, _lang)) = ready {
                 let clip = caprust_core::Clip::new_narration(
                     0,
                     self.playhead_ms,
                     3000,
                     &model_id,
-                    &voice_id,
+                    &model_id,
                     "Narration text goes here",
                 );
                 let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                 let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
             } else {
-                tracing::warn!("No narration model ready — download one in Settings → AI Models");
+                self.model_prompt = Some(caprust_core::ModelKind::Narration);
             }
         }
     }
@@ -943,7 +965,19 @@ impl CapRustApp {
                                     .project
                                     .clips
                                     .iter()
-                                    .filter(|c| c.track_index == idx)
+                                    .filter(|c| {
+                                        // If this clip is being dragged, show it on
+                                        // the drag's target track instead of its
+                                        // stored track.
+                                        let drag_track = clip_drag_snapshot
+                                            .as_ref()
+                                            .filter(|d| d.clip_id == c.id)
+                                            .map(|d| d.track_index);
+                                        match drag_track {
+                                            Some(t) => t == idx,
+                                            None => c.track_index == idx,
+                                        }
+                                    })
                                     .map(|c| {
                                         let is_dragged = clip_drag_snapshot
                                             .as_ref()
@@ -1031,6 +1065,59 @@ impl CapRustApp {
                                         egui::FontId::proportional(11.0),
                                         egui::Color32::WHITE,
                                     );
+
+                                    // --- Trim handles ---
+                                    const HANDLE_W: f32 = 6.0;
+                                    if clip_rect.width() > HANDLE_W * 3.0 {
+                                        let left_rect = egui::Rect::from_min_size(
+                                            clip_rect.min,
+                                            egui::vec2(HANDLE_W, clip_rect.height()),
+                                        );
+                                        let right_rect = egui::Rect::from_min_size(
+                                            egui::pos2(clip_rect.max.x - HANDLE_W, clip_rect.min.y),
+                                            egui::vec2(HANDLE_W, clip_rect.height()),
+                                        );
+                                        // Draw subtle handle visual
+                                        ui.painter().rect_filled(
+                                            left_rect,
+                                            2.0,
+                                            egui::Color32::from_white_alpha(60),
+                                        );
+                                        ui.painter().rect_filled(
+                                            right_rect,
+                                            2.0,
+                                            egui::Color32::from_white_alpha(60),
+                                        );
+
+                                        // Interact
+                                        let l_resp = ui.interact(
+                                            left_rect,
+                                            egui::Id::new(("trim_l", clip_id)),
+                                            egui::Sense::click(),
+                                        );
+                                        let r_resp = ui.interact(
+                                            right_rect,
+                                            egui::Id::new(("trim_r", clip_id)),
+                                            egui::Sense::click(),
+                                        );
+
+                                        if (l_resp.hovered() || r_resp.hovered())
+                                            && pointer_down
+                                            && clip_drag_snapshot.is_none()
+                                        {
+                                            pending_actions.push(ClipAction::Select(clip_id));
+                                            pending_actions.push(ClipAction::DragStart(
+                                                clip_id, idx, start_ms,
+                                            ));
+                                            let edge = if l_resp.hovered() {
+                                                Some(TrimEdge::Left)
+                                            } else {
+                                                Some(TrimEdge::Right)
+                                            };
+                                            pending_actions
+                                                .push(ClipAction::SetTrimEdge(clip_id, edge));
+                                        }
+                                    }
 
                                     let resp = ui.interact(
                                         clip_rect,
@@ -1174,14 +1261,21 @@ impl CapRustApp {
                                 self.selected_clips = vec![id];
                             }
                         }
+                        ClipAction::SetTrimEdge(id, edge) => {
+                            if let Some(d) = &mut self.clip_drag {
+                                if d.clip_id == id {
+                                    d.trim_edge = edge;
+                                }
+                            }
+                        }
                         ClipAction::DragStart(id, track_idx, origin) => {
-                            let dur = self
+                            let (dur, src_dur) = self
                                 .project
                                 .clips
                                 .iter()
                                 .find(|c| c.id == id)
-                                .map(|c| c.duration_ms)
-                                .unwrap_or(3000);
+                                .map(|c| (c.duration_ms, c.source_duration_ms))
+                                .unwrap_or((3000, 0));
                             let ptr = self.last_pointer.unwrap_or_else(|| egui::pos2(0.0, 0.0));
                             self.clip_drag = Some(ClipDrag {
                                 clip_id: id,
@@ -1191,6 +1285,9 @@ impl CapRustApp {
                                 clip_duration_ms: dur,
                                 origin_ptr: ptr,
                                 last_ptr: ptr,
+                                trim_edge: None,
+                                source_duration_ms: src_dur,
+                                origin_duration_ms: dur,
                             });
                         }
                         ClipAction::DragDelta(id, dx_total, ppm) => {
@@ -1322,11 +1419,40 @@ impl CapRustApp {
 
         egui::SidePanel::right("right_panel")
             .resizable(true)
-            .default_width(260.0)
+            .default_width(280.0)
+            .min_width(240.0)
             .show(ctx, |ui| {
                 ui.heading("Properties");
                 ui.separator();
-                ui.label("Select a clip to edit its properties.");
+
+                let selected = self.selected_clips.first().copied();
+                crate::panels::clip_properties::show(
+                    ui,
+                    &self.project,
+                    selected,
+                    &mut self.properties,
+                );
+
+                // Consume any pending edits → commands
+                if !self.properties.pending.is_empty() {
+                    let edits = std::mem::take(&mut self.properties.pending);
+                    if let Some(id) = selected {
+                        let mut cmd = caprust_core::commands::set_clip::SetClipCommand::new(id);
+                        for e in edits {
+                            cmd = match e {
+                                PendingEdit::Speed(v) => cmd.speed(v),
+                                PendingEdit::Reverse(v) => cmd.reversed(v),
+                                PendingEdit::FlipH(v) => cmd.flip_h(v),
+                                PendingEdit::FlipV(v) => cmd.flip_v(v),
+                                PendingEdit::VolumeDb(v) => cmd.volume_db(v),
+                                PendingEdit::TrimStart(v) => cmd.start_time_ms(v),
+                                PendingEdit::TrimDuration(v) => cmd.duration_ms(v),
+                                PendingEdit::TrackIndex(v) => cmd.track_index(v),
+                            };
+                        }
+                        let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                    }
+                }
             });
 
         self.show_timeline(ctx);
@@ -1406,6 +1532,154 @@ impl CapRustApp {
         self.export_open = open;
     }
 
+    fn show_model_prompt_window(&mut self, ctx: &egui::Context) {
+        let Some(kind) = self.model_prompt else {
+            return;
+        };
+
+        // Advance fake downloads while this dialog is up.
+        self.project.models.tick_downloads(1.0 / 60.0);
+
+        let title = match kind {
+            caprust_core::ModelKind::Caption => "💬  Captions — choose a model",
+            caprust_core::ModelKind::Narration => "🎙  Narration — choose a voice",
+        };
+
+        let mut open = true;
+        let mut chosen: Option<(String, String)> = None;
+        let mut cancel = false;
+
+        egui::Window::new(title)
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(560.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("This action needs a model. Download one, then click Use.")
+                        .color(egui::Color32::from_gray(180)),
+                );
+                ui.add_space(6.0);
+                ui.separator();
+
+                let ids: Vec<String> = self
+                    .project
+                    .models
+                    .models
+                    .iter()
+                    .filter(|m| m.kind == kind)
+                    .map(|m| m.id.clone())
+                    .collect();
+
+                for id in ids {
+                    let m = self
+                        .project
+                        .models
+                        .models
+                        .iter_mut()
+                        .find(|m| m.id == id)
+                        .unwrap();
+
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(&m.name).strong());
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "· {} MB · {}",
+                                            m.size_mb, m.language
+                                        ))
+                                        .small()
+                                        .color(egui::Color32::from_gray(140)),
+                                    );
+                                });
+                                ui.label(
+                                    egui::RichText::new(&m.description)
+                                        .small()
+                                        .color(egui::Color32::from_gray(170)),
+                                );
+                            });
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| match m.status {
+                                    caprust_core::ModelStatus::NotDownloaded => {
+                                        if ui.button("⬇ Download").clicked() {
+                                            m.status = caprust_core::ModelStatus::Downloading;
+                                            m.progress = 0.0;
+                                        }
+                                    }
+                                    caprust_core::ModelStatus::Downloading => {
+                                        ui.add(
+                                            egui::ProgressBar::new(m.progress)
+                                                .desired_width(120.0)
+                                                .show_percentage(),
+                                        );
+                                    }
+                                    caprust_core::ModelStatus::Ready => {
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new("✓ Use this")
+                                                .color(egui::Color32::WHITE)
+                                                .strong(),
+                                        )
+                                        .fill(egui::Color32::from_rgb(34, 139, 230));
+                                        if ui.add(btn).clicked() {
+                                            chosen = Some((m.id.clone(), m.language.clone()));
+                                        }
+                                    }
+                                    caprust_core::ModelStatus::Error => {
+                                        ui.label(
+                                            egui::RichText::new("Error")
+                                                .color(egui::Color32::from_rgb(230, 90, 90)),
+                                        );
+                                    }
+                                },
+                            );
+                        });
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.label(
+                        egui::RichText::new("Downloads go to Settings → Paths → AI models folder.")
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
+                    );
+                });
+            });
+
+        if cancel || !open {
+            self.model_prompt = None;
+            return;
+        }
+
+        if let Some((model_id, lang)) = chosen {
+            let clip = match kind {
+                caprust_core::ModelKind::Caption => {
+                    caprust_core::Clip::new_captions(0, self.playhead_ms, 4000, &model_id, &lang)
+                }
+                caprust_core::ModelKind::Narration => caprust_core::Clip::new_narration(
+                    0,
+                    self.playhead_ms,
+                    3000,
+                    &model_id,
+                    &model_id,
+                    "Narration text goes here",
+                ),
+            };
+            let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+            self.model_prompt = None;
+        }
+    }
+
     fn show_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
         egui::Window::new("Settings")
@@ -1473,6 +1747,7 @@ enum ClipAction {
     SetPlayhead(u64),
     Select(uuid::Uuid),
     DragStart(uuid::Uuid, usize, u64),
+    SetTrimEdge(uuid::Uuid, Option<TrimEdge>),
     DragDelta(uuid::Uuid, f32, f32),
     DragEnd(uuid::Uuid),
     Delete(uuid::Uuid),
@@ -1562,6 +1837,9 @@ impl eframe::App for CapRustApp {
         }
         if self.export_open {
             self.show_export_window(ctx);
+        }
+        if self.model_prompt.is_some() {
+            self.show_model_prompt_window(ctx);
         }
     }
 
