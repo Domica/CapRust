@@ -64,6 +64,7 @@ pub struct CapRustApp {
     pub clip_drag: Option<ClipDrag>,
     pub settings: AppSettings,
     pub ffmpeg_status: caprust_core::FfmpegStatus,
+    pub last_dnd_payload: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +108,7 @@ impl CapRustApp {
             clip_drag: None,
             settings,
             ffmpeg_status,
+            last_dnd_payload: None,
         }
     }
 
@@ -483,6 +485,7 @@ impl CapRustApp {
 
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .drag_to_scroll(false)
                     .show(ui, |ui| {
                         ui.horizontal_top(|ui| {
                             // LEFT: fixed header column
@@ -1063,6 +1066,7 @@ impl CapRustApp {
             .resizable(false)
             .collapsible(false)
             .default_width(420.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 if crate::panels::export_window::show(ui, &mut self.export_state, total_ms) {
                     tracing::info!(
