@@ -789,8 +789,9 @@ impl CapRustApp {
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
             if !self.preview.playing {
-                // Stop → clear stale pending so we decode the current frame cleanly.
+                // Stop → clear pending + queued want so decode pauses cleanly.
                 self.preview_player.pending = None;
+                self.preview_player.want = None;
             }
         }
         if ev.toggle_loop {
@@ -1585,13 +1586,15 @@ impl CapRustApp {
             .default_width(260.0)
             .min_width(200.0)
             .show(ctx, |ui| {
-                ui.heading("Media Library");
-                ui.separator();
-                let out =
-                    crate::panels::media_bin::show(ui, &mut self.project, &mut self.media_bin);
+                let out = crate::panels::asset_browser::show(
+                    ui,
+                    &mut self.project,
+                    &mut self.asset_browser,
+                    &mut self.media_bin,
+                );
 
                 // Enqueue background probe + thumbnail jobs for new imports.
-                for id in out.newly_imported {
+                for id in out.media.newly_imported {
                     if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
                         tracing::info!("enqueueing probe for {}", item.path);
                         let item_clone = item.clone();
@@ -1600,10 +1603,16 @@ impl CapRustApp {
                 }
 
                 // Remove requested items from library (files on disk are kept).
-                for id in out.remove_requested {
+                for id in out.media.remove_requested {
                     self.project.media.remove(id);
                     self.clip_textures.remove(&id);
                     tracing::info!("media removed from library: {id}");
+                }
+
+                // Preset clicked (transitions/effects/filters/text).
+                // Wiring to selected timeline clip is a follow-up PR.
+                if let Some((id, tab)) = out.preset_clicked {
+                    tracing::info!("preset clicked: {:?} → {}", tab, id);
                 }
             });
 
@@ -1748,7 +1757,9 @@ impl CapRustApp {
                 let tex_size = tex.size_vec2();
                 let avail_w = rect.width() - 16.0;
                 let avail_h = rect.height() - 16.0;
-                let scale = (avail_w / tex_size.x).min(avail_h / tex_size.y).min(1.0);
+                // Fit: scale to fill the panel, allow upscale so 1/4
+                // quality still fills the frame area.
+                let scale = (avail_w / tex_size.x).min(avail_h / tex_size.y);
                 let draw_size = tex_size * scale;
                 let draw_rect = egui::Rect::from_center_size(rect.center(), draw_size);
                 ui.painter().image(

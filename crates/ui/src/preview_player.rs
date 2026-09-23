@@ -16,6 +16,7 @@ pub struct FrameKey {
     pub height: u32,
 }
 
+#[derive(Clone)]
 struct FrameJob {
     key: FrameKey,
     ffmpeg: PathBuf,
@@ -40,6 +41,10 @@ pub struct PreviewPlayer {
     pub decoded: u64,
     tx: Option<Sender<FrameJob>>,
     rx: Option<Receiver<FrameResult>>,
+    /// Latest queued-but-not-yet-sent request. Replaces `pending` when
+    /// the worker finishes the current frame. Guarantees at most 1 job
+    /// in flight + 1 job waiting.
+    want: Option<FrameJob>,
 }
 
 impl std::fmt::Debug for PreviewPlayer {
@@ -93,6 +98,7 @@ impl PreviewPlayer {
             decoded: 0,
             tx: Some(tx),
             rx: Some(rx),
+            want: None,
         }
     }
 
@@ -171,6 +177,23 @@ impl PreviewPlayer {
             self.last_key = Some(res.key);
             self.has_frame = true;
             self.decoded += 1;
+        }
+
+        // Send the latest queued request if any (keeps at most 1 in flight).
+        if self.pending.is_none() {
+            if let Some(job) = self.want.take() {
+                if self.last_key != Some(job.key) {
+                    if let Some(tx) = self.tx.as_ref() {
+                        tracing::info!(
+                            "preview: send queued clip={} at={}ms",
+                            job.key.clip_id,
+                            job.key.at_ms
+                        );
+                        self.pending = Some(job.key);
+                        let _ = tx.send(job);
+                    }
+                }
+            }
         }
     }
 
