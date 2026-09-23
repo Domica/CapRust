@@ -1510,8 +1510,17 @@ impl CapRustApp {
             .show(ctx, |ui| {
                 ui.heading("Media Library");
                 ui.separator();
-                let _dragging =
+                let out =
                     crate::panels::media_bin::show(ui, &mut self.project, &mut self.media_bin);
+
+                // Enqueue background probe + thumbnail jobs for new imports.
+                for id in out.newly_imported {
+                    if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
+                        tracing::info!("enqueueing probe for {}", item.path);
+                        let item_clone = item.clone();
+                        self.job_runner.enqueue(&item_clone);
+                    }
+                }
             });
 
         egui::SidePanel::right("right_panel")
@@ -1863,24 +1872,6 @@ impl eframe::App for CapRustApp {
         let _ = self.job_runner.drain(&mut self.project);
 
         // Keyboard shortcuts (only in Editor + when enabled in Settings)
-        // Debug: log the current value of the toggle once per second.
-        {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static LAST: AtomicU64 = AtomicU64::new(0);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            if now != LAST.load(Ordering::Relaxed) {
-                LAST.store(now, Ordering::Relaxed);
-                tracing::info!(
-                    "shortcuts toggle = {} (mode = {:?})",
-                    self.settings.enable_shortcuts,
-                    self.mode
-                );
-            }
-        }
-
         if self.mode == AppMode::Editor && self.settings.enable_shortcuts {
             let events: Vec<egui::Key> = ctx.input(|i| {
                 i.events
