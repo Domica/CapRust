@@ -1,3 +1,4 @@
+pub mod asset_browser;
 pub mod clip_properties;
 pub mod export_dialog;
 pub mod export_window;

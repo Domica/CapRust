@@ -785,6 +785,10 @@ impl CapRustApp {
         }
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
+            if !self.preview.playing {
+                // Stop → clear stale pending so we decode the current frame cleanly.
+                self.preview_player.pending = None;
+            }
         }
         if ev.toggle_loop {
             self.preview.loop_playback = !self.preview.loop_playback;
@@ -1652,9 +1656,14 @@ impl CapRustApp {
             ui.painter()
                 .rect_filled(rect, 6.0, egui::Color32::from_gray(12));
 
-            // Target frame size from project aspect
+            // Target frame size — respects the Quality dropdown.
             let (pw, ph) = self.project.project_dimensions();
-            let (tw, th) = caprust_media_io::player::preview_size(pw, ph, 640);
+            let max_side = match self.preview.quality {
+                crate::panels::preview_window::PreviewQuality::Quarter => 320,
+                crate::panels::preview_window::PreviewQuality::Half => 480,
+                crate::panels::preview_window::PreviewQuality::Full => 640,
+            };
+            let (tw, th) = caprust_media_io::player::preview_size(pw, ph, max_side);
 
             // Find video clip under playhead on a visible track
             let playhead = self.playhead_ms;
