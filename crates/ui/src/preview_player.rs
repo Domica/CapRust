@@ -197,6 +197,13 @@ impl PreviewPlayer {
         }
     }
 
+    /// Stop any in-flight or queued frame request.
+    /// The last decoded texture stays on screen.
+    pub fn cancel_pending(&mut self) {
+        self.pending = None;
+        self.want = None;
+    }
+
     /// Forget the current frame (e.g. after project change).
     pub fn clear(&mut self) {
         self.texture = None;

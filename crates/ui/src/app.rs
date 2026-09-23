@@ -789,9 +789,7 @@ impl CapRustApp {
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
             if !self.preview.playing {
-                // Stop → clear pending + queued want so decode pauses cleanly.
-                self.preview_player.pending = None;
-                self.preview_player.want = None;
+                self.preview_player.cancel_pending();
             }
         }
         if ev.toggle_loop {
@@ -1583,8 +1581,8 @@ impl CapRustApp {
 
         egui::SidePanel::left("left_panel")
             .resizable(true)
-            .default_width(260.0)
-            .min_width(200.0)
+            .default_width(280.0)
+            .min_width(120.0)
             .show(ctx, |ui| {
                 let out = crate::panels::asset_browser::show(
                     ui,
