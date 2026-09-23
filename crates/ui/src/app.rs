@@ -1042,8 +1042,12 @@ impl CapRustApp {
                                         pending_actions.push(ClipAction::Select(clip_id));
                                     }
 
-                                    // Manual drag detection: hovered + primary down.
-                                    if resp.hovered()
+                                    // Manual drag detection. Uses explicit
+                                    // rect-contains-pointer + primary-down, since
+                                    // resp.hovered() is unreliable while holding
+                                    // the button inside a ScrollArea.
+                                    let pointer_on_clip = ui.rect_contains_pointer(clip_rect);
+                                    if pointer_on_clip
                                         && pointer_down
                                         && clip_drag_snapshot.is_none()
                                     {
