@@ -43,6 +43,14 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize) -> bool {
     let mut changed = false;
 
     ui.horizontal(|ui| {
+        // Pinned lanes get a marker so users know they're always on top.
+        if track.pinned {
+            ui.label(
+                RichText::new("📌")
+                    .size(11.0)
+                    .color(Color32::from_rgb(120, 220, 140)),
+            );
+        }
         // Track name + kind icon
         ui.label(
             RichText::new(format!("{} {}", track.kind.icon(), track.name))
