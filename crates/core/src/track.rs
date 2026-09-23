@@ -1,14 +1,20 @@
-//! Track model — video/audio/text/overlay lanes.
+//! Track model — video/audio/text/captions/overlay lanes.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrackKind {
+    /// Regular video content. Multiple allowed.
     Video,
+    /// Audio lane. Multiple allowed.
     Audio,
+    /// Text overlays (lower thirds, titles) — user placed.
     Text,
+    /// Pinned overlay lane (watermark, logo, global effect). Only one.
     Overlay,
+    /// Dedicated captions lane (burn-in + sidecar SRT/VTT export). Only one.
+    Captions,
 }
 
 impl TrackKind {
@@ -18,6 +24,7 @@ impl TrackKind {
             Self::Audio => "Audio",
             Self::Text => "Text",
             Self::Overlay => "Overlay",
+            Self::Captions => "Captions",
         }
     }
     pub fn icon(&self) -> &'static str {
@@ -26,15 +33,25 @@ impl TrackKind {
             Self::Audio => "🎵",
             Self::Text => "T",
             Self::Overlay => "✦",
+            Self::Captions => "💬",
         }
     }
     pub fn default_height(&self) -> f32 {
-        // Reduced lane height per request
         match self {
-            Self::Video | Self::Overlay => 46.0,
+            Self::Video => 46.0,
+            Self::Overlay => 42.0,
             Self::Audio => 38.0,
             Self::Text => 34.0,
+            Self::Captions => 32.0,
         }
+    }
+    /// Overlay + Captions lanes never spawn more than one of their kind.
+    pub fn is_singleton(&self) -> bool {
+        matches!(self, Self::Overlay | Self::Captions)
+    }
+    /// Pinned lanes are always sorted to the top of the timeline.
+    pub fn is_pinned_by_default(&self) -> bool {
+        matches!(self, Self::Overlay)
     }
 }
 
@@ -46,7 +63,11 @@ pub struct Track {
     pub locked: bool,
     pub visible: bool,
     pub muted: bool,
-    /// Overrides `kind.default_height()` if user resizes.
+    /// If true, this lane always renders above all non-pinned lanes,
+    /// regardless of array order. Used by the Overlay lane.
+    #[serde(default)]
+    pub pinned: bool,
+    /// Overrides `kind.default_height()` if the user resizes.
     pub height: f32,
 }
 
@@ -59,16 +80,38 @@ impl Track {
             locked: false,
             visible: true,
             muted: false,
+            pinned: kind.is_pinned_by_default(),
             height: kind.default_height(),
         }
     }
 }
 
-/// Default project tracks: 2 video, 1 audio.
+/// Default project tracks:
+///  - Overlay (pinned, top)  ← watermark / global effect
+///  - V1, V2                 ← main video content
+///  - A1                     ← audio
+///  - Captions               ← dedicated captions lane
 pub fn default_tracks() -> Vec<Track> {
     vec![
+        Track::new("Overlay", TrackKind::Overlay),
         Track::new("V1", TrackKind::Video),
         Track::new("V2", TrackKind::Video),
         Track::new("A1", TrackKind::Audio),
+        Track::new("Captions", TrackKind::Captions),
     ]
+}
+
+/// Returns the visible track order: pinned first (in insertion order),
+/// then non-pinned in their array order.
+pub fn display_order(tracks: &[Track]) -> Vec<usize> {
+    let mut pinned: Vec<usize> = Vec::new();
+    let mut normal: Vec<usize> = Vec::new();
+    for (i, t) in tracks.iter().enumerate() {
+        if t.pinned {
+            pinned.push(i);
+        } else {
+            normal.push(i);
+        }
+    }
+    pinned.into_iter().chain(normal).collect()
 }

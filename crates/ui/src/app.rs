@@ -406,13 +406,13 @@ impl CapRustApp {
         let screen_h = ctx.screen_rect().height();
         egui::TopBottomPanel::bottom("timeline")
             .resizable(true)
-            .default_height(220.0)
+            .default_height(240.0)
             .min_height(150.0)
             .max_height(screen_h * 0.75)
             .show(ctx, |ui| {
                 ui.set_min_height(150.0);
 
-                // Tick fake downloads
+                // Tick fake model downloads
                 self.project.models.tick_downloads(1.0 / 60.0);
 
                 // --- Toolbar ---
@@ -430,29 +430,25 @@ impl CapRustApp {
                 ui.separator();
                 self.handle_timeline_events(ev);
 
-                // --- Ruler + tracks ---
+                // --- Ruler + lanes ---
                 let total_ms = self.total_duration_ms();
-                let content_width = (total_ms.max(20_000) as f32 * 0.05 * self.timeline_zoom)
-                    .max(ui.available_width());
-
-                let px_per_ms = content_width / total_ms.max(20_000) as f32;
-                let px_per_ms = px_per_ms * self.timeline_zoom / self.timeline_zoom.max(1.0);
+                let content_ms = (total_ms + 20_000).max(30_000);
+                let px_per_ms =
+                    (ui.available_width() * 0.85 * self.timeline_zoom) / content_ms as f32;
                 let px_per_ms = px_per_ms.max(0.002);
+                let content_width = (content_ms as f32 * px_per_ms).max(ui.available_width());
 
-                // Track headers first (left column), then lanes (right).
-                let tracks_snapshot: Vec<(usize, caprust_core::Track)> =
-                    self.project.tracks.iter().cloned().enumerate().collect();
+                let header_w = crate::timeline::track_header::HEADER_WIDTH;
+                let ruler_h = crate::timeline::ruler::RULER_HEIGHT;
 
+                // Scroll wrapper
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // ----- Ruler row -----
+                        // ---------------- Ruler row ----------------
                         ui.horizontal(|ui| {
-                            // Spacer that matches header width
-                            ui.allocate_space(egui::vec2(
-                                crate::timeline::track_header::HEADER_WIDTH,
-                                crate::timeline::ruler::RULER_HEIGHT,
-                            ));
+                            // Spacer matching header width
+                            ui.allocate_space(egui::vec2(header_w, ruler_h));
 
                             if let Some(ms) = crate::timeline::ruler::show(
                                 ui,
@@ -461,133 +457,226 @@ impl CapRustApp {
                                 self.playhead_ms,
                                 total_ms,
                             ) {
-                                self.playhead_ms = ms.min(total_ms);
+                                self.playhead_ms = ms.min(total_ms.max(1));
                             }
                         });
 
-                        // ----- Track rows -----
+                        // ---------------- Track rows ----------------
+                        // Build a helper index: which track_idx does each lane belong to?
+                        let tracks_len = self.project.tracks.len();
+                        if tracks_len == 0 {
+                            ui.label("No tracks.");
+                            return;
+                        }
+
+                        // Snapshot tracks for iteration (avoid borrow conflicts)
+                        let mut updated_tracks: Vec<caprust_core::Track> =
+                            self.project.tracks.clone();
                         let mut header_changed = false;
-                        let tracks_len = tracks_snapshot.len();
-                        let mut new_tracks: Vec<caprust_core::Track> = self.project.tracks.clone();
 
-                        for (idx, mut track) in tracks_snapshot {
+                        // Pinned lanes first (e.g. Overlay), then normal order.
+                        let order = caprust_core::track::display_order(&updated_tracks);
+
+                        // Dragged media id (if any) — used below after we render lanes
+                        let mut pending_drop: Option<(uuid::Uuid, usize, u64)> = None;
+
+                        for idx in order {
+                            let mut track = updated_tracks[idx].clone();
                             let row_h = track.height;
-                            ui.horizontal(|ui| {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(crate::timeline::track_header::HEADER_WIDTH, row_h),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ui.set_width(crate::timeline::track_header::HEADER_WIDTH);
-                                        if crate::timeline::track_header::show(ui, &mut track, idx)
-                                        {
-                                            header_changed = true;
-                                        }
-                                    },
-                                );
-                                if let Some(slot) = new_tracks.get_mut(idx) {
-                                    *slot = track.clone();
-                                }
 
-                                // Lane background
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(content_width, row_h),
-                                    egui::Sense::hover(),
-                                );
-                                let lane_bg = if track.visible {
-                                    egui::Color32::from_gray(22)
-                                } else {
-                                    egui::Color32::from_gray(16)
-                                };
-                                ui.painter().rect_filled(rect, 0.0, lane_bg);
+                            // Reserve full row (header + lane). We draw manually so the lane
+                            // is a drop target that knows its own bounds.
+                            let row_total_w = header_w + content_width;
+                            let (row_rect, _row_resp) = ui.allocate_exact_size(
+                                egui::vec2(row_total_w, row_h),
+                                egui::Sense::hover(),
+                            );
+                            let header_rect = egui::Rect::from_min_size(
+                                row_rect.min,
+                                egui::vec2(header_w, row_h),
+                            );
+                            let lane_rect = egui::Rect::from_min_size(
+                                egui::pos2(row_rect.min.x + header_w, row_rect.min.y),
+                                egui::vec2(content_width, row_h),
+                            );
+
+                            // --- Header ---
+                            let mut header_ui = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(header_rect)
+                                    .layout(egui::Layout::top_down(egui::Align::Min)),
+                            );
+                            if crate::timeline::track_header::show(&mut header_ui, &mut track, idx)
+                            {
+                                header_changed = true;
+                            }
+
+                            // --- Lane bg ---
+                            let lane_bg = if track.visible {
+                                egui::Color32::from_gray(22)
+                            } else {
+                                egui::Color32::from_gray(16)
+                            };
+                            ui.painter().rect_filled(lane_rect, 0.0, lane_bg);
+
+                            // Pinned marker: subtle green line on the left edge
+                            if track.pinned {
                                 ui.painter().line_segment(
                                     [
-                                        egui::Pos2::new(rect.left(), rect.bottom() - 0.5),
-                                        egui::Pos2::new(rect.right(), rect.bottom() - 0.5),
+                                        egui::Pos2::new(lane_rect.left(), lane_rect.top() + 2.0),
+                                        egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 2.0),
                                     ],
-                                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
+                                    egui::Stroke::new(
+                                        3.0_f32,
+                                        egui::Color32::from_rgb(80, 200, 120),
+                                    ),
                                 );
+                            }
+                            ui.painter().line_segment(
+                                [
+                                    egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 0.5),
+                                    egui::Pos2::new(lane_rect.right(), lane_rect.bottom() - 0.5),
+                                ],
+                                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
+                            );
 
-                                // Draw clips assigned to this lane (by track_index)
-                                let track_idx = idx;
-                                for clip in self.project.clips.iter() {
-                                    if clip.track_index != track_idx {
-                                        continue;
-                                    }
-                                    let x0 = rect.left() + (clip.start_time_ms as f32) * px_per_ms;
-                                    let x1 = rect.left()
-                                        + ((clip.start_time_ms + clip.duration_ms) as f32)
-                                            * px_per_ms;
-                                    let clip_rect = egui::Rect::from_min_max(
-                                        egui::pos2(x0, rect.top() + 3.0),
-                                        egui::pos2(x1.max(x0 + 6.0), rect.bottom() - 3.0),
-                                    );
-                                    let color = match &clip.clip_type {
-                                        caprust_core::ClipType::Video { .. } => {
-                                            egui::Color32::from_rgb(60, 110, 180)
-                                        }
-                                        caprust_core::ClipType::Audio { .. } => {
-                                            egui::Color32::from_rgb(90, 60, 140)
-                                        }
-                                        caprust_core::ClipType::Image { .. } => {
-                                            egui::Color32::from_rgb(60, 140, 110)
-                                        }
-                                        caprust_core::ClipType::TextOverlay { .. } => {
-                                            egui::Color32::from_rgb(180, 130, 60)
-                                        }
-                                        caprust_core::ClipType::Captions { .. } => {
-                                            egui::Color32::from_rgb(180, 80, 120)
-                                        }
-                                        caprust_core::ClipType::Narration { .. } => {
-                                            egui::Color32::from_rgb(120, 100, 200)
-                                        }
-                                    };
-                                    ui.painter().rect_filled(clip_rect, 4.0, color);
-                                    let label = match &clip.clip_type {
-                                        caprust_core::ClipType::TextOverlay { content, .. } => {
-                                            content.clone()
-                                        }
-                                        caprust_core::ClipType::Captions { .. } => {
-                                            "💬 Captions".into()
-                                        }
-                                        caprust_core::ClipType::Narration { .. } => {
-                                            "🎙 Narration".into()
-                                        }
-                                        caprust_core::ClipType::Video { path, .. } => {
-                                            std::path::Path::new(path)
-                                                .file_name()
-                                                .map(|s| s.to_string_lossy().to_string())
-                                                .unwrap_or_else(|| "video".into())
-                                        }
-                                        _ => "clip".into(),
-                                    };
-                                    ui.painter().text(
-                                        clip_rect.left_top() + egui::vec2(6.0, 4.0),
-                                        egui::Align2::LEFT_TOP,
-                                        label,
-                                        egui::FontId::proportional(11.0),
-                                        egui::Color32::WHITE,
-                                    );
+                            // --- Draw clips on this lane ---
+                            for clip in self.project.clips.iter() {
+                                if clip.track_index != idx {
+                                    continue;
                                 }
-                            });
+                                let x0 = lane_rect.left() + (clip.start_time_ms as f32) * px_per_ms;
+                                let x1 = lane_rect.left()
+                                    + ((clip.start_time_ms + clip.duration_ms) as f32) * px_per_ms;
+                                let clip_rect = egui::Rect::from_min_max(
+                                    egui::pos2(x0, lane_rect.top() + 3.0),
+                                    egui::pos2(x1.max(x0 + 6.0), lane_rect.bottom() - 3.0),
+                                );
+                                let color = match &clip.clip_type {
+                                    caprust_core::ClipType::Video { .. } => {
+                                        egui::Color32::from_rgb(60, 110, 180)
+                                    }
+                                    caprust_core::ClipType::Audio { .. } => {
+                                        egui::Color32::from_rgb(90, 60, 140)
+                                    }
+                                    caprust_core::ClipType::Image { .. } => {
+                                        egui::Color32::from_rgb(60, 140, 110)
+                                    }
+                                    caprust_core::ClipType::TextOverlay { .. } => {
+                                        egui::Color32::from_rgb(180, 130, 60)
+                                    }
+                                    caprust_core::ClipType::Captions { .. } => {
+                                        egui::Color32::from_rgb(180, 80, 120)
+                                    }
+                                    caprust_core::ClipType::Narration { .. } => {
+                                        egui::Color32::from_rgb(120, 100, 200)
+                                    }
+                                };
+                                ui.painter().rect_filled(clip_rect, 4.0, color);
+                                let label = match &clip.clip_type {
+                                    caprust_core::ClipType::TextOverlay { content, .. } => {
+                                        content.clone()
+                                    }
+                                    caprust_core::ClipType::Captions { .. } => "💬 Captions".into(),
+                                    caprust_core::ClipType::Narration { .. } => {
+                                        "🎙 Narration".into()
+                                    }
+                                    caprust_core::ClipType::Video { path, .. }
+                                    | caprust_core::ClipType::Audio { path, .. }
+                                    | caprust_core::ClipType::Image { path, .. } => {
+                                        std::path::Path::new(path)
+                                            .file_name()
+                                            .map(|s| s.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "clip".into())
+                                    }
+                                };
+                                ui.painter().text(
+                                    clip_rect.left_top() + egui::vec2(6.0, 4.0),
+                                    egui::Align2::LEFT_TOP,
+                                    label,
+                                    egui::FontId::proportional(11.0),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+
+                            // --- Lane as drop target ---
+                            let lane_resp = ui.interact(
+                                lane_rect,
+                                egui::Id::new(("lane_drop", idx)),
+                                egui::Sense::hover(),
+                            );
+
+                            if let Some(payload) = lane_resp.dnd_hover_payload::<uuid::Uuid>() {
+                                // Highlight
+                                ui.painter().rect_stroke(
+                                    lane_rect.shrink(2.0),
+                                    4.0,
+                                    egui::Stroke::new(
+                                        2.0_f32,
+                                        egui::Color32::from_rgb(90, 160, 240),
+                                    ),
+                                    egui::StrokeKind::Inside,
+                                );
+                                let _ = payload;
+                            }
+
+                            if let Some(payload) = lane_resp.dnd_release_payload::<uuid::Uuid>() {
+                                // Determine time from pointer x
+                                let release_time_ms =
+                                    if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                                        let rel_x = (pos.x - lane_rect.left()).max(0.0);
+                                        (rel_x / px_per_ms) as u64
+                                    } else {
+                                        0
+                                    };
+                                pending_drop = Some((*payload, idx, release_time_ms));
+                            }
+
+                            if header_changed && updated_tracks.get(idx).is_some() {
+                                updated_tracks[idx] = track;
+                            }
                         }
 
                         if header_changed {
-                            self.project.tracks = new_tracks;
+                            self.project.tracks = updated_tracks;
                         }
-                        let _ = tracks_len;
-                    });
 
-                // Write back track header changes
-                // (done outside closure above via snapshot pattern)
-                // NOTE: since we cloned, changes to `track` were local. To keep
-                // this simple and correct, we capture changes via a temp vec.
-                // See next block for the actual write-back handled below.
+                        // Apply any pending drop
+                        if let Some((media_id, track_idx, time_ms)) = pending_drop {
+                            let media = self
+                                .project
+                                .media
+                                .items
+                                .iter()
+                                .find(|m| m.id == media_id)
+                                .cloned();
+                            if let Some(item) = media {
+                                use caprust_core::{Clip, MediaKind};
+                                let dur = if item.duration_ms > 0 {
+                                    item.duration_ms
+                                } else {
+                                    3000
+                                };
+                                let clip = match item.kind {
+                                    MediaKind::Video => {
+                                        Clip::new_video(&item.path, track_idx, time_ms, dur)
+                                    }
+                                    MediaKind::Audio => {
+                                        Clip::new_audio(&item.path, track_idx, time_ms, dur)
+                                    }
+                                    MediaKind::Image => {
+                                        Clip::new_image(&item.path, track_idx, time_ms, dur)
+                                    }
+                                };
+                                let cmd =
+                                    caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                            }
+                        }
+                    });
             });
     }
 
-    // ---------------------------------------------------------------
-    // Editor
-    // ---------------------------------------------------------------
     fn show_editor(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
