@@ -231,8 +231,8 @@ impl CapRustApp {
             });
             // Two columns: left = New Project form, right = Recent
             ui.horizontal_top(|ui| {
-            // Center the two columns horizontally.
-            ui.add_space(((ui.available_width() - 884.0) / 2.0).max(12.0));
+                // Center the two columns horizontally.
+                ui.add_space(((ui.available_width() - 884.0) / 2.0).max(12.0));
                 // LEFT: New Project form (existing)
                 ui.vertical(|ui| {
                     ui.set_min_width(520.0);
