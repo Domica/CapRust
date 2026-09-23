@@ -210,6 +210,8 @@ impl CapRustApp {
                 let entry = caprust_core::recent::entry_from(&self.project, path);
                 self.recent.push(entry);
                 tracing::info!("Loaded project {path}");
+                // Auto-regenerate thumbnails for older projects or after cache clear.
+                self.regen_missing_thumbnails();
             }
             Err(e) => tracing::error!("Load failed: {e}"),
         }
@@ -476,7 +478,16 @@ impl CapRustApp {
                     if ui.button(tr("menu-file-clear-cache")).clicked() {
                         if let Some(path) = self.project.project_path.clone() {
                             let _ = caprust_core::cache::clear_cache(std::path::Path::new(&path));
+                            // Textures in memory must be dropped too.
+                            self.clip_textures.clear();
+                            self.media_bin.thumb_cache = Default::default();
+                            // Re-generate in background.
+                            self.regen_missing_thumbnails();
                         }
+                        ui.close_menu();
+                    }
+                    if ui.button(tr("menu-file-regen-thumbs")).clicked() {
+                        self.regen_missing_thumbnails();
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-file-settings")).clicked() {
@@ -1564,6 +1575,13 @@ impl CapRustApp {
                         self.job_runner.enqueue(&item_clone);
                     }
                 }
+
+                // Remove requested items from library (files on disk are kept).
+                for id in out.remove_requested {
+                    self.project.media.remove(id);
+                    self.clip_textures.remove(&id);
+                    tracing::info!("media removed from library: {id}");
+                }
             });
 
         egui::SidePanel::right("right_panel")
@@ -1826,6 +1844,37 @@ impl CapRustApp {
             let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
             self.model_prompt = None;
+        }
+    }
+
+    /// Enqueue probe+thumbnail jobs for any media that has no thumbnail
+    /// on disk. Call after loading a project and after cache clear.
+    fn regen_missing_thumbnails(&mut self) {
+        let Some(proj_path) = self.project.project_path.clone() else {
+            return;
+        };
+        if !self.ffmpeg_status.is_available() {
+            tracing::warn!("regen skipped: ffmpeg/ffprobe not detected");
+            return;
+        }
+        let mut count = 0usize;
+        for item in &self.project.media.items {
+            if !matches!(
+                item.kind,
+                caprust_core::MediaKind::Video | caprust_core::MediaKind::Image
+            ) {
+                continue;
+            }
+            let jpg =
+                caprust_core::cache::thumbnail_path(std::path::Path::new(&proj_path), item.id);
+            if !jpg.is_file() {
+                let item_clone = item.clone();
+                self.job_runner.enqueue(&item_clone);
+                count += 1;
+            }
+        }
+        if count > 0 {
+            tracing::info!("regen: enqueued {count} missing thumbnails");
         }
     }
 
