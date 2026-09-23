@@ -12,6 +12,8 @@ pub struct ProjectState {
     pub base_resolution: u32,
     pub export_settings: ExportSettings,
     pub locale: String,
+    pub frame_rate: crate::frame_rate::FrameRate,
+    pub project_path: Option<String>,
 }
 
 impl Default for ProjectState {
@@ -25,6 +27,8 @@ impl Default for ProjectState {
             locale: sys_locale::get_locale()
                 .map(|l| l.split('-').next().unwrap_or("en").to_string())
                 .unwrap_or_else(|| "en".into()),
+            frame_rate: crate::frame_rate::FrameRate::default(),
+            project_path: None,
         }
     }
 }
