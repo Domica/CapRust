@@ -14,6 +14,8 @@ pub struct ProjectState {
     pub locale: String,
     pub frame_rate: crate::frame_rate::FrameRate,
     pub project_path: Option<String>,
+    pub media: crate::media::MediaLibrary,
+    pub models: crate::models::ModelRegistry,
 }
 
 impl Default for ProjectState {
@@ -29,6 +31,8 @@ impl Default for ProjectState {
                 .unwrap_or_else(|| "en".into()),
             frame_rate: crate::frame_rate::FrameRate::default(),
             project_path: None,
+            media: crate::media::MediaLibrary::default(),
+            models: crate::models::ModelRegistry::default(),
         }
     }
 }
