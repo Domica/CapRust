@@ -6,6 +6,7 @@ use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
 use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
+use caprust_core::recent::{RecentList, RecentProject};
 use caprust_core::settings::AppSettings;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use eframe::egui;
@@ -65,6 +66,7 @@ pub struct CapRustApp {
     pub settings: AppSettings,
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<uuid::Uuid>,
+    pub recent: RecentList,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +91,11 @@ impl CapRustApp {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let ffmpeg_status = caprust_core::detect_ffmpeg(&settings);
+        let recent: RecentList = cc
+            .storage
+            .and_then(|s| s.get_string("recent"))
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
         Self {
             mode: AppMode::StartScreen,
             project: ProjectState::default(),
@@ -110,6 +117,7 @@ impl CapRustApp {
             settings,
             ffmpeg_status,
             last_dnd_payload: None,
+            recent: recent,
         }
     }
 
@@ -124,6 +132,50 @@ impl CapRustApp {
         };
         self.undo_stack = UndoStack::new();
         self.mode = AppMode::Editor;
+        // Persist initial file + register in recents
+        self.save_project_to_disk();
+    }
+
+    fn project_file_path(&self) -> Option<std::path::PathBuf> {
+        let folder = self.project.project_path.as_ref()?;
+        Some(caprust_core::project_io::project_file_for(
+            std::path::Path::new(folder),
+            &self.project.name,
+        ))
+    }
+
+    fn save_project_to_disk(&mut self) {
+        let Some(path) = self.project_file_path() else {
+            return;
+        };
+        match caprust_core::project_io::save_project(&self.project, &path) {
+            Ok(()) => {
+                let entry =
+                    caprust_core::recent::entry_from(&self.project, &path.to_string_lossy());
+                self.recent.push(entry);
+                tracing::info!("Saved project to {}", path.display());
+            }
+            Err(e) => tracing::error!("Save failed: {e}"),
+        }
+    }
+
+    fn load_project_from(&mut self, path: &str) {
+        match caprust_core::project_io::load_project(std::path::Path::new(path)) {
+            Ok(state) => {
+                // Ensure project_path points to the folder containing the file
+                let mut state = state;
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    state.project_path = Some(parent.to_string_lossy().to_string());
+                }
+                self.project = state;
+                self.undo_stack = UndoStack::new();
+                self.mode = AppMode::Editor;
+                let entry = caprust_core::recent::entry_from(&self.project, path);
+                self.recent.push(entry);
+                tracing::info!("Loaded project {path}");
+            }
+            Err(e) => tracing::error!("Load failed: {e}"),
+        }
     }
 
     fn total_duration_ms(&self) -> u64 {
@@ -139,6 +191,10 @@ impl CapRustApp {
     // Start screen
     // ---------------------------------------------------------------
     fn show_start_screen(&mut self, ctx: &egui::Context) {
+        let mut load_path: Option<String> = None;
+        let mut forget_path: Option<String> = None;
+        let mut delete_from_disk: Option<String> = None;
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
@@ -147,75 +203,179 @@ impl CapRustApp {
                 ui.label("Social-first video editor");
                 ui.add_space(30.0);
             });
-            ui.vertical_centered(|ui| {
-                egui::Frame::group(ui.style())
-                    .inner_margin(24.0)
-                    .show(ui, |ui| {
-                        ui.set_width(480.0);
-                        ui.heading("New Project");
-                        ui.separator();
-                        egui::Grid::new("new_project_grid")
-                            .num_columns(2)
-                            .spacing([12.0, 10.0])
-                            .show(ui, |ui| {
-                                ui.label("Name");
-                                ui.text_edit_singleline(&mut self.draft.name);
-                                ui.end_row();
-                                ui.label("Location");
-                                ui.horizontal(|ui| {
-                                    ui.text_edit_singleline(&mut self.draft.location);
-                                    if ui.button("Browse…").clicked() {
-                                        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                            self.draft.location = dir.to_string_lossy().to_string();
-                                        }
-                                    }
-                                });
-                                ui.end_row();
-                                ui.label("Format");
-                                egui::ComboBox::from_id_salt("draft_aspect")
-                                    .selected_text(self.draft.aspect_ratio.label())
-                                    .show_ui(ui, |ui| {
-                                        for preset in AspectRatio::presets() {
-                                            ui.selectable_value(
-                                                &mut self.draft.aspect_ratio,
-                                                preset.clone(),
-                                                preset.label(),
-                                            );
+            // Two columns: left = New Project form, right = Recent
+            ui.horizontal_top(|ui| {
+                // LEFT: New Project form (existing)
+                ui.vertical(|ui| {
+                    ui.set_min_width(520.0);
+                    egui::Frame::group(ui.style())
+                        .inner_margin(24.0)
+                        .show(ui, |ui| {
+                            ui.set_width(480.0);
+                            ui.heading("New Project");
+                            ui.separator();
+                            egui::Grid::new("new_project_grid")
+                                .num_columns(2)
+                                .spacing([12.0, 10.0])
+                                .show(ui, |ui| {
+                                    ui.label("Name");
+                                    ui.text_edit_singleline(&mut self.draft.name);
+                                    ui.end_row();
+                                    ui.label("Location");
+                                    ui.horizontal(|ui| {
+                                        ui.text_edit_singleline(&mut self.draft.location);
+                                        if ui.button("Browse…").clicked() {
+                                            if let Some(dir) = rfd::FileDialog::new().pick_folder()
+                                            {
+                                                self.draft.location =
+                                                    dir.to_string_lossy().to_string();
+                                            }
                                         }
                                     });
-                                ui.end_row();
-                                ui.label("Base resolution");
-                                ui.add(
-                                    egui::Slider::new(&mut self.draft.base_resolution, 480..=2160)
+                                    ui.end_row();
+                                    ui.label("Format");
+                                    egui::ComboBox::from_id_salt("draft_aspect")
+                                        .selected_text(self.draft.aspect_ratio.label())
+                                        .show_ui(ui, |ui| {
+                                            for preset in AspectRatio::presets() {
+                                                ui.selectable_value(
+                                                    &mut self.draft.aspect_ratio,
+                                                    preset.clone(),
+                                                    preset.label(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+                                    ui.label("Base resolution");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut self.draft.base_resolution,
+                                            480..=2160,
+                                        )
                                         .suffix(" px"),
-                                );
-                                ui.end_row();
-                                ui.label("Frame rate");
-                                egui::ComboBox::from_id_salt("draft_fps")
-                                    .selected_text(self.draft.frame_rate.label())
-                                    .show_ui(ui, |ui| {
-                                        for fps in FrameRate::all() {
-                                            ui.selectable_value(
-                                                &mut self.draft.frame_rate,
-                                                fps,
-                                                fps.label(),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
+                                    );
+                                    ui.end_row();
+                                    ui.label("Frame rate");
+                                    egui::ComboBox::from_id_salt("draft_fps")
+                                        .selected_text(self.draft.frame_rate.label())
+                                        .show_ui(ui, |ui| {
+                                            for fps in FrameRate::all() {
+                                                ui.selectable_value(
+                                                    &mut self.draft.frame_rate,
+                                                    fps,
+                                                    fps.label(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+                                });
+                            ui.add_space(16.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Create Project").clicked() {
+                                    self.create_project();
+                                }
+                                if ui.button("Quit").clicked() {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
                             });
-                        ui.add_space(16.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Create Project").clicked() {
-                                self.create_project();
-                            }
-                            if ui.button("Quit").clicked() {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
                         });
-                    });
+                });
+
+                // RIGHT: Recent Projects
+                ui.vertical(|ui| {
+                    ui.set_min_width(320.0);
+                    ui.set_max_width(360.0);
+                    ui.heading("Recent Projects");
+                    ui.separator();
+
+                    if self.recent.items.is_empty() {
+                        ui.label(
+                            egui::RichText::new("No recent projects yet.")
+                                .italics()
+                                .color(egui::Color32::from_gray(120)),
+                        );
+                    } else {
+                        let entries: Vec<RecentProject> = self.recent.items.clone();
+                        egui::ScrollArea::vertical()
+                            .max_height(360.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for rp in entries {
+                                    let frame = egui::Frame::group(ui.style())
+                                        .inner_margin(8.0)
+                                        .fill(ui.visuals().faint_bg_color);
+                                    frame.show(ui, |ui| {
+                                        ui.set_width(320.0);
+                                        ui.horizontal(|ui| {
+                                            // Thumbnail placeholder
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                egui::vec2(72.0, 54.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                4.0,
+                                                egui::Color32::from_gray(40),
+                                            );
+                                            ui.painter().text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "🎬",
+                                                egui::FontId::proportional(22.0),
+                                                egui::Color32::from_gray(180),
+                                            );
+
+                                            ui.vertical(|ui| {
+                                                ui.label(egui::RichText::new(&rp.name).strong());
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "{} · {} clips · {}",
+                                                        format_duration(rp.duration_ms),
+                                                        rp.clip_count,
+                                                        format_age(rp.last_opened),
+                                                    ))
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(150)),
+                                                );
+                                                ui.horizontal(|ui| {
+                                                    if ui.small_button("Open").clicked() {
+                                                        load_path = Some(rp.path.clone());
+                                                    }
+                                                    if ui.small_button("Forget").clicked() {
+                                                        forget_path = Some(rp.path.clone());
+                                                    }
+                                                    if ui
+                                                        .small_button("🗑")
+                                                        .on_hover_text(
+                                                            "Delete project file from disk",
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        delete_from_disk = Some(rp.path.clone());
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    });
+                                    ui.add_space(4.0);
+                                }
+                            });
+                    }
+                });
             });
         });
+
+        if let Some(p) = load_path {
+            self.load_project_from(&p);
+        }
+        if let Some(p) = forget_path {
+            self.recent.forget(&p);
+        }
+        if let Some(p) = delete_from_disk {
+            let _ = std::fs::remove_file(&p);
+            // Also remove its folder cache? leave for later.
+            self.recent.forget(&p);
+        }
     }
 
     // ---------------------------------------------------------------
@@ -227,6 +387,42 @@ impl CapRustApp {
                 ui.menu_button("File", |ui| {
                     if ui.button("New Project…").clicked() {
                         self.mode = AppMode::StartScreen;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Open Project…").clicked() {
+                        if let Some(f) = rfd::FileDialog::new()
+                            .add_filter("CapRust Project", &["caprust"])
+                            .pick_file()
+                        {
+                            let p = f.to_string_lossy().to_string();
+                            self.load_project_from(&p);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("Save Project").clicked() {
+                        self.save_project_to_disk();
+                        ui.close_menu();
+                    }
+                    if ui.button("Save As…").clicked() {
+                        if let Some(f) = rfd::FileDialog::new()
+                            .add_filter("CapRust Project", &["caprust"])
+                            .set_file_name(format!("{}.caprust", self.project.name))
+                            .save_file()
+                        {
+                            let mut p = f.clone();
+                            if p.extension().is_none() {
+                                p.set_extension("caprust");
+                            }
+                            if let Some(parent) = p.parent() {
+                                self.project.project_path =
+                                    Some(parent.to_string_lossy().to_string());
+                            }
+                            if let Some(stem) = p.file_stem() {
+                                self.project.name = stem.to_string_lossy().to_string();
+                            }
+                            self.save_project_to_disk();
+                        }
                         ui.close_menu();
                     }
                     ui.separator();
@@ -1156,6 +1352,35 @@ impl CapRustApp {
     }
 }
 
+fn format_duration(ms: u64) -> String {
+    let s = ms / 1000;
+    let h = s / 3600;
+    let m = (s % 3600) / 60;
+    let sec = s % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{sec:02}")
+    } else {
+        format!("{m}:{sec:02}")
+    }
+}
+
+fn format_age(unix_secs: u64) -> String {
+    let now = caprust_core::recent::now_unix();
+    if now <= unix_secs {
+        return "just now".into();
+    }
+    let d = now - unix_secs;
+    if d < 60 {
+        format!("{d}s ago")
+    } else if d < 3600 {
+        format!("{}m ago", d / 60)
+    } else if d < 86_400 {
+        format!("{}h ago", d / 3600)
+    } else {
+        format!("{}d ago", d / 86_400)
+    }
+}
+
 #[derive(Debug)]
 enum ClipAction {
     SetPlayhead(u64),
@@ -1172,6 +1397,7 @@ enum ClipAction {
 
 impl eframe::App for CapRustApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        caprust_i18n::set_current_lang(&self.settings.language);
         self.theme.apply(ctx);
 
         // Keyboard shortcuts (only in Editor + when enabled in Settings)
@@ -1258,6 +1484,9 @@ impl eframe::App for CapRustApp {
         }
         if let Ok(json) = serde_json::to_string(&self.settings) {
             storage.set_string("settings", json);
+        }
+        if let Ok(json) = serde_json::to_string(&self.recent) {
+            storage.set_string("recent", json);
         }
     }
 }

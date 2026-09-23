@@ -6,6 +6,8 @@ pub mod frame_rate;
 pub mod media;
 pub mod models;
 pub mod project;
+pub mod project_io;
+pub mod recent;
 pub mod settings;
 pub mod track;
 

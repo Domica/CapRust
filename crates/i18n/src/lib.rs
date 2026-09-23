@@ -1,7 +1,7 @@
-//! Fluent localization (English, Croatian).
+//! Fluent localization with runtime language switching.
 
 use fluent_bundle::{FluentBundle, FluentResource};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use unic_langid::LanguageIdentifier;
 
@@ -20,9 +20,31 @@ thread_local! {
         }
         map
     });
+
+    /// Current UI language, set once per frame by the app.
+    static CURRENT: RefCell<String> = RefCell::new(String::from("en"));
+
+    /// When true, `t` formats with parameters via `t_args`.
+    static _UNUSED: Cell<()> = const { Cell::new(()) };
 }
 
-pub fn t(key: &str, lang: &str) -> String {
+/// Set the active language for this frame. Call from the app's `update()`.
+pub fn set_current_lang(lang: &str) {
+    CURRENT.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.as_str() != lang {
+            *c = lang.to_string();
+        }
+    });
+}
+
+/// Translate using the current language.
+pub fn t(key: &str) -> String {
+    CURRENT.with(|c| t_lang(key, &c.borrow()))
+}
+
+/// Explicit-language variant (kept for compatibility).
+pub fn t_lang(key: &str, lang: &str) -> String {
     BUNDLES.with(|bundles| {
         let bundles = bundles.borrow();
         if let Some(bundle) = bundles.get(lang) {
@@ -46,5 +68,4 @@ pub fn detect_locale() -> String {
         .unwrap_or_else(|| "en".into())
 }
 
-/// Available languages shown in the Settings dialog.
 pub const LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("hr", "Hrvatski")];
