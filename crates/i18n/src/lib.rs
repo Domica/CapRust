@@ -1,4 +1,4 @@
-//! Fluent localization. Croatian locale ported from jub0t/Concat#61.
+//! Fluent-based localization (English, Croatian).
 //!
 //! NOTE: FluentBundle<FluentResource> holds a RefCell<TypeMap> internally,
 //! which is neither Send nor Sync. It cannot live in a `static Lazy<...>`.

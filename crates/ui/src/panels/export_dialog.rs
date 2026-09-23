@@ -1,4 +1,4 @@
-//! Export dialog scaffold. From Concat #175 + #143.
+//! Export dialog.
 
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;

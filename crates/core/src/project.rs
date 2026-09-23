@@ -1,4 +1,4 @@
-//! Project state. ExportSettings indices ported from Concat #143 + #175.
+//! Project state — serializable.
 
 use crate::aspect_ratio::AspectRatio;
 use crate::clip::Clip;

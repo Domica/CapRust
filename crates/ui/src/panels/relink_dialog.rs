@@ -1,4 +1,4 @@
-//! Missing media relink. From jub0t/Concat#76.
+//! Missing-media relink dialog.
 
 use egui::Ui;
 

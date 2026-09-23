@@ -1,4 +1,4 @@
-//! Audio sample-counter mix. Ported from jub0t/Concat#68.
+//! Audio sample-counter mix.
 
 pub struct MixInputState {
     pub samples_sent: i64,

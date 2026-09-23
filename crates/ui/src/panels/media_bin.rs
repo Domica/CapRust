@@ -1,4 +1,4 @@
-//! Media bin. Sorting scaffold from jub0t/Concat#63.
+//! Media bin with sorting.
 
 use caprust_core::ProjectState;
 use egui::Ui;

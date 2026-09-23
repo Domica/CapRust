@@ -1,4 +1,4 @@
-//! Export settings. Ported from jub0t/Concat#175 + #143.
+//! Export resolution, frame rate, and rate mode.
 
 use serde::{Deserialize, Serialize};
 

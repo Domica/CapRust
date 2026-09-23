@@ -1,4 +1,4 @@
-//! Real-time ETA. Ported from jub0t/Concat#64 + #175.
+//! Real-time export ETA tracker.
 
 use std::time::Instant;
 

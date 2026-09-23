@@ -1,4 +1,4 @@
-//! Clip model. `above` flag ported from jub0t/Concat#142.
+//! Clip model.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

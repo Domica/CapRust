@@ -1,4 +1,4 @@
-//! Aspect ratio presets. Ported from jub0t/Concat#179.
+//! Aspect ratio presets for social video.
 
 use serde::{Deserialize, Serialize};
 
