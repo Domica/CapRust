@@ -1,5 +1,6 @@
 //! Clip properties panel — Video / Sound / Effects tabs.
 
+use crate::i18n_helper::tr;
 use caprust_core::{Clip, ClipType, ProjectState};
 use egui::Ui;
 use uuid::Uuid;
@@ -39,7 +40,7 @@ pub fn show(
 ) {
     let Some(id) = selected else {
         ui.label(
-            egui::RichText::new("Select a clip to edit its properties.")
+            egui::RichText::new(tr("props-empty"))
                 .italics()
                 .color(egui::Color32::from_gray(140)),
         );
@@ -47,7 +48,7 @@ pub fn show(
     };
     let Some(clip) = project.clips.iter().find(|c| c.id == id) else {
         ui.label(
-            egui::RichText::new("Selected clip no longer exists.")
+            egui::RichText::new(tr("props-empty"))
                 .italics()
                 .color(egui::Color32::from_gray(140)),
         );
@@ -72,9 +73,13 @@ pub fn show(
 
     // --- Tabs ---
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut state.tab, PropertiesTab::Video, "Video");
-        ui.selectable_value(&mut state.tab, PropertiesTab::Sound, "Sound");
-        ui.selectable_value(&mut state.tab, PropertiesTab::Effects, "Effects");
+        ui.selectable_value(&mut state.tab, PropertiesTab::Video, tr("props-tab-video"));
+        ui.selectable_value(&mut state.tab, PropertiesTab::Sound, tr("props-tab-sound"));
+        ui.selectable_value(
+            &mut state.tab,
+            PropertiesTab::Effects,
+            tr("props-tab-effects"),
+        );
     });
     ui.separator();
 
@@ -89,13 +94,13 @@ pub fn show(
 
 fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // --- Main ---
-    ui.label(egui::RichText::new("Main").strong());
+    ui.label(egui::RichText::new(tr("props-video-main")).strong());
     ui.add_space(4.0);
     egui::Grid::new("clip_main_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Rotation");
+            ui.label(tr("props-field-rotation"));
             let mut rot = 0.0_f32;
             ui.add(
                 egui::DragValue::new(&mut rot)
@@ -104,7 +109,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             );
             ui.end_row();
 
-            ui.label("Width");
+            ui.label(tr("props-field-width"));
             let mut w = 100.0_f32;
             ui.add(
                 egui::DragValue::new(&mut w)
@@ -113,7 +118,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             );
             ui.end_row();
 
-            ui.label("Height");
+            ui.label(tr("props-field-height"));
             let mut h = 100.0_f32;
             ui.add(
                 egui::DragValue::new(&mut h)
@@ -127,13 +132,13 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.separator();
 
     // --- Speed ---
-    ui.label(egui::RichText::new("Speed").strong());
+    ui.label(egui::RichText::new(tr("props-video-speed")).strong());
     ui.add_space(4.0);
     egui::Grid::new("clip_speed_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Speed");
+            ui.label(tr("props-field-speed"));
             let mut speed = clip.speed;
             let combo = egui::ComboBox::from_id_salt("clip_speed")
                 .selected_text(format!("{:.2}×", speed))
@@ -150,7 +155,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             });
             ui.end_row();
 
-            ui.label("Custom");
+            ui.label(tr("props-field-custom"));
             let mut custom = speed;
             if ui
                 .add(
@@ -165,7 +170,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.end_row();
 
-            ui.label("Reverse");
+            ui.label(tr("props-field-reverse"));
             let mut rev = clip.reversed;
             if ui.checkbox(&mut rev, "").changed() {
                 state.pending.push(PendingEdit::Reverse(rev));
@@ -177,20 +182,20 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.separator();
 
     // --- Mirror ---
-    ui.label(egui::RichText::new("Mirror").strong());
+    ui.label(egui::RichText::new(tr("props-video-mirror")).strong());
     ui.add_space(4.0);
     egui::Grid::new("clip_mirror_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Mirror horizontally");
+            ui.label(tr("props-mirror-h"));
             let mut h = clip.flip_h;
             if ui.checkbox(&mut h, "").changed() {
                 state.pending.push(PendingEdit::FlipH(h));
             }
             ui.end_row();
 
-            ui.label("Mirror vertically");
+            ui.label(tr("props-mirror-v"));
             let mut v = clip.flip_v;
             if ui.checkbox(&mut v, "").changed() {
                 state.pending.push(PendingEdit::FlipV(v));
@@ -202,10 +207,10 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.separator();
 
     // --- Trim (read-only info) ---
-    ui.label(egui::RichText::new("Trim").strong());
+    ui.label(egui::RichText::new(tr("props-video-trim")).strong());
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new("Drag the handles on the clip's edges in the timeline.")
+        egui::RichText::new(tr("props-trim-hint"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
@@ -213,15 +218,15 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Start");
+            ui.label(tr("props-field-start"));
             ui.label(format_duration(clip.start_time_ms));
             ui.end_row();
-            ui.label("Duration");
+            ui.label(tr("props-field-duration"));
             ui.label(format_duration(clip.duration_ms));
             ui.end_row();
-            ui.label("Source");
+            ui.label(tr("props-field-source"));
             if clip.source_duration_ms == 0 {
-                ui.label("unlimited");
+                ui.label(tr("props-value-unlimited"));
             } else {
                 ui.label(format_duration(clip.source_duration_ms));
             }
@@ -230,7 +235,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 }
 
 fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
-    ui.label(egui::RichText::new("Volume").strong());
+    ui.label(egui::RichText::new(tr("props-sound-volume")).strong());
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let mut vol = clip.volume_db;
@@ -249,7 +254,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.add_space(10.0);
     ui.separator();
 
-    ui.label(egui::RichText::new("Fade").strong());
+    ui.label(egui::RichText::new(tr("props-sound-fade")).strong());
     ui.add_space(4.0);
     let mut fade_in = 0.0_f32;
     let mut fade_out = 0.0_f32;
@@ -257,14 +262,14 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Fade in");
+            ui.label(tr("props-sound-fade-in"));
             ui.add(
                 egui::Slider::new(&mut fade_in, 0.0..=50.0)
                     .suffix(" %")
                     .show_value(true),
             );
             ui.end_row();
-            ui.label("Fade out");
+            ui.label(tr("props-sound-fade-out"));
             ui.add(
                 egui::Slider::new(&mut fade_out, 0.0..=50.0)
                     .suffix(" %")
@@ -275,16 +280,16 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
     ui.add_space(10.0);
     ui.separator();
-    ui.label(egui::RichText::new("Processing").strong());
+    ui.label(egui::RichText::new(tr("props-sound-processing")).strong());
     ui.add_space(4.0);
     let mut norm = false;
     let mut denoise = false;
     let mut voice_boost = false;
-    ui.checkbox(&mut norm, "Normalize sound");
-    ui.checkbox(&mut denoise, "Decrease noise");
-    ui.checkbox(&mut voice_boost, "Voice volume increase");
+    ui.checkbox(&mut norm, tr("props-sound-normalize"));
+    ui.checkbox(&mut denoise, tr("props-sound-denoise"));
+    ui.checkbox(&mut voice_boost, tr("props-sound-boost"));
     ui.label(
-        egui::RichText::new("(Wired in audio-engine PR.)")
+        egui::RichText::new(tr("props-sound-wip"))
             .small()
             .italics()
             .color(egui::Color32::from_gray(140)),
@@ -292,10 +297,10 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 }
 
 fn show_effects(ui: &mut Ui) {
-    ui.label(egui::RichText::new("Effects").strong());
+    ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(6.0);
     ui.label(
-        egui::RichText::new("No effect selected.")
+        egui::RichText::new(tr("props-effects-empty"))
             .italics()
             .color(egui::Color32::from_gray(140)),
     );

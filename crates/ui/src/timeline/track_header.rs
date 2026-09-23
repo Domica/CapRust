@@ -1,5 +1,6 @@
 //! Track header (left column): two rows — name+icon on top, chips below.
 
+use crate::i18n_helper::tr;
 use caprust_core::Track;
 use egui::{Color32, RichText, Ui, Vec2};
 
@@ -64,19 +65,19 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize) -> HeaderEvents {
 
         // --- Row 2: 4 chips ---
         ui.horizontal(|ui| {
-            if chip(ui, "🔒", "Lock", track.locked) {
+            if chip(ui, "🔒", &tr("tk-lock"), track.locked) {
                 track.locked = !track.locked;
                 ev.changed = true;
             }
-            if chip(ui, "👁", "Show in preview", !track.visible) {
+            if chip(ui, "👁", &tr("tk-view"), !track.visible) {
                 track.visible = !track.visible;
                 ev.changed = true;
             }
-            if chip(ui, "🔊", "Mute", track.muted) {
+            if chip(ui, "🔊", &tr("tk-mute"), track.muted) {
                 track.muted = !track.muted;
                 ev.changed = true;
             }
-            if chip(ui, "✕", "Delete track", false) {
+            if chip(ui, "✕", &tr("tk-delete"), false) {
                 ev.delete_requested = true;
             }
         });

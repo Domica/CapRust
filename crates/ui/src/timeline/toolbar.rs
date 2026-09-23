@@ -1,5 +1,6 @@
 //! Timeline toolbar with icon buttons that "press in" when active.
 
+use crate::i18n_helper::tr;
 use egui::{Color32, RichText, Ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -91,37 +92,31 @@ pub fn show(
 
     ui.horizontal(|ui| {
         // --- Add track ---
-        if icon_action(ui, "➕", "Add track", true) {
+        if icon_action(ui, "➕", &tr("tt-add-track"), true) {
             ev.add_track = true;
         }
         ui.separator();
 
         // --- Pan (tvoj PR) ---
-        if icon_toggle(ui, "✋", "Pan tool", state.pan_mode, true) {
+        if icon_toggle(ui, "✋", &tr("tt-pan"), state.pan_mode, true) {
             state.pan_mode = !state.pan_mode;
             ev.pan_toggled = true;
         }
 
         // --- Magnetic ---
-        if icon_toggle(ui, "🧲", "Magnetic timeline", state.magnetic, true) {
+        if icon_toggle(ui, "🧲", &tr("tt-magnetic"), state.magnetic, true) {
             state.magnetic = !state.magnetic;
             ev.magnetic_toggled = true;
         }
 
         // --- Snapping ---
-        if icon_toggle(ui, "🧷", "Snap to clips", state.snapping, true) {
+        if icon_toggle(ui, "🧷", &tr("tt-snap"), state.snapping, true) {
             state.snapping = !state.snapping;
             ev.snapping_toggled = true;
         }
 
         // --- Follow playhead (NEW) ---
-        if icon_toggle(
-            ui,
-            "🎯",
-            "Follow playhead (auto-scroll during playback)",
-            state.follow_playhead,
-            true,
-        ) {
+        if icon_toggle(ui, "🎯", &tr("tt-follow"), state.follow_playhead, true) {
             state.follow_playhead = !state.follow_playhead;
             ev.follow_toggled = true;
         }
@@ -129,11 +124,11 @@ pub fn show(
         ui.separator();
 
         // --- Captions ---
-        if icon_action(ui, "💬", "Generate captions", true) {
+        if icon_action(ui, "💬", &tr("tt-captions"), true) {
             state.captions_enabled = true;
             ev.captions_clicked = true;
         }
-        if icon_action(ui, "🎙", "Generate narration (TTS)", true) {
+        if icon_action(ui, "🎙", &tr("tt-narration"), true) {
             state.narration_enabled = true;
             ev.narration_clicked = true;
         }
@@ -141,13 +136,13 @@ pub fn show(
         ui.separator();
 
         // --- Zoom ---
-        if icon_action(ui, "🔍−", "Zoom out", true) {
+        if icon_action(ui, "🔍−", &tr("tt-zoom-out"), true) {
             ev.zoom_out = true;
         }
-        if icon_action(ui, "🔍+", "Zoom in", true) {
+        if icon_action(ui, "🔍+", &tr("tt-zoom-in"), true) {
             ev.zoom_in = true;
         }
-        if icon_action(ui, "⤢", "Zoom to fit", true) {
+        if icon_action(ui, "⤢", &tr("tt-zoom-fit"), true) {
             ev.zoom_fit = true;
         }
 
@@ -162,10 +157,10 @@ pub fn show(
 
         // --- Right side: undo / redo ---
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_action(ui, "↪", "Redo", can_redo) {
+            if icon_action(ui, "↪", &tr("tt-redo"), can_redo) {
                 ev.redo = true;
             }
-            if icon_action(ui, "↩", "Undo", can_undo) {
+            if icon_action(ui, "↩", &tr("tt-undo"), can_undo) {
                 ev.undo = true;
             }
         });

@@ -1,3 +1,5 @@
+use crate::i18n_helper::tr;
+use crate::media_jobs::JobRunner;
 use crate::panels::clip_properties::{PendingEdit, PropertiesState};
 use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
@@ -74,6 +76,7 @@ pub struct CapRustApp {
     pub properties: PropertiesState,
     pub model_prompt: Option<caprust_core::ModelKind>,
     pub timeline_scroll_x: f32,
+    pub job_runner: JobRunner,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +149,10 @@ impl CapRustApp {
             properties: PropertiesState::default(),
             model_prompt: None,
             timeline_scroll_x: 0.0,
+            job_runner: JobRunner::new(
+                ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
+                ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
+            ),
         }
     }
 
@@ -242,19 +249,19 @@ impl CapRustApp {
                         .inner_margin(24.0)
                         .show(ui, |ui| {
                             ui.set_width(480.0);
-                            ui.heading("New Project");
+                            ui.heading(tr("new-title"));
                             ui.separator();
                             egui::Grid::new("new_project_grid")
                                 .num_columns(2)
                                 .spacing([12.0, 10.0])
                                 .show(ui, |ui| {
-                                    ui.label("Name");
+                                    ui.label(tr("new-field-name"));
                                     ui.text_edit_singleline(&mut self.draft.name);
                                     ui.end_row();
-                                    ui.label("Location");
+                                    ui.label(tr("new-field-location"));
                                     ui.horizontal(|ui| {
                                         ui.text_edit_singleline(&mut self.draft.location);
-                                        if ui.button("Browse…").clicked() {
+                                        if ui.button(tr("new-button-browse")).clicked() {
                                             if let Some(dir) = rfd::FileDialog::new().pick_folder()
                                             {
                                                 self.draft.location =
@@ -263,7 +270,7 @@ impl CapRustApp {
                                         }
                                     });
                                     ui.end_row();
-                                    ui.label("Format");
+                                    ui.label(tr("new-field-format"));
                                     egui::ComboBox::from_id_salt("draft_aspect")
                                         .selected_text(self.draft.aspect_ratio.label())
                                         .show_ui(ui, |ui| {
@@ -276,7 +283,7 @@ impl CapRustApp {
                                             }
                                         });
                                     ui.end_row();
-                                    ui.label("Base resolution");
+                                    ui.label(tr("new-field-resolution"));
                                     ui.add(
                                         egui::Slider::new(
                                             &mut self.draft.base_resolution,
@@ -285,7 +292,7 @@ impl CapRustApp {
                                         .suffix(" px"),
                                     );
                                     ui.end_row();
-                                    ui.label("Frame rate");
+                                    ui.label(tr("new-field-fps"));
                                     egui::ComboBox::from_id_salt("draft_fps")
                                         .selected_text(self.draft.frame_rate.label())
                                         .show_ui(ui, |ui| {
@@ -301,10 +308,10 @@ impl CapRustApp {
                                 });
                             ui.add_space(16.0);
                             ui.horizontal(|ui| {
-                                if ui.button("Create Project").clicked() {
+                                if ui.button(tr("new-button-create")).clicked() {
                                     self.create_project();
                                 }
-                                if ui.button("Quit").clicked() {
+                                if ui.button(tr("menu-file-quit")).clicked() {
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             });
@@ -315,12 +322,12 @@ impl CapRustApp {
                 ui.vertical(|ui| {
                     ui.set_min_width(320.0);
                     ui.set_max_width(360.0);
-                    ui.heading("Recent Projects");
+                    ui.heading(tr("new-recent-heading"));
                     ui.separator();
 
                     if self.recent.items.is_empty() {
                         ui.label(
-                            egui::RichText::new("No recent projects yet.")
+                            egui::RichText::new(tr("new-recent-empty"))
                                 .italics()
                                 .color(egui::Color32::from_gray(120)),
                         );
@@ -368,7 +375,10 @@ impl CapRustApp {
                                                     .color(egui::Color32::from_gray(150)),
                                                 );
                                                 ui.horizontal(|ui| {
-                                                    if ui.small_button("Open").clicked() {
+                                                    if ui
+                                                        .small_button(tr("new-recent-open"))
+                                                        .clicked()
+                                                    {
                                                         load_path = Some(rp.path.clone());
                                                     }
                                                     if ui.small_button("Forget").clicked() {
@@ -414,13 +424,13 @@ impl CapRustApp {
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("New Project…").clicked() {
+                ui.menu_button(tr("menu-file"), |ui| {
+                    if ui.button(tr("menu-file-new")).clicked() {
                         self.mode = AppMode::StartScreen;
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Open Project…").clicked() {
+                    if ui.button(tr("menu-file-open")).clicked() {
                         if let Some(f) = rfd::FileDialog::new()
                             .add_filter("CapRust Project", &["caprust"])
                             .pick_file()
@@ -430,11 +440,11 @@ impl CapRustApp {
                         }
                         ui.close_menu();
                     }
-                    if ui.button("Save Project").clicked() {
+                    if ui.button(tr("menu-file-save")).clicked() {
                         self.save_project_to_disk();
                         ui.close_menu();
                     }
-                    if ui.button("Save As…").clicked() {
+                    if ui.button(tr("menu-file-save-as")).clicked() {
                         if let Some(f) = rfd::FileDialog::new()
                             .add_filter("CapRust Project", &["caprust"])
                             .set_file_name(format!("{}.caprust", self.project.name))
@@ -456,35 +466,35 @@ impl CapRustApp {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Export…").clicked() {
+                    if ui.button(tr("menu-file-export")).clicked() {
                         self.export_open = true;
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Clear Project Cache").clicked() {
+                    if ui.button(tr("menu-file-clear-cache")).clicked() {
                         if let Some(path) = self.project.project_path.clone() {
                             let _ = caprust_core::cache::clear_cache(std::path::Path::new(&path));
                         }
                         ui.close_menu();
                     }
-                    if ui.button("Settings…").clicked() {
+                    if ui.button(tr("menu-file-settings")).clicked() {
                         self.settings_open = true;
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Close Project").clicked() {
+                    if ui.button(tr("menu-file-close")).clicked() {
                         self.mode = AppMode::StartScreen;
                         ui.close_menu();
                     }
-                    if ui.button("Quit").clicked() {
+                    if ui.button(tr("menu-file-quit")).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
 
-                ui.menu_button("Edit", |ui| {
+                ui.menu_button(tr("menu-edit"), |ui| {
                     let can_undo = self.undo_stack.can_undo();
                     if ui
-                        .add_enabled(can_undo, egui::Button::new("Undo"))
+                        .add_enabled(can_undo, egui::Button::new(tr("menu-edit-undo")))
                         .clicked()
                     {
                         let _ = self.undo_stack.undo(&mut self.project);
@@ -492,26 +502,26 @@ impl CapRustApp {
                     }
                     let can_redo = self.undo_stack.can_redo();
                     if ui
-                        .add_enabled(can_redo, egui::Button::new("Redo"))
+                        .add_enabled(can_redo, egui::Button::new(tr("menu-edit-redo")))
                         .clicked()
                     {
                         let _ = self.undo_stack.redo(&mut self.project);
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Split at Playhead").clicked() {
+                    if ui.button(tr("menu-edit-split")).clicked() {
                         ui.close_menu();
                     }
-                    if ui.button("Delete Clip").clicked() {
+                    if ui.button(tr("menu-edit-delete")).clicked() {
                         ui.close_menu();
                     }
-                    if ui.button("Ripple Delete").clicked() {
+                    if ui.button(tr("menu-edit-ripple-delete")).clicked() {
                         ui.close_menu();
                     }
                 });
 
-                ui.menu_button("View", |ui| {
-                    ui.menu_button("Sort Media by", |ui| {
+                ui.menu_button(tr("menu-view"), |ui| {
+                    ui.menu_button(tr("menu-view-sort"), |ui| {
                         for s in crate::panels::media_bin::MediaSort::all() {
                             let sel = self.media_bin.sort == s;
                             if ui.selectable_label(sel, s.label()).clicked() {
@@ -520,7 +530,7 @@ impl CapRustApp {
                             }
                         }
                     });
-                    ui.menu_button("Preview Size", |ui| {
+                    ui.menu_button(tr("menu-view-size"), |ui| {
                         for sz in [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large] {
                             let sel = self.preview_size == sz;
                             if ui.selectable_label(sel, sz.label()).clicked() {
@@ -1217,17 +1227,26 @@ impl CapRustApp {
                                         }
                                         if self.settings.enable_shortcuts {
                                             ui.separator();
-                                            if ui.button("Reverse  (R)").clicked() {
+                                            if ui
+                                                .button(format!("{}  (R)", tr("clip-ctx-reverse")))
+                                                .clicked()
+                                            {
                                                 pending_actions
                                                     .push(ClipAction::ToggleReverse(clip_id));
                                                 ui.close_menu();
                                             }
-                                            if ui.button("Mirror horizontally  (H)").clicked() {
+                                            if ui
+                                                .button(format!("{}  (H)", tr("clip-ctx-mirror-h")))
+                                                .clicked()
+                                            {
                                                 pending_actions
                                                     .push(ClipAction::ToggleFlipH(clip_id));
                                                 ui.close_menu();
                                             }
-                                            if ui.button("Mirror vertically  (V)").clicked() {
+                                            if ui
+                                                .button(format!("{}  (V)", tr("clip-ctx-mirror-v")))
+                                                .clicked()
+                                            {
                                                 pending_actions
                                                     .push(ClipAction::ToggleFlipV(clip_id));
                                                 ui.close_menu();
@@ -1500,7 +1519,7 @@ impl CapRustApp {
             .default_width(280.0)
             .min_width(240.0)
             .show(ctx, |ui| {
-                ui.heading("Properties");
+                ui.heading(tr("props-heading"));
                 ui.separator();
 
                 let selected = self.selected_clips.first().copied();
@@ -1586,7 +1605,7 @@ impl CapRustApp {
     fn show_export_window(&mut self, ctx: &egui::Context) {
         let total_ms = self.total_duration_ms();
         let mut open = self.export_open;
-        egui::Window::new("⬆  Export video")
+        egui::Window::new(tr("exp-title"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
@@ -1619,8 +1638,8 @@ impl CapRustApp {
         self.project.models.tick_downloads(1.0 / 60.0);
 
         let title = match kind {
-            caprust_core::ModelKind::Caption => "💬  Captions — choose a model",
-            caprust_core::ModelKind::Narration => "🎙  Narration — choose a voice",
+            caprust_core::ModelKind::Caption => tr("mp-captions-title"),
+            caprust_core::ModelKind::Narration => tr("mp-narration-title"),
         };
 
         let mut open = true;
@@ -1698,7 +1717,7 @@ impl CapRustApp {
                                     }
                                     caprust_core::ModelStatus::Ready => {
                                         let btn = egui::Button::new(
-                                            egui::RichText::new("✓ Use this")
+                                            egui::RichText::new(tr("mp-use-this"))
                                                 .color(egui::Color32::WHITE)
                                                 .strong(),
                                         )
@@ -1722,7 +1741,7 @@ impl CapRustApp {
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("mp-cancel")).clicked() {
                         cancel = true;
                     }
                     ui.label(
@@ -1760,7 +1779,7 @@ impl CapRustApp {
 
     fn show_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
-        egui::Window::new("Settings")
+        egui::Window::new(tr("set-title"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
@@ -1839,6 +1858,9 @@ impl eframe::App for CapRustApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         caprust_i18n::set_current_lang(&self.settings.language);
         self.theme.apply(ctx);
+
+        // Drain background jobs (ffprobe results, thumbnails ready)
+        let _ = self.job_runner.drain(&mut self.project);
 
         // Keyboard shortcuts (only in Editor + when enabled in Settings)
         // Debug: log the current value of the toggle once per second.

@@ -3,6 +3,19 @@
 use anyhow::Result;
 use std::path::Path;
 
+/// Path: <project>/cache/thumbnails/<id>.jpg
+pub fn thumbnail_path(project_path: &Path, media_id: uuid::Uuid) -> std::path::PathBuf {
+    project_path
+        .join("cache")
+        .join("thumbnails")
+        .join(format!("{media_id}.jpg"))
+}
+
+/// Best-effort: does the thumbnail already exist?
+pub fn thumbnail_exists(project_path: &Path, media_id: uuid::Uuid) -> bool {
+    thumbnail_path(project_path, media_id).is_file()
+}
+
 pub fn clear_cache(project_path: &Path) -> Result<usize> {
     let cache_dir = project_path.join("cache");
     if !cache_dir.exists() {
