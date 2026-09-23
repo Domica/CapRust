@@ -23,13 +23,18 @@ pub fn decode_frame_rgba(
     let w = target_w.max(2);
     let h = target_h.max(2);
 
+    // Fast input seeking (-ss before -i) + skip audio/subtitle decoding
+    // + fast scaler. On a 4K source, 640x270 RGBA goes from ~180ms to
+    // ~40-60ms with these flags.
     let mut child = Command::new(ffmpeg)
         .args(["-v", "error"])
         .args(["-ss", &format!("{at_sec:.3}")])
         .arg("-i")
         .arg(input)
+        .args(["-an", "-sn", "-dn"])
         .args(["-frames:v", "1"])
         .args(["-f", "rawvideo", "-pix_fmt", "rgba"])
+        .args(["-sws_flags", "fast_bilinear"])
         .args(["-s", &format!("{w}x{h}")])
         .arg("-")
         .stdin(Stdio::null())

@@ -55,6 +55,15 @@ new-recent-forget = Forget
 new-recent-delete = Delete
 
 # Media bin
+asset-tab-media = Media
+asset-tab-transitions = Transitions
+asset-tab-effects = Effects
+asset-tab-filters = Filters
+asset-tab-text = Text
+asset-tab-templates = Templates
+asset-search = Search…
+asset-empty = No items here yet.
+asset-templates-hint = Saved clip templates will appear here.
 media-heading = Media Library
 media-import-clips = 📥 Clips
 media-import-music = 🎵 Music

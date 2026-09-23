@@ -55,6 +55,15 @@ new-recent-forget = Zaboravi
 new-recent-delete = Obriši
 
 # Media bin
+asset-tab-media = Mediji
+asset-tab-transitions = Tranzicije
+asset-tab-effects = Efekti
+asset-tab-filters = Filteri
+asset-tab-text = Tekst
+asset-tab-templates = Predlošci
+asset-search = Pretraži…
+asset-empty = Ovdje još nema stavki.
+asset-templates-hint = Spremljeni predlošci isječaka pojavit će se ovdje.
 media-heading = Medijska knjižnica
 media-import-clips = 📥 Isječci
 media-import-music = 🎵 Glazba
