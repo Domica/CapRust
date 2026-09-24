@@ -2020,10 +2020,34 @@ impl CapRustApp {
                             self.preview_player.texture = Some(handle);
                             self.preview_player.has_frame = true;
                         }
-                        // Advance playhead
-                        let fps = r.fps.max(1.0);
-                        let step_ms = (consumed as f64 * 1000.0 / fps).round() as u64;
-                        self.playhead_ms = self.playhead_ms.saturating_add(step_ms.max(1));
+                        // Advance playhead — audio-master when audio is
+                        // running, wall-clock fallback otherwise (§21).
+                        let wall_ms = self
+                            .playback_started_at
+                            .map(|t0| {
+                                self.playback_started_ms
+                                    + t0.elapsed().as_millis() as u64
+                            })
+                            .unwrap_or(self.playhead_ms);
+
+                        let (new_ph, src_tag) = match self.audio_player.as_ref() {
+                            Some(ap) => (
+                                self.playback_started_ms + ap.playhead_ms(),
+                                "audio",
+                            ),
+                            None => (wall_ms, "wall"),
+                        };
+
+                        tracing::debug!(
+                            "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={}",
+                            new_ph,
+                            self.audio_player.as_ref().map(|ap| ap.playhead_ms()),
+                            wall_ms,
+                            new_ph as i64 - wall_ms as i64,
+                            src_tag
+                        );
+
+                        self.playhead_ms = new_ph;
                     }
                 }
 
