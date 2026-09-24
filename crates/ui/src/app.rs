@@ -89,6 +89,7 @@ pub struct CapRustApp {
     pub export_finished_path: Option<String>,
     /// Clip currently being streamed in preview (None = no stream).
     pub preview_renderer: Option<PreviewRenderer>,
+    pub last_frame_instant: Option<std::time::Instant>,
     pub last_streamed_clip: Option<uuid::Uuid>,
     /// Set to true when the user seeks; forces the preview stream to restart.
     pub stream_needs_restart: bool,
@@ -174,6 +175,7 @@ impl CapRustApp {
             export_progress: 0.0,
             export_finished_path: None,
             preview_renderer: None,
+            last_frame_instant: None,
             last_streamed_clip: None,
             stream_needs_restart: false,
             job_runner: JobRunner::new(

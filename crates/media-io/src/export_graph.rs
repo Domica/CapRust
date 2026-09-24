@@ -592,6 +592,14 @@ pub fn plan_from_project(
 
     let has_audio = !audio_clips.is_empty();
 
+    tracing::info!(
+        "export plan: {} video, {} audio, {} text (has_audio_track={})",
+        video_clips.len(),
+        audio_clips.len(),
+        text_clips.len(),
+        has_audio_track,
+    );
+
     Ok(RenderPlan {
         inputs,
         video_clips,
