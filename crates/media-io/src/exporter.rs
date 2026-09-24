@@ -87,6 +87,22 @@ pub fn spawn_export(
     rx
 }
 
+/// Open the folder in the OS file browser.
+pub fn open_folder(path: &Path) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("explorer").arg(path).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(path).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open").arg(path).spawn();
+    }
+}
+
 /// Open Explorer/Finder with the given file selected.
 pub fn reveal_in_folder(path: &Path) {
     #[cfg(target_os = "windows")]
