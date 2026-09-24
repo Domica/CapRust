@@ -88,10 +88,13 @@ impl AudioPlayer {
     /// preview running without sound.
     pub fn play_pcm_file(path: &Path, start_ms: u64) -> Result<Self> {
         // Verify the file exists before we commit to spawning anything.
-        let meta = std::fs::metadata(path)
+        // NOTE: do NOT clamp byte_offset to the file's current size. At this
+        // point ffmpeg may not have written anything yet (file size 0), and
+        // clamping would reset the seek to 0 — so a call with start_ms=3300
+        // would silently play from the very beginning of the source.
+        std::fs::metadata(path)
             .with_context(|| format!("stat {}", path.display()))?;
-        let size_bytes = meta.len();
-        let byte_offset = pcm_seek_offset(start_ms, TARGET_SAMPLE_RATE).min(size_bytes);
+        let byte_offset = pcm_seek_offset(start_ms, TARGET_SAMPLE_RATE);
 
         // SPSC ring buffer, f32 samples (interleaved stereo).
         let rb = HeapRb::<f32>::new(RING_FRAMES * TARGET_CHANNELS as usize);
@@ -216,6 +219,13 @@ where
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
                 let need = data.len();
                 let mut written = 0usize;
+                // Frames of *real* audio pulled from the source this callback.
+                // Silence written to fill an underrun is NOT counted, because
+                // otherwise the playhead would advance during the window where
+                // the PCM reader hasn't produced data yet (e.g. ffmpeg still
+                // buffering) — making the UI believe audio has been playing
+                // when the listener has heard nothing.
+                let mut real_samples_written = 0usize;
 
                 while written < need {
                     let want = (need - written).min(scratch.len());
@@ -233,6 +243,7 @@ where
                         data[written + i] = T::from_sample(scratch[i]);
                     }
                     written += got;
+                    real_samples_written += got;
 
                     if got < want {
                         // Partial fill = underrun. Pad with silence.
@@ -243,8 +254,11 @@ where
                     }
                 }
 
-                // Count *frames* played, not samples.
-                counter.fetch_add((need / channels.max(1)) as u64, Ordering::Relaxed);
+                // Count only frames that came from real source data.
+                counter.fetch_add(
+                    (real_samples_written / channels.max(1)) as u64,
+                    Ordering::Relaxed,
+                );
             },
             |err| tracing::error!("cpal stream error: {err}"),
             None,
