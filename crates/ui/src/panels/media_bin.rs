@@ -53,8 +53,8 @@ impl SortDirection {
     }
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Ascending => "\u{2193}",
-            Self::Descending => "\u{2191}",
+            Self::Ascending => egui_phosphor::regular::SORT_ASCENDING,
+            Self::Descending => egui_phosphor::regular::SORT_DESCENDING,
         }
     }
     pub fn key(self) -> &'static str {
