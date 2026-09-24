@@ -1878,9 +1878,19 @@ impl CapRustApp {
 
             if playing {
                 // Ensure the timeline renderer is running.
-                let need_start = self.preview_renderer.is_none() || self.stream_needs_restart;
+                let renderer_dead = self.preview_renderer.is_none();
+                let explicit_seek = self.explicit_seek_ms.is_some();
+                let drifted = self
+                    .preview_renderer
+                    .as_ref()
+                    .map(|r| (self.playhead_ms as i64 - r.started_at_ms as i64).abs() > 1500)
+                    .unwrap_or(false);
+                let need_start = renderer_dead || explicit_seek || drifted;
 
                 if need_start {
+                    // Where to start the renderer from.
+                    let start_from = self.explicit_seek_ms.take().unwrap_or(self.playhead_ms);
+
                     // Kill old one
                     if let Some(mut r) = self.preview_renderer.take() {
                         r.kill();
@@ -2064,7 +2074,7 @@ impl CapRustApp {
                     if let Some(mut r) = self.preview_renderer.take() {
                         r.kill();
                     }
-                    self.stream_needs_restart = true;
+                    self.explicit_seek_ms = Some(0);
                 } else {
                     self.playhead_ms = total_ms;
                     self.preview.playing = false;
