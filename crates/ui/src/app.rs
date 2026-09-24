@@ -790,6 +790,7 @@ impl CapRustApp {
             self.preview.playing = !self.preview.playing;
             if !self.preview.playing {
                 self.preview_player.cancel_pending();
+                self.preview_player.stop_stream();
             }
         }
         if ev.toggle_loop {
@@ -1719,7 +1720,7 @@ impl CapRustApp {
                     .unwrap_or(0);
                 if now >= LAST.load(Ordering::Relaxed) + 5 {
                     LAST.store(now, Ordering::Relaxed);
-                    tracing::debug!(
+                    tracing::info!(
                         "preview: playhead={}ms clips={} clip={} ffmpeg={}",
                         playhead,
                         self.project.clips.len(),
@@ -1806,19 +1807,15 @@ impl CapRustApp {
             );
             self.handle_preview_events(ev, total_ms);
 
-            // Auto-advance when playing
-            if self.preview.playing && total_ms > 0 {
-                let dt_ms = (ui.input(|i| i.stable_dt) * 1000.0) as u64;
-                self.playhead_ms = self.playhead_ms.saturating_add(dt_ms.max(16));
-                if self.playhead_ms >= total_ms {
-                    if self.preview.loop_playback {
-                        self.playhead_ms = 0;
-                    } else {
-                        self.playhead_ms = total_ms;
-                        self.preview.playing = false;
-                    }
+            // End-of-timeline handling (advance is done above in stream mode).
+            if self.preview.playing && total_ms > 0 && self.playhead_ms >= total_ms {
+                if self.preview.loop_playback {
+                    self.playhead_ms = 0;
+                } else {
+                    self.playhead_ms = total_ms;
+                    self.preview.playing = false;
+                    self.preview_player.stop_stream();
                 }
-                ui.ctx().request_repaint();
             }
         });
     }
