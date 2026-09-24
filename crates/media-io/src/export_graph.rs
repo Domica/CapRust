@@ -569,25 +569,12 @@ pub fn plan_from_project(
             .filter(|c| c.track_index == t_idx)
             .collect();
         clips.sort_by_key(|c| c.start_time_ms);
-        tracing::debug!(
-            "audio-src: t_idx={} kind={:?} clips={}",
-            t_idx,
-            project.tracks.get(t_idx).map(|t| t.kind),
-            clips.len()
-        );
         for c in clips {
             let path_opt: Option<&String> = match &c.clip_type {
                 ClipType::Audio { path, .. } => Some(path),
                 ClipType::Video { path, .. } if audio_from_video => Some(path),
                 _ => None,
             };
-            if path_opt.is_some() {
-                tracing::debug!(
-                    "audio-src: found clip track_index={} type={:?}",
-                    c.track_index,
-                    std::mem::discriminant(&c.clip_type)
-                );
-            }
             if let Some(path) = path_opt {
                 let dur_sec = c.duration_ms as f64 / 1000.0;
                 let idx = register_input(&mut inputs, path, 0.0, dur_sec);
