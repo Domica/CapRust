@@ -28,12 +28,14 @@ impl TrackKind {
         }
     }
     pub fn icon(&self) -> &'static str {
+        // Phosphor constants (see crates/ui/src/timeline/track_header.rs).
+        // Core doesn't link egui-phosphor; keep the raw glyphs here.
         match self {
-            Self::Video => "🎞",
-            Self::Audio => "🎵",
-            Self::Text => "T",
-            Self::Overlay => "✦",
-            Self::Captions => "💬",
+            Self::Video => "\u{E4C2}",    // FILM_STRIP
+            Self::Audio => "\u{E3D5}",    // WAVEFORM
+            Self::Text => "\u{E4F0}",     // TEXT_T
+            Self::Overlay => "\u{E4F1}",  // SPARKLE
+            Self::Captions => "\u{E2BC}", // CHAT_TEXT
         }
     }
     pub fn default_height(&self) -> f32 {

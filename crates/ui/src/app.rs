@@ -111,6 +111,7 @@ pub enum TrimEdge {
 
 impl CapRustApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        setup_phosphor_fonts(&cc.egui_ctx);
         let theme = cc
             .storage
             .and_then(|s| s.get_string("theme"))
@@ -2262,4 +2263,11 @@ impl eframe::App for CapRustApp {
             storage.set_string("recent", json);
         }
     }
+}
+
+/// Register the Phosphor icon font family.
+fn setup_phosphor_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    ctx.set_fonts(fonts);
 }

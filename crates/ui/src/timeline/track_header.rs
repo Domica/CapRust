@@ -3,6 +3,7 @@
 use crate::i18n_helper::tr;
 use caprust_core::Track;
 use egui::{Color32, RichText, Ui, Vec2};
+use egui_phosphor::regular as ph;
 
 pub const HEADER_WIDTH: f32 = 140.0;
 
@@ -47,11 +48,11 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize) -> HeaderEvents {
     };
 
     ui.vertical(|ui| {
-        // --- Row 1: icon + name (+ pin if pinned) ---
+        // --- Row 1: icon + name ---
         ui.horizontal(|ui| {
             if track.pinned {
                 ui.label(
-                    RichText::new("📌")
+                    RichText::new(ph::PUSH_PIN)
                         .size(10.0)
                         .color(Color32::from_rgb(120, 220, 140)),
                 );
@@ -63,21 +64,48 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize) -> HeaderEvents {
             );
         });
 
-        // --- Row 2: 4 chips ---
+        // --- Row 2: chips ---
         ui.horizontal(|ui| {
-            if chip(ui, "🔒", &tr("tk-lock"), track.locked) {
+            if chip(
+                ui,
+                if track.locked {
+                    ph::LOCK
+                } else {
+                    ph::LOCK_OPEN
+                },
+                &tr("tk-lock"),
+                track.locked,
+            ) {
                 track.locked = !track.locked;
                 ev.changed = true;
             }
-            if chip(ui, "👁", &tr("tk-view"), !track.visible) {
+            if chip(
+                ui,
+                if track.visible {
+                    ph::EYE
+                } else {
+                    ph::EYE_SLASH
+                },
+                &tr("tk-view"),
+                !track.visible,
+            ) {
                 track.visible = !track.visible;
                 ev.changed = true;
             }
-            if chip(ui, "🔊", &tr("tk-mute"), track.muted) {
+            if chip(
+                ui,
+                if track.muted {
+                    ph::SPEAKER_SLASH
+                } else {
+                    ph::SPEAKER_HIGH
+                },
+                &tr("tk-mute"),
+                track.muted,
+            ) {
                 track.muted = !track.muted;
                 ev.changed = true;
             }
-            if chip(ui, "✕", &tr("tk-delete"), false) {
+            if chip(ui, ph::X, &tr("tk-delete"), false) {
                 ev.delete_requested = true;
             }
         });
