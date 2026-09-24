@@ -324,18 +324,26 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         }),
     }
 
-    // TEMP DEBUG — vidi na ekranu sto se dogadja
+    // TEMP DEBUG — kompaktan prikaz: poz, added_at, prvih 12 znakova name
     ui.label(
         egui::RichText::new(format!(
-            "[DBG] sort={:?} filter={:?} n={} order={:?}",
-            state.sort,
-            state.filter,
-            sorted.len(),
-            sorted.iter().take(5).map(|m| m.name.as_str()).collect::<Vec<_>>()
+            "[DBG] sort={:?} filter={:?} n={}",
+            state.sort, state.filter, sorted.len()
         ))
         .small()
         .color(egui::Color32::YELLOW),
     );
+    for (i, m) in sorted.iter().take(6).enumerate() {
+        let prefix: String = m.name.chars().take(12).collect();
+        ui.label(
+            egui::RichText::new(format!(
+                "  #{} added={:>3} kind={:?} name12={}",
+                i, m.added_at, m.kind, prefix
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(255, 220, 100)),
+        );
+    }
 
     if sorted.is_empty() {
         ui.add_space(20.0);
