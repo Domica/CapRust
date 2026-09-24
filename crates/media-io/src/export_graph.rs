@@ -525,9 +525,25 @@ pub fn plan_from_project(
         }
     }
 
-    // Audio: prefer dedicated Audio tracks. If none exist, fall back to
-    // pulling audio from Video clips (they usually have an audio stream).
-    let has_audio_track = project.tracks.iter().any(|t| t.kind == TrackKind::Audio);
+    // Audio: prefer dedicated Audio tracks *that actually contain clips*.
+    // An empty Audio track (e.g. auto-created default) should NOT disable
+    // the fallback to embedded audio in Video clips — otherwise projects
+    // with only video+audio-embedded playback would produce silence.
+    let audio_track_clip_count: usize = project
+        .tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.kind == TrackKind::Audio)
+        .map(|(i, _)| {
+            project
+                .clips
+                .iter()
+                .filter(|c| c.track_index == i)
+                .count()
+        })
+        .sum();
+
+    let has_audio_track = audio_track_clip_count > 0;
 
     let audio_source_tracks: Vec<usize> = if has_audio_track {
         project
@@ -593,11 +609,13 @@ pub fn plan_from_project(
     let has_audio = !audio_clips.is_empty();
 
     tracing::info!(
-        "export plan: {} video, {} audio, {} text (has_audio_track={})",
+        "export plan: {} video, {} audio, {} text \
+         (audio_track_clips={}, from_video={})",
         video_clips.len(),
         audio_clips.len(),
         text_clips.len(),
-        has_audio_track,
+        audio_track_clip_count,
+        audio_from_video,
     );
 
     Ok(RenderPlan {
