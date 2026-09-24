@@ -85,6 +85,10 @@ pub struct CapRustApp {
     pub preview_player: PreviewPlayer,
     /// Audio playback for the current preview session. None = no audio.
     pub audio_player: Option<AudioPlayer>,
+    /// True after we have re-anchored playback_started_at to the first
+    /// consumed video frame of the current play session. Reset on every
+    /// toggle_play(true). See comments at the anchor site.
+    pub play_anchor_set: bool,
     pub asset_browser: AssetBrowserState,
     pub export_in_progress: bool,
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
@@ -179,6 +183,7 @@ impl CapRustApp {
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
             audio_player: None,
+            play_anchor_set: false,
             asset_browser: AssetBrowserState::new(),
             export_in_progress: false,
             export_rx: None,
@@ -844,6 +849,7 @@ impl CapRustApp {
             } else {
                 // Starting play: use current playhead as the render start.
                 self.explicit_seek_ms = Some(self.playhead_ms);
+                self.play_anchor_set = false;
             }
         }
         if ev.toggle_loop {
@@ -2039,6 +2045,19 @@ impl CapRustApp {
                             self.preview_player.texture = Some(handle);
                             self.preview_player.has_frame = true;
 
+                            // Re-anchor wall clock to the first consumed
+                            // frame of this session. Without this, wall_ms
+                            // includes the ~1 s of ffmpeg audio priming and
+                            // every sync log line shows a bogus drift.
+                            if !self.play_anchor_set {
+                                self.playback_started_at = Some(std::time::Instant::now());
+                                self.play_anchor_set = true;
+                                tracing::info!(
+                                    "playhead: re-anchored to first frame at {}ms",
+                                    self.playhead_ms
+                                );
+                            }
+
                         }
                         // Advance playhead — audio-master when audio is
                         // running, wall-clock fallback otherwise (§21).
@@ -2058,13 +2077,18 @@ impl CapRustApp {
                             None => (wall_ms, "wall"),
                         };
 
+                        let underruns = self
+                            .audio_player
+                            .as_ref()
+                            .map_or(0, |ap| ap.underruns());
                         tracing::debug!(
-                            "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={}",
+                            "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={} underruns={}",
                             new_ph,
                             self.audio_player.as_ref().map(|ap| ap.playhead_ms()),
                             wall_ms,
                             new_ph as i64 - wall_ms as i64,
-                            src_tag
+                            src_tag,
+                            underruns
                         );
 
                         self.playhead_ms = new_ph;

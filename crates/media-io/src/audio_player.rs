@@ -34,15 +34,20 @@ pub const TARGET_CHANNELS: u16 = 2;
 
 /// Frames read per iteration from disk by the reader thread.
 const READ_CHUNK_FRAMES: usize = 1024;
-/// Ring buffer capacity in frames. Previously 9_600 (~200 ms at 48 kHz
-/// stereo), which was not enough cushion: any time ffmpeg stopped writing
-/// (because the UI stalled and backpressure rippled all the way up), the
-/// ringbuf drained in 200 ms and the cpal callback wrote silence. Silence
-/// was not counted in samples_played, so the playhead froze.
+/// Ring buffer capacity in frames. Progressively raised:
+/// 9_600 (200 ms) -> 96_000 (2 s) -> 240_000 (5 s).
 ///
-/// 96_000 frames gives 2 seconds of buffered audio, easily surviving the
-/// short UI stalls that triggered the dropouts.
-const RING_FRAMES: usize = 96_000;
+/// Why 5 s: ffmpeg writes the PCM file at roughly real-time pace because
+/// its muxer is PTS-ordered and the video output is throttled by our
+/// reader at fps. Any jitter on the write side (OS scheduling, disk
+/// flush, VS Code / antivirus I/O on Windows) can leave the ring empty
+/// for tens of ms; cpal then pads with silence, and because silence is
+/// not counted in samples_played the playhead drifts behind wall clock.
+///
+/// 5 s of headroom absorbs jitter bursts far larger than the ones we
+/// observed without making the initial audio latency noticeable (the
+/// ring is filled before the stream is played, so no startup penalty).
+const RING_FRAMES: usize = 240_000;
 /// Bytes per frame in the on-disk PCM stream (s16le stereo = 2 ch * 2 B).
 const BYTES_PER_FRAME: u64 = 4;
 /// Consecutive EOF reads before the reader gives up.
@@ -74,6 +79,9 @@ pub struct AudioPlayer {
     channels: u16,
     stop_flag: Arc<AtomicBool>,
     reader_handle: Option<JoinHandle<()>>,
+    /// Number of cpal callbacks that ran dry and had to write silence.
+    /// Monotonically increasing; read by the UI for diagnostics.
+    underruns: Arc<AtomicU64>,
 }
 
 impl Drop for AudioPlayer {
@@ -143,6 +151,13 @@ impl AudioPlayer {
         self.channels
     }
 
+    /// Number of times the cpal callback had to pad with silence since
+    /// the stream started. Should stay constant during steady playback;
+    /// any increase means the ring buffer ran dry.
+    pub fn underruns(&self) -> u64 {
+        self.underruns.load(Ordering::Relaxed)
+    }
+
     /// Shared device/stream setup. `reader` is `None` for sources that don't
     /// need a background thread (sine), `Some((flag, handle))` for PCM.
     fn spawn(
@@ -166,6 +181,7 @@ impl AudioPlayer {
         let sample_rate = config.sample_rate.0;
         let channels = config.channels;
         let samples_played = Arc::new(AtomicU64::new(0));
+        let underruns = Arc::new(AtomicU64::new(0));
 
         tracing::info!(
             "cpal[{}]: device={} fmt={:?} rate={} ch={}",
@@ -178,13 +194,13 @@ impl AudioPlayer {
 
         let stream = match sample_format {
             SampleFormat::F32 => {
-                build_stream::<f32>(&device, &config, source, &samples_played)?
+                build_stream::<f32>(&device, &config, source, &samples_played, &underruns)?
             }
             SampleFormat::I16 => {
-                build_stream::<i16>(&device, &config, source, &samples_played)?
+                build_stream::<i16>(&device, &config, source, &samples_played, &underruns)?
             }
             SampleFormat::U16 => {
-                build_stream::<u16>(&device, &config, source, &samples_played)?
+                build_stream::<u16>(&device, &config, source, &samples_played, &underruns)?
             }
             other => return Err(anyhow!("unsupported sample format: {other:?}")),
         };
@@ -203,6 +219,7 @@ impl AudioPlayer {
             channels,
             stop_flag,
             reader_handle,
+            underruns,
         })
     }
 }
@@ -221,12 +238,14 @@ fn build_stream<T>(
     config: &StreamConfig,
     mut source: SourceFn,
     samples_played: &Arc<AtomicU64>,
+    underruns: &Arc<AtomicU64>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::SizedSample + cpal::FromSample<f32>,
 {
     let channels = config.channels as usize;
     let counter = samples_played.clone();
+    let underrun_counter = underruns.clone();
     let mut scratch: Vec<f32> = vec![0.0; 8192];
 
     device
@@ -249,6 +268,8 @@ where
 
                     if got == 0 {
                         // Source exhausted — silence the rest of this buffer.
+                        // Count it: every occurrence is a ring-buffer underrun.
+                        underrun_counter.fetch_add(1, Ordering::Relaxed);
                         for s in &mut data[written..] {
                             *s = T::from_sample(0.0_f32);
                         }
