@@ -86,6 +86,10 @@ pub struct CapRustApp {
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
     pub export_progress: f32,
     pub export_finished_path: Option<String>,
+    /// Clip currently being streamed in preview (None = no stream).
+    pub last_streamed_clip: Option<uuid::Uuid>,
+    /// Set to true when the user seeks; forces the preview stream to restart.
+    pub stream_needs_restart: bool,
     pub job_runner: JobRunner,
 }
 
@@ -167,6 +171,8 @@ impl CapRustApp {
             export_rx: None,
             export_progress: 0.0,
             export_finished_path: None,
+            last_streamed_clip: None,
+            stream_needs_restart: false,
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -784,23 +790,35 @@ impl CapRustApp {
     }
 
     fn handle_preview_events(&mut self, ev: PreviewEvents, total_ms: u64) {
+        let mut seeked = false;
         if ev.seek_back_30 {
             self.playhead_ms = self.playhead_ms.saturating_sub(30_000);
+            seeked = true;
         }
         if ev.seek_back_5 {
             self.playhead_ms = self.playhead_ms.saturating_sub(5_000);
+            seeked = true;
         }
         if ev.seek_fwd_5 {
             self.playhead_ms = (self.playhead_ms + 5_000).min(total_ms);
+            seeked = true;
         }
         if ev.seek_fwd_30 {
             self.playhead_ms = (self.playhead_ms + 30_000).min(total_ms);
+            seeked = true;
+        }
+        if seeked && self.preview.playing {
+            self.stream_needs_restart = true;
         }
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
             if !self.preview.playing {
                 self.preview_player.cancel_pending();
                 self.preview_player.stop_stream();
+                self.last_streamed_clip = None;
+            } else {
+                // Starting play: force a fresh stream from the current position.
+                self.stream_needs_restart = true;
             }
         }
         if ev.toggle_loop {
@@ -1432,6 +1450,9 @@ impl CapRustApp {
                     match a {
                         ClipAction::SetPlayhead(ms) => {
                             self.playhead_ms = ms.min(total_ms.max(1));
+                            if self.preview.playing {
+                                self.stream_needs_restart = true;
+                            }
                         }
                         ClipAction::Select(id) => {
                             if ctx.input(|i| i.modifiers.ctrl || i.modifiers.command) {
@@ -1839,62 +1860,53 @@ impl CapRustApp {
             let playing = self.preview.playing;
 
             if playing {
-                // Start/keep stream alive for the current clip.
-                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
-                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
-                {
-                    let source_sec =
-                        ((playhead.saturating_sub(clip_start)) as f32 * speed) as f64 / 1000.0;
-                    self.preview_player.start_stream(
-                        std::path::Path::new(&ffmpeg),
-                        std::path::Path::new(&path),
-                        clip_id,
-                        source_sec,
-                        tw,
-                        th,
-                        30.0,
-                    );
+                let desired_clip: Option<uuid::Uuid> = clip_info.as_ref().map(|(id, _, _, _)| *id);
+
+                let clip_changed = self.last_streamed_clip != desired_clip;
+                let need_start = self.preview_player.stream.is_none()
+                    || clip_changed
+                    || self.stream_needs_restart;
+
+                if need_start {
+                    if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                        (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+                    {
+                        let source_sec =
+                            ((playhead.saturating_sub(clip_start)) as f32 * speed) as f64 / 1000.0;
+                        tracing::info!(
+                            "preview: (re)start stream clip={} at={:.2}s (changed={} seek={})",
+                            clip_id,
+                            source_sec,
+                            clip_changed,
+                            self.stream_needs_restart,
+                        );
+                        self.preview_player.start_stream(
+                            std::path::Path::new(&ffmpeg),
+                            std::path::Path::new(&path),
+                            clip_id,
+                            source_sec,
+                            tw,
+                            th,
+                            30.0,
+                        );
+                        self.last_streamed_clip = Some(clip_id);
+                        self.stream_needs_restart = false;
+                    }
                 }
 
-                // Drain all ready frames; keep only the last one.
                 let mut consumed = 0u32;
                 while self.preview_player.poll_stream(ctx) {
                     consumed += 1;
-                    if consumed > 10 {
+                    if consumed > 6 {
                         break;
                     }
                 }
                 if consumed > 0 {
                     let step_ms = (consumed as f64 * 1000.0 / 30.0).round() as u64;
                     self.playhead_ms = self.playhead_ms.saturating_add(step_ms.max(1));
-                } else {
-                    // No frame ready yet; nudge playhead slowly so the UI
-                    // doesn't freeze if the stream is starting up.
-                    self.playhead_ms = self.playhead_ms.saturating_add(8);
                 }
 
-                // CRITICAL: keep the UI loop alive so we render new frames.
                 ctx.request_repaint();
-            } else {
-                // Paused: kill stream, seek-based single-frame decode.
-                self.preview_player.stop_stream();
-                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
-                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
-                {
-                    let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
-                    self.preview_player.request(
-                        std::path::Path::new(&ffmpeg),
-                        std::path::Path::new(&path),
-                        clip_id,
-                        source_ms,
-                        tw,
-                        th,
-                    );
-                }
-                self.preview_player.poll(ctx);
-                if self.preview_player.pending.is_some() {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                }
             }
 
             // ---- Render frame or placeholder ----

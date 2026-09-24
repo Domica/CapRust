@@ -49,8 +49,13 @@ impl FrameStream {
         };
 
         // Capture stderr so we can log ffmpeg errors if the stream dies.
+        // `-re` forces ffmpeg to emit frames in real time (30fps of video per
+        // 1s of wall clock). Without it, ffmpeg decodes as fast as the CPU
+        // can, the 4-frame buffer fills instantly, and the UI sees 10 frames
+        // arrive in one render cycle → apparent fast-forward.
         let mut child = Command::new(ffmpeg)
             .args(["-v", "error"])
+            .args(["-re"])
             .args(["-ss", &format!("{at_sec:.3}")])
             .arg("-i")
             .arg(input)
