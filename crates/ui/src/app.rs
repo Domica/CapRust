@@ -1771,7 +1771,7 @@ impl CapRustApp {
             ui.painter()
                 .rect_filled(rect, 6.0, egui::Color32::from_gray(12));
 
-            // Target frame size — respects the Quality dropdown.
+            // ---- Target decode size ----
             let (pw, ph) = self.project.project_dimensions();
             let max_side = match self.preview.quality {
                 crate::panels::preview_window::PreviewQuality::Quarter => 320,
@@ -1780,7 +1780,7 @@ impl CapRustApp {
             };
             let (tw, th) = caprust_media_io::player::preview_size(pw, ph, max_side);
 
-            // Find video clip under playhead on a visible track
+            // ---- Find clip under playhead on a visible track ----
             let playhead = self.playhead_ms;
             let clip_info: Option<(uuid::Uuid, String, u64, f32)> = self
                 .project
@@ -1814,7 +1814,7 @@ impl CapRustApp {
                     _ => None,
                 });
 
-            // Rate-limited state log — every 5 s, less spam.
+            // ---- Rate-limited state log ----
             {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static LAST: AtomicU64 = AtomicU64::new(0);
@@ -1825,8 +1825,9 @@ impl CapRustApp {
                 if now >= LAST.load(Ordering::Relaxed) + 5 {
                     LAST.store(now, Ordering::Relaxed);
                     tracing::info!(
-                        "preview: playhead={}ms clips={} clip={} ffmpeg={}",
+                        "preview state: playhead={}ms playing={} clips={} clip_info={} ffmpeg={}",
                         playhead,
+                        self.preview.playing,
                         self.project.clips.len(),
                         clip_info.is_some(),
                         self.ffmpeg_status.ffmpeg.is_some(),
@@ -1834,34 +1835,73 @@ impl CapRustApp {
                 }
             }
 
-            // Request frame
-            if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
-                (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
-            {
-                let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
-                self.preview_player.request(
-                    std::path::Path::new(&ffmpeg),
-                    std::path::Path::new(&path),
-                    clip_id,
-                    source_ms,
-                    tw,
-                    th,
-                );
+            // ---- Playing vs paused ----
+            let playing = self.preview.playing;
+
+            if playing {
+                // Start/keep stream alive for the current clip.
+                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+                {
+                    let source_sec =
+                        ((playhead.saturating_sub(clip_start)) as f32 * speed) as f64 / 1000.0;
+                    self.preview_player.start_stream(
+                        std::path::Path::new(&ffmpeg),
+                        std::path::Path::new(&path),
+                        clip_id,
+                        source_sec,
+                        tw,
+                        th,
+                        30.0,
+                    );
+                }
+
+                // Drain all ready frames; keep only the last one.
+                let mut consumed = 0u32;
+                while self.preview_player.poll_stream(ctx) {
+                    consumed += 1;
+                    if consumed > 10 {
+                        break;
+                    }
+                }
+                if consumed > 0 {
+                    let step_ms = (consumed as f64 * 1000.0 / 30.0).round() as u64;
+                    self.playhead_ms = self.playhead_ms.saturating_add(step_ms.max(1));
+                } else {
+                    // No frame ready yet; nudge playhead slowly so the UI
+                    // doesn't freeze if the stream is starting up.
+                    self.playhead_ms = self.playhead_ms.saturating_add(8);
+                }
+
+                // CRITICAL: keep the UI loop alive so we render new frames.
+                ctx.request_repaint();
+            } else {
+                // Paused: kill stream, seek-based single-frame decode.
+                self.preview_player.stop_stream();
+                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+                {
+                    let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
+                    self.preview_player.request(
+                        std::path::Path::new(&ffmpeg),
+                        std::path::Path::new(&path),
+                        clip_id,
+                        source_ms,
+                        tw,
+                        th,
+                    );
+                }
+                self.preview_player.poll(ctx);
+                if self.preview_player.pending.is_some() {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                }
             }
 
-            // Poll for completed frames
-            self.preview_player.poll(ctx);
-            if self.preview_player.pending.is_some() {
-                ctx.request_repaint_after(std::time::Duration::from_millis(50));
-            }
-
-            // Render frame or placeholder
+            // ---- Render frame or placeholder ----
             if let Some(tex) = self.preview_player.texture.as_ref() {
                 let tex_size = tex.size_vec2();
                 let avail_w = rect.width() - 16.0;
                 let avail_h = rect.height() - 16.0;
-                // Fit: scale to fill the panel, allow upscale so 1/4
-                // quality still fills the frame area.
                 let scale = (avail_w / tex_size.x).min(avail_h / tex_size.y);
                 let draw_size = tex_size * scale;
                 let draw_rect = egui::Rect::from_center_size(rect.center(), draw_size);
@@ -1911,7 +1951,7 @@ impl CapRustApp {
             );
             self.handle_preview_events(ev, total_ms);
 
-            // End-of-timeline handling (advance is done above in stream mode).
+            // ---- End-of-timeline ----
             if self.preview.playing && total_ms > 0 && self.playhead_ms >= total_ms {
                 if self.preview.loop_playback {
                     self.playhead_ms = 0;

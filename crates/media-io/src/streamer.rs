@@ -48,6 +48,7 @@ impl FrameStream {
             30.0
         };
 
+        // Capture stderr so we can log ffmpeg errors if the stream dies.
         let mut child = Command::new(ffmpeg)
             .args(["-v", "error"])
             .args(["-ss", &format!("{at_sec:.3}")])
@@ -61,9 +62,20 @@ impl FrameStream {
             .arg("-")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("spawn ffmpeg stream for {}", input.display()))?;
+
+        // Drain stderr in a background thread, forwarding lines to tracing.
+        if let Some(mut err) = child.stderr.take() {
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(&mut err);
+                for line in reader.lines().map_while(Result::ok) {
+                    tracing::warn!("ffmpeg stream stderr: {line}");
+                }
+            });
+        }
 
         let mut stdout = child.stdout.take().context("ffmpeg stdout missing")?;
         let (tx, rx) = sync_channel::<Vec<u8>>(BUFFER);
