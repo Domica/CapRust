@@ -47,7 +47,14 @@ const READ_CHUNK_FRAMES: usize = 1024;
 /// 5 s of headroom absorbs jitter bursts far larger than the ones we
 /// observed without making the initial audio latency noticeable (the
 /// ring is filled before the stream is played, so no startup penalty).
-const RING_FRAMES: usize = 240_000;
+/// 10 s of buffered audio. The previous 5 s ring still produced ~77
+/// cpal underruns per minute of playback on this machine, each costing
+/// ~10 ms of audio and stalling the playhead while the wall clock kept
+/// ticking. Reason: ffmpeg paces its PCM writes off the same muxer that
+/// throttles video, and small scheduler jitter + per-frame sleep in our
+/// reader add up to slightly less than 1x real-time on the audio side.
+/// Doubling the ring halves the underrun rate without startup cost.
+const RING_FRAMES: usize = 480_000;
 /// Bytes per frame in the on-disk PCM stream (s16le stereo = 2 ch * 2 B).
 const BYTES_PER_FRAME: u64 = 4;
 /// Consecutive EOF reads before the reader gives up.

@@ -89,6 +89,13 @@ pub struct CapRustApp {
     /// consumed video frame of the current play session. Reset on every
     /// toggle_play(true). See comments at the anchor site.
     pub play_anchor_set: bool,
+    /// AudioPlayer::playhead_ms() value at the moment the wall clock was
+    /// re-anchored. Subtracted from ap.playhead_ms() in the playhead
+    /// formula so that at re-anchor time playhead == wall. Without this
+    /// the ~300-400 ms during which cpal was already running but we had
+    /// not yet re-anchored remains baked into every subsequent sample,
+    /// producing a stable constant offset between video and audio.
+    pub audio_baseline_ms: u64,
     pub asset_browser: AssetBrowserState,
     pub export_in_progress: bool,
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
@@ -184,6 +191,7 @@ impl CapRustApp {
             preview_player: PreviewPlayer::new(),
             audio_player: None,
             play_anchor_set: false,
+            audio_baseline_ms: 0,
             asset_browser: AssetBrowserState::new(),
             export_in_progress: false,
             export_rx: None,
@@ -850,6 +858,7 @@ impl CapRustApp {
                 // Starting play: use current playhead as the render start.
                 self.explicit_seek_ms = Some(self.playhead_ms);
                 self.play_anchor_set = false;
+                self.audio_baseline_ms = 0;
             }
         }
         if ev.toggle_loop {
@@ -2051,10 +2060,16 @@ impl CapRustApp {
                             // every sync log line shows a bogus drift.
                             if !self.play_anchor_set {
                                 self.playback_started_at = Some(std::time::Instant::now());
+                                // Capture audio position now. See field docs.
+                                self.audio_baseline_ms = self
+                                    .audio_player
+                                    .as_ref()
+                                    .map_or(0, |ap| ap.playhead_ms());
                                 self.play_anchor_set = true;
                                 tracing::info!(
-                                    "playhead: re-anchored to first frame at {}ms",
-                                    self.playhead_ms
+                                    "playhead: re-anchored at {}ms (audio_baseline={}ms)",
+                                    self.playhead_ms,
+                                    self.audio_baseline_ms
                                 );
                             }
 
@@ -2071,7 +2086,8 @@ impl CapRustApp {
 
                         let (new_ph, src_tag) = match self.audio_player.as_ref() {
                             Some(ap) => (
-                                self.playback_started_ms + ap.playhead_ms(),
+                                self.playback_started_ms
+                                    + ap.playhead_ms().saturating_sub(self.audio_baseline_ms),
                                 "audio",
                             ),
                             None => (wall_ms, "wall"),
