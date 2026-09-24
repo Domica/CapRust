@@ -14,7 +14,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 
-const BUFFER_FRAMES: usize = 4;
+const BUFFER_FRAMES: usize = 8;
 
 pub struct PreviewRenderer {
     child: Child,
@@ -64,11 +64,6 @@ impl PreviewRenderer {
                 args.push("1".into());
                 args.push("-framerate".into());
                 args.push(format!("{fps:.6}"));
-            } else {
-                // `-re` = read input at native rate. Without this, ffmpeg
-                // decodes as fast as the CPU allows, the buffer saturates,
-                // and preview runs 5-10x too fast.
-                args.push("-re".into());
             }
             args.push("-ss".into());
             args.push(format!("{:.6}", inp.source_start_sec));
@@ -80,6 +75,16 @@ impl PreviewRenderer {
 
         args.push("-filter_complex".into());
         args.push(fg);
+
+        // Skip the pre-roll on the OUTPUT side. We DON'T use -re because
+        // that would force ffmpeg to decode real-time from t=0, which for
+        // a 40s seek means 40 real seconds of waiting. Instead we decode
+        // as fast as possible and discard the first N frames server-side.
+        if start_ms > 0 {
+            args.push("-ss".into());
+            args.push(format!("{:.6}", start_ms as f64 / 1000.0));
+        }
+
         args.push("-map".into());
         args.push(format!("[{v_label}]"));
 
@@ -131,11 +136,6 @@ impl PreviewRenderer {
 
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
-            for _ in 0..frames_to_skip {
-                if stdout.read_exact(&mut buf).is_err() {
-                    return;
-                }
-            }
             loop {
                 if stdout.read_exact(&mut buf).is_err() {
                     break;

@@ -1880,12 +1880,7 @@ impl CapRustApp {
                 // Ensure the timeline renderer is running.
                 let renderer_dead = self.preview_renderer.is_none();
                 let explicit_seek = self.explicit_seek_ms.is_some();
-                let drifted = self
-                    .preview_renderer
-                    .as_ref()
-                    .map(|r| (self.playhead_ms as i64 - r.started_at_ms as i64).abs() > 1500)
-                    .unwrap_or(false);
-                let need_start = renderer_dead || explicit_seek || drifted;
+                let need_start = renderer_dead || explicit_seek;
 
                 if need_start {
                     // Where to start the renderer from.
@@ -1931,6 +1926,7 @@ impl CapRustApp {
                                     fps_f,
                                 ) {
                                     Ok(renderer) => {
+                                        self.last_frame_instant = Some(std::time::Instant::now());
                                         tracing::info!(
                                             "preview: renderer started from {}ms",
                                             self.playhead_ms
