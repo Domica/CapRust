@@ -324,6 +324,19 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         }),
     }
 
+    // TEMP DEBUG — vidi na ekranu sto se dogadja
+    ui.label(
+        egui::RichText::new(format!(
+            "[DBG] sort={:?} filter={:?} n={} order={:?}",
+            state.sort,
+            state.filter,
+            sorted.len(),
+            sorted.iter().take(5).map(|m| m.name.as_str()).collect::<Vec<_>>()
+        ))
+        .small()
+        .color(egui::Color32::YELLOW),
+    );
+
     if sorted.is_empty() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
@@ -616,4 +629,60 @@ fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> Vec<Uu
         }
     }
     new_ids
+}
+
+#[cfg(test)]
+mod sort_filter_tests {
+    use super::*;
+    use caprust_core::media::{MediaItem, MediaKind};
+
+    fn make(name: &str, kind: MediaKind, added_at: u64) -> MediaItem {
+        MediaItem {
+            id: uuid::Uuid::new_v4(),
+            name: name.to_string(),
+            path: format!("/tmp/{name}"),
+            kind,
+            duration_ms: 1000,
+            size_bytes: 100,
+            added_at,
+            probe_done: true,
+            thumb_done: true,
+        }
+    }
+
+    #[test]
+    fn filter_video_only() {
+        let items = vec![
+            make("a.mp4", MediaKind::Video, 1),
+            make("b.mp3", MediaKind::Audio, 2),
+            make("c.png", MediaKind::Image, 3),
+        ];
+        let filtered: Vec<_> = items.iter().filter(|m| MediaFilter::Video.matches(m.kind)).collect();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "a.mp4");
+    }
+
+    #[test]
+    fn sort_by_name() {
+        let mut items = vec![
+            make("z.mp4", MediaKind::Video, 1),
+            make("a.mp4", MediaKind::Video, 2),
+            make("m.mp4", MediaKind::Video, 3),
+        ];
+        items.sort_by_key(|m| m.name.to_lowercase());
+        assert_eq!(items[0].name, "a.mp4");
+        assert_eq!(items[2].name, "z.mp4");
+    }
+
+    #[test]
+    fn sort_by_added() {
+        let mut items = vec![
+            make("z.mp4", MediaKind::Video, 3),
+            make("a.mp4", MediaKind::Video, 1),
+            make("m.mp4", MediaKind::Video, 2),
+        ];
+        items.sort_by_key(|m| m.added_at);
+        assert_eq!(items[0].added_at, 1);
+        assert_eq!(items[2].added_at, 3);
+    }
 }
