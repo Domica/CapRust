@@ -13,9 +13,7 @@ use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Number of decoded frames to buffer between the ffmpeg stdout reader
@@ -27,7 +25,14 @@ use std::time::{Duration, Instant};
 ///
 /// 24 frames gives ~1 second of slack at 24 fps (a bit under 2 s at 12 fps),
 /// which comfortably covers typical scheduler hiccups.
-const BUFFER_FRAMES: usize = 24;
+/// Channel capacity between the stdout reader and the UI, in frames.
+/// Must comfortably cover the audio priming window (ffmpeg needs ~1-4 s
+/// before the first audio byte hits the PCM file). During that window
+/// the reader is producing at fps and the UI is not consuming, so the
+/// channel has to hold priming_time * fps frames without blocking the
+/// reader. 180 frames = 7.5 s at 24 fps, which covers observed cases
+/// with a wide margin.
+const BUFFER_FRAMES: usize = 180;
 
 pub struct PreviewRenderer {
     child: Child,
@@ -38,11 +43,6 @@ pub struct PreviewRenderer {
     pub started_at_ms: u64,
     /// Path to the s16le PCM file written by ffmpeg (None if no audio track).
     pub pcm_path: Option<PathBuf>,
-    /// Set to true once the audio player is actually producing samples.
-    /// The video reader thread gates its FIRST emission on this flag so
-    /// that video and audio start at the same logical time even though
-    /// ffmpeg's audio file needs ~1 second of decoding to produce data.
-    pub audio_ready: Arc<AtomicBool>,
 }
 
 impl PreviewRenderer {
@@ -53,7 +53,6 @@ impl PreviewRenderer {
         width: u32,
         height: u32,
         fps: f64,
-        audio_ready: Arc<AtomicBool>,
     ) -> Result<Self> {
         let w = width.max(2) & !1;
         let h = height.max(2) & !1;
@@ -119,11 +118,6 @@ impl PreviewRenderer {
 
         // ---- OUTPUT 2: audio PCM file (optional) ----
         let mut pcm_path: Option<PathBuf> = None;
-        // If the plan has no audio output, release the video gate immediately
-        // — otherwise the reader thread would burn 3 s in the timeout wait.
-        if a_label.is_none() {
-            audio_ready.store(true, Ordering::Relaxed);
-        }
         if let Some(a) = &a_label {
             let path = std::env::temp_dir().join(format!(
                 "caprust-audio-{}-{}.pcm",
@@ -181,38 +175,14 @@ impl PreviewRenderer {
         let frame_size = (w * h * 4) as usize;
         let frame_interval = Duration::from_secs_f64(1.0 / fps);
 
-        let audio_ready_for_reader = audio_ready.clone();
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
-
-            // ---- Gate on audio readiness -----------------------------------
-            // ffmpeg writes both outputs (video to our stdout pipe, audio to
-            // the PCM file) in PTS order. The PCM file typically needs
-            // ~500-1000 ms of decoding before its first samples are written.
-            // If we start emitting video immediately, the UI shows frames
-            // from t=start_ms while the audio player is still at position 0
-            // — that produced the ~1 s desync reported in the field.
-            //
-            // Waiting here costs nothing extra: ffmpeg's stdout write is
-            // already blocking on the pipe (only ~1 frame fits), so the
-            // audio output inside ffmpeg is being throttled anyway. We just
-            // make the delay explicit and sync both outputs to it.
-            //
-            // Generous 3 s budget so slow machines / cold caches don't stall.
-            // If the flag never fires (no audio device, ffmpeg failed to
-            // write anything, etc.), we fall through and video plays alone.
-            let gate_deadline = Instant::now() + Duration::from_secs(3);
-            while !audio_ready_for_reader.load(Ordering::Relaxed) {
-                if Instant::now() >= gate_deadline {
-                    tracing::warn!(
-                        "preview: audio gate timed out after 3 s, starting video without audio"
-                    );
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-
-            // Emit from now on, at fps.
+            // NOTE: do NOT gate this reader. Blocking here stalls ffmpeg's
+            // main thread (its muxer writes both outputs in PTS order), so
+            // the PCM file never gets written and audio never starts. The
+            // UI is responsible for holding the last displayed frame until
+            // the audio player produces samples; the reader just keeps the
+            // stdout pipe drained so ffmpeg keeps moving.
             let mut next_emit = Instant::now();
             loop {
                 if stdout.read_exact(&mut buf).is_err() {
@@ -239,7 +209,6 @@ impl PreviewRenderer {
             child,
             rx,
             pcm_path,
-            audio_ready,
             width: w,
             height: h,
             fps,
