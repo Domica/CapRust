@@ -265,11 +265,11 @@ fn atempo_chain(speed: f32) -> String {
     // atempo supports 0.5..=100 in recent builds; older only 0.5..=2.
     // Chain to be safe.
     while s > 2.0 {
-        parts.push(format!(",atempo=2.0"));
+        parts.push(",atempo=2.0".to_string());
         s /= 2.0;
     }
     while s < 0.5 {
-        parts.push(format!(",atempo=0.5"));
+        parts.push(",atempo=0.5".to_string());
         s *= 2.0;
     }
     parts.push(format!(",atempo={s:.6}"));
@@ -323,12 +323,7 @@ pub fn plan_from_project(
         clips.sort_by_key(|c| c.start_time_ms);
         for c in clips {
             if let ClipType::Video { path, .. } | ClipType::Image { path, .. } = &c.clip_type {
-                let src_start = c
-                    .source_duration_ms
-                    .saturating_sub(c.duration_ms) // best-effort: assume trim from end
-                    .min(0);
-                let _ = src_start;
-                // We don't track source_start_ms in Clip yet; assume 0 for now.
+                // We don't track source_start_ms in Clip yet; assume 0.
                 let source_start_sec = 0.0_f64;
                 let dur_sec = c.duration_ms as f64 / 1000.0;
                 let idx = register_input(path, source_start_sec, dur_sec);

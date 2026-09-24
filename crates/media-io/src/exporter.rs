@@ -41,7 +41,7 @@ pub fn run_export(
 
     // Parse `-progress pipe:2` output: lines like `out_time_ms=1234567`.
     let reader = BufReader::new(stderr);
-    let total_us = (plan.total_duration_sec * 1_000_000.0) as f64;
+    let total_us = plan.total_duration_sec * 1_000_000.0;
 
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim().to_string();
