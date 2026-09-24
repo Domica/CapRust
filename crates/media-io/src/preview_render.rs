@@ -51,13 +51,22 @@ const BUFFER_FRAMES: usize = 180;
 /// behind.
 ///
 /// Tunable via the CAPRUST_AV_DELAY_MS environment variable for testing
-/// on different hardware. Default 300 ms matches the WASAPI buffer size
-/// observed on the reference Windows machine.
+/// on different hardware.
+///
+/// Default 650 ms was calibrated on the reference Windows machine
+/// (FxSound Audio Enhancer + Windows WASAPI). The perceived A/V gap
+/// there was ~950 ms total, of which 300 ms was the initial estimate
+/// and the remaining 650 ms came from the WASAPI output buffer plus
+/// the cpal stream's internal latency. Users on different audio
+/// hardware can tune via env var without a rebuild.
+///
+/// A UI calibration slider is planned for Phase H5 (mute/volume) so
+/// end users can adjust this without touching env vars.
 fn av_delay_ms() -> u64 {
     std::env::var("CAPRUST_AV_DELAY_MS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(300)
+        .unwrap_or(650)
 }
 
 pub struct PreviewRenderer {
