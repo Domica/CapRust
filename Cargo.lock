@@ -737,7 +737,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caprust-core",
+ "cpal",
  "ffmpeg-next",
+ "ringbuf",
  "serde",
  "serde_json",
  "tokio",
