@@ -11,7 +11,7 @@
 use crate::export_graph::RenderPlan;
 use anyhow::{Context, Result};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -25,6 +25,8 @@ pub struct PreviewRenderer {
     pub height: u32,
     pub fps: f64,
     pub started_at_ms: u64,
+    /// Path to the s16le PCM file written by ffmpeg (None if no audio track).
+    pub pcm_path: Option<PathBuf>,
 }
 
 impl PreviewRenderer {
@@ -81,13 +83,24 @@ impl PreviewRenderer {
         args.push("-map".into());
         args.push(format!("[{v_label}]"));
 
+        let mut pcm_path: Option<PathBuf> = None;
         if let Some(a) = &a_label {
-            // Drain audio to /dev/null for now (real playback next PR).
+            let path = std::env::temp_dir().join(format!(
+                "caprust-audio-{}-{}.pcm",
+                std::process::id(),
+                start_ms
+            ));
+            std::fs::File::create(&path).ok();
             args.push("-map".into());
             args.push(format!("[{a}]"));
             args.push("-f".into());
-            args.push("null".into());
-            args.push("-".into());
+            args.push("s16le".into());
+            args.push("-ar".into());
+            args.push("48000".into());
+            args.push("-ac".into());
+            args.push("2".into());
+            args.push(path.to_string_lossy().to_string());
+            pcm_path = Some(path);
         }
 
         // Video: raw RGBA on stdout.
@@ -166,6 +179,7 @@ impl PreviewRenderer {
         Ok(Self {
             child,
             rx,
+            pcm_path,
             width: w,
             height: h,
             fps,
@@ -194,5 +208,8 @@ impl PreviewRenderer {
 impl Drop for PreviewRenderer {
     fn drop(&mut self) {
         self.kill();
+        if let Some(p) = &self.pcm_path {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }

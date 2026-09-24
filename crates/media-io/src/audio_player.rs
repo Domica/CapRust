@@ -38,6 +38,9 @@ const READ_CHUNK_FRAMES: usize = 1024;
 const RING_FRAMES: usize = 9_600;
 /// Bytes per frame in the on-disk PCM stream (s16le stereo = 2 ch * 2 B).
 const BYTES_PER_FRAME: u64 = 4;
+/// Consecutive EOF reads before the reader gives up (~1 s window).
+/// Handles the case where ffmpeg hasn't started writing yet.
+const EOF_RETRIES: u32 = 20;
 
 /// A sample source consumed by the cpal callback.
 ///
@@ -318,6 +321,7 @@ fn pcm_reader_loop(
         .context("seek pcm file")?;
 
     let mut bytes = vec![0u8; READ_CHUNK_FRAMES * BYTES_PER_FRAME as usize];
+    let mut eof_streak: u32 = 0;
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -326,8 +330,15 @@ fn pcm_reader_loop(
 
         let n = file.read(&mut bytes).context("read pcm")?;
         if n == 0 {
-            return Ok(()); // EOF
+            eof_streak += 1;
+            if eof_streak >= EOF_RETRIES {
+                tracing::debug!("pcm reader: EOF after {eof_streak} retries");
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(50));
+            continue;
         }
+        eof_streak = 0;
 
         // s16le → f32 in [-1.0, 1.0). `chunks_exact(2)` discards an odd
         // trailing byte — can't happen with well-formed PCM but be safe.

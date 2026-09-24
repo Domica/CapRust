@@ -6,6 +6,7 @@ use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
+use caprust_media_io::audio_player::AudioPlayer;
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
@@ -82,6 +83,8 @@ pub struct CapRustApp {
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
+    /// Audio playback for the current preview session. None = no audio.
+    pub audio_player: Option<AudioPlayer>,
     pub asset_browser: AssetBrowserState,
     pub export_in_progress: bool,
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
@@ -175,6 +178,7 @@ impl CapRustApp {
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
+            audio_player: None,
             asset_browser: AssetBrowserState::new(),
             export_in_progress: false,
             export_rx: None,
@@ -831,6 +835,7 @@ impl CapRustApp {
             if !self.preview.playing {
                 self.preview_player.cancel_pending();
                 self.preview_player.stop_stream();
+                self.audio_player = None; // Drop zaustavlja cpal stream
                 if let Some(mut r) = self.preview_renderer.take() {
                     r.kill();
                 }
