@@ -64,6 +64,12 @@ impl PreviewRenderer {
                 args.push("1".into());
                 args.push("-framerate".into());
                 args.push(format!("{fps:.6}"));
+            } else {
+                // `-re` is an INPUT option that forces ffmpeg to read
+                // the source at native rate (real-time). Without it,
+                // ffmpeg decodes as fast as the CPU allows → 5-10x.
+                // Must come BEFORE -i.
+                args.push("-re".into());
             }
             args.push("-ss".into());
             args.push(format!("{:.6}", inp.source_start_sec));
@@ -75,15 +81,6 @@ impl PreviewRenderer {
 
         args.push("-filter_complex".into());
         args.push(fg);
-
-        // Skip the pre-roll on the OUTPUT side. We DON'T use -re because
-        // that would force ffmpeg to decode real-time from t=0, which for
-        // a 40s seek means 40 real seconds of waiting. Instead we decode
-        // as fast as possible and discard the first N frames server-side.
-        if start_ms > 0 {
-            args.push("-ss".into());
-            args.push(format!("{:.6}", start_ms as f64 / 1000.0));
-        }
 
         args.push("-map".into());
         args.push(format!("[{v_label}]"));

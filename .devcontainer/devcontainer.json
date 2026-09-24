@@ -1,0 +1,78 @@
+{
+  "name": "CapRust Dev",
+
+  // Use Microsoft's official Rust image — includes rustup, cargo, clippy,
+  // rustfmt, and the GNU toolchain out of the box.
+  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bookworm",
+
+  // VS Code customizations
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates",
+        "usernamehw.errorlens",
+        "fill-labs.dependi"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.cargo.features": "all",
+        "rust-analyzer.check.extraArgs": ["--workspace", "--all-targets"],
+        "rust-analyzer.cargo.targetDir": true,
+        "editor.formatOnSave": true,
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        },
+        "files.watcherExclude": {
+          "**/target/**": true,
+          "**/.git/objects/**": true
+        }
+      }
+    }
+  },
+
+  // Install system deps we need for eframe/egui, ffmpeg, and cpal (ALSA).
+  // Run once when the container is created.
+  "postCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends \
+    pkg-config \
+    clang \
+    libclang-dev \
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libavfilter-dev \
+    libavdevice-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libxcb-shape0-dev \
+    libxcb-xfixes0-dev \
+    libxkbcommon-dev \
+    libgtk-3-dev \
+    libasound2-dev \
+    libxrandr-dev \
+    libxi-dev \
+    libxcursor-dev \
+    && sudo rm -rf /var/lib/apt/lists/*",
+
+  // Keep the container lean but give cargo a bit of headroom.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+
+  // Post-attach runs every time you open the devcontainer (fast).
+  "postAttachCommand": "cargo --version && ffmpeg -version | head -1",
+
+  // Use non-root user (default in Microsoft images).
+  "remoteUser": "vscode",
+
+  // Mount a persistent cache for cargo so rebuilds are fast.
+  "mounts": [
+    "source=caprust-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+    "source=caprust-target,target=${containerWorkspaceFolder}/target,type=volume"
+  ]
+}
