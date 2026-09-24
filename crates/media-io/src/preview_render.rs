@@ -1,11 +1,12 @@
 //! Timeline-level preview renderer.
 //!
-//! Spawns ONE ffmpeg process that renders the whole timeline through the
-//! SAME filtergraph as export. Output is raw RGBA video on stdout, one
-//! frame at a time. UI reads frames and uploads to egui textures.
-//!
-//! Audio: emitted to a second pipe in `-f f32le` format. For now we
-//! drain it to avoid blocking; a future PR wires it to cpal.
+//! Strategy:
+//!  - No `-re` on input (that would force real-time decode from t=0,
+//!    making a 30s seek wait 30 real seconds).
+//!  - Use `-ss <start>` as an OUTPUT option, so ffmpeg decodes as fast
+//!    as it can and just discards frames before `start`.
+//!  - Reader thread THROTTLES its own emission to the target fps using
+//!    `std::thread::sleep`, so the consumer sees exactly fps frames/sec.
 
 use crate::export_graph::RenderPlan;
 use anyhow::{Context, Result};
@@ -13,8 +14,9 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
-const BUFFER_FRAMES: usize = 8;
+const BUFFER_FRAMES: usize = 3;
 
 pub struct PreviewRenderer {
     child: Child,
@@ -26,9 +28,6 @@ pub struct PreviewRenderer {
 }
 
 impl PreviewRenderer {
-    /// Start rendering the timeline from `start_ms` (0 = beginning).
-    /// Frames before `start_ms` are decoded but discarded, so xfades
-    /// and per-track chains are still correct at the start position.
     pub fn spawn(
         ffmpeg: &Path,
         plan: &RenderPlan,
@@ -50,7 +49,7 @@ impl PreviewRenderer {
             "error".into(),
         ];
 
-        // Image inputs get -loop 1 + -framerate
+        // Inputs: images need -loop 1; everything else is plain -i.
         let image_indices: std::collections::HashSet<usize> = plan
             .video_clips
             .iter()
@@ -64,29 +63,26 @@ impl PreviewRenderer {
                 args.push("1".into());
                 args.push("-framerate".into());
                 args.push(format!("{fps:.6}"));
-            } else {
-                // `-re` is an INPUT option that forces ffmpeg to read
-                // the source at native rate (real-time). Without it,
-                // ffmpeg decodes as fast as the CPU allows → 5-10x.
-                // Must come BEFORE -i.
-                args.push("-re".into());
             }
-            args.push("-ss".into());
-            args.push(format!("{:.6}", inp.source_start_sec));
-            args.push("-t".into());
-            args.push(format!("{:.6}", inp.duration_sec));
             args.push("-i".into());
             args.push(inp.path.to_string_lossy().to_string());
         }
 
         args.push("-filter_complex".into());
-        args.push(fg);
+        args.push(fg.clone());
+
+        // OUTPUT-side seek. Ffmpeg decodes everything as fast as it can,
+        // discards the first `start_ms / 1000` seconds of the composition.
+        if start_ms > 0 {
+            args.push("-ss".into());
+            args.push(format!("{:.6}", start_ms as f64 / 1000.0));
+        }
 
         args.push("-map".into());
         args.push(format!("[{v_label}]"));
 
-        // Audio: if available, drain to null (real playback comes next PR)
         if let Some(a) = &a_label {
+            // Drain audio to /dev/null for now (real playback next PR).
             args.push("-map".into());
             args.push(format!("[{a}]"));
             args.push("-f".into());
@@ -94,7 +90,7 @@ impl PreviewRenderer {
             args.push("-".into());
         }
 
-        // Video output: raw RGBA on stdout
+        // Video: raw RGBA on stdout.
         args.push("-f".into());
         args.push("rawvideo".into());
         args.push("-pix_fmt".into());
@@ -105,15 +101,27 @@ impl PreviewRenderer {
         args.push(format!("{fps:.6}"));
         args.push("-".into());
 
+        tracing::debug!(
+            "preview: ffmpeg args: {}",
+            args.iter()
+                .map(|a| if a.contains(' ') {
+                    format!("{a:?}")
+                } else {
+                    a.clone()
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+
         let mut child = Command::new(ffmpeg)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| format!("spawn preview ffmpeg for {} inputs", plan.inputs.len()))?;
+            .with_context(|| format!("spawn preview ffmpeg ({} inputs)", plan.inputs.len()))?;
 
-        // Drain stderr in background so we can log issues
+        // Forward ffmpeg stderr to tracing.
         if let Some(mut err) = child.stderr.take() {
             std::thread::spawn(move || {
                 use std::io::BufRead;
@@ -129,14 +137,21 @@ impl PreviewRenderer {
         let mut stdout = child.stdout.take().context("ffmpeg stdout missing")?;
         let (tx, rx) = sync_channel::<Vec<u8>>(BUFFER_FRAMES);
         let frame_size = (w * h * 4) as usize;
-        let frames_to_skip = ((start_ms as f64 / 1000.0) * fps).round() as u64;
+        let frame_interval = Duration::from_secs_f64(1.0 / fps);
 
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
+            let mut next_emit = Instant::now();
             loop {
                 if stdout.read_exact(&mut buf).is_err() {
                     break;
                 }
+                // Throttle: sleep so we emit at exactly `fps` frames/sec.
+                let now = Instant::now();
+                if next_emit > now {
+                    std::thread::sleep(next_emit - now);
+                }
+                next_emit = Instant::now() + frame_interval;
                 if tx.send(buf.clone()).is_err() {
                     break;
                 }
@@ -144,9 +159,8 @@ impl PreviewRenderer {
         });
 
         tracing::info!(
-            "preview: renderer spawn from {start_ms}ms ({} inputs, {} frames to skip)",
-            plan.inputs.len(),
-            frames_to_skip
+            "preview: renderer spawn from {start_ms}ms ({} inputs @ {fps:.2}fps)",
+            plan.inputs.len()
         );
 
         Ok(Self {
