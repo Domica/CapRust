@@ -175,7 +175,6 @@ impl RenderPlan {
 
         let mut v_prev = String::from("v_base");
         for (overlay_i, &clip_i) in order.iter().enumerate() {
-            let c = &self.video_clips[clip_i];
             let v_next = format!("v_ov{overlay_i}");
             fg.push_str(&format!(
                 "[{v_prev}][{clip}]overlay=shortest=0:eof_action=pass[v_ov{overlay_i}];",
