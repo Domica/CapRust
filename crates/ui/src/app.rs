@@ -14,6 +14,7 @@ use caprust_core::commands::split_clip::SplitClipCommand;
 use caprust_core::recent::{RecentList, RecentProject};
 use caprust_core::settings::AppSettings;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
+use caprust_media_io::exporter::ExportEvent;
 use eframe::egui;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,6 +82,10 @@ pub struct CapRustApp {
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
     pub asset_browser: AssetBrowserState,
+    pub export_in_progress: bool,
+    pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
+    pub export_progress: f32,
+    pub export_finished_path: Option<String>,
     pub job_runner: JobRunner,
 }
 
@@ -158,6 +163,10 @@ impl CapRustApp {
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
             asset_browser: AssetBrowserState::new(),
+            export_in_progress: false,
+            export_rx: None,
+            export_progress: 0.0,
+            export_finished_path: None,
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -1918,6 +1927,8 @@ impl CapRustApp {
     fn show_export_window(&mut self, ctx: &egui::Context) {
         let total_ms = self.total_duration_ms();
         let mut open = self.export_open;
+        let mut start_clicked = false;
+
         egui::Window::new(tr("exp-title"))
             .open(&mut open)
             .resizable(false)
@@ -1925,19 +1936,47 @@ impl CapRustApp {
             .default_width(440.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                if crate::panels::export_window::show(ui, &mut self.export_state, total_ms) {
-                    tracing::info!(
-                        "Export → dest={}, res={:?}, fps={:?}, codec={:?}, q={:?}",
-                        self.export_state.destination,
-                        self.export_state.resolution,
-                        self.export_state.frame_rate,
-                        self.export_state.codec,
-                        self.export_state.quality,
+                start_clicked =
+                    crate::panels::export_window::show(ui, &mut self.export_state, total_ms);
+
+                // Progress section
+                if self.export_in_progress {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("Exporting…")
+                            .strong()
+                            .color(egui::Color32::from_rgb(120, 180, 240)),
                     );
-                    self.export_open = false;
+                    ui.add(
+                        egui::ProgressBar::new(self.export_progress)
+                            .desired_width(ui.available_width())
+                            .show_percentage(),
+                    );
+                    ctx.request_repaint();
+                }
+
+                // Finished section
+                if let Some(path) = self.export_finished_path.clone() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(format!("✓ Done: {path}"))
+                            .color(egui::Color32::from_rgb(120, 220, 120)),
+                    );
+                    if ui.button("📂 Open folder").clicked() {
+                        caprust_media_io::exporter::reveal_in_folder(std::path::Path::new(&path));
+                    }
+                    if ui.button("Dismiss").clicked() {
+                        self.export_finished_path = None;
+                    }
                 }
             });
         self.export_open = open;
+
+        if start_clicked && !self.export_in_progress {
+            self.start_export();
+        }
     }
 
     fn show_model_prompt_window(&mut self, ctx: &egui::Context) {
@@ -2119,6 +2158,92 @@ impl CapRustApp {
         }
     }
 
+    fn start_export(&mut self) {
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            tracing::error!("export: ffmpeg not detected");
+            return;
+        };
+
+        // Resolve target size from export state.
+        let (pw, ph) = self.project.project_dimensions();
+        let (w, h) = self.export_state.resolution.dimensions(pw, ph);
+        let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+            self.project.frame_rate.num as i64,
+            self.project.frame_rate.den as i64,
+        );
+
+        let crf = match self.export_state.quality {
+            crate::panels::export_window::QualityTier::Small => 26,
+            crate::panels::export_window::QualityTier::Regular => 20,
+            crate::panels::export_window::QualityTier::Large => 16,
+        };
+
+        let plan = match caprust_media_io::export_graph::plan_from_project(
+            &self.project,
+            w,
+            h,
+            fps_num,
+            fps_den,
+            crf,
+            "veryfast",
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("export plan failed: {e}");
+                return;
+            }
+        };
+
+        // Output path: <destination>/<project-name>.mp4
+        let mut out = std::path::PathBuf::from(&self.export_state.destination);
+        out.push(format!("{}.mp4", self.project.name.replace(' ', "_")));
+
+        tracing::info!(
+            "starting export: {} → {} ({}x{} @ {}/{})",
+            plan.inputs.len(),
+            out.display(),
+            w,
+            h,
+            fps_num,
+            fps_den,
+        );
+
+        let rx =
+            caprust_media_io::exporter::spawn_export(std::path::PathBuf::from(ffmpeg), plan, out);
+        self.export_rx = Some(rx);
+        self.export_in_progress = true;
+        self.export_progress = 0.0;
+        self.export_finished_path = None;
+    }
+
+    fn poll_export(&mut self) {
+        let Some(rx) = self.export_rx.as_ref() else {
+            return;
+        };
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                ExportEvent::Started => {
+                    tracing::info!("export: ffmpeg started");
+                }
+                ExportEvent::Progress(p) => {
+                    self.export_progress = p;
+                }
+                ExportEvent::Log(line) => {
+                    tracing::info!("export log: {line}");
+                }
+                ExportEvent::Finished { output } => {
+                    tracing::info!("export: finished → {}", output.display());
+                    self.export_in_progress = false;
+                    self.export_finished_path = Some(output.to_string_lossy().to_string());
+                }
+                ExportEvent::Failed(msg) => {
+                    tracing::error!("export failed: {msg}");
+                    self.export_in_progress = false;
+                }
+            }
+        }
+    }
+
     fn show_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
         egui::Window::new(tr("set-title"))
@@ -2200,6 +2325,9 @@ impl eframe::App for CapRustApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         caprust_i18n::set_current_lang(&self.settings.language);
         self.theme.apply(ctx);
+
+        // Poll export events.
+        self.poll_export();
 
         // Drain background jobs (ffprobe results, thumbnails ready).
         let thumbs_ready = self.job_runner.drain(&mut self.project);
