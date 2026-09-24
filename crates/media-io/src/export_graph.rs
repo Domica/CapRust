@@ -525,12 +525,31 @@ pub fn plan_from_project(
         }
     }
 
-    // Audio tracks — for now still only Audio kind tracks.
-    for (t_idx, t) in project.tracks.iter().enumerate() {
-        if t.kind != TrackKind::Audio {
-            continue;
-        }
-        let _ = t;
+    // Audio: prefer dedicated Audio tracks. If none exist, fall back to
+    // pulling audio from Video clips (they usually have an audio stream).
+    let has_audio_track = project.tracks.iter().any(|t| t.kind == TrackKind::Audio);
+
+    let audio_source_tracks: Vec<usize> = if has_audio_track {
+        project
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == TrackKind::Audio)
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        project
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == TrackKind::Video)
+            .map(|(i, _)| i)
+            .collect()
+    };
+
+    let audio_from_video = !has_audio_track;
+
+    for t_idx in audio_source_tracks {
         let mut clips: Vec<&caprust_core::Clip> = project
             .clips
             .iter()
@@ -538,7 +557,12 @@ pub fn plan_from_project(
             .collect();
         clips.sort_by_key(|c| c.start_time_ms);
         for c in clips {
-            if let ClipType::Audio { path, .. } = &c.clip_type {
+            let path_opt: Option<&String> = match &c.clip_type {
+                ClipType::Audio { path, .. } => Some(path),
+                ClipType::Video { path, .. } if audio_from_video => Some(path),
+                _ => None,
+            };
+            if let Some(path) = path_opt {
                 let dur_sec = c.duration_ms as f64 / 1000.0;
                 let idx = register_input(&mut inputs, path, 0.0, dur_sec);
                 audio_clips.push(AudioClip {

@@ -15,6 +15,7 @@ use caprust_core::recent::{RecentList, RecentProject};
 use caprust_core::settings::AppSettings;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use caprust_media_io::exporter::ExportEvent;
+use caprust_media_io::preview_render::PreviewRenderer;
 use eframe::egui;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,6 +88,7 @@ pub struct CapRustApp {
     pub export_progress: f32,
     pub export_finished_path: Option<String>,
     /// Clip currently being streamed in preview (None = no stream).
+    pub preview_renderer: Option<PreviewRenderer>,
     pub last_streamed_clip: Option<uuid::Uuid>,
     /// Set to true when the user seeks; forces the preview stream to restart.
     pub stream_needs_restart: bool,
@@ -171,6 +173,7 @@ impl CapRustApp {
             export_rx: None,
             export_progress: 0.0,
             export_finished_path: None,
+            preview_renderer: None,
             last_streamed_clip: None,
             stream_needs_restart: false,
             job_runner: JobRunner::new(
@@ -809,12 +812,18 @@ impl CapRustApp {
         }
         if seeked && self.preview.playing {
             self.stream_needs_restart = true;
+            if let Some(mut r) = self.preview_renderer.take() {
+                r.kill();
+            }
         }
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
             if !self.preview.playing {
                 self.preview_player.cancel_pending();
                 self.preview_player.stop_stream();
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
+                }
                 self.last_streamed_clip = None;
             } else {
                 // Starting play: force a fresh stream from the current position.
@@ -1860,53 +1869,129 @@ impl CapRustApp {
             let playing = self.preview.playing;
 
             if playing {
-                let desired_clip: Option<uuid::Uuid> = clip_info.as_ref().map(|(id, _, _, _)| *id);
-
-                let clip_changed = self.last_streamed_clip != desired_clip;
-                let need_start = self.preview_player.stream.is_none()
-                    || clip_changed
-                    || self.stream_needs_restart;
+                // Ensure the timeline renderer is running.
+                let need_start = self.preview_renderer.is_none() || self.stream_needs_restart;
 
                 if need_start {
-                    if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
-                        (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
-                    {
-                        let source_sec =
-                            ((playhead.saturating_sub(clip_start)) as f32 * speed) as f64 / 1000.0;
-                        tracing::info!(
-                            "preview: (re)start stream clip={} at={:.2}s (changed={} seek={})",
-                            clip_id,
-                            source_sec,
-                            clip_changed,
-                            self.stream_needs_restart,
-                        );
-                        self.preview_player.start_stream(
-                            std::path::Path::new(&ffmpeg),
-                            std::path::Path::new(&path),
-                            clip_id,
-                            source_sec,
-                            tw,
-                            th,
-                            30.0,
-                        );
-                        self.last_streamed_clip = Some(clip_id);
-                        self.stream_needs_restart = false;
+                    // Kill old one
+                    if let Some(mut r) = self.preview_renderer.take() {
+                        r.kill();
+                    }
+
+                    // Build the same render plan that export uses.
+                    let (pw, ph) = self.project.project_dimensions();
+                    let max_side = match self.preview.quality {
+                        crate::panels::preview_window::PreviewQuality::Quarter => 320,
+                        crate::panels::preview_window::PreviewQuality::Half => 480,
+                        crate::panels::preview_window::PreviewQuality::Full => 640,
+                    };
+                    let (rw, rh) = caprust_media_io::player::preview_size(pw, ph, max_side);
+
+                    let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+                        self.project.frame_rate.num as i64,
+                        self.project.frame_rate.den as i64,
+                    );
+                    let fps_f = fps_num as f64 / fps_den.max(1) as f64;
+
+                    if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
+                        match caprust_media_io::export_graph::plan_from_project(
+                            &self.project,
+                            rw,
+                            rh,
+                            fps_num,
+                            fps_den,
+                            23,
+                            "veryfast",
+                        ) {
+                            Ok(plan) => {
+                                match PreviewRenderer::spawn(
+                                    std::path::Path::new(&ffmpeg),
+                                    &plan,
+                                    self.playhead_ms,
+                                    rw,
+                                    rh,
+                                    fps_f,
+                                ) {
+                                    Ok(renderer) => {
+                                        tracing::info!(
+                                            "preview: renderer started from {}ms",
+                                            self.playhead_ms
+                                        );
+                                        self.preview_renderer = Some(renderer);
+                                        self.stream_needs_restart = false;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("preview renderer spawn failed: {e}");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("preview plan failed: {e}");
+                            }
+                        }
                     }
                 }
 
+                // Drain ready frames; keep only the last.
                 let mut consumed = 0u32;
-                while self.preview_player.poll_stream(ctx) {
-                    consumed += 1;
-                    if consumed > 6 {
-                        break;
+                let mut latest: Option<Vec<u8>> = None;
+                if let Some(r) = self.preview_renderer.as_ref() {
+                    while let Some(frame) = r.try_next() {
+                        latest = Some(frame);
+                        consumed += 1;
+                        if consumed > 6 {
+                            break;
+                        }
                     }
                 }
-                if consumed > 0 {
-                    let step_ms = (consumed as f64 * 1000.0 / 30.0).round() as u64;
-                    self.playhead_ms = self.playhead_ms.saturating_add(step_ms.max(1));
+
+                if let Some(buf) = latest {
+                    if let Some(r) = self.preview_renderer.as_ref() {
+                        let w = r.width as usize;
+                        let h = r.height as usize;
+                        let expected = w * h * 4;
+                        if buf.len() >= expected {
+                            let img =
+                                egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
+                            let handle = ctx.load_texture(
+                                "preview-timeline",
+                                img,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.preview_player.texture = Some(handle);
+                            self.preview_player.has_frame = true;
+                        }
+                        // Advance playhead
+                        let fps = r.fps.max(1.0);
+                        let step_ms = (consumed as f64 * 1000.0 / fps).round() as u64;
+                        self.playhead_ms = self.playhead_ms.saturating_add(step_ms.max(1));
+                    }
                 }
 
                 ctx.request_repaint();
+            } else {
+                // Paused: kill any renderer, do a seek-based single-frame decode
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
+                }
+                self.preview_player.stop_stream();
+                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+                {
+                    let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
+                    self.preview_player.request(
+                        std::path::Path::new(&ffmpeg),
+                        std::path::Path::new(&path),
+                        clip_id,
+                        source_ms,
+                        tw,
+                        th,
+                    );
+                }
+                self.preview_player.poll(ctx);
+                if self.preview_player.pending.is_some() {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                }
             }
 
             // ---- Render frame or placeholder ----
