@@ -139,7 +139,14 @@ impl RenderPlan {
             fg.push_str(&fade_in);
             fg.push_str(&fade_out);
 
-            fg.push_str(&format!("[{v_out}];"));
+            // Shift this clip's PTS to its position on the timeline.
+            // Without this, `overlay` matches by PTS and everything past
+            // the first clip is shown at the wrong moment (usually black).
+            fg.push_str(&format!(
+                ",setpts=PTS+{start:.6}/TB[{v_out}];",
+                start = c.timeline_start_sec,
+                v_out = v_out,
+            ));
             v_labels.push(v_out);
         }
 
@@ -171,13 +178,11 @@ impl RenderPlan {
             let c = &self.video_clips[clip_i];
             let v_next = format!("v_ov{overlay_i}");
             fg.push_str(&format!(
-            "[{v_prev}][{clip}]overlay=enable='between(t,{start:.6},{end:.6})':eof_action=pass[v_ov{overlay_i}];",
-            v_prev = v_prev,
-            clip = v_labels[clip_i],
-            start = c.timeline_start_sec,
-            end = c.timeline_start_sec + c.duration_sec,
-            overlay_i = overlay_i,
-        ));
+                "[{v_prev}][{clip}]overlay=shortest=0:eof_action=pass[v_ov{overlay_i}];",
+                v_prev = v_prev,
+                clip = v_labels[clip_i],
+                overlay_i = overlay_i,
+            ));
             v_prev = v_next;
         }
 
