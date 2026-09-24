@@ -95,6 +95,10 @@ pub struct CapRustApp {
     pub stream_needs_restart: bool,
     /// When Some, preview should restart from here regardless of delta.
     pub explicit_seek_ms: Option<u64>,
+    /// Wall-clock instant when playback started (for playhead derivation).
+    pub playback_started_at: Option<std::time::Instant>,
+    /// Playhead value (ms) at the moment playback started.
+    pub playback_started_ms: u64,
     pub job_runner: JobRunner,
 }
 
@@ -181,6 +185,8 @@ impl CapRustApp {
             last_streamed_clip: None,
             stream_needs_restart: false,
             explicit_seek_ms: None,
+            playback_started_at: None,
+            playback_started_ms: 0,
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -817,6 +823,8 @@ impl CapRustApp {
         }
         if seeked && self.preview.playing {
             self.explicit_seek_ms = Some(self.playhead_ms);
+            self.playback_started_at = Some(std::time::Instant::now());
+            self.playback_started_ms = self.playhead_ms;
         }
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
@@ -827,6 +835,7 @@ impl CapRustApp {
                     r.kill();
                 }
                 self.last_streamed_clip = None;
+                self.playback_started_at = None;
             } else {
                 // Starting play: use current playhead as the render start.
                 self.explicit_seek_ms = Some(self.playhead_ms);
@@ -1461,13 +1470,14 @@ impl CapRustApp {
                     match a {
                         ClipAction::SetPlayhead(ms) => {
                             let target = ms.min(total_ms.max(1));
-                            // Only restart the renderer if the user's seek
-                            // target is meaningfully different from the
-                            // current playhead (avoids restart loops).
                             if self.preview.playing
                                 && (target as i64 - self.playhead_ms as i64).abs() > 500
                             {
                                 self.explicit_seek_ms = Some(target);
+                                // Re-anchor wall clock so playhead stays
+                                // in sync with the new position.
+                                self.playback_started_at = Some(std::time::Instant::now());
+                                self.playback_started_ms = target;
                             }
                             self.playhead_ms = target;
                         }
@@ -1926,7 +1936,10 @@ impl CapRustApp {
                                     fps_f,
                                 ) {
                                     Ok(renderer) => {
-                                        self.last_frame_instant = Some(std::time::Instant::now());
+                                        // Re-anchor wall clock so drift during
+                                        // renderer startup doesn't push playhead.
+                                        self.playback_started_at = Some(std::time::Instant::now());
+                                        self.playback_started_ms = start_from;
                                         tracing::info!(
                                             "preview: renderer started from {}ms",
                                             self.playhead_ms
@@ -2071,6 +2084,8 @@ impl CapRustApp {
                         r.kill();
                     }
                     self.explicit_seek_ms = Some(0);
+                    self.playback_started_at = Some(std::time::Instant::now());
+                    self.playback_started_ms = 0;
                 } else {
                     self.playhead_ms = total_ms;
                     self.preview.playing = false;
