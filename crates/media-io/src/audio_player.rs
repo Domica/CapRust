@@ -38,9 +38,18 @@ const READ_CHUNK_FRAMES: usize = 1024;
 const RING_FRAMES: usize = 9_600;
 /// Bytes per frame in the on-disk PCM stream (s16le stereo = 2 ch * 2 B).
 const BYTES_PER_FRAME: u64 = 4;
-/// Consecutive EOF reads before the reader gives up (~1 s window).
-/// Handles the case where ffmpeg hasn't started writing yet.
-const EOF_RETRIES: u32 = 20;
+/// Consecutive EOF reads before the reader gives up.
+/// ffmpeg writes PCM sequentially from t=0 even when we asked to start at a
+/// later offset (the -ss is only on the video output). The reader therefore
+/// seeks to `start_ms * 192` bytes and has to wait until ffmpeg has DECODED
+/// that many seconds of source and written them out. On a 15-second seek
+/// this can take 10-20 real seconds. Give the reader a long enough window
+/// (~20 s at 40 ms per retry) that it survives typical seeks, then still
+/// exit cleanly if ffmpeg really did reach end-of-file.
+const EOF_RETRIES: u32 = 500;
+/// Sleep between EOF retries. Chosen so retries are cheap but the reader
+/// stays responsive to the stop flag.
+const EOF_SLEEP_MS: u64 = 40;
 
 /// A sample source consumed by the cpal callback.
 ///
@@ -336,6 +345,7 @@ fn pcm_reader_loop(
 
     let mut bytes = vec![0u8; READ_CHUNK_FRAMES * BYTES_PER_FRAME as usize];
     let mut eof_streak: u32 = 0;
+    let mut first_data = true;
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -349,10 +359,18 @@ fn pcm_reader_loop(
                 tracing::debug!("pcm reader: EOF after {eof_streak} retries");
                 return Ok(());
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(EOF_SLEEP_MS));
             continue;
         }
         eof_streak = 0;
+        if first_data {
+            tracing::info!(
+                "pcm reader: first real data after {} EOF polls (offset {} bytes)",
+                eof_streak,
+                byte_offset
+            );
+            first_data = false;
+        }
 
         // s16le → f32 in [-1.0, 1.0). `chunks_exact(2)` discards an odd
         // trailing byte — can't happen with well-formed PCM but be safe.
