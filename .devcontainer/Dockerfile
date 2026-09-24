@@ -38,7 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #    so a static binary from johnvansickle is perfect: single ~80MB
 #    executable, all codecs, no shared lib deps.
 # -----------------------------------------------------------------------------
-ARG FFMPEG_VERSION=7.0.2
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
          amd64) FF_ARCH=amd64 ;; \
@@ -58,16 +57,18 @@ RUN ffmpeg -version | head -1 && ffprobe -version | head -1
 
 # -----------------------------------------------------------------------------
 # 3) cargo-nextest (faster parallel test runner)
+#    Nextest's install endpoint uses OS names, not Rust target triples:
+#      linux / linux-arm / mac / mac-arm / windows
+#    The payload is a .tar.gz containing the `cargo-nextest` binary.
 # -----------------------------------------------------------------------------
-ARG NEXTEST_VERSION=0.9.85
 RUN ARCH="$(uname -m)" \
     && case "$ARCH" in \
-         x86_64) NX_ARCH=x86_64-unknown-linux-gnu ;; \
-         aarch64) NX_ARCH=aarch64-unknown-linux-gnu ;; \
-         *) NX_ARCH=x86_64-unknown-linux-gnu ;; \
+         x86_64)  NX_OS=linux ;; \
+         aarch64) NX_OS=linux-arm ;; \
+         *)       NX_OS=linux ;; \
        esac \
-    && curl -fsSL "https://get.nexte.st/${NEXTEST_VERSION}/${NX_ARCH}" \
-         -o /usr/local/cargo/bin/cargo-nextest \
+    && curl -LsSf "https://get.nexte.st/latest/${NX_OS}" \
+       | tar zxf - -C /usr/local/cargo/bin \
     && chmod +x /usr/local/cargo/bin/cargo-nextest \
     && cargo nextest --version
 
