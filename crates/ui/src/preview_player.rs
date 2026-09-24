@@ -12,6 +12,7 @@
 //! This gives ~1 in-flight ffmpeg process with zero backlog, so latency
 //! stays bounded (~150 ms) regardless of how fast the user seeks.
 
+use caprust_media_io::streamer::FrameStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
@@ -87,6 +88,8 @@ pub struct PreviewPlayer {
     pub has_frame: bool,
     pub decoded: u64,
     slot: Option<Arc<Slot>>,
+    /// Active streaming decoder (only while playing).
+    pub stream: Option<FrameStream>,
     rx: Option<Receiver<FrameResult>>,
 }
 
@@ -147,6 +150,7 @@ impl PreviewPlayer {
             decoded: 0,
             slot: Some(slot),
             rx: Some(rx),
+            stream: None,
         }
     }
 
@@ -222,6 +226,85 @@ impl PreviewPlayer {
             self.has_frame = true;
             self.decoded += 1;
         }
+    }
+
+    /// Stop any active stream.
+    pub fn stop_stream(&mut self) {
+        if let Some(mut s) = self.stream.take() {
+            s.kill();
+        }
+    }
+
+    /// Start (or restart) streaming from `at_sec`. No-op if the same
+    /// clip+position is already streaming.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_stream(
+        &mut self,
+        ffmpeg: &Path,
+        input: &Path,
+        clip_id: uuid::Uuid,
+        at_sec: f64,
+        width: u32,
+        height: u32,
+        fps: f64,
+    ) {
+        // If an equivalent stream is already active, keep it.
+        if let Some(s) = self.stream.as_ref() {
+            if s.clip_id == clip_id
+                && s.width == width.max(2)
+                && s.height == height.max(2)
+                && (s.started_at_sec - at_sec).abs() < 0.35
+            {
+                return;
+            }
+        }
+        self.stop_stream();
+        match FrameStream::spawn(ffmpeg, input, clip_id, at_sec, width, height, fps) {
+            Ok(s) => {
+                tracing::info!(
+                    "preview: stream start clip={} at={:.2}s {}x{} @ {}fps",
+                    clip_id,
+                    at_sec,
+                    width,
+                    height,
+                    fps
+                );
+                self.stream = Some(s);
+            }
+            Err(e) => {
+                tracing::warn!("preview: stream spawn failed — {e}");
+            }
+        }
+    }
+
+    /// Pull one frame from the active stream (if any) and upload it.
+    /// Returns true if a new frame was drawn.
+    pub fn poll_stream(&mut self, ctx: &egui::Context) -> bool {
+        let Some(s) = self.stream.as_ref() else {
+            return false;
+        };
+        let Some(buf) = s.try_next() else {
+            return false;
+        };
+        let w = s.width as usize;
+        let h = s.height as usize;
+        let expected = w * h * 4;
+        if buf.len() < expected {
+            return false;
+        }
+        let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
+        let handle = ctx.load_texture("preview-stream", img, egui::TextureOptions::LINEAR);
+        self.texture = Some(handle);
+        self.has_frame = true;
+        self.decoded += 1;
+        true
+    }
+
+    /// If a stream is active, returns (started_at_sec, 1/fps seconds per frame).
+    pub fn stream_frame_duration_ms(&self) -> Option<u64> {
+        let s = self.stream.as_ref()?;
+        let ms = (1000.0 / s.fps).round() as u64;
+        Some(ms.max(1))
     }
 
     /// Cancel any queued job. Current decode finishes; its result is

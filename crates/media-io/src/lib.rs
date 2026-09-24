@@ -3,6 +3,7 @@ pub mod export;
 pub mod export_progress;
 pub mod ffprobe;
 pub mod player;
+pub mod streamer;
 pub mod thumbnail;
 
 #[cfg(feature = "ffmpeg")]
