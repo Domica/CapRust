@@ -1940,6 +1940,33 @@ impl CapRustApp {
                                         // renderer startup doesn't push playhead.
                                         self.playback_started_at = Some(std::time::Instant::now());
                                         self.playback_started_ms = start_from;
+
+                                        // Start audio playback from the PCM file
+                                        // that this renderer will write. Audio is
+                                        // optional: if there's no track, or no
+                                        // device, or the file can't be opened,
+                                        // video keeps playing silently.
+                                        self.audio_player = match renderer.pcm_path.as_ref() {
+                                            Some(path) => match AudioPlayer::play_pcm_file(
+                                                path, start_from,
+                                            ) {
+                                                Ok(p) => {
+                                                    tracing::info!(
+                                                        "preview: audio started from {}ms",
+                                                        start_from
+                                                    );
+                                                    Some(p)
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "preview: audio unavailable: {e}"
+                                                    );
+                                                    None
+                                                }
+                                            },
+                                            None => None,
+                                        };
+
                                         tracing::info!(
                                             "preview: renderer started from {}ms",
                                             self.playhead_ms
