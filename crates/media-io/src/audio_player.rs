@@ -261,13 +261,6 @@ where
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
                 let need = data.len();
                 let mut written = 0usize;
-                // Frames of *real* audio pulled from the source this callback.
-                // Silence written to fill an underrun is NOT counted, because
-                // otherwise the playhead would advance during the window where
-                // the PCM reader hasn't produced data yet (e.g. ffmpeg still
-                // buffering) — making the UI believe audio has been playing
-                // when the listener has heard nothing.
-                let mut real_samples_written = 0usize;
 
                 while written < need {
                     let want = (need - written).min(scratch.len());
@@ -275,7 +268,7 @@ where
 
                     if got == 0 {
                         // Source exhausted — silence the rest of this buffer.
-                        // Count it: every occurrence is a ring-buffer underrun.
+                        // Count it as an underrun.
                         underrun_counter.fetch_add(1, Ordering::Relaxed);
                         for s in &mut data[written..] {
                             *s = T::from_sample(0.0_f32);
@@ -287,7 +280,6 @@ where
                         data[written + i] = T::from_sample(scratch[i]);
                     }
                     written += got;
-                    real_samples_written += got;
 
                     if got < want {
                         // Partial fill = underrun. Pad with silence.
@@ -298,11 +290,20 @@ where
                     }
                 }
 
-                // Count only frames that came from real source data.
-                counter.fetch_add(
-                    (real_samples_written / channels.max(1)) as u64,
-                    Ordering::Relaxed,
-                );
+                // Count ALL frames sent to the audio hardware, silence
+                // included. Earlier revisions counted only real samples,
+                // which meant every underrun (silence pad) made the sample
+                // counter fall behind real time. Over a 60 s session with
+                // ~100 underruns this accumulated to a ~1.1 s lag between
+                // the audio "position" the UI believed in and wall time.
+                //
+                // With all frames counted, samples_played advances at
+                // exactly the WASAPI callback rate, which is driven by the
+                // audio device clock and matches real time. Startup
+                // silence is handled by the audio_baseline captured in
+                // app.rs at first-frame anchor time, so the playhead is
+                // not biased by the buffering period.
+                counter.fetch_add((need / channels.max(1)) as u64, Ordering::Relaxed);
             },
             |err| tracing::error!("cpal stream error: {err}"),
             None,
