@@ -126,7 +126,7 @@ impl RenderPlan {
 
             // Edge transitions (fade in/out)
             let fade_in = if c.transition_in.as_deref() == Some("fade") {
-                format!(",fade=t=in:st=0:d=0.35")
+                ",fade=t=in:st=0:d=0.35".to_string()
             } else {
                 String::new()
             };
@@ -192,9 +192,9 @@ impl RenderPlan {
                 .replace('\'', "\\'");
             // Approximate vertical position: above=true → top, else bottom.
             let y = if t.above {
-                format!("h*0.08")
+                "h*0.08".to_string()
             } else {
-                format!("h*0.82")
+                "h*0.82".to_string()
             };
             fg.push_str(&format!(
             "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x=(w-text_w)/2:y={y}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
@@ -460,8 +460,8 @@ pub fn plan_from_project(
     }
 
     // Z-order index assigned to each clip as we walk tracks bottom-up.
-    let mut z = 0u32;
-    for &t_idx in &video_track_order {
+    for (z, &t_idx) in video_track_order.iter().enumerate() {
+        let z = z as u32;
         let track_kind = project.tracks[t_idx].kind;
         let mut clips: Vec<&caprust_core::Clip> = project
             .clips
@@ -519,7 +519,6 @@ pub fn plan_from_project(
                 _ => {}
             }
         }
-        z += 1;
     }
 
     // Audio tracks — for now still only Audio kind tracks.
