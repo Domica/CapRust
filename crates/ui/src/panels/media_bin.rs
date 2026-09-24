@@ -324,7 +324,16 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         }),
     }
 
-    // TEMP DEBUG — kompaktan prikaz: poz, added_at, prvih 12 znakova name
+    // TEMP DEBUG — dokaz da sort radi (neovisno o podacima)
+    // Prikazuje: state.sort, prvi i zadnji item u sorted, te reverse(sorted) prvog itema.
+    let first = sorted.first().map(|m| (m.added_at, m.name.clone()));
+    let last = sorted.last().map(|m| (m.added_at, m.name.clone()));
+
+    // Dokaz: sortiraj kopiju OBRNUTO po added_at — ako se first_rev != first, sort radi
+    let mut rev = sorted.clone();
+    rev.sort_by_key(|m| std::cmp::Reverse(m.added_at));
+    let first_rev = rev.first().map(|m| (m.added_at, m.name.clone()));
+
     ui.label(
         egui::RichText::new(format!(
             "[DBG] sort={:?} filter={:?} n={}",
@@ -333,15 +342,22 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         .small()
         .color(egui::Color32::YELLOW),
     );
-    for (i, m) in sorted.iter().take(6).enumerate() {
-        let prefix: String = m.name.chars().take(12).collect();
+    if let Some((a, n)) = &first {
         ui.label(
-            egui::RichText::new(format!(
-                "  #{} added={:>3} kind={:?} name12={}",
-                i, m.added_at, m.kind, prefix
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(255, 220, 100)),
+            egui::RichText::new(format!("  FIRST: added={} name={}", a, &n[..n.len().min(45)]))
+                .small().color(egui::Color32::from_rgb(255,220,100)),
+        );
+    }
+    if let Some((a, n)) = &last {
+        ui.label(
+            egui::RichText::new(format!("  LAST:  added={} name={}", a, &n[..n.len().min(45)]))
+                .small().color(egui::Color32::from_rgb(255,220,100)),
+        );
+    }
+    if let Some((a, n)) = &first_rev {
+        ui.label(
+            egui::RichText::new(format!("  REV-FIRST (proof sort works): added={} name={}", a, &n[..n.len().min(45)]))
+                .small().color(egui::Color32::from_rgb(100,255,150)),
         );
     }
 
