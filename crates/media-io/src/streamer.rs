@@ -71,15 +71,10 @@ impl FrameStream {
 
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
-            loop {
-                match stdout.read_exact(&mut buf) {
-                    Ok(()) => {
-                        // Blocks if the UI is behind; provides back-pressure.
-                        if tx.send(buf.clone()).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            while stdout.read_exact(&mut buf).is_ok() {
+                // Blocks if the UI is behind; provides back-pressure.
+                if tx.send(buf.clone()).is_err() {
+                    break;
                 }
             }
         });

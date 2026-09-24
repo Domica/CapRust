@@ -9,6 +9,7 @@ caprust-core = { path = "../core" }
 caprust-media-io = { path = "../media-io" }
 caprust-i18n = { path = "../i18n" }
 egui = { workspace = true }
+egui-phosphor = { workspace = true }
 eframe = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
