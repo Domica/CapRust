@@ -64,6 +64,11 @@ impl PreviewRenderer {
                 args.push("1".into());
                 args.push("-framerate".into());
                 args.push(format!("{fps:.6}"));
+            } else {
+                // `-re` = read input at native rate. Without this, ffmpeg
+                // decodes as fast as the CPU allows, the buffer saturates,
+                // and preview runs 5-10x too fast.
+                args.push("-re".into());
             }
             args.push("-ss".into());
             args.push(format!("{:.6}", inp.source_start_sec));
