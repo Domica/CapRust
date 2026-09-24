@@ -22,6 +22,9 @@ pub struct PropertiesState {
 
 #[derive(Debug)]
 pub enum PendingEdit {
+    RemoveEffect(String),
+    ClearTransitionIn,
+    ClearTransitionOut,
     Speed(f32),
     Reverse(bool),
     FlipH(bool),
@@ -88,7 +91,7 @@ pub fn show(
         .show(ui, |ui| match state.tab {
             PropertiesTab::Video => show_video(ui, clip, state),
             PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui),
+            PropertiesTab::Effects => show_effects(ui, clip, state),
         });
 }
 
@@ -296,22 +299,66 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     );
 }
 
-fn show_effects(ui: &mut Ui) {
+fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(tr("props-effects-empty"))
-            .italics()
-            .color(egui::Color32::from_gray(140)),
-    );
+
+    // --- Transitions ---
+    ui.label(egui::RichText::new("Transitions").strong());
+    egui::Grid::new("clip_transitions")
+        .num_columns(3)
+        .spacing([6.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("In");
+            ui.label(clip.transition_in.clone().unwrap_or_else(|| "—".into()));
+            if clip.transition_in.is_some() && ui.small_button("✕").clicked() {
+                state.pending.push(PendingEdit::ClearTransitionIn);
+            }
+            ui.end_row();
+
+            ui.label("Out");
+            ui.label(clip.transition_out.clone().unwrap_or_else(|| "—".into()));
+            if clip.transition_out.is_some() && ui.small_button("✕").clicked() {
+                state.pending.push(PendingEdit::ClearTransitionOut);
+            }
+            ui.end_row();
+        });
+
+    ui.add_space(10.0);
+    ui.separator();
+
+    // --- Applied effects ---
+    ui.label(egui::RichText::new("Applied Effects").strong());
+    ui.add_space(4.0);
+
+    if clip.effects.is_empty() {
+        ui.label(
+            egui::RichText::new(tr("props-effects-empty"))
+                .italics()
+                .color(egui::Color32::from_gray(140)),
+        );
+    } else {
+        let mut to_remove: Option<String> = None;
+        for fx in &clip.effects {
+            ui.horizontal(|ui| {
+                ui.label(format!("✨ {}", fx.effect_id));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("✕").clicked() {
+                        to_remove = Some(fx.effect_id.clone());
+                    }
+                });
+            });
+        }
+        if let Some(id) = to_remove {
+            state.pending.push(PendingEdit::RemoveEffect(id));
+        }
+    }
+
     ui.add_space(8.0);
     ui.label(
-        egui::RichText::new(
-            "Pick a filter, transition, or audio effect from the left panel \
-             to attach it to this clip.",
-        )
-        .small()
-        .color(egui::Color32::from_gray(160)),
+        egui::RichText::new(tr("props-effects-hint"))
+            .small()
+            .color(egui::Color32::from_gray(160)),
     );
 }
 

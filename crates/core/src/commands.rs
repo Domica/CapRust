@@ -5,6 +5,7 @@ pub mod move_clip;
 pub mod relink;
 pub mod ripple;
 pub mod set_clip;
+pub mod set_effect;
 pub mod split_clip;
 
 use crate::project::ProjectState;

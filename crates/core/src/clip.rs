@@ -44,6 +44,19 @@ pub struct CaptionSegment {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EffectInstance {
+    pub effect_id: String,
+    #[serde(default = "default_effect_amount")]
+    pub amount: f32,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_effect_amount() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     pub id: Uuid,
@@ -62,6 +75,12 @@ pub struct Clip {
     /// Links back to the MediaItem this clip was created from, if any.
     #[serde(default)]
     pub media_id: Option<Uuid>,
+    #[serde(default)]
+    pub effects: Vec<EffectInstance>,
+    #[serde(default)]
+    pub transition_in: Option<String>,
+    #[serde(default)]
+    pub transition_out: Option<String>,
 }
 
 impl Clip {
@@ -80,6 +99,9 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -100,6 +122,9 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -120,6 +145,9 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -141,6 +169,9 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -168,6 +199,9 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -196,6 +230,9 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             volume_db: 0.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             source_duration_ms: 0,
             media_id: None,
         }
