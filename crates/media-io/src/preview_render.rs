@@ -74,15 +74,33 @@ impl PreviewRenderer {
         args.push(fg.clone());
 
         // OUTPUT-side seek. Ffmpeg decodes everything as fast as it can,
-        // discards the first `start_ms / 1000` seconds of the composition.
+        // discards the first `start_ms / 1000` seconds of the video output.
+        // Audio is NOT seeked here — the full PCM file is written from t=0,
+        // and AudioPlayer::play_pcm_file(path, start_from) seeks the reader
+        // by byte offset instead. This keeps the ffmpeg arg list simple
+        // (one -ss, one output) and avoids duplicating -ss per output.
         if start_ms > 0 {
             args.push("-ss".into());
             args.push(format!("{:.6}", start_ms as f64 / 1000.0));
         }
 
+        // ---- OUTPUT 1: video to stdout ----
+        // Every -map / -f / target combination must be adjacent, otherwise
+        // ffmpeg lumps all preceding -map options into whichever output
+        // target appears next — which previously sent [v] into the PCM file.
         args.push("-map".into());
         args.push(format!("[{v_label}]"));
+        args.push("-f".into());
+        args.push("rawvideo".into());
+        args.push("-pix_fmt".into());
+        args.push("rgba".into());
+        args.push("-s".into());
+        args.push(format!("{w}x{h}"));
+        args.push("-r".into());
+        args.push(format!("{fps:.6}"));
+        args.push("-".into());
 
+        // ---- OUTPUT 2: audio PCM file (optional) ----
         let mut pcm_path: Option<PathBuf> = None;
         if let Some(a) = &a_label {
             let path = std::env::temp_dir().join(format!(
@@ -102,17 +120,6 @@ impl PreviewRenderer {
             args.push(path.to_string_lossy().to_string());
             pcm_path = Some(path);
         }
-
-        // Video: raw RGBA on stdout.
-        args.push("-f".into());
-        args.push("rawvideo".into());
-        args.push("-pix_fmt".into());
-        args.push("rgba".into());
-        args.push("-s".into());
-        args.push(format!("{w}x{h}"));
-        args.push("-r".into());
-        args.push(format!("{fps:.6}"));
-        args.push("-".into());
 
         tracing::debug!(
             "preview: ffmpeg args: {}",
