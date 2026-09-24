@@ -1,5 +1,28 @@
+# Rust
 /target
 **/*.rs.bk
-*.pdb
-.env
+Cargo.lock.orig
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.dll
+*.dylib
+*.so
+*.pdb
+
+# Env
+.env
+
+# User projects (not committed)
+*.caprust
+cache/
