@@ -16,7 +16,16 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-const BUFFER_FRAMES: usize = 3;
+/// Number of decoded frames to buffer between the ffmpeg stdout reader
+/// and the UI. Previously 3 (~125 ms at 24 fps), which was not enough to
+/// survive a UI thread stall: when the UI was busy, the reader blocked on
+/// `tx.send`, ffmpeg blocked on the stdout pipe, audio also stopped being
+/// written to the PCM file, and the ringbuf drained to silence. The result
+/// was an audible dropout and a frozen playhead for several hundred ms.
+///
+/// 24 frames gives ~1 second of slack at 24 fps (a bit under 2 s at 12 fps),
+/// which comfortably covers typical scheduler hiccups.
+const BUFFER_FRAMES: usize = 24;
 
 pub struct PreviewRenderer {
     child: Child,

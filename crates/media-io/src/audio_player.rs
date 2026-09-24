@@ -34,8 +34,15 @@ pub const TARGET_CHANNELS: u16 = 2;
 
 /// Frames read per iteration from disk by the reader thread.
 const READ_CHUNK_FRAMES: usize = 1024;
-/// Ring buffer capacity in frames (~200 ms at 48 kHz, stereo).
-const RING_FRAMES: usize = 9_600;
+/// Ring buffer capacity in frames. Previously 9_600 (~200 ms at 48 kHz
+/// stereo), which was not enough cushion: any time ffmpeg stopped writing
+/// (because the UI stalled and backpressure rippled all the way up), the
+/// ringbuf drained in 200 ms and the cpal callback wrote silence. Silence
+/// was not counted in samples_played, so the playhead froze.
+///
+/// 96_000 frames gives 2 seconds of buffered audio, easily surviving the
+/// short UI stalls that triggered the dropouts.
+const RING_FRAMES: usize = 96_000;
 /// Bytes per frame in the on-disk PCM stream (s16le stereo = 2 ch * 2 B).
 const BYTES_PER_FRAME: u64 = 4;
 /// Consecutive EOF reads before the reader gives up.
