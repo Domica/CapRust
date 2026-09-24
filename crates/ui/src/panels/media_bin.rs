@@ -39,6 +39,33 @@ impl MediaSort {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    pub fn flipped(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Ascending => "\u{2193}",
+            Self::Descending => "\u{2191}",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Ascending => "asc",
+            Self::Descending => "desc",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaFilter {
     All,
     Video,
@@ -214,6 +241,7 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color32 {
 
 pub struct MediaBinState {
     pub sort: MediaSort,
+    pub sort_dir: SortDirection,
     pub filter: MediaFilter,
     pub preview: PreviewSize,
     pub thumb_cache: ThumbnailCache,
@@ -223,6 +251,7 @@ impl Default for MediaBinState {
     fn default() -> Self {
         Self {
             sort: MediaSort::Added,
+            sort_dir: SortDirection::Ascending,
             filter: MediaFilter::All,
             preview: PreviewSize::Medium,
             thumb_cache: ThumbnailCache::default(),
@@ -284,9 +313,18 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             .width(110.0)
             .show_ui(ui, |ui| {
                 for s in MediaSort::all() {
-                    ui.selectable_value(&mut state.sort, s, s.label());
+                    ui.selectable_value(&mut state.sort, s, tr(&format!("media-sort-{}", s.key())));
                 }
             });
+        // Sort direction toggle
+        let dir_icon = state.sort_dir.icon();
+        if ui
+            .button(dir_icon)
+            .on_hover_text(tr(&format!("media-sort-dir-{}", state.sort_dir.key())))
+            .clicked()
+        {
+            state.sort_dir = state.sort_dir.flipped();
+        }
         ui.separator();
         ui.label(tr("media-filter-label"));
         egui::ComboBox::from_id_salt("media_filter")
@@ -294,7 +332,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             .width(90.0)
             .show_ui(ui, |ui| {
                 for f in MediaFilter::all() {
-                    ui.selectable_value(&mut state.filter, f, f.label());
+                    ui.selectable_value(&mut state.filter, f, tr(&format!("media-filter-{}", f.key())));
                 }
             });
         ui.separator();
@@ -324,41 +362,8 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         }),
     }
 
-    // TEMP DEBUG — dokaz da sort radi (neovisno o podacima)
-    // Prikazuje: state.sort, prvi i zadnji item u sorted, te reverse(sorted) prvog itema.
-    let first = sorted.first().map(|m| (m.added_at, m.name.clone()));
-    let last = sorted.last().map(|m| (m.added_at, m.name.clone()));
-
-    // Dokaz: sortiraj kopiju OBRNUTO po added_at — ako se first_rev != first, sort radi
-    let mut rev = sorted.clone();
-    rev.sort_by_key(|m| std::cmp::Reverse(m.added_at));
-    let first_rev = rev.first().map(|m| (m.added_at, m.name.clone()));
-
-    ui.label(
-        egui::RichText::new(format!(
-            "[DBG] sort={:?} filter={:?} n={}",
-            state.sort, state.filter, sorted.len()
-        ))
-        .small()
-        .color(egui::Color32::YELLOW),
-    );
-    if let Some((a, n)) = &first {
-        ui.label(
-            egui::RichText::new(format!("  FIRST: added={} name={}", a, &n[..n.len().min(45)]))
-                .small().color(egui::Color32::from_rgb(255,220,100)),
-        );
-    }
-    if let Some((a, n)) = &last {
-        ui.label(
-            egui::RichText::new(format!("  LAST:  added={} name={}", a, &n[..n.len().min(45)]))
-                .small().color(egui::Color32::from_rgb(255,220,100)),
-        );
-    }
-    if let Some((a, n)) = &first_rev {
-        ui.label(
-            egui::RichText::new(format!("  REV-FIRST (proof sort works): added={} name={}", a, &n[..n.len().min(45)]))
-                .small().color(egui::Color32::from_rgb(100,255,150)),
-        );
+    if state.sort_dir == SortDirection::Descending {
+        sorted.reverse();
     }
 
     if sorted.is_empty() {
@@ -684,6 +689,25 @@ mod sort_filter_tests {
         let filtered: Vec<_> = items.iter().filter(|m| MediaFilter::Video.matches(m.kind)).collect();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "a.mp4");
+    }
+
+
+    #[test]
+    fn sort_dir_descending_reverses_ascending() {
+        use super::SortDirection;
+        // Ascending ostaje kak je
+        let asc = SortDirection::Ascending;
+        assert_eq!(asc.flipped(), SortDirection::Descending);
+        assert_eq!(SortDirection::Descending.flipped(), SortDirection::Ascending);
+    }
+
+    #[test]
+    fn sort_dir_icon_and_key() {
+        use super::SortDirection;
+        assert_eq!(SortDirection::Ascending.key(), "asc");
+        assert_eq!(SortDirection::Descending.key(), "desc");
+        assert_eq!(SortDirection::Ascending.icon(), "\u{2193}");
+        assert_eq!(SortDirection::Descending.icon(), "\u{2191}");
     }
 
     #[test]
