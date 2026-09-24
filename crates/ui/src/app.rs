@@ -1226,6 +1226,31 @@ impl CapRustApp {
                                         egui::Color32::WHITE,
                                     );
 
+                                    // Effect/transition badge (top-right of clip)
+                                    if let Some(fx_clip) =
+                                        self.project.clips.iter().find(|c| c.id == clip_id)
+                                    {
+                                        let has_fx = !fx_clip.effects.is_empty();
+                                        let has_tr = fx_clip.transition_in.is_some()
+                                            || fx_clip.transition_out.is_some();
+                                        if has_fx || has_tr {
+                                            let badge = if has_fx && has_tr {
+                                                "✨⇄"
+                                            } else if has_fx {
+                                                "✨"
+                                            } else {
+                                                "⇄"
+                                            };
+                                            p.text(
+                                                clip_rect.right_top() + egui::vec2(-6.0, 4.0),
+                                                egui::Align2::RIGHT_TOP,
+                                                badge,
+                                                egui::FontId::proportional(11.0),
+                                                egui::Color32::from_rgb(255, 240, 130),
+                                            );
+                                        }
+                                    }
+
                                     let resp = ui.interact(
                                         clip_rect,
                                         egui::Id::new(("clip", clip_id)),
@@ -1611,8 +1636,50 @@ impl CapRustApp {
 
                 // Preset clicked (transitions/effects/filters/text).
                 // Wiring to selected timeline clip is a follow-up PR.
-                if let Some((id, tab)) = out.preset_clicked {
-                    tracing::info!("preset clicked: {:?} → {}", tab, id);
+                // Apply clicked preset to the selected clip.
+                if let Some((preset_id, tab)) = out.preset_clicked {
+                    if let Some(clip_id) = self.selected_clips.first().copied() {
+                        use crate::panels::asset_browser::AssetTab;
+                        use caprust_core::commands::set_effect::{
+                            AddEffectCommand, SetTransitionCommand,
+                        };
+                        match tab {
+                            AssetTab::Effects | AssetTab::Filters => {
+                                if preset_id != "none" {
+                                    let cmd = AddEffectCommand::new(clip_id, preset_id);
+                                    let _ =
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                    tracing::info!("applied effect '{preset_id}'");
+                                }
+                            }
+                            AssetTab::Transitions => {
+                                let t = if preset_id == "none" {
+                                    None
+                                } else {
+                                    Some(preset_id.to_string())
+                                };
+                                let cmd = SetTransitionCommand::new(clip_id, true, t);
+                                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                tracing::info!("set transition in = '{preset_id}'");
+                            }
+                            AssetTab::Text => {
+                                let clip = caprust_core::Clip::new_text(
+                                    preset_id,
+                                    0,
+                                    self.playhead_ms,
+                                    3000,
+                                    true,
+                                );
+                                let cmd =
+                                    caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                tracing::info!("inserted text clip '{preset_id}'");
+                            }
+                            AssetTab::Media | AssetTab::Templates => {}
+                        }
+                    } else {
+                        tracing::warn!("preset '{preset_id}' clicked but no clip selected");
+                    }
                 }
             });
 
@@ -1636,20 +1703,47 @@ impl CapRustApp {
                 if !self.properties.pending.is_empty() {
                     let edits = std::mem::take(&mut self.properties.pending);
                     if let Some(id) = selected {
-                        let mut cmd = caprust_core::commands::set_clip::SetClipCommand::new(id);
+                        // Field edits collapse into one SetClipCommand; effect
+                        // and transition edits run as separate commands so each
+                        // is individually undoable.
+                        let mut field_cmd: Option<
+                            caprust_core::commands::set_clip::SetClipCommand,
+                        > = None;
                         for e in edits {
-                            cmd = match e {
-                                PendingEdit::Speed(v) => cmd.speed(v),
-                                PendingEdit::Reverse(v) => cmd.reversed(v),
-                                PendingEdit::FlipH(v) => cmd.flip_h(v),
-                                PendingEdit::FlipV(v) => cmd.flip_v(v),
-                                PendingEdit::VolumeDb(v) => cmd.volume_db(v),
-                                PendingEdit::TrimStart(v) => cmd.start_time_ms(v),
-                                PendingEdit::TrimDuration(v) => cmd.duration_ms(v),
-                                PendingEdit::TrackIndex(v) => cmd.track_index(v),
-                            };
+                            match e {
+                                PendingEdit::RemoveEffect(effect_id) => {
+                                    let c = caprust_core::commands::set_effect::RemoveEffectCommand::new(id, effect_id);
+                                    let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                                }
+                                PendingEdit::ClearTransitionIn => {
+                                    let c = caprust_core::commands::set_effect::SetTransitionCommand::new(id, true, None);
+                                    let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                                }
+                                PendingEdit::ClearTransitionOut => {
+                                    let c = caprust_core::commands::set_effect::SetTransitionCommand::new(id, false, None);
+                                    let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                                }
+                                other => {
+                                    let cmd = field_cmd.take().unwrap_or_else(|| {
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                    });
+                                    field_cmd = Some(match other {
+                                        PendingEdit::Speed(v) => cmd.speed(v),
+                                        PendingEdit::Reverse(v) => cmd.reversed(v),
+                                        PendingEdit::FlipH(v) => cmd.flip_h(v),
+                                        PendingEdit::FlipV(v) => cmd.flip_v(v),
+                                        PendingEdit::VolumeDb(v) => cmd.volume_db(v),
+                                        PendingEdit::TrimStart(v) => cmd.start_time_ms(v),
+                                        PendingEdit::TrimDuration(v) => cmd.duration_ms(v),
+                                        PendingEdit::TrackIndex(v) => cmd.track_index(v),
+                                        _ => cmd,
+                                    });
+                                }
+                            }
                         }
-                        let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        if let Some(cmd) = field_cmd {
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                     }
                 }
             });
