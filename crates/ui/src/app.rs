@@ -2084,12 +2084,35 @@ impl CapRustApp {
                             })
                             .unwrap_or(self.playhead_ms);
 
+                        // Playhead source: the wall clock is the
+                        // reference; the audio sample counter only serves
+                        // to SLOW US DOWN when audio is falling behind.
+                        //
+                        // Why not let audio lead: on Windows WASAPI the
+                        // cpal callback can fire slightly more often than
+                        // the nominal rate. Over 60 s we measured a
+                        // steady +19 ms/s error, i.e. the sample counter
+                        // ran ~1.9% fast. That produced a +1157 ms
+                        // playhead-ahead-of-wall over one minute, which
+                        // is a real, visible desync (video led audio).
+                        //
+                        // Capping at wall_ms eliminates that class of
+                        // drift entirely: if audio is late we freeze the
+                        // playhead (correct), if audio is early we ignore
+                        // it (correct). Sample counter accuracy no longer
+                        // matters for absolute position, only for the
+                        // relative "is audio behind" signal.
                         let (new_ph, src_tag) = match self.audio_player.as_ref() {
-                            Some(ap) => (
-                                self.playback_started_ms
-                                    + ap.playhead_ms().saturating_sub(self.audio_baseline_ms),
-                                "audio",
-                            ),
+                            Some(ap) => {
+                                let audio_ms = self.playback_started_ms
+                                    + ap.playhead_ms()
+                                        .saturating_sub(self.audio_baseline_ms);
+                                if audio_ms < wall_ms {
+                                    (audio_ms, "audio")
+                                } else {
+                                    (wall_ms, "wall")
+                                }
+                            }
                             None => (wall_ms, "wall"),
                         };
 
