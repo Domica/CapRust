@@ -7,8 +7,6 @@ use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
 use caprust_media_io::audio_player::AudioPlayer;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
@@ -87,15 +85,6 @@ pub struct CapRustApp {
     pub preview_player: PreviewPlayer,
     /// Audio playback for the current preview session. None = no audio.
     pub audio_player: Option<AudioPlayer>,
-    /// Gate passed to the current PreviewRenderer. The video reader
-    /// thread waits until this flips to true before emitting its first
-    /// frame — that keeps video and audio in sync even though ffmpeg's
-    /// audio output needs ~1 s of priming. Flipped by the update loop
-    /// once AudioPlayer::playhead_ms() > 0.
-    pub preview_audio_ready: Option<Arc<AtomicBool>>,
-    /// True after we've re-anchored playback_started_at to the first
-    /// video frame of the current play session. Reset on toggle_play(true).
-    pub play_anchor_set: bool,
     pub asset_browser: AssetBrowserState,
     pub export_in_progress: bool,
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
@@ -190,8 +179,6 @@ impl CapRustApp {
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
             audio_player: None,
-            preview_audio_ready: None,
-            play_anchor_set: false,
             asset_browser: AssetBrowserState::new(),
             export_in_progress: false,
             export_rx: None,
@@ -849,7 +836,6 @@ impl CapRustApp {
                 self.preview_player.cancel_pending();
                 self.preview_player.stop_stream();
                 self.audio_player = None; // Drop zaustavlja cpal stream
-                self.preview_audio_ready = None;
                 if let Some(mut r) = self.preview_renderer.take() {
                     r.kill();
                 }
@@ -1947,8 +1933,6 @@ impl CapRustApp {
                             "veryfast",
                         ) {
                             Ok(plan) => {
-                                let audio_ready = Arc::new(AtomicBool::new(false));
-                                self.preview_audio_ready = Some(audio_ready.clone());
                                 match PreviewRenderer::spawn(
                                     std::path::Path::new(&ffmpeg),
                                     &plan,
@@ -1956,7 +1940,6 @@ impl CapRustApp {
                                     rw,
                                     rh,
                                     fps_f,
-                                    audio_ready,
                                 ) {
                                     Ok(renderer) => {
                                         // Re-anchor wall clock so drift during
@@ -2012,12 +1995,31 @@ impl CapRustApp {
                 // Drain ready frames; keep only the last.
                 let mut consumed = 0u32;
                 let mut latest: Option<Vec<u8>> = None;
-                if let Some(r) = self.preview_renderer.as_ref() {
-                    while let Some(frame) = r.try_next() {
-                        latest = Some(frame);
-                        consumed += 1;
-                        if consumed > 6 {
-                            break;
+                // Audio-priming gate, moved here from the reader thread.
+                //
+                // ffmpeg needs ~0.5-4 s before its first audio byte hits
+                // the PCM file (filtergraph priming + muxer buffering).
+                // During that window we do NOT consume video frames: the
+                // reader keeps filling the sync_channel at fps, but we
+                // hold the display on whatever was last shown. When the
+                // audio player finally produces samples, this opens and
+                // we start consuming from the FRONT of the buffer, so
+                // frame 0 corresponds to audio position 0 ms.
+                //
+                // If there is no audio track at all (audio_player is
+                // None), the gate is trivially open.
+                let audio_playing = self
+                    .audio_player
+                    .as_ref()
+                    .map_or(true, |ap| ap.playhead_ms() > 0);
+                if audio_playing {
+                    if let Some(r) = self.preview_renderer.as_ref() {
+                        while let Some(frame) = r.try_next() {
+                            latest = Some(frame);
+                            consumed += 1;
+                            if consumed > 6 {
+                                break;
+                            }
                         }
                     }
                 }
@@ -2038,19 +2040,6 @@ impl CapRustApp {
                             self.preview_player.texture = Some(handle);
                             self.preview_player.has_frame = true;
 
-                            // Re-anchor the wall clock to the FIRST video
-                            // frame of this play session. Without this the
-                            // playhead is already ~500-800 ms ahead by the
-                            // time the first frame appears, because spawn
-                            // happens before ffmpeg's first byte.
-                            if !self.play_anchor_set {
-                                self.playback_started_at = Some(std::time::Instant::now());
-                                self.play_anchor_set = true;
-                                tracing::info!(
-                                    "playhead: re-anchored to first video frame at {}ms",
-                                    self.playhead_ms
-                                );
-                            }
                         }
                         // Advance playhead — audio-master when audio is
                         // running, wall-clock fallback otherwise (§21).
@@ -2080,24 +2069,6 @@ impl CapRustApp {
                         );
 
                         self.playhead_ms = new_ph;
-
-                        // Release the video gate on the renderer as soon
-                        // as audio samples start flowing. Once set, the
-                        // reader thread emits frames from the first raw
-                        // byte ffmpeg wrote, so picture and sound start
-                        // together.
-                        if let (Some(ap), Some(gate)) = (
-                            self.audio_player.as_ref(),
-                            self.preview_audio_ready.as_ref(),
-                        ) {
-                            if !gate.load(Ordering::Relaxed) && ap.playhead_ms() > 0 {
-                                gate.store(true, Ordering::Relaxed);
-                                tracing::info!(
-                                    "preview: audio flowing ({}ms), releasing video gate",
-                                    ap.playhead_ms()
-                                );
-                            }
-                        }
                     }
                 }
 
