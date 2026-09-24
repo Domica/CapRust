@@ -844,7 +844,6 @@ impl CapRustApp {
             } else {
                 // Starting play: use current playhead as the render start.
                 self.explicit_seek_ms = Some(self.playhead_ms);
-                self.play_anchor_set = false;
             }
         }
         if ev.toggle_loop {
