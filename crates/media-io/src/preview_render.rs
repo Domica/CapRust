@@ -34,6 +34,32 @@ use std::time::{Duration, Instant};
 /// with a wide margin.
 const BUFFER_FRAMES: usize = 180;
 
+/// A/V output delay compensation, in milliseconds.
+///
+/// The cpal / WASAPI audio path buffers a few hundred ms between what we
+/// hand to the device and what the listener actually hears. The video
+/// path has no equivalent buffer. Result: even when our sample counter
+/// is perfectly in step with the wall clock (max drift ~10 ms in the
+/// current logs), the user perceives audio as lagging video by
+/// 200-500 ms.
+///
+/// Fix: delay the video stream by the same amount. The reader still
+/// drains stdout at fps (so ffmpeg is never blocked), but it holds the
+/// first `AV_OUTPUT_DELAY_MS` worth of frames in a local queue before
+/// forwarding them to the UI. The queue then acts as a fixed-delay
+/// pipeline: one frame in, one frame out, always `AV_OUTPUT_DELAY_MS`
+/// behind.
+///
+/// Tunable via the CAPRUST_AV_DELAY_MS environment variable for testing
+/// on different hardware. Default 300 ms matches the WASAPI buffer size
+/// observed on the reference Windows machine.
+fn av_delay_ms() -> u64 {
+    std::env::var("CAPRUST_AV_DELAY_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300)
+}
+
 pub struct PreviewRenderer {
     child: Child,
     rx: Receiver<Vec<u8>>,
@@ -175,14 +201,21 @@ impl PreviewRenderer {
         let frame_size = (w * h * 4) as usize;
         let frame_interval = Duration::from_secs_f64(1.0 / fps);
 
+        let av_delay = av_delay_ms();
+        tracing::info!("preview: A/V output delay compensation = {av_delay} ms");
+
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
-            // NOTE: do NOT gate this reader. Blocking here stalls ffmpeg's
-            // main thread (its muxer writes both outputs in PTS order), so
-            // the PCM file never gets written and audio never starts. The
-            // UI is responsible for holding the last displayed frame until
-            // the audio player produces samples; the reader just keeps the
-            // stdout pipe drained so ffmpeg keeps moving.
+            // Delayed forward queue. See AV_OUTPUT_DELAY_MS docs above.
+            // During the first `av_delay` ms after the first decoded frame
+            // we accumulate frames here without forwarding; after that we
+            // forward one per iteration while keeping the queue length
+            // constant, so the video stream stays exactly `av_delay` ms
+            // behind real time.
+            let mut delay_queue: std::collections::VecDeque<Vec<u8>> =
+                std::collections::VecDeque::new();
+            let mut first_frame_at: Option<Instant> = None;
+
             let mut next_emit = Instant::now();
             loop {
                 if stdout.read_exact(&mut buf).is_err() {
@@ -194,8 +227,25 @@ impl PreviewRenderer {
                     std::thread::sleep(next_emit - now);
                 }
                 next_emit = Instant::now() + frame_interval;
-                if tx.send(buf.clone()).is_err() {
-                    break;
+
+                let t0 = *first_frame_at.get_or_insert_with(Instant::now);
+                let held_ms = t0.elapsed().as_millis() as u64;
+
+                if held_ms < av_delay {
+                    // Still in the initial hold window — buffer locally.
+                    delay_queue.push_back(buf.clone());
+                } else if let Some(old) = delay_queue.pop_front() {
+                    // Normal operation: forward oldest held frame, keep the
+                    // newest one in the queue to preserve the fixed delay.
+                    delay_queue.push_back(buf.clone());
+                    if tx.send(old).is_err() {
+                        break;
+                    }
+                } else {
+                    // No held frames (e.g. av_delay == 0). Forward directly.
+                    if tx.send(buf.clone()).is_err() {
+                        break;
+                    }
                 }
             }
         });
