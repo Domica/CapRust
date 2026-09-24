@@ -93,6 +93,8 @@ pub struct CapRustApp {
     pub last_streamed_clip: Option<uuid::Uuid>,
     /// Set to true when the user seeks; forces the preview stream to restart.
     pub stream_needs_restart: bool,
+    /// When Some, preview should restart from here regardless of delta.
+    pub explicit_seek_ms: Option<u64>,
     pub job_runner: JobRunner,
 }
 
@@ -178,6 +180,7 @@ impl CapRustApp {
             last_frame_instant: None,
             last_streamed_clip: None,
             stream_needs_restart: false,
+            explicit_seek_ms: None,
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -813,10 +816,7 @@ impl CapRustApp {
             seeked = true;
         }
         if seeked && self.preview.playing {
-            self.stream_needs_restart = true;
-            if let Some(mut r) = self.preview_renderer.take() {
-                r.kill();
-            }
+            self.explicit_seek_ms = Some(self.playhead_ms);
         }
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
@@ -828,8 +828,8 @@ impl CapRustApp {
                 }
                 self.last_streamed_clip = None;
             } else {
-                // Starting play: force a fresh stream from the current position.
-                self.stream_needs_restart = true;
+                // Starting play: use current playhead as the render start.
+                self.explicit_seek_ms = Some(self.playhead_ms);
             }
         }
         if ev.toggle_loop {
@@ -1460,10 +1460,16 @@ impl CapRustApp {
                 for a in pending_actions {
                     match a {
                         ClipAction::SetPlayhead(ms) => {
-                            self.playhead_ms = ms.min(total_ms.max(1));
-                            if self.preview.playing {
-                                self.stream_needs_restart = true;
+                            let target = ms.min(total_ms.max(1));
+                            // Only restart the renderer if the user's seek
+                            // target is meaningfully different from the
+                            // current playhead (avoids restart loops).
+                            if self.preview.playing
+                                && (target as i64 - self.playhead_ms as i64).abs() > 500
+                            {
+                                self.explicit_seek_ms = Some(target);
                             }
+                            self.playhead_ms = target;
                         }
                         ClipAction::Select(id) => {
                             if ctx.input(|i| i.modifiers.ctrl || i.modifiers.command) {
@@ -1909,7 +1915,7 @@ impl CapRustApp {
                                 match PreviewRenderer::spawn(
                                     std::path::Path::new(&ffmpeg),
                                     &plan,
-                                    self.playhead_ms,
+                                    start_from,
                                     rw,
                                     rh,
                                     fps_f,
