@@ -2052,10 +2052,18 @@ impl CapRustApp {
             if self.preview.playing && total_ms > 0 && self.playhead_ms >= total_ms {
                 if self.preview.loop_playback {
                     self.playhead_ms = 0;
+                    // Force renderer restart from t=0.
+                    if let Some(mut r) = self.preview_renderer.take() {
+                        r.kill();
+                    }
+                    self.stream_needs_restart = true;
                 } else {
                     self.playhead_ms = total_ms;
                     self.preview.playing = false;
                     self.preview_player.stop_stream();
+                    if let Some(mut r) = self.preview_renderer.take() {
+                        r.kill();
+                    }
                 }
             }
         });
