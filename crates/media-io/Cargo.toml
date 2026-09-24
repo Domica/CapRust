@@ -12,6 +12,8 @@ anyhow = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+cpal = { workspace = true }
+ringbuf = { workspace = true }
 
 [dependencies.ffmpeg-next]
 workspace = true
