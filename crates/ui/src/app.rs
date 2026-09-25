@@ -866,7 +866,7 @@ impl CapRustApp {
             if self.caption_rx.is_some() {
                 tracing::info!("caption job already in flight, ignoring click");
             } else {
-                self.start_caption_job();
+                self.start_caption_job(None);
             }
         }
         if ev.narration_clicked {
@@ -1027,10 +1027,44 @@ impl CapRustApp {
     }
 
     /// Handle a 💬 click. If a model is ready and no job is in flight,
-    /// spawn a Whisper transcription over the first audio-bearing clip
-    /// on the timeline and remember the receiver. If no model is ready,
-    /// open the model-prompt dialog instead.
-    fn start_caption_job(&mut self) {
+    /// Spawn a Whisper transcription over the requested clip and
+    /// remember the receiver.
+    ///
+    /// `source_id` is the clip to transcribe. When `None`, the current
+    /// selection is used: exactly one clip → that clip; more than one
+    /// → the first (with a toast noting the choice, since multi-clip
+    /// batch is a follow-up); nothing selected → a warning toast and
+    /// no job.
+    ///
+    /// If no model is ready, opens the model-prompt dialog instead.
+    fn start_caption_job(&mut self, source_id: Option<uuid::Uuid>) {
+        // Resolve the source clip up front so a bad selection fails
+        // before we do any model work.
+        let resolved_source: Option<uuid::Uuid> = match source_id {
+            Some(id) => Some(id),
+            None => {
+                // Copy selection out before any &mut self call so the
+                // borrow checker is happy.
+                let selected = self.selected_clips.clone();
+                match selected.as_slice() {
+                    [] => {
+                        self.toast(tr("toast-caption-no-selection"));
+                        tracing::info!("caption: no clip selected");
+                        return;
+                    }
+                    [single] => Some(*single),
+                    [first, rest @ ..] => {
+                        tracing::info!(
+                            "caption: {} clips selected — using the first",
+                            rest.len() + 1
+                        );
+                        self.toast(tr("toast-caption-multi-first"));
+                        Some(*first)
+                    }
+                }
+            }
+        };
+
         // Demo bypass: a zero-byte `DEMO` file in the models folder
         // activates a fake transcription path. Lets the caption pipeline
         // be exercised end to end (insert, track routing, save) without
@@ -1077,32 +1111,35 @@ impl CapRustApp {
             (model_id, language, model_path)
         };
 
-        // Find the first clip with real audio: prefer an Audio clip, fall
-        // back to the first Video clip with duration > 0.
-        let source = self
+        // Look up the resolved source. If it's missing, is a type
+        // without a file, or has zero duration, bail with a clear toast
+        // instead of silently doing nothing.
+        let Some(source_clip) = self
             .project
             .clips
             .iter()
-            .find(|c| {
-                matches!(&c.clip_type, caprust_core::ClipType::Audio { .. }) && c.duration_ms > 0
-            })
-            .or_else(|| {
-                self.project.clips.iter().find(|c| {
-                    matches!(&c.clip_type, caprust_core::ClipType::Video { .. })
-                        && c.duration_ms > 0
-                })
-            });
-
-        let Some(source_clip) = source else {
-            tracing::warn!("caption: no audio-bearing clip on timeline");
+            .find(|c| Some(c.id) == resolved_source)
+            .cloned()
+        else {
+            self.toast(tr("toast-caption-no-selection"));
+            tracing::warn!("caption: selected clip vanished");
             return;
         };
 
         let path_str = match &source_clip.clip_type {
             caprust_core::ClipType::Audio { path, .. } => path.clone(),
             caprust_core::ClipType::Video { path, .. } => path.clone(),
-            _ => return,
+            _ => {
+                self.toast(tr("toast-caption-no-audio"));
+                tracing::warn!("caption: selected clip has no audio source");
+                return;
+            }
         };
+        if source_clip.duration_ms == 0 {
+            self.toast(tr("toast-caption-no-audio"));
+            tracing::warn!("caption: selected clip has zero duration");
+            return;
+        }
         let source_path = std::path::PathBuf::from(path_str);
         let source_start_ms = 0u64;
         let duration_ms = source_clip.duration_ms;
@@ -1981,6 +2018,12 @@ impl CapRustApp {
                                                 .push(ClipAction::Split(clip_id, self.playhead_ms));
                                             ui.close_menu();
                                         }
+                                        ui.separator();
+                                        if ui.button(tr("clip-ctx-generate-captions")).clicked() {
+                                            pending_actions
+                                                .push(ClipAction::GenerateCaptions(clip_id));
+                                            ui.close_menu();
+                                        }
                                         if self.settings.enable_shortcuts {
                                             ui.separator();
                                             if ui
@@ -2075,6 +2118,9 @@ impl CapRustApp {
 
                 for a in pending_actions {
                     match a {
+                        ClipAction::GenerateCaptions(id) => {
+                            self.start_caption_job(Some(id));
+                        }
                         ClipAction::SetPlayhead(ms) => {
                             let target = ms.min(total_ms.max(1));
                             if self.preview.playing
@@ -3048,7 +3094,7 @@ impl CapRustApp {
                     // start_caption_job re-checks readiness; if still not
                     // ready it re-opens this prompt, which is the desired
                     // behaviour when a download has not actually happened.
-                    self.start_caption_job();
+                    self.start_caption_job(None);
                 }
                 caprust_core::ModelKind::Narration => {
                     if self.project.models.ready_narration().is_empty() {
@@ -3257,6 +3303,7 @@ enum ClipAction {
     ToggleReverse(uuid::Uuid),
     ToggleFlipH(uuid::Uuid),
     ToggleFlipV(uuid::Uuid),
+    GenerateCaptions(uuid::Uuid),
 }
 
 impl eframe::App for CapRustApp {
