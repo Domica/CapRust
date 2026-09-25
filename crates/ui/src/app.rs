@@ -94,6 +94,14 @@ pub struct CapRustApp {
         Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::NarrationResult, String>>>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
+    /// Result of the last update check, if a newer version was found.
+    /// Some(..) => show the toast; None => nothing to notify.
+    pub update_available: Option<caprust_core::update_checker::UpdateInfo>,
+    /// Receiver for the background update-check thread. Cleared after
+    /// first successful receive.
+    pub update_rx: Option<
+        std::sync::mpsc::Receiver<Result<Option<caprust_core::update_checker::UpdateInfo>, String>>,
+    >,
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
@@ -155,6 +163,30 @@ pub enum TrimEdge {
     Right,
 }
 
+/// Spawn a background update-check thread. Returns None if the user
+/// has disabled update checks in Settings; the receiver is polled by
+/// `drain_update_check` during update ticks.
+fn spawn_update_check(
+    settings: &AppSettings,
+) -> Option<
+    std::sync::mpsc::Receiver<Result<Option<caprust_core::update_checker::UpdateInfo>, String>>,
+> {
+    if !settings.check_for_updates {
+        return None;
+    }
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("caprust-update-check".into())
+        .spawn(move || {
+            let res =
+                caprust_core::update_checker::check(&current, true).map_err(|e| e.to_string());
+            let _ = tx.send(res);
+        })
+        .ok()?;
+    Some(rx)
+}
+
 impl CapRustApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_phosphor_fonts(&cc.egui_ctx);
@@ -174,6 +206,7 @@ impl CapRustApp {
             .and_then(|s| s.get_string("recent"))
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
+        let update_rx = spawn_update_check(&settings);
         Self {
             mode: AppMode::StartScreen,
             project: ProjectState::default(),
@@ -204,6 +237,8 @@ impl CapRustApp {
             caption_job_started: None,
             narration_rx: None,
             narration_input: Default::default(),
+            update_available: None,
+            update_rx,
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
@@ -1035,6 +1070,132 @@ impl CapRustApp {
                 self.caption_rx = None;
                 self.caption_job_started = None;
             }
+        }
+    }
+
+    /// Poll the update-check thread. On success with Some(info), store
+    /// it and let the toast render. On None or Err, do nothing.
+    fn drain_update_check(&mut self) {
+        let Some(rx) = self.update_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(Some(info))) => {
+                // Respect snooze / skip preferences persisted in the
+                // update-checker cache from a previous session.
+                if caprust_core::update_checker::should_notify(&info) {
+                    tracing::info!(
+                        "update: {} available (current {})",
+                        info.latest_version,
+                        info.current_version
+                    );
+                    self.update_available = Some(info);
+                } else {
+                    tracing::info!(
+                        "update: {} available but snoozed/skipped",
+                        info.latest_version
+                    );
+                }
+                self.update_rx = None;
+            }
+            Ok(Ok(None)) => {
+                tracing::debug!("update: already current");
+                self.update_rx = None;
+            }
+            Ok(Err(e)) => {
+                tracing::debug!("update: check failed: {e}");
+                self.update_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.update_rx = None;
+            }
+        }
+    }
+
+    /// Render the update toast in the top-right corner when an update
+    /// is available. Three actions: Download (open browser), Remind me
+    /// later (snooze 7 days), Skip this version (never notify again
+    /// for this exact version).
+    fn show_update_toast(&mut self, ctx: &egui::Context) {
+        let Some(info) = self.update_available.clone() else {
+            return;
+        };
+
+        let mut dismiss = false;
+        let mut open_browser = false;
+        let mut snooze = false;
+        let mut skip = false;
+
+        egui::Window::new(tr("update-toast-title"))
+            .id(egui::Id::new("update_toast"))
+            .resizable(false)
+            .collapsible(false)
+            .title_bar(false)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 48.0))
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(tr("update-toast-title"))
+                                .strong()
+                                .size(14.0),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} → {}",
+                                info.current_version, info.latest_version
+                            ))
+                            .small()
+                            .color(egui::Color32::from_gray(200)),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            let dl = egui::Button::new(
+                                egui::RichText::new(tr("update-toast-download"))
+                                    .color(egui::Color32::WHITE)
+                                    .strong(),
+                            )
+                            .fill(egui::Color32::from_rgb(34, 139, 230));
+                            if ui.add(dl).clicked() {
+                                open_browser = true;
+                                dismiss = true;
+                            }
+                            if ui.button(tr("update-toast-later")).clicked() {
+                                snooze = true;
+                                dismiss = true;
+                            }
+                            if ui.button(tr("update-toast-skip")).clicked() {
+                                skip = true;
+                                dismiss = true;
+                            }
+                        });
+                    });
+                });
+            });
+
+        if open_browser {
+            if let Err(e) = open::that(&info.release_url) {
+                tracing::warn!("update: open browser failed: {e}");
+            }
+        }
+        if snooze {
+            if let Err(e) = caprust_core::update_checker::snooze_default(
+                &info.latest_version,
+                &info.release_url,
+            ) {
+                tracing::warn!("update: snooze write failed: {e}");
+            }
+        }
+        if skip {
+            if let Err(e) = caprust_core::update_checker::skip_version(&info.latest_version) {
+                tracing::warn!("update: skip write failed: {e}");
+            }
+        }
+        if dismiss {
+            self.update_available = None;
         }
     }
 
@@ -2890,6 +3051,7 @@ impl eframe::App for CapRustApp {
         self.poll_export();
 
         // Drain background jobs (ffprobe results, thumbnails ready).
+        self.drain_update_check();
         self.drain_caption_job();
         self.drain_narration_job();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
@@ -3034,6 +3196,7 @@ impl eframe::App for CapRustApp {
         if self.model_prompt.is_some() {
             self.show_model_prompt_window(ctx);
         }
+        self.show_update_toast(ctx);
         if self.narration_input.open {
             let n_ev = crate::panels::narration_input::show(
                 ctx,

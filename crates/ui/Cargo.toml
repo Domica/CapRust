@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+open = { workspace = true }
 caprust-core = { path = "../core" }
 caprust-media-io = { path = "../media-io" }
 caprust-i18n = { path = "../i18n" }

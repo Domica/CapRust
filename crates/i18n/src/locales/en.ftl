@@ -240,3 +240,12 @@ set-audio-volume = Volume
 set-audio-mute = Mute
 set-audio-unmute = Unmute
 set-audio-preview-only = These settings affect preview only, not export.
+
+# Update checker
+update-toast-title = Update available
+update-toast-download = Download
+update-toast-later = Remind me later
+update-toast-skip = Skip this version
+set-appearance-updates = Updates
+set-appearance-check-updates = Check for updates on startup
+set-appearance-updates-hint = Silent check, once per day. You can skip or snooze a specific version.

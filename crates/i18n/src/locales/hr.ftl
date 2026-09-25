@@ -240,3 +240,12 @@ set-audio-volume = Glasnoća
 set-audio-mute = Utišaj
 set-audio-unmute = Uključi zvuk
 set-audio-preview-only = Ove postavke utječu samo na preview, ne na izvoz.
+
+# Update checker
+update-toast-title = Nova verzija dostupna
+update-toast-download = Preuzmi
+update-toast-later = Podsjeti me kasnije
+update-toast-skip = Preskoči ovu verziju
+set-appearance-updates = Ažuriranja
+set-appearance-check-updates = Provjeri ažuriranja pri pokretanju
+set-appearance-updates-hint = Tiha provjera, jednom dnevno. Možeš preskočiti ili odgoditi pojedinu verziju.

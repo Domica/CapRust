@@ -817,6 +817,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "image",
+ "open",
  "rfd",
  "ringbuf",
  "serde",
