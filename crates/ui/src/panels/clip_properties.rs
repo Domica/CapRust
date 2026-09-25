@@ -144,7 +144,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             ui.label(tr("props-field-speed"));
             let mut speed = clip.speed;
             let combo = egui::ComboBox::from_id_salt("clip_speed")
-                .selected_text(format!("{:.2}×", speed))
+                .selected_text(format!("{speed:.2}×"))
                 .width(120.0);
             combo.show_ui(ui, |ui| {
                 for s in [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0] {
@@ -378,5 +378,5 @@ fn format_duration(ms: u64) -> String {
     let m = s / 60;
     let sec = s % 60;
     let millis = ms % 1000;
-    format!("{:02}:{:02}.{:03}", m, sec, millis)
+    format!("{m:02}:{sec:02}.{millis:03}")
 }

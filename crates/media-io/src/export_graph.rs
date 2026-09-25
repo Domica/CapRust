@@ -251,10 +251,7 @@ impl RenderPlan {
                     i = i,
                 ));
                 fg.push_str(&format!(
-                "[{a_prev}][a_delayed{i}]amix=inputs=2:duration=longest:dropout_transition=0[{a_mix}];",
-                a_prev = a_prev,
-                i = i,
-                a_mix = a_next,
+                "[{a_prev}][a_delayed{i}]amix=inputs=2:duration=longest:dropout_transition=0[{a_next}];"
             ));
                 a_prev = a_next;
             }

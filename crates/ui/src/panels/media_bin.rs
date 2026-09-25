@@ -625,7 +625,7 @@ fn format_ms(ms: u64) -> String {
     let s = ms / 1000;
     let m = s / 60;
     let sec = s % 60;
-    format!("{:02}:{:02}", m, sec)
+    format!("{m:02}:{sec:02}")
 }
 
 fn human_size(bytes: u64) -> String {
@@ -639,7 +639,7 @@ fn human_size(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.0} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 

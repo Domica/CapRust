@@ -182,5 +182,5 @@ fn format_playhead(ms: u64) -> String {
     let m = (total_s % 3600) / 60;
     let s = total_s % 60;
     let ms = ms % 1000;
-    format!("{:02}:{:02}:{:02}.{:03}", h, m, s, ms)
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
 }

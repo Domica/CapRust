@@ -7,7 +7,7 @@ pub fn show(ui: &mut Ui, missing_count: usize) {
         return;
     }
 
-    ui.heading(format!("⚠ {} media file(s) not found", missing_count));
+    ui.heading(format!("⚠ {missing_count} media file(s) not found"));
     ui.label("Files could not be located. Relink them or dismiss to continue.");
 
     ui.horizontal(|ui| {

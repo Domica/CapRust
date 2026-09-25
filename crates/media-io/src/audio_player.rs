@@ -409,6 +409,12 @@ fn pcm_reader_loop(
 
         // s16le → f32 in [-1.0, 1.0). `chunks_exact(2)` discards an odd
         // trailing byte — can't happen with well-formed PCM but be safe.
+        //
+        // Clippy 1.98+ suggests `as_chunks::<2>()` here, but that method
+        // was stabilised after our pinned toolchain (Rust 1.83 floor,
+        // 1.88 in CI). Allow the lint with an explicit reason rather
+        // than bumping the toolchain just to silence it.
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         let samples: Vec<f32> = bytes[..n]
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
