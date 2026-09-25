@@ -835,13 +835,49 @@ impl CapRustApp {
         best_start.max(0)
     }
 
-    /// Pack clips on each track end-to-end when the magnetic timeline is on.
+    /// Magnetic pack. Video and Overlay tracks pack end-to-end (their
+    /// own clips shoulder to shoulder). Audio, Captions and Text tracks
+    /// do NOT pack on their own: they follow the video clip they were
+    /// attached to, shifting by the same delta that video clip shifted.
+    ///
+    /// "Attached to" = maximum overlap in the original timeline. A clip
+    /// with no overlapping video anywhere keeps its position (it sits
+    /// in a gap that the video pack did not move).
+    ///
+    /// Only runs on toggle ON; drag/drop/delete do not auto-repack
+    /// (see DIRECTIVES §7.4).
     fn apply_magnetic(&mut self) {
+        use std::collections::HashMap;
+
         if !self.timeline_tools.magnetic {
             return;
         }
-        let track_count = self.project.tracks.len();
-        for t in 0..track_count {
+
+        // Snapshot: old start of every clip, keyed by id.
+        let old_starts: HashMap<uuid::Uuid, u64> = self
+            .project
+            .clips
+            .iter()
+            .map(|c| (c.id, c.start_time_ms))
+            .collect();
+
+        // Which tracks pack on their own?
+        let video_tracks: Vec<usize> = self
+            .project
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| {
+                matches!(
+                    t.kind,
+                    caprust_core::TrackKind::Video | caprust_core::TrackKind::Overlay
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        // Pack those, per track.
+        for t in video_tracks {
             let mut indices: Vec<usize> = self
                 .project
                 .clips
@@ -859,6 +895,118 @@ impl CapRustApp {
                 self.project.clips[i].start_time_ms = cursor;
                 cursor += self.project.clips[i].duration_ms;
             }
+        }
+
+        // Delta per video clip: new_start - old_start (signed).
+        let deltas: HashMap<uuid::Uuid, i64> = self
+            .project
+            .clips
+            .iter()
+            .filter(|c| {
+                self.project
+                    .tracks
+                    .get(c.track_index)
+                    .map(|t| {
+                        matches!(
+                            t.kind,
+                            caprust_core::TrackKind::Video | caprust_core::TrackKind::Overlay
+                        )
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|c| {
+                let old = *old_starts.get(&c.id).unwrap_or(&c.start_time_ms) as i64;
+                (c.id, c.start_time_ms as i64 - old)
+            })
+            .collect();
+
+        // Build a (child -> parent video id) map by maximum overlap in
+        // the ORIGINAL timeline.
+        let video_clip_ids: Vec<uuid::Uuid> = self
+            .project
+            .clips
+            .iter()
+            .filter(|c| {
+                self.project
+                    .tracks
+                    .get(c.track_index)
+                    .map(|t| {
+                        matches!(
+                            t.kind,
+                            caprust_core::TrackKind::Video | caprust_core::TrackKind::Overlay
+                        )
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|c| c.id)
+            .collect();
+
+        // Snapshot enough info about the follower clips and video clips
+        // to compute overlap without holding a borrow.
+        let follower_ids: Vec<uuid::Uuid> = self
+            .project
+            .clips
+            .iter()
+            .filter(|c| {
+                self.project
+                    .tracks
+                    .get(c.track_index)
+                    .map(|t| {
+                        !matches!(
+                            t.kind,
+                            caprust_core::TrackKind::Video | caprust_core::TrackKind::Overlay
+                        )
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|c| c.id)
+            .collect();
+
+        // (id, old_start, old_end) for follower and video clips.
+        let old_spans: HashMap<uuid::Uuid, (u64, u64)> = self
+            .project
+            .clips
+            .iter()
+            .map(|c| {
+                let s = *old_starts.get(&c.id).unwrap_or(&c.start_time_ms);
+                (c.id, (s, s + c.duration_ms))
+            })
+            .collect();
+
+        let mut parent_of: HashMap<uuid::Uuid, uuid::Uuid> = HashMap::new();
+        for child in &follower_ids {
+            let Some(&(cs, ce)) = old_spans.get(child) else {
+                continue;
+            };
+            let mut best: Option<(u64, uuid::Uuid)> = None;
+            for v in &video_clip_ids {
+                let Some(&(vs, ve)) = old_spans.get(v) else {
+                    continue;
+                };
+                let ov_start = cs.max(vs);
+                let ov_end = ce.min(ve);
+                if ov_start < ov_end {
+                    let ov = ov_end - ov_start;
+                    if best.is_none_or(|(bo, _)| ov > bo) {
+                        best = Some((ov, *v));
+                    }
+                }
+            }
+            if let Some((_, parent)) = best {
+                parent_of.insert(*child, parent);
+            }
+        }
+
+        // Apply the parent's delta to each follower.
+        for c in self.project.clips.iter_mut() {
+            let Some(parent) = parent_of.get(&c.id) else {
+                continue;
+            };
+            let Some(&delta) = deltas.get(parent) else {
+                continue;
+            };
+            let new_start = (c.start_time_ms as i64 + delta).max(0) as u64;
+            c.start_time_ms = new_start;
         }
     }
 
