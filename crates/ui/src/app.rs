@@ -2386,7 +2386,80 @@ impl CapRustApp {
                                 if let (Some(id), Some(pp)) = (dnd_drop, pointer_hover) {
                                     if lane_rect.contains(pp) {
                                         let rel = (pp.x - lane_rect.left() + scroll_x).max(0.0);
-                                        pending_drop = Some((id, idx, (rel / px_per_ms) as u64));
+                                        let raw_ms = (rel / px_per_ms) as u64;
+
+                                        // Snap the drop position against
+                                        // neighbouring clip edges and the
+                                        // playhead (same rules as clip
+                                        // drag). Durations come from the
+                                        // media item being dropped.
+                                        let dur = self
+                                            .project
+                                            .media
+                                            .items
+                                            .iter()
+                                            .find(|m| m.id == id)
+                                            .map(|m| m.duration_ms)
+                                            .unwrap_or(0);
+                                        let snapped_ms = self
+                                            .snap_ms(
+                                                uuid::Uuid::nil(),
+                                                idx,
+                                                raw_ms as i64,
+                                                dur,
+                                                px_per_ms,
+                                            )
+                                            .max(0)
+                                            as u64;
+                                        pending_drop = Some((id, idx, snapped_ms));
+
+                                        // Drop ghost: green edges when
+                                        // snapped to a neighbour, neutral
+                                        // blue otherwise. Disappears once
+                                        // the clip lands; the real clip
+                                        // renders in the standard style.
+                                        let ghost_x = lane_rect.left()
+                                            + (snapped_ms as f32 * px_per_ms)
+                                            - scroll_x;
+                                        let ghost_w = (dur as f32 * px_per_ms).max(4.0);
+                                        let ghost_rect = egui::Rect::from_min_size(
+                                            egui::Pos2::new(ghost_x, lane_rect.top() + 3.0),
+                                            egui::vec2(
+                                                ghost_w,
+                                                (lane_rect.height() - 6.0).max(4.0),
+                                            ),
+                                        );
+                                        let is_snapped = snapped_ms != raw_ms;
+                                        let edge_color = if is_snapped {
+                                            egui::Color32::from_rgb(120, 220, 120)
+                                        } else {
+                                            egui::Color32::from_rgb(120, 180, 240)
+                                        };
+                                        p.rect_filled(
+                                            ghost_rect,
+                                            4.0,
+                                            egui::Color32::from_rgba_unmultiplied(
+                                                edge_color.r(),
+                                                edge_color.g(),
+                                                edge_color.b(),
+                                                55,
+                                            ),
+                                        );
+                                        p.rect_stroke(
+                                            ghost_rect,
+                                            4.0,
+                                            egui::Stroke::new(1.0_f32, edge_color),
+                                            egui::StrokeKind::Outside,
+                                        );
+                                        // Emphasised left / right edges
+                                        p.line_segment(
+                                            [ghost_rect.left_top(), ghost_rect.left_bottom()],
+                                            egui::Stroke::new(3.0_f32, edge_color),
+                                        );
+                                        p.line_segment(
+                                            [ghost_rect.right_top(), ghost_rect.right_bottom()],
+                                            egui::Stroke::new(3.0_f32, edge_color),
+                                        );
                                     }
                                 }
                             }
