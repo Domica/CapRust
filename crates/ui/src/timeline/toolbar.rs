@@ -25,6 +25,9 @@ pub struct TimelineToolEvents {
     /// clip on the selected clip's track, sequentially.
     pub captions_all_clicked: bool,
     pub narration_clicked: bool,
+    /// Click on the download-models icon. Opens the model prompt for
+    /// the model family with the most missing entries.
+    pub download_models_clicked: bool,
     pub follow_toggled: bool,
     pub undo: bool,
     pub redo: bool,
@@ -84,6 +87,43 @@ fn icon_action(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> bool {
     icon_toggle(ui, icon, tooltip, false, enabled)
 }
 
+/// Icon with an explicit tint. Used for status indicators like the
+/// model-download icon that turns red when a family has no local copy.
+fn icon_action_colored(
+    ui: &mut Ui,
+    icon: &str,
+    tooltip: &str,
+    enabled: bool,
+    color: Color32,
+) -> bool {
+    let size = egui::vec2(30.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let bg = if resp.hovered() && enabled {
+        ui.visuals().widgets.hovered.bg_fill
+    } else {
+        Color32::from_gray(45)
+    };
+    ui.painter().rect_filled(rect, 5.0, bg);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        egui::FontId::proportional(16.0),
+        if enabled {
+            color
+        } else {
+            Color32::from_gray(80)
+        },
+    );
+    if enabled {
+        let clicked = resp.clicked();
+        resp.on_hover_text(tooltip);
+        clicked
+    } else {
+        false
+    }
+}
+
 /// Like `icon_action`, but returns the `Response` so callers can attach
 /// a context menu. Clicking still yields `true` from `resp.clicked()`.
 fn icon_action_resp(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> egui::Response {
@@ -114,12 +154,32 @@ fn icon_action_resp(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> eg
     }
 }
 
+/// Summary of local model availability, used to tint the download icon
+/// and shape its tooltip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelAvailability {
+    /// Every family has at least one Ready model.
+    AllReady,
+    /// Some families ready, some missing.
+    Partial,
+    /// No caption AND no narration model on disk.
+    NoneReady,
+    /// Count of Ready entries per family, for the tooltip.
+    Status {
+        captions_ready: usize,
+        narration_ready: usize,
+        captions_total: usize,
+        narration_total: usize,
+    },
+}
+
 pub fn show(
     ui: &mut Ui,
     state: &mut TimelineToolState,
     can_undo: bool,
     can_redo: bool,
     playhead_ms: u64,
+    models: ModelAvailability,
 ) -> TimelineToolEvents {
     let mut ev = TimelineToolEvents::default();
 
@@ -180,6 +240,53 @@ pub fn show(
         if icon_action(ui, ph::MICROPHONE, &tr("tt-narration"), true) {
             state.narration_enabled = true;
             ev.narration_clicked = true;
+        }
+
+        // --- Download models ---
+        // Colour and tooltip reflect local model availability. The icon
+        // is always clickable (opens the model prompt for the family
+        // that needs it most) but stands out when something is missing.
+        {
+            let (icon_color, tooltip) = match models {
+                ModelAvailability::AllReady => (Color32::from_gray(200), tr("tt-models-ready")),
+                ModelAvailability::Partial => {
+                    (Color32::from_rgb(230, 200, 90), tr("tt-models-partial"))
+                }
+                ModelAvailability::NoneReady => {
+                    (Color32::from_rgb(230, 90, 90), tr("tt-models-none"))
+                }
+                ModelAvailability::Status {
+                    captions_ready,
+                    narration_ready,
+                    captions_total,
+                    narration_total,
+                } => {
+                    let all_ready =
+                        captions_ready >= captions_total && narration_ready >= narration_total;
+                    let none_ready = captions_ready == 0 && narration_ready == 0;
+                    let color = if all_ready {
+                        Color32::from_gray(200)
+                    } else if none_ready {
+                        Color32::from_rgb(230, 90, 90)
+                    } else {
+                        Color32::from_rgb(230, 200, 90)
+                    };
+                    let tt = format!(
+                        "{} — {} {}/{} · {} {}/{}",
+                        tr("tt-models-label"),
+                        tr("tt-models-captions-short"),
+                        captions_ready,
+                        captions_total,
+                        tr("tt-models-narration-short"),
+                        narration_ready,
+                        narration_total,
+                    );
+                    (color, tt)
+                }
+            };
+            if icon_action_colored(ui, ph::DOWNLOAD_SIMPLE, &tooltip, true, icon_color) {
+                ev.download_models_clicked = true;
+            }
         }
 
         ui.separator();
