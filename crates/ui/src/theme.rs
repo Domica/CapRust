@@ -1,5 +1,6 @@
 //! Theme system: light / dark / custom + accent color.
 
+use caprust_core::TrackKind;
 use egui::{Color32, CornerRadius, Stroke, Visuals};
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +33,30 @@ pub struct Theme {
     pub custom_panel: [u8; 3],
     pub custom_window: [u8; 3],
     pub custom_text: [u8; 3],
+    /// Track header/lane colors, one per track family. Headers use the
+    /// raw RGB; lanes use a dimmed variant so clips stay readable. All
+    /// four are user-editable in Settings → Theme → Track colors.
+    #[serde(default = "default_track_video")]
+    pub track_video: [u8; 3],
+    #[serde(default = "default_track_audio")]
+    pub track_audio: [u8; 3],
+    #[serde(default = "default_track_captions")]
+    pub track_captions: [u8; 3],
+    #[serde(default = "default_track_text")]
+    pub track_text: [u8; 3],
+}
+
+fn default_track_video() -> [u8; 3] {
+    [128, 170, 232]
+}
+fn default_track_audio() -> [u8; 3] {
+    [128, 200, 148]
+}
+fn default_track_captions() -> [u8; 3] {
+    [232, 208, 120]
+}
+fn default_track_text() -> [u8; 3] {
+    [184, 148, 224]
 }
 
 impl Default for Theme {
@@ -42,6 +67,10 @@ impl Default for Theme {
             custom_panel: [18, 18, 20],
             custom_window: [24, 24, 27],
             custom_text: [220, 220, 224],
+            track_video: default_track_video(),
+            track_audio: default_track_audio(),
+            track_captions: default_track_captions(),
+            track_text: default_track_text(),
         }
     }
 }
@@ -100,6 +129,49 @@ impl Theme {
         v.window_stroke = Stroke::new(1.0_f32, border);
 
         ctx.set_visuals(v);
+    }
+
+    /// Raw RGB chosen for a track kind.
+    pub fn track_color(&self, kind: TrackKind) -> [u8; 3] {
+        match kind {
+            TrackKind::Video | TrackKind::Overlay => self.track_video,
+            TrackKind::Audio => self.track_audio,
+            TrackKind::Captions => self.track_captions,
+            TrackKind::Text => self.track_text,
+        }
+    }
+
+    /// Header background. Uses the raw track color in every mode — the
+    /// palette is already pastel enough to stay legible on both dark and
+    /// light chrome.
+    pub fn track_header_bg(&self, kind: TrackKind) -> Color32 {
+        let [r, g, b] = self.track_color(kind);
+        Color32::from_rgb(r, g, b)
+    }
+
+    /// Ink color for the header's text and icons. Dark on every mode
+    /// because the pastel backgrounds are always light.
+    pub fn track_header_fg(&self, _kind: TrackKind) -> Color32 {
+        Color32::from_rgb(24, 24, 30)
+    }
+
+    /// Lane background. Pastel tint that respects theme mode: brighter
+    /// wash on light chrome, darker wash on dark. Hidden tracks are
+    /// dimmed further so the difference between visible/hidden is
+    /// obvious without a separate pattern.
+    pub fn track_lane_bg(&self, kind: TrackKind, visible: bool) -> Color32 {
+        let [r, g, b] = self.track_color(kind);
+        let base = match self.mode {
+            ThemeMode::Light => 0.78,
+            ThemeMode::Dark => 0.16,
+            ThemeMode::Custom => 0.16,
+        };
+        let f = if visible { base } else { base * 0.55 };
+        Color32::from_rgb(
+            (r as f32 * f) as u8,
+            (g as f32 * f) as u8,
+            (b as f32 * f) as u8,
+        )
     }
 }
 

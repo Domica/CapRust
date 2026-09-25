@@ -1524,6 +1524,7 @@ impl CapRustApp {
                     }
                 }
 
+                let theme_snapshot = self.theme.clone();
                 ui.horizontal_top(|ui| {
                     // LEFT: headers
                     ui.allocate_ui_with_layout(
@@ -1554,7 +1555,11 @@ impl CapRustApp {
                                         // the lane column after 4-5 tracks.
                                         ui.set_min_height(row_h);
                                         let hev = crate::timeline::track_header::show(
-                                            ui, &mut track, idx,
+                                            ui,
+                                            &mut track,
+                                            idx,
+                                            &theme_snapshot,
+                                            row_h,
                                         );
                                         if hev.changed {
                                             header_changed = true;
@@ -1685,11 +1690,7 @@ impl CapRustApp {
                                 rows_actual.push((idx, row_h));
 
                                 let p = ui.painter_at(lane_rect);
-                                let bg = if track.visible {
-                                    egui::Color32::from_gray(22)
-                                } else {
-                                    egui::Color32::from_gray(16)
-                                };
+                                let bg = theme_snapshot.track_lane_bg(track.kind, track.visible);
                                 p.rect_filled(lane_rect, 0.0, bg);
                                 if track.pinned {
                                     p.line_segment(
