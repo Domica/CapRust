@@ -48,7 +48,7 @@ pub fn show(
     egui::ScrollArea::vertical()
         .max_height(400.0)
         .show(ui, |ui| match tab {
-            SettingsTab::Appearance => show_appearance(ui, theme),
+            SettingsTab::Appearance => show_appearance(ui, theme, settings),
             SettingsTab::Models => show_models(ui, models, settings),
             SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
             SettingsTab::Language => show_language(ui, &mut settings.language),
@@ -92,7 +92,7 @@ pub fn show(
 // Appearance
 // ---------------------------------------------------------------------------
 
-fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
+fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
     ui.label(egui::RichText::new(tr("set-tab-appearance")).strong());
     ui.add_space(4.0);
 
@@ -156,6 +156,19 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme) {
     if ui.button(tr("set-appearance-reset")).clicked() {
         *theme = Theme::default();
     }
+
+    ui.add_space(12.0);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-updates")).strong());
+    ui.checkbox(
+        &mut settings.check_for_updates,
+        tr("set-appearance-check-updates"),
+    );
+    ui.label(
+        egui::RichText::new(tr("set-appearance-updates-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
 }
 
 // ---------------------------------------------------------------------------
