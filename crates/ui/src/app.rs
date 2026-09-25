@@ -2517,7 +2517,14 @@ impl CapRustApp {
                                         ui.ctx()
                                             .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                                     }
-                                    if !pan_mode
+                                    let track_locked = self
+                                        .project
+                                        .tracks
+                                        .get(idx)
+                                        .map(|t| t.locked)
+                                        .unwrap_or(false);
+                                    if !track_locked
+                                        && !pan_mode
                                         && pointer_on_clip
                                         && pointer_down
                                         && clip_drag_snapshot.is_none()
