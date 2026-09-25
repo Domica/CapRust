@@ -843,6 +843,10 @@ impl CapRustApp {
             }
         }
         if ev.narration_clicked {
+            // Refresh from disk so manually-placed Piper voices (and
+            // ones added since startup) are seen without a restart.
+            let models_dir = self.settings.effective_models_dir();
+            self.project.models.scan_local(&models_dir);
             let any_ready = !self.project.models.ready_narration().is_empty();
             if any_ready {
                 if self.narration_rx.is_some() {
@@ -980,6 +984,14 @@ impl CapRustApp {
     /// on the timeline and remember the receiver. If no model is ready,
     /// open the model-prompt dialog instead.
     fn start_caption_job(&mut self) {
+        // Refresh model status from the filesystem before deciding whether
+        // a caption model is available. scan_local() marks a model Ready
+        // when its file exists and is non-empty, so manually-placed
+        // weights (and downloads that completed after the last startup)
+        // are picked up without restarting the app.
+        let models_dir = self.settings.effective_models_dir();
+        self.project.models.scan_local(&models_dir);
+
         let ready = self.project.models.ready_captions();
         let Some(model) = ready.first() else {
             tracing::info!("no caption model ready — opening prompt");
@@ -989,7 +1001,6 @@ impl CapRustApp {
         let model_id = model.id.clone();
         let language = model.language.clone();
 
-        let models_dir = self.settings.effective_models_dir();
         let model_path = self.project.models.local_path(&models_dir, &model_id);
         if !model_path.is_file() {
             tracing::warn!(
