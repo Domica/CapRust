@@ -278,14 +278,14 @@ const EFFECTS: &[Preset] = &[
         label_key: "asset-effect-sparkle",
         icon: ph::STAR,
         color: [230, 210, 140],
-        coming_soon: true,
+        coming_soon: false,
     },
     Preset {
         id: "ghost",
         label_key: "asset-effect-ghost",
         icon: ph::GHOST,
         color: [160, 170, 200],
-        coming_soon: true,
+        coming_soon: false,
     },
     Preset {
         id: "lens_flare",
