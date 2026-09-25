@@ -416,6 +416,11 @@ fn atempo_chain(speed: f32) -> String {
 
 /// Builder helper: given a `ProjectState`, collect inputs + clips.
 /// Only V1 (first Video track) and A1 (first Audio track) are used for now.
+// plan_from_project has grown to 8 parameters as the pipeline gained
+// features (crf, preset, and now models_dir for narration caching).
+// Every parameter is a distinct, load-bearing input to the render plan;
+// bundling them into a struct just shuffles the same fields around.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_from_project(
     project: &caprust_core::ProjectState,
     width: u32,
@@ -424,6 +429,7 @@ pub fn plan_from_project(
     fps_den: i64,
     crf: u8,
     preset: &str,
+    models_dir: &std::path::Path,
 ) -> Result<RenderPlan> {
     use caprust_core::{ClipType, TrackKind};
 
@@ -583,12 +589,41 @@ pub fn plan_from_project(
             .collect();
         clips.sort_by_key(|c| c.start_time_ms);
         for c in clips {
+            // Narration clips resolve to a cached WAV on disk. The path
+            // is deterministic from (text, voice_id) via
+            // core::cache::narration_path, so the same project can be
+            // opened on another machine and re-synthesized.
+            let narration_path_owned: Option<String> = match &c.clip_type {
+                ClipType::Narration { voice_id, text, .. } => Some(
+                    caprust_core::cache::narration_path(models_dir, text, voice_id)
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                _ => None,
+            };
+
             let path_opt: Option<&String> = match &c.clip_type {
                 ClipType::Audio { path, .. } => Some(path),
                 ClipType::Video { path, .. } if audio_from_video => Some(path),
+                ClipType::Narration { .. } => narration_path_owned.as_ref(),
                 _ => None,
             };
             if let Some(path) = path_opt {
+                // Narration WAVs are cached on demand. If the file is not
+                // there yet (project shared, cache cleared, first render),
+                // skip the audio with a warning rather than letting
+                // ffmpeg fail with an unhelpful error. F5 wires the UI
+                // synthesis flow that populates this cache.
+                if matches!(&c.clip_type, ClipType::Narration { .. })
+                    && !std::path::Path::new(path).is_file()
+                {
+                    tracing::warn!(
+                        "narration clip {} has no cached WAV at {} — skipping",
+                        c.id,
+                        path
+                    );
+                    continue;
+                }
                 let dur_sec = c.duration_ms as f64 / 1000.0;
                 let idx = register_input(&mut inputs, path, 0.0, dur_sec);
                 audio_clips.push(AudioClip {

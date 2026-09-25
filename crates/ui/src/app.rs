@@ -2080,6 +2080,7 @@ impl CapRustApp {
                     let fps_f = fps_num as f64 / fps_den.max(1) as f64;
 
                     if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
+                        let models_dir = self.settings.effective_models_dir();
                         match caprust_media_io::export_graph::plan_from_project(
                             &self.project,
                             rw,
@@ -2088,6 +2089,7 @@ impl CapRustApp {
                             fps_den,
                             23,
                             "veryfast",
+                            &models_dir,
                         ) {
                             Ok(plan) => {
                                 match PreviewRenderer::spawn(
@@ -2645,6 +2647,7 @@ impl CapRustApp {
             crate::panels::export_window::QualityTier::Large => 16,
         };
 
+        let models_dir = self.settings.effective_models_dir();
         let plan = match caprust_media_io::export_graph::plan_from_project(
             &self.project,
             w,
@@ -2653,6 +2656,7 @@ impl CapRustApp {
             fps_den,
             crf,
             "veryfast",
+            &models_dir,
         ) {
             Ok(p) => p,
             Err(e) => {
