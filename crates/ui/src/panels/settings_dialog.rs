@@ -132,6 +132,33 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
         }
     });
 
+    ui.add_space(12.0);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-tracks")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-appearance-tracks-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(6.0);
+    egui::Grid::new("track_colors_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(tr("set-appearance-track-video"));
+            ui.color_edit_button_srgb(&mut theme.track_video);
+            ui.end_row();
+            ui.label(tr("set-appearance-track-audio"));
+            ui.color_edit_button_srgb(&mut theme.track_audio);
+            ui.end_row();
+            ui.label(tr("set-appearance-track-captions"));
+            ui.color_edit_button_srgb(&mut theme.track_captions);
+            ui.end_row();
+            ui.label(tr("set-appearance-track-text"));
+            ui.color_edit_button_srgb(&mut theme.track_text);
+            ui.end_row();
+        });
+
     if theme.mode == ThemeMode::Custom {
         ui.add_space(12.0);
         ui.label(egui::RichText::new(tr("set-appearance-custom")).strong());
