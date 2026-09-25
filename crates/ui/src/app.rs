@@ -1541,6 +1541,18 @@ impl CapRustApp {
                                     egui::Layout::top_down(egui::Align::Min),
                                     |ui| {
                                         ui.set_width(header_w);
+                                        // Force the child UI to occupy the
+                                        // full row height. allocate_ui_with_layout
+                                        // shrinks the reserved space to the
+                                        // child's actual content (two header
+                                        // rows, ~36px) rather than the
+                                        // requested row_h. The lanes on the
+                                        // right use allocate_exact_size, which
+                                        // does honor row_h. That mismatch
+                                        // accumulated ~14px per track and left
+                                        // the header column ~1 track short of
+                                        // the lane column after 4-5 tracks.
+                                        ui.set_min_height(row_h);
                                         let hev = crate::timeline::track_header::show(
                                             ui, &mut track, idx,
                                         );
