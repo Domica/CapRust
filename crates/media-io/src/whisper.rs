@@ -176,12 +176,19 @@ pub fn extract_16khz_mono_f32(
         ));
     }
 
-    if bytes.len() % 4 != 0 {
+    // Clippy 1.98 introduced manual_is_multiple_of and re-flagged
+    // chunks_exact_to_as_chunks; neither lint exists on our pinned
+    // toolchain (Rust 1.83 floor, 1.88 in CI), so allow unknown_lints
+    // alongside the specific names to keep -D warnings green on both.
+    #[allow(unknown_lints, clippy::manual_is_multiple_of)]
+    let len_ok = bytes.len() % 4 == 0;
+    if !len_ok {
         return Err(anyhow!(
             "pcm byte length not divisible by 4: {} bytes",
             bytes.len()
         ));
     }
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     let samples: Vec<f32> = bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
