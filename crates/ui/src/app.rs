@@ -1133,6 +1133,7 @@ impl CapRustApp {
         };
         self.caption_rx = Some(rx);
         self.caption_job_started = Some(std::time::Instant::now());
+        self.toast(tr("toast-caption-started"));
         tracing::info!("caption: job spawned ({duration_ms}ms source)");
     }
 
@@ -1151,6 +1152,7 @@ impl CapRustApp {
                     // a phantom block on the timeline and pollutes the
                     // project file across saves.
                     tracing::warn!("caption: job returned 0 segments — not inserting a clip");
+                    self.toast(tr("toast-caption-empty"));
                     self.caption_rx = None;
                     self.caption_job_started = None;
                     return;
@@ -1176,12 +1178,14 @@ impl CapRustApp {
                         result.segments.len(),
                         result.insert_at_ms
                     );
+                    self.toast(tr("toast-caption-added"));
                 }
                 self.caption_rx = None;
                 self.caption_job_started = None;
             }
             Ok(Err(msg)) => {
                 tracing::error!("caption: job failed: {msg}");
+                self.toast(format!("{}: {msg}", tr("toast-caption-failed")));
                 self.caption_rx = None;
                 self.caption_job_started = None;
             }
