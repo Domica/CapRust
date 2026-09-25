@@ -53,6 +53,25 @@ fn default_projects_dir() -> String {
         .unwrap_or_else(|_| ".".into())
 }
 
+/// Lightweight transient notification shown in the top-right corner.
+/// Auto-dismisses after `duration`; the user can also dismiss early
+/// via the ✕ button. Multiple toasts stack vertically.
+pub struct Toast {
+    pub text: String,
+    pub created_at: std::time::Instant,
+    pub duration: std::time::Duration,
+}
+
+impl Toast {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            created_at: std::time::Instant::now(),
+            duration: std::time::Duration::from_secs(4),
+        }
+    }
+}
+
 pub struct CapRustApp {
     pub mode: AppMode,
     pub project: ProjectState,
@@ -97,6 +116,9 @@ pub struct CapRustApp {
     /// Result of the last update check, if a newer version was found.
     /// Some(..) => show the toast; None => nothing to notify.
     pub update_available: Option<caprust_core::update_checker::UpdateInfo>,
+    /// Transient notifications shown top-right. Expired entries are
+    /// pruned each frame; the user can dismiss early with the ✕ button.
+    pub toasts: Vec<Toast>,
     /// Receiver for the background update-check thread. Cleared after
     /// first successful receive.
     pub update_rx: Option<
@@ -238,6 +260,7 @@ impl CapRustApp {
             narration_rx: None,
             narration_input: Default::default(),
             update_available: None,
+            toasts: Vec::new(),
             update_rx,
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
@@ -894,6 +917,7 @@ impl CapRustApp {
         };
         let rx = crate::media_jobs::spawn_narration_job(ffprobe, req);
         self.narration_rx = Some(rx);
+        self.toast(tr("toast-narration-started"));
         tracing::info!("narration: job spawned");
     }
 
@@ -926,6 +950,7 @@ impl CapRustApp {
             }
             Ok(Err(msg)) => {
                 tracing::error!("narration: job failed: {msg}");
+                self.toast(format!("{}: {msg}", tr("toast-narration-failed")));
                 self.narration_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -1206,6 +1231,62 @@ impl CapRustApp {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.update_rx = None;
             }
+        }
+    }
+
+    /// Push a transient notification. Auto-dismisses after 4s.
+    fn toast(&mut self, text: impl Into<String>) {
+        self.toasts.push(Toast::new(text));
+    }
+
+    /// Render live toasts top-right. Prunes expired entries each frame.
+    fn show_toasts(&mut self, ctx: &egui::Context) {
+        let now = std::time::Instant::now();
+        self.toasts
+            .retain(|t| now.duration_since(t.created_at) < t.duration);
+        if self.toasts.is_empty() {
+            return;
+        }
+
+        let mut dismiss: Option<usize> = None;
+        let base_y = 48.0
+            + if self.update_available.is_some() {
+                140.0
+            } else {
+                0.0
+            };
+        let mut y = base_y;
+
+        for (i, t) in self.toasts.iter().enumerate() {
+            let id = egui::Id::new(("caprust-toast", i, t.created_at));
+            egui::Window::new(format!("caprust-toast-{i}"))
+                .id(id)
+                .resizable(false)
+                .collapsible(false)
+                .title_bar(false)
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, y))
+                .default_width(320.0)
+                .show(ctx, |ui| {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&t.text).size(13.0));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("✕").clicked() {
+                                        dismiss = Some(i);
+                                    }
+                                },
+                            );
+                        });
+                    });
+                });
+
+            y += 56.0;
+        }
+
+        if let Some(i) = dismiss {
+            self.toasts.remove(i);
         }
     }
 
@@ -3309,6 +3390,7 @@ impl eframe::App for CapRustApp {
         if self.model_prompt.is_some() {
             self.show_model_prompt_window(ctx);
         }
+        self.show_toasts(ctx);
         self.show_update_toast(ctx);
         if self.narration_input.open {
             let n_ev = crate::panels::narration_input::show(
