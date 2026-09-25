@@ -159,6 +159,26 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             ui.end_row();
         });
 
+    ui.add_space(12.0);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-playhead")).strong());
+    ui.add_space(6.0);
+    egui::Grid::new("playhead_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(tr("set-appearance-playhead-color"));
+            ui.color_edit_button_srgb(&mut theme.playhead);
+            ui.end_row();
+            ui.label(tr("set-appearance-playhead-size"));
+            ui.horizontal(|ui| {
+                for s in crate::theme::PlayheadSize::all() {
+                    ui.selectable_value(&mut theme.playhead_size, s, tr(s.label_key()));
+                }
+            });
+            ui.end_row();
+        });
+
     if theme.mode == ThemeMode::Custom {
         ui.add_space(12.0);
         ui.label(egui::RichText::new(tr("set-appearance-custom")).strong());

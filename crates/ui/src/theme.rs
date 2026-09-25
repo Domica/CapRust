@@ -24,6 +24,28 @@ impl ThemeMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PlayheadSize {
+    /// Line only inside the ruler strip (default).
+    #[default]
+    Compact,
+    /// Line runs from the ruler top down through every lane, ending at
+    /// the bottom of the last visible track.
+    Full,
+}
+
+impl PlayheadSize {
+    pub fn label_key(&self) -> &'static str {
+        match self {
+            Self::Compact => "set-appearance-playhead-size-compact",
+            Self::Full => "set-appearance-playhead-size-full",
+        }
+    }
+    pub fn all() -> [Self; 2] {
+        [Self::Compact, Self::Full]
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Theme {
     pub mode: ThemeMode,
@@ -44,6 +66,16 @@ pub struct Theme {
     pub track_captions: [u8; 3],
     #[serde(default = "default_track_text")]
     pub track_text: [u8; 3],
+    /// Playhead line color. Default is a warm red.
+    #[serde(default = "default_playhead_color")]
+    pub playhead: [u8; 3],
+    /// Playhead line extent.
+    #[serde(default)]
+    pub playhead_size: PlayheadSize,
+}
+
+fn default_playhead_color() -> [u8; 3] {
+    [230, 70, 70]
 }
 
 fn default_track_video() -> [u8; 3] {
@@ -71,6 +103,8 @@ impl Default for Theme {
             track_audio: default_track_audio(),
             track_captions: default_track_captions(),
             track_text: default_track_text(),
+            playhead: default_playhead_color(),
+            playhead_size: PlayheadSize::default(),
         }
     }
 }
@@ -153,6 +187,11 @@ impl Theme {
     /// because the pastel backgrounds are always light.
     pub fn track_header_fg(&self, _kind: TrackKind) -> Color32 {
         Color32::from_rgb(24, 24, 30)
+    }
+
+    /// Playhead line color as Color32.
+    pub fn playhead_color(&self) -> Color32 {
+        Color32::from_rgb(self.playhead[0], self.playhead[1], self.playhead[2])
     }
 
     /// Lane background. Pastel tint that respects theme mode: brighter
