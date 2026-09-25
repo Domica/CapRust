@@ -685,7 +685,7 @@ mod sort_filter_tests {
 
     #[test]
     fn filter_video_only() {
-        let items = vec![
+        let items = [
             make("a.mp4", MediaKind::Video, 1),
             make("b.mp3", MediaKind::Audio, 2),
             make("c.png", MediaKind::Image, 3),
@@ -721,11 +721,15 @@ mod sort_filter_tests {
 
     #[test]
     fn sort_by_name() {
-        let mut items = vec![
+        // Owned Vec because the test sorts in place. Using `.to_vec()` on
+        // an array literal keeps clippy's useless_vec lint quiet — the
+        // allocation is intentional here.
+        let mut items = [
             make("z.mp4", MediaKind::Video, 1),
             make("a.mp4", MediaKind::Video, 2),
             make("m.mp4", MediaKind::Video, 3),
-        ];
+        ]
+        .to_vec();
         items.sort_by_key(|m| m.name.to_lowercase());
         assert_eq!(items[0].name, "a.mp4");
         assert_eq!(items[2].name, "z.mp4");
@@ -733,11 +737,12 @@ mod sort_filter_tests {
 
     #[test]
     fn sort_by_added() {
-        let mut items = vec![
+        let mut items = [
             make("z.mp4", MediaKind::Video, 3),
             make("a.mp4", MediaKind::Video, 1),
             make("m.mp4", MediaKind::Video, 2),
-        ];
+        ]
+        .to_vec();
         items.sort_by_key(|m| m.added_at);
         assert_eq!(items[0].added_at, 1);
         assert_eq!(items[2].added_at, 3);
