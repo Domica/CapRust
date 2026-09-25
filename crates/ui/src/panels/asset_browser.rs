@@ -9,6 +9,7 @@ use crate::i18n_helper::tr;
 use crate::panels::media_bin::{MediaBinOutput, MediaBinState};
 use caprust_core::ProjectState;
 use egui::{Color32, RichText, Sense, Ui, Vec2, Vec2 as V2};
+use egui_phosphor::regular as ph;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AssetTab {
@@ -72,12 +73,21 @@ impl AssetBrowserState {
 }
 
 /// One preset entry (transitions, effects, filters, text styles).
+///
+/// `label_key` is an FTL key resolved via `tr()` — never store a
+/// translated string here (§8: every user-visible string goes through
+/// the i18n system).
+///
+/// `coming_soon` marks a preset that is visible but not yet wired in
+/// the filtergraph. The card renders dimmed and clicks are ignored
+/// until the backing implementation lands.
 struct Preset {
     id: &'static str,
-    label: &'static str,
+    label_key: &'static str,
     icon: &'static str,
     /// Base color for the placeholder thumbnail.
     color: [u8; 3],
+    coming_soon: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,324 +97,376 @@ struct Preset {
 const TRANSITIONS: &[Preset] = &[
     Preset {
         id: "none",
-        label: "None",
-        icon: "▢",
+        label_key: "asset-transition-none",
+        icon: ph::PROHIBIT,
         color: [70, 70, 75],
+        coming_soon: false,
     },
     Preset {
         id: "fade",
-        label: "Fade",
-        icon: "◐",
+        label_key: "asset-transition-fade",
+        icon: ph::CIRCLE_HALF,
         color: [120, 90, 160],
+        coming_soon: false,
     },
     Preset {
         id: "slide_l",
-        label: "Slide Left",
-        icon: "←",
+        label_key: "asset-transition-slide_l",
+        icon: ph::ARROW_LEFT,
         color: [80, 130, 190],
+        coming_soon: true,
     },
     Preset {
         id: "slide_r",
-        label: "Slide Right",
-        icon: "→",
+        label_key: "asset-transition-slide_r",
+        icon: ph::ARROW_RIGHT,
         color: [80, 130, 190],
+        coming_soon: true,
     },
     Preset {
         id: "slide_u",
-        label: "Slide Up",
-        icon: "↑",
+        label_key: "asset-transition-slide_u",
+        icon: ph::ARROW_UP,
         color: [80, 130, 190],
+        coming_soon: true,
     },
     Preset {
         id: "slide_d",
-        label: "Slide Down",
-        icon: "↓",
+        label_key: "asset-transition-slide_d",
+        icon: ph::ARROW_DOWN,
         color: [80, 130, 190],
+        coming_soon: true,
     },
     Preset {
         id: "zoom_in",
-        label: "Zoom In",
-        icon: "⤢",
+        label_key: "asset-transition-zoom_in",
+        icon: ph::ARROWS_OUT,
         color: [200, 120, 80],
+        coming_soon: true,
     },
     Preset {
         id: "zoom_out",
-        label: "Zoom Out",
-        icon: "⤡",
+        label_key: "asset-transition-zoom_out",
+        icon: ph::ARROWS_IN,
         color: [200, 120, 80],
+        coming_soon: true,
     },
     Preset {
         id: "wipe_l",
-        label: "Wipe Left",
-        icon: "◧",
+        label_key: "asset-transition-wipe_l",
+        icon: ph::ARROW_LINE_LEFT,
         color: [140, 170, 90],
+        coming_soon: true,
     },
     Preset {
         id: "wipe_r",
-        label: "Wipe Right",
-        icon: "◨",
+        label_key: "asset-transition-wipe_r",
+        icon: ph::ARROW_LINE_RIGHT,
         color: [140, 170, 90],
+        coming_soon: true,
     },
     Preset {
         id: "rotate",
-        label: "Rotate",
-        icon: "⟳",
+        label_key: "asset-transition-rotate",
+        icon: ph::ARROWS_CLOCKWISE,
         color: [180, 100, 140],
+        coming_soon: true,
     },
     Preset {
         id: "blur_t",
-        label: "Blur Cut",
-        icon: "❋",
+        label_key: "asset-transition-blur_t",
+        icon: ph::DROP,
         color: [110, 110, 130],
+        coming_soon: true,
     },
 ];
 
 const EFFECTS: &[Preset] = &[
     Preset {
         id: "blur",
-        label: "Blur",
-        icon: "◌",
+        label_key: "asset-effect-blur",
+        icon: ph::DROP,
         color: [110, 110, 130],
+        coming_soon: false,
     },
     Preset {
         id: "vignette",
-        label: "Vignette",
-        icon: "◎",
+        label_key: "asset-effect-vignette",
+        icon: ph::CIRCLE,
         color: [60, 50, 60],
+        coming_soon: false,
     },
     Preset {
         id: "glitch",
-        label: "Glitch",
-        icon: "≠",
+        label_key: "asset-effect-glitch",
+        icon: ph::LIGHTNING,
         color: [190, 80, 130],
+        coming_soon: false,
     },
     Preset {
         id: "rgb_split",
-        label: "RGB Split",
-        icon: "◍",
+        label_key: "asset-effect-rgb_split",
+        icon: ph::GIT_BRANCH,
         color: [220, 90, 90],
+        coming_soon: false,
     },
     Preset {
         id: "shake",
-        label: "Shake",
-        icon: "≈",
+        label_key: "asset-effect-shake",
+        icon: ph::WAVE_SINE,
         color: [200, 130, 80],
+        coming_soon: false,
     },
     Preset {
         id: "zoom_pulse",
-        label: "Zoom Pulse",
-        icon: "◉",
+        label_key: "asset-effect-zoom_pulse",
+        icon: ph::CIRCLES_THREE,
         color: [220, 160, 60],
+        coming_soon: false,
     },
     Preset {
         id: "flash",
-        label: "Flash",
-        icon: "✷",
+        label_key: "asset-effect-flash",
+        icon: ph::LIGHTNING_SLASH,
         color: [240, 230, 200],
+        coming_soon: false,
     },
     Preset {
         id: "mirror",
-        label: "Mirror",
-        icon: "◫",
+        label_key: "asset-effect-mirror",
+        icon: ph::FLIP_HORIZONTAL,
         color: [90, 150, 190],
+        coming_soon: false,
     },
     Preset {
         id: "kaleido",
-        label: "Kaleidoscope",
-        icon: "❋",
+        label_key: "asset-effect-kaleido",
+        icon: ph::DIAMOND,
         color: [140, 90, 180],
+        coming_soon: false,
     },
     Preset {
         id: "old_film",
-        label: "Old Film",
-        icon: "▦",
+        label_key: "asset-effect-old_film",
+        icon: ph::FILM_STRIP,
         color: [160, 140, 100],
+        coming_soon: false,
     },
     Preset {
         id: "vhs",
-        label: "VHS",
-        icon: "▤",
+        label_key: "asset-effect-vhs",
+        icon: ph::CASSETTE_TAPE,
         color: [130, 150, 100],
+        coming_soon: false,
     },
     Preset {
         id: "light_leak",
-        label: "Light Leak",
-        icon: "☀",
+        label_key: "asset-effect-light_leak",
+        icon: ph::SUN,
         color: [230, 170, 90],
+        coming_soon: false,
     },
     Preset {
         id: "particle",
-        label: "Particle",
-        icon: "✧",
+        label_key: "asset-effect-particle",
+        icon: ph::SPARKLE,
         color: [180, 180, 210],
+        coming_soon: true,
     },
     Preset {
         id: "sparkle",
-        label: "Sparkle",
-        icon: "✦",
+        label_key: "asset-effect-sparkle",
+        icon: ph::STAR,
         color: [230, 210, 140],
+        coming_soon: true,
     },
     Preset {
         id: "ghost",
-        label: "Ghost",
-        icon: "◊",
+        label_key: "asset-effect-ghost",
+        icon: ph::GHOST,
         color: [160, 170, 200],
+        coming_soon: true,
     },
     Preset {
         id: "lens_flare",
-        label: "Lens Flare",
-        icon: "◐",
+        label_key: "asset-effect-lens_flare",
+        icon: ph::SUN_HORIZON,
         color: [240, 200, 130],
+        coming_soon: true,
     },
 ];
 
 const FILTERS: &[Preset] = &[
     Preset {
         id: "none",
-        label: "None",
-        icon: "○",
+        label_key: "asset-filter-none",
+        icon: ph::CIRCLE,
         color: [80, 80, 80],
+        coming_soon: false,
     },
     Preset {
         id: "warm",
-        label: "Warm",
-        icon: "☀",
+        label_key: "asset-filter-warm",
+        icon: ph::SUN,
         color: [220, 150, 80],
+        coming_soon: false,
     },
     Preset {
         id: "cool",
-        label: "Cool",
-        icon: "❄",
+        label_key: "asset-filter-cool",
+        icon: ph::SNOWFLAKE,
         color: [100, 160, 220],
+        coming_soon: false,
     },
     Preset {
         id: "bw",
-        label: "B&W",
-        icon: "◑",
+        label_key: "asset-filter-bw",
+        icon: ph::CIRCLE_HALF,
         color: [120, 120, 120],
+        coming_soon: false,
     },
     Preset {
         id: "sepia",
-        label: "Sepia",
-        icon: "◒",
+        label_key: "asset-filter-sepia",
+        icon: ph::PALETTE,
         color: [180, 140, 90],
+        coming_soon: false,
     },
     Preset {
         id: "cinematic",
-        label: "Cinematic",
-        icon: "🎬",
+        label_key: "asset-filter-cinematic",
+        icon: ph::FILM_SLATE,
         color: [70, 90, 140],
+        coming_soon: false,
     },
     Preset {
         id: "vintage",
-        label: "Vintage",
-        icon: "🕰",
+        label_key: "asset-filter-vintage",
+        icon: ph::CLOCK_COUNTER_CLOCKWISE,
         color: [180, 150, 110],
+        coming_soon: true,
     },
     Preset {
         id: "vivid",
-        label: "Vivid",
-        icon: "✸",
+        label_key: "asset-filter-vivid",
+        icon: ph::PALETTE,
         color: [230, 90, 130],
+        coming_soon: false,
     },
     Preset {
         id: "matte",
-        label: "Matte",
-        icon: "◍",
+        label_key: "asset-filter-matte",
+        icon: ph::SQUARE,
         color: [150, 150, 160],
+        coming_soon: false,
     },
     Preset {
         id: "noir",
-        label: "Noir",
-        icon: "◼",
+        label_key: "asset-filter-noir",
+        icon: ph::MOON,
         color: [40, 40, 50],
+        coming_soon: false,
     },
     Preset {
         id: "sunset",
-        label: "Sunset",
-        icon: "◓",
+        label_key: "asset-filter-sunset",
+        icon: ph::SUN_HORIZON,
         color: [230, 110, 80],
+        coming_soon: false,
     },
     Preset {
         id: "ocean",
-        label: "Ocean",
-        icon: "≋",
+        label_key: "asset-filter-ocean",
+        icon: ph::WAVES,
         color: [60, 130, 170],
+        coming_soon: false,
     },
     Preset {
         id: "fade",
-        label: "Fade",
-        icon: "◌",
+        label_key: "asset-filter-fade",
+        icon: ph::CIRCLE_HALF_TILT,
         color: [180, 180, 190],
+        coming_soon: false,
     },
     Preset {
         id: "pastel",
-        label: "Pastel",
-        icon: "❀",
+        label_key: "asset-filter-pastel",
+        icon: ph::FLOWER,
         color: [220, 180, 210],
+        coming_soon: false,
     },
     Preset {
         id: "neon",
-        label: "Neon",
-        icon: "✷",
+        label_key: "asset-filter-neon",
+        icon: ph::LIGHTNING,
         color: [90, 240, 200],
+        coming_soon: false,
     },
     Preset {
         id: "gold",
-        label: "Golden",
-        icon: "✦",
+        label_key: "asset-filter-gold",
+        icon: ph::CROWN,
         color: [230, 190, 90],
+        coming_soon: false,
     },
 ];
 
 const TEXT_STYLES: &[Preset] = &[
     Preset {
         id: "default",
-        label: "Default",
-        icon: "T",
+        label_key: "asset-text-default",
+        icon: ph::TEXT_T,
         color: [80, 90, 130],
+        coming_soon: true,
     },
     Preset {
         id: "bold",
-        label: "Bold Title",
-        icon: "B",
+        label_key: "asset-text-bold",
+        icon: ph::TEXT_B,
         color: [160, 60, 60],
+        coming_soon: true,
     },
     Preset {
         id: "subtitle",
-        label: "Subtitle",
-        icon: "s",
+        label_key: "asset-text-subtitle",
+        icon: ph::TEXT_ALIGN_LEFT,
         color: [80, 120, 160],
+        coming_soon: true,
     },
     Preset {
         id: "lower",
-        label: "Lower Third",
-        icon: "▬",
+        label_key: "asset-text-lower",
+        icon: ph::TEXTBOX,
         color: [130, 130, 90],
+        coming_soon: true,
     },
     Preset {
         id: "quote",
-        label: "Quote",
-        icon: "❝",
+        label_key: "asset-text-quote",
+        icon: ph::QUOTES,
         color: [160, 120, 180],
+        coming_soon: true,
     },
     Preset {
         id: "caption",
-        label: "Caption",
-        icon: "▭",
+        label_key: "asset-text-caption",
+        icon: ph::TEXT_ALIGN_CENTER,
         color: [90, 140, 120],
+        coming_soon: true,
     },
     Preset {
         id: "glow",
-        label: "Neon",
-        icon: "✷",
+        label_key: "asset-text-glow",
+        icon: ph::LIGHTNING,
         color: [220, 90, 200],
+        coming_soon: true,
     },
     Preset {
         id: "handwrite",
-        label: "Handwritten",
-        icon: "✎",
+        label_key: "asset-text-handwrite",
+        icon: ph::PENCIL,
         color: [180, 160, 100],
+        coming_soon: true,
     },
 ];
 
@@ -509,7 +571,11 @@ fn preset_grid(
     let filtered: Vec<&Preset> = presets
         .iter()
         .filter(|p| {
-            needle.is_empty() || p.label.to_lowercase().contains(&needle) || p.id.contains(&needle)
+            if needle.is_empty() {
+                return true;
+            }
+            let label = tr(p.label_key).to_lowercase();
+            label.contains(&needle) || p.id.contains(&needle)
         })
         .collect();
 
@@ -546,32 +612,47 @@ fn preset_grid(
 fn preset_card(ui: &mut Ui, p: &Preset, card_size: f32) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(card_size, card_size), Sense::click());
 
-    // Background
+    // Background. Coming-soon presets render at 55% brightness and do
+    // not respond to hover, so the user reads them as unavailable.
     let base = Color32::from_rgb(p.color[0], p.color[1], p.color[2]);
-    let bg = if resp.hovered() {
+    let bg = if p.coming_soon {
+        base.gamma_multiply(0.55)
+    } else if resp.hovered() {
         base.gamma_multiply(1.25)
     } else {
         base
     };
     ui.painter().rect_filled(rect, 6.0, bg);
 
-    // Icon, big, centered
+    // Icon, big, centered. Dimmed icon for coming-soon.
+    let icon_alpha = if p.coming_soon { 110 } else { 230 };
     ui.painter().text(
         rect.center() - Vec2::new(0.0, 6.0),
         egui::Align2::CENTER_CENTER,
         p.icon,
         egui::FontId::proportional(card_size * 0.35),
-        Color32::from_white_alpha(230),
+        Color32::from_white_alpha(icon_alpha),
     );
 
-    // Label, bottom
+    // Label, bottom, localized.
+    let label = tr(p.label_key);
+    let label_color = if p.coming_soon {
+        Color32::from_gray(130)
+    } else {
+        Color32::from_gray(220)
+    };
     ui.painter().text(
         egui::pos2(rect.center().x, rect.bottom() - 8.0),
         egui::Align2::CENTER_BOTTOM,
-        p.label,
+        &label,
         egui::FontId::proportional(10.0),
-        Color32::from_gray(220),
+        label_color,
     );
+
+    if p.coming_soon {
+        resp.on_hover_text(tr("asset-coming-soon"));
+        return false;
+    }
 
     // Border
     let border = if resp.hovered() {

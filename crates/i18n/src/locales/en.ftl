@@ -249,3 +249,66 @@ update-toast-skip = Skip this version
 set-appearance-updates = Updates
 set-appearance-check-updates = Check for updates on startup
 set-appearance-updates-hint = Silent check, once per day. You can skip or snooze a specific version.
+
+# Asset browser — coming-soon marker
+asset-coming-soon = Coming soon
+
+# Transitions
+asset-transition-none = None
+asset-transition-fade = Fade
+asset-transition-slide_l = Slide Left
+asset-transition-slide_r = Slide Right
+asset-transition-slide_u = Slide Up
+asset-transition-slide_d = Slide Down
+asset-transition-zoom_in = Zoom In
+asset-transition-zoom_out = Zoom Out
+asset-transition-wipe_l = Wipe Left
+asset-transition-wipe_r = Wipe Right
+asset-transition-rotate = Rotate
+asset-transition-blur_t = Blur Cut
+
+# Effects
+asset-effect-blur = Blur
+asset-effect-vignette = Vignette
+asset-effect-glitch = Glitch
+asset-effect-rgb_split = RGB Split
+asset-effect-shake = Shake
+asset-effect-zoom_pulse = Zoom Pulse
+asset-effect-flash = Flash
+asset-effect-mirror = Mirror
+asset-effect-kaleido = Kaleidoscope
+asset-effect-old_film = Old Film
+asset-effect-vhs = VHS
+asset-effect-light_leak = Light Leak
+asset-effect-particle = Particle
+asset-effect-sparkle = Sparkle
+asset-effect-ghost = Ghost
+asset-effect-lens_flare = Lens Flare
+
+# Filters
+asset-filter-none = None
+asset-filter-warm = Warm
+asset-filter-cool = Cool
+asset-filter-bw = B&W
+asset-filter-sepia = Sepia
+asset-filter-cinematic = Cinematic
+asset-filter-vintage = Vintage
+asset-filter-vivid = Vivid
+asset-filter-matte = Matte
+asset-filter-noir = Noir
+asset-filter-sunset = Sunset
+asset-filter-ocean = Ocean
+asset-filter-fade = Fade
+asset-filter-pastel = Pastel
+asset-filter-neon = Neon
+asset-filter-gold = Golden
+
+# Text styles
+asset-text-default = Default
+asset-text-bold = Bold Title
+asset-text-subtitle = Subtitle
+asset-text-lower = Lower Third
+asset-text-quote = Quote
+asset-text-caption = Caption
+asset-text-glow = Neon
+asset-text-handwrite = Handwritten
