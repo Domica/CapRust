@@ -21,6 +21,9 @@ pub struct TimelineToolEvents {
     pub magnetic_toggled: bool,
     pub snapping_toggled: bool,
     pub captions_clicked: bool,
+    /// Right-click dropdown on the 💬 button: caption every audio-bearing
+    /// clip on the selected clip's track, sequentially.
+    pub captions_all_clicked: bool,
     pub narration_clicked: bool,
     pub follow_toggled: bool,
     pub undo: bool,
@@ -81,6 +84,36 @@ fn icon_action(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> bool {
     icon_toggle(ui, icon, tooltip, false, enabled)
 }
 
+/// Like `icon_action`, but returns the `Response` so callers can attach
+/// a context menu. Clicking still yields `true` from `resp.clicked()`.
+fn icon_action_resp(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> egui::Response {
+    let size = egui::vec2(30.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let bg = if resp.hovered() && enabled {
+        ui.visuals().widgets.hovered.bg_fill
+    } else {
+        Color32::from_gray(45)
+    };
+    ui.painter().rect_filled(rect, 5.0, bg);
+    let icon_color = if !enabled {
+        Color32::from_gray(80)
+    } else {
+        Color32::from_gray(200)
+    };
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        egui::FontId::proportional(16.0),
+        icon_color,
+    );
+    if enabled {
+        resp.on_hover_text(tooltip)
+    } else {
+        resp
+    }
+}
+
 pub fn show(
     ui: &mut Ui,
     state: &mut TimelineToolState,
@@ -130,10 +163,19 @@ pub fn show(
         ui.separator();
 
         // --- Captions ---
-        if icon_action(ui, ph::CHAT_TEXT, &tr("tt-captions"), true) {
+        // Left click: transcribe the selected clip (existing behaviour).
+        // Right click: dropdown with "caption all clips on this track".
+        let cap_resp = icon_action_resp(ui, ph::CHAT_TEXT, &tr("tt-captions"), true);
+        if cap_resp.clicked() {
             state.captions_enabled = true;
             ev.captions_clicked = true;
         }
+        cap_resp.context_menu(|ui| {
+            if ui.button(tr("tt-captions-all-in-track")).clicked() {
+                ev.captions_all_clicked = true;
+                ui.close_menu();
+            }
+        });
         // --- Narration ---
         if icon_action(ui, ph::MICROPHONE, &tr("tt-narration"), true) {
             state.narration_enabled = true;
