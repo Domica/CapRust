@@ -33,9 +33,9 @@ fn format_eta(seconds: f32) -> String {
     let m = (total % 3600) / 60;
     let s = total % 60;
     if h > 0 {
-        format!("{}:{:02}:{:02}", h, m, s)
+        format!("{h}:{m:02}:{s:02}")
     } else {
-        format!("{}:{:02}", m, s)
+        format!("{m}:{s:02}")
     }
 }
 

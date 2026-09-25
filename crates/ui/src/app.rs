@@ -780,7 +780,7 @@ impl CapRustApp {
             let kind = caprust_core::TrackKind::Video;
             self.project
                 .tracks
-                .push(caprust_core::Track::new(&format!("V{}", idx), kind));
+                .push(caprust_core::Track::new(&format!("V{idx}"), kind));
         }
         if ev.captions_clicked {
             let ready = self.project.models.ready_captions();
@@ -2025,7 +2025,7 @@ impl CapRustApp {
                 let audio_playing = self
                     .audio_player
                     .as_ref()
-                    .map_or(true, |ap| ap.playhead_ms() > 0);
+                    .is_none_or(|ap| ap.playhead_ms() > 0);
                 if audio_playing {
                     if let Some(r) = self.preview_renderer.as_ref() {
                         while let Some(frame) = r.try_next() {

@@ -109,9 +109,9 @@ pub fn format_time(ms: u64) -> String {
     let m = (total_s % 3600) / 60;
     let s = total_s % 60;
     if h > 0 {
-        format!("{:02}:{:02}:{:02}", h, m, s)
+        format!("{h:02}:{m:02}:{s:02}")
     } else {
-        format!("{:02}:{:02}", m, s)
+        format!("{m:02}:{s:02}")
     }
 }
 
