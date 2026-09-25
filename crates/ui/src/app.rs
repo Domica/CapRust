@@ -2322,6 +2322,25 @@ impl CapRustApp {
                                     };
                                     p.rect_filled(clip_rect, 4.0, c);
 
+                                    // Border: pastel tint of the track
+                                    // colour, distinct from the clip's own
+                                    // fill so adjacent clips stay readable
+                                    // when they butt up against each other.
+                                    let border_kind = self
+                                        .project
+                                        .tracks
+                                        .get(idx)
+                                        .map(|t| t.kind)
+                                        .unwrap_or(caprust_core::TrackKind::Video);
+                                    let border_color =
+                                        theme_snapshot.clip_border_color(border_kind);
+                                    p.rect_stroke(
+                                        clip_rect,
+                                        4.0,
+                                        egui::Stroke::new(1.5_f32, border_color),
+                                        egui::StrokeKind::Inside,
+                                    );
+
                                     // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
                                     let thumb_tex = self
                                         .project
