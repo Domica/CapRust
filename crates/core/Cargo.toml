@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+ureq = { workspace = true }
+sha2 = "0.10"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

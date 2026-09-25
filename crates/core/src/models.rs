@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod download;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelKind {
     Caption,
@@ -35,9 +37,20 @@ pub struct ModelInfo {
     pub progress: f32,
     /// Enabled = user has switched it on.
     pub enabled: bool,
+    /// HTTPS URL of the model file to download. Empty for models whose
+    /// download is not yet wired (currently all four Whisper variants
+    /// and the Piper voices are served from Hugging Face).
+    #[serde(default)]
+    pub url: String,
+    /// Optional expected SHA-256 of the downloaded file, lowercase hex.
+    /// When present the downloader verifies it before renaming
+    /// `.part` to the final name. Empty = skip verification.
+    #[serde(default)]
+    pub sha256: String,
 }
 
 impl ModelInfo {
+    /// Basic entry without a download URL. Use `with_url` to attach one.
     pub fn new(
         id: &str,
         name: &str,
@@ -56,7 +69,20 @@ impl ModelInfo {
             status: ModelStatus::NotDownloaded,
             progress: 0.0,
             enabled: false,
+            url: String::new(),
+            sha256: String::new(),
         }
+    }
+
+    /// Attach the download URL (and optional SHA-256) to this entry.
+    pub fn with_url(mut self, url: &str) -> Self {
+        self.url = url.into();
+        self
+    }
+
+    pub fn with_sha256(mut self, sha: &str) -> Self {
+        self.sha256 = sha.into();
+        self
     }
 }
 
@@ -77,6 +103,9 @@ impl Default for ModelRegistry {
                     "multi",
                     75,
                     "Fastest. Good for quick drafts and low-end hardware.",
+                )
+                .with_url(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
                 ),
                 ModelInfo::new(
                     "whisper-base",
@@ -85,6 +114,9 @@ impl Default for ModelRegistry {
                     "multi",
                     142,
                     "Balanced speed/accuracy. Recommended default.",
+                )
+                .with_url(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
                 ),
                 ModelInfo::new(
                     "whisper-small",
@@ -93,6 +125,9 @@ impl Default for ModelRegistry {
                     "multi",
                     466,
                     "Better accuracy for accented speech and noisy audio.",
+                )
+                .with_url(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
                 ),
                 ModelInfo::new(
                     "whisper-medium",
@@ -101,6 +136,9 @@ impl Default for ModelRegistry {
                     "multi",
                     1500,
                     "High accuracy. Slower, needs a decent GPU.",
+                )
+                .with_url(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
                 ),
                 // --- Narration (Piper TTS voices) ---
                 ModelInfo::new(
@@ -202,4 +240,59 @@ pub fn models_dir() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     base.join("CapRust").join("models")
+}
+
+// ---------------------------------------------------------------------------
+// Local filesystem helpers
+// ---------------------------------------------------------------------------
+
+impl ModelRegistry {
+    /// Where this model's weights live on disk. Whisper is a single .bin
+    /// file; Piper uses two files (.onnx + .onnx.json) but we only track
+    /// the ONNX path here — the sibling JSON is downloaded alongside and
+    /// discovered by the Piper process at runtime.
+    pub fn local_path(&self, models_dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+        Self::local_path_static(&self.models, models_dir, id)
+    }
+
+    /// Static variant, callable while iterating `self.models` mutably.
+    pub fn local_path_static(
+        models: &[ModelInfo],
+        models_dir: &std::path::Path,
+        id: &str,
+    ) -> std::path::PathBuf {
+        let kind = models.iter().find(|m| m.id == id).map(|m| m.kind);
+        let filename = match kind {
+            Some(ModelKind::Narration) => format!("{id}.onnx"),
+            _ => format!("{id}.bin"),
+        };
+        models_dir.join(filename)
+    }
+
+    /// Verify a single model against the filesystem and update its status.
+    /// Call on app startup so previously-downloaded models are marked
+    /// Ready without hitting the network.
+    pub fn scan_local(&mut self, models_dir: &std::path::Path) {
+        // Compute all paths first (immutable borrow), then mutate.
+        let paths: Vec<std::path::PathBuf> = self
+            .models
+            .iter()
+            .map(|m| Self::local_path_static(&self.models, models_dir, &m.id))
+            .collect();
+        for (m, path) in self.models.iter_mut().zip(paths) {
+            let exists = path.is_file() && path.metadata().map(|md| md.len() > 0).unwrap_or(false);
+            m.status = if exists {
+                ModelStatus::Ready
+            } else {
+                ModelStatus::NotDownloaded
+            };
+            m.progress = if exists { 1.0 } else { 0.0 };
+        }
+    }
+
+    /// Mutable access by id, for updating progress / status during a
+    /// background download.
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut ModelInfo> {
+        self.models.iter_mut().find(|m| m.id == id)
+    }
 }
