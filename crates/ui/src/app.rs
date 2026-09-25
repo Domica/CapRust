@@ -160,6 +160,11 @@ pub struct CapRustApp {
     /// "caption all in track"; drained sequentially because only one
     /// caption_rx slot exists at a time.
     pub caption_queue: std::collections::VecDeque<uuid::Uuid>,
+    /// Total number of clips in the current batch. 0 or 1 means no
+    /// batch is running and the job label stays generic.
+    pub caption_batch_total: usize,
+    /// Index of the currently running job within the batch (1-based).
+    pub caption_batch_current: usize,
     pub narration_job_id: Option<u64>,
     pub export_job_id: Option<u64>,
     /// Receiver for the background update-check thread. Cleared after
@@ -308,6 +313,8 @@ impl CapRustApp {
             next_job_id: 1,
             caption_job_id: None,
             caption_queue: std::collections::VecDeque::new(),
+            caption_batch_total: 0,
+            caption_batch_current: 0,
             narration_job_id: None,
             export_job_id: None,
             update_rx,
@@ -1282,6 +1289,8 @@ impl CapRustApp {
         self.caption_queue.clear();
         self.caption_queue
             .extend(sources.into_iter().map(|(id, _)| id));
+        self.caption_batch_total = n;
+        self.caption_batch_current = 0;
         tracing::info!("caption: queued {n} clips for transcription");
         self.toast(format!("{} · {}", tr("toast-caption-queued"), n));
 
@@ -1295,8 +1304,13 @@ impl CapRustApp {
             return;
         }
         let Some(next) = self.caption_queue.pop_front() else {
+            // Nothing left — clear the batch so the next single-clip
+            // caption job shows the generic label again.
+            self.caption_batch_total = 0;
+            self.caption_batch_current = 0;
             return;
         };
+        self.caption_batch_current += 1;
         tracing::info!(
             "caption: starting next queued clip ({} remaining)",
             self.caption_queue.len()
@@ -1452,7 +1466,17 @@ impl CapRustApp {
             };
             crate::media_jobs::spawn_caption_job(ffmpeg, req)
         };
-        let job_id = self.begin_job(JobKind::Caption, tr("job-caption"));
+        let label = if self.caption_batch_total > 1 {
+            format!(
+                "{}  {}/{}",
+                tr("job-caption"),
+                self.caption_batch_current,
+                self.caption_batch_total
+            )
+        } else {
+            tr("job-caption")
+        };
+        let job_id = self.begin_job(JobKind::Caption, label);
         self.caption_job_id = Some(job_id);
         self.caption_rx = Some(rx);
         self.caption_job_started = Some(std::time::Instant::now());
