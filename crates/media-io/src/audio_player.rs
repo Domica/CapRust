@@ -89,6 +89,13 @@ pub struct AudioPlayer {
     /// Number of cpal callbacks that ran dry and had to write silence.
     /// Monotonically increasing; read by the UI for diagnostics.
     underruns: Arc<AtomicU64>,
+    /// Master volume, 0.0..=1.0 as f32 bit pattern in an AtomicU32.
+    /// cpal callback reads this every buffer so live changes apply
+    /// without restarting the stream.
+    volume_bits: Arc<std::sync::atomic::AtomicU32>,
+    /// When true, the cpal callback outputs silence regardless of
+    /// volume_bits. Live, same as volume.
+    muted: Arc<AtomicBool>,
 }
 
 impl Drop for AudioPlayer {
@@ -164,6 +171,29 @@ impl AudioPlayer {
         self.underruns.load(Ordering::Relaxed)
     }
 
+    /// Set the master volume, 0.0..=1.0. Applied to every subsequent
+    /// cpal callback; takes effect within one audio buffer (~10 ms).
+    /// Values outside the range are clamped.
+    pub fn set_volume(&self, v: f32) {
+        let clamped = v.clamp(0.0, 1.0);
+        self.volume_bits.store(clamped.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Current master volume, 0.0..=1.0.
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume_bits.load(Ordering::Relaxed))
+    }
+
+    /// Mute or unmute the stream. Independent of volume: unmuting
+    /// restores whatever volume was set previously.
+    pub fn set_muted(&self, m: bool) {
+        self.muted.store(m, Ordering::Relaxed);
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
+    }
+
     /// Shared device/stream setup. `reader` is `None` for sources that don't
     /// need a background thread (sine), `Some((flag, handle))` for PCM.
     fn spawn(
@@ -188,6 +218,8 @@ impl AudioPlayer {
         let channels = config.channels;
         let samples_played = Arc::new(AtomicU64::new(0));
         let underruns = Arc::new(AtomicU64::new(0));
+        let volume_bits = Arc::new(std::sync::atomic::AtomicU32::new(1.0_f32.to_bits()));
+        let muted = Arc::new(AtomicBool::new(false));
 
         tracing::info!(
             "cpal[{}]: device={} fmt={:?} rate={} ch={}",
@@ -199,15 +231,33 @@ impl AudioPlayer {
         );
 
         let stream = match sample_format {
-            SampleFormat::F32 => {
-                build_stream::<f32>(&device, &config, source, &samples_played, &underruns)?
-            }
-            SampleFormat::I16 => {
-                build_stream::<i16>(&device, &config, source, &samples_played, &underruns)?
-            }
-            SampleFormat::U16 => {
-                build_stream::<u16>(&device, &config, source, &samples_played, &underruns)?
-            }
+            SampleFormat::F32 => build_stream::<f32>(
+                &device,
+                &config,
+                source,
+                &samples_played,
+                &underruns,
+                &volume_bits,
+                &muted,
+            )?,
+            SampleFormat::I16 => build_stream::<i16>(
+                &device,
+                &config,
+                source,
+                &samples_played,
+                &underruns,
+                &volume_bits,
+                &muted,
+            )?,
+            SampleFormat::U16 => build_stream::<u16>(
+                &device,
+                &config,
+                source,
+                &samples_played,
+                &underruns,
+                &volume_bits,
+                &muted,
+            )?,
             other => return Err(anyhow!("unsupported sample format: {other:?}")),
         };
 
@@ -226,6 +276,8 @@ impl AudioPlayer {
             stop_flag,
             reader_handle,
             underruns,
+            volume_bits,
+            muted,
         })
     }
 }
@@ -239,12 +291,15 @@ impl AudioPlayer {
 /// Underrun policy: if `source` returns fewer samples than requested,
 /// the callback pads the remainder with silence. Keeps the audio device
 /// alive (avoids clicks/stutters) at the cost of a brief gap.
+#[allow(clippy::too_many_arguments)]
 fn build_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
     mut source: SourceFn,
     samples_played: &Arc<AtomicU64>,
     underruns: &Arc<AtomicU64>,
+    volume_bits: &Arc<std::sync::atomic::AtomicU32>,
+    muted: &Arc<AtomicBool>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::SizedSample + cpal::FromSample<f32>,
@@ -252,12 +307,21 @@ where
     let channels = config.channels as usize;
     let counter = samples_played.clone();
     let underrun_counter = underruns.clone();
+    let volume_for_cb = volume_bits.clone();
+    let muted_for_cb = muted.clone();
     let mut scratch: Vec<f32> = vec![0.0; 8192];
 
     device
         .build_output_stream(
             config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
+                // Read master volume / mute once per callback so the value
+                // is stable for the whole buffer. UI changes take effect
+                // on the next callback (~10 ms).
+                let vol = f32::from_bits(volume_for_cb.load(Ordering::Relaxed));
+                let is_muted = muted_for_cb.load(Ordering::Relaxed);
+                let gain: f32 = if is_muted { 0.0 } else { vol };
+
                 let need = data.len();
                 let mut written = 0usize;
 
@@ -273,6 +337,16 @@ where
                             *s = T::from_sample(0.0_f32);
                         }
                         break;
+                    }
+
+                    // Apply gain in f32 domain before converting to T.
+                    // This avoids requiring `T: Into<f32>` (which is not
+                    // in our trait bounds) — scaling `scratch` keeps the
+                    // conversion one-way: f32 -> T via FromSample.
+                    if gain != 1.0 {
+                        for s in scratch[..got].iter_mut() {
+                            *s *= gain;
+                        }
                     }
 
                     for i in 0..got {

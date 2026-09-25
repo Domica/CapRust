@@ -843,6 +843,20 @@ impl CapRustApp {
             self.playback_started_at = Some(std::time::Instant::now());
             self.playback_started_ms = self.playhead_ms;
         }
+        if ev.toggle_mute {
+            self.settings.muted = !self.settings.muted;
+            if let Some(ap) = self.audio_player.as_ref() {
+                ap.set_muted(self.settings.muted);
+            }
+            tracing::info!("preview: muted={}", self.settings.muted);
+        }
+        if let Some(v) = ev.volume_changed {
+            self.settings.master_volume = v.clamp(0.0, 1.0);
+            if let Some(ap) = self.audio_player.as_ref() {
+                ap.set_volume(self.settings.master_volume);
+            }
+            tracing::info!("preview: volume={:.2}", self.settings.master_volume);
+        }
         if ev.toggle_play {
             self.preview.playing = !self.preview.playing;
             if !self.preview.playing {
@@ -1971,9 +1985,18 @@ impl CapRustApp {
                                                 path, start_from,
                                             ) {
                                                 Ok(p) => {
+                                                    // Apply user's persisted
+                                                    // volume / mute settings
+                                                    // to the freshly created
+                                                    // stream before playback
+                                                    // starts.
+                                                    p.set_volume(self.settings.master_volume);
+                                                    p.set_muted(self.settings.muted);
                                                     tracing::info!(
-                                                        "preview: audio started from {}ms",
-                                                        start_from
+                                                        "preview: audio started from {}ms (vol={:.2} muted={})",
+                                                        start_from,
+                                                        self.settings.master_volume,
+                                                        self.settings.muted,
                                                     );
                                                     Some(p)
                                                 }
@@ -2211,6 +2234,8 @@ impl CapRustApp {
                 self.playhead_ms,
                 total_ms,
                 &mut self.project.aspect_ratio,
+                self.settings.muted,
+                self.settings.master_volume,
             );
             self.handle_preview_events(ev, total_ms);
 

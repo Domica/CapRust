@@ -53,6 +53,10 @@ pub struct PreviewEvents {
     pub toggle_loop: bool,
     /// User picked a different ratio → Some(new).
     pub ratio_changed: bool,
+    /// User toggled mute in the transport bar.
+    pub toggle_mute: bool,
+    /// User dragged the master volume slider → Some(new value 0..=1).
+    pub volume_changed: Option<f32>,
 }
 
 fn transport_button(ui: &mut Ui, icon: &str, tooltip: &str, size: Vec2) -> bool {
@@ -80,6 +84,8 @@ pub fn show_transport(
     playhead_ms: u64,
     total_ms: u64,
     ratio: &mut AspectRatio,
+    muted: bool,
+    volume: f32,
 ) -> PreviewEvents {
     let mut ev = PreviewEvents::default();
 
@@ -142,7 +148,7 @@ pub fn show_transport(
             },
         );
 
-        // --- Right: quality dropdown ---
+        // --- Right: volume / mute + quality dropdown ---
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::ComboBox::from_id_salt("preview_quality")
                 .selected_text(state.quality.label())
@@ -153,6 +159,28 @@ pub fn show_transport(
                     }
                 });
             ui.label("Quality:");
+            ui.separator();
+
+            // Mute toggle button.
+            let mute_icon = if muted { "🔇" } else { "🔊" };
+            if transport_button(ui, mute_icon, "Mute", Vec2::new(28.0, 26.0)) {
+                ev.toggle_mute = true;
+            }
+
+            // Small volume slider. Fixed width so the layout doesn't jump.
+            // Disabled while muted to match the Settings Audio tab behaviour.
+            let mut v = volume;
+            ui.add_enabled_ui(!muted, |ui| {
+                let resp = ui.add_sized(
+                    [90.0, 20.0],
+                    egui::Slider::new(&mut v, 0.0..=1.0).show_value(false),
+                );
+                if resp.changed() {
+                    ev.volume_changed = Some(v);
+                }
+            });
+
+            ui.separator();
         });
     });
 
