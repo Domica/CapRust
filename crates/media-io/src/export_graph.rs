@@ -39,8 +39,10 @@ pub struct VideoClip {
     pub z_order: u32,
     /// Image sources need `-loop 1` on their input.
     pub is_image: bool,
-    /// Applied effect preset ids (see asset_browser Effects list).
-    pub effects: Vec<String>,
+    /// Applied effect instances (see asset_browser Effects list).
+    /// Carries `amount` and `enabled` so the filtergraph can scale and
+    /// skip stages without reaching back into the project state.
+    pub effects: Vec<caprust_core::clip::EffectInstance>,
     /// Transition preset id (fade, slide_l, ...) on the in edge.
     pub transition_in: Option<String>,
     /// Transition preset id on the out edge.
@@ -352,45 +354,175 @@ impl RenderPlan {
     }
 }
 
-/// Translate a list of effect preset ids into an ffmpeg filter chain
-/// (each item begins with `,` and appends to the previous stage).
-fn build_effects_chain(effects: &[String]) -> String {
+/// Translate a list of effect instances into an ffmpeg filter chain.
+/// Each fragment begins with `,` and appends to the previous stage.
+///
+/// `amount` semantics per effect:
+/// - Static effects (blur, vignette, chroma shift, ...): scales the
+///   magnitude of the primary parameter. Clamped to a sane range so a
+///   stray amount=100 does not make ffmpeg reject the filtergraph.
+/// - Animated effects (shake, zoom_pulse): controls amplitude AND
+///   frequency, per the J1 spec — a larger amount makes the motion
+///   both wider and slower, which reads as "more dramatic".
+///
+/// `enabled == false` skips the effect entirely; the UI can toggle a
+/// stage without removing it from the stack.
+fn build_effects_chain(effects: &[caprust_core::clip::EffectInstance]) -> String {
     let mut out = String::new();
-    for id in effects {
-        let frag: Option<&str> = match id.as_str() {
-            "blur" => Some(",boxblur=4:2"),
-            "vignette" => Some(",vignette=PI/5"),
-            "sepia" => Some(",colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"),
-            "bw" => Some(",hue=s=0"),
-            "glitch" => Some(",chromashift=cbh=4:crh=-4"),
-            "rgb_split" => Some(",chromashift=cbh=6:crh=-6"),
-            "shake" => Some(",crop=iw-8:ih-8:4+random(16)*2:4+random(16)*2"),
-            "flash" => Some(",eq=brightness=0.15:contrast=1.1"),
-            "mirror" => Some(",hflip"),
-            "kaleido" => Some(",vflip,hflip"),
-            "old_film" => Some(",curves=preset=vintage,noise=alls=15:allf=t"),
-            "vhs" => Some(",chromashift=cbh=2:crh=-2,noise=alls=8:allf=t"),
-            "light_leak" => Some(",colorbalance=rm=0.15:gm=0.05"),
-            "warm" => Some(",colorbalance=rm=0.1:bm=-0.1"),
-            "cool" => Some(",colorbalance=bm=0.1:rm=-0.1"),
-            "cinematic" => Some(",curves=preset=strong_contrast,colorbalance=bm=0.1"),
-            "vivid" => Some(",eq=saturation=1.4:contrast=1.05"),
-            "matte" => Some(",eq=saturation=0.85:brightness=-0.02:contrast=1.05"),
-            "noir" => Some(",hue=s=0,curves=preset=strong_contrast"),
-            "sunset" => Some(",colorbalance=rm=0.2:gm=0.05:bm=-0.15"),
-            "ocean" => Some(",colorbalance=bm=0.2:gm=0.05:rm=-0.15"),
-            "fade" => Some(",fade=t=in:st=0:d=0.6"),
-            "pastel" => Some(",eq=saturation=0.75:brightness=0.05"),
-            "neon" => Some(",eq=saturation=1.6:contrast=1.15"),
-            "gold" => Some(",colorbalance=rm=0.15:gm=0.1:bm=-0.1"),
-            // "zoom_pulse" is animated; skip for MVP
-            _ => None,
-        };
+    for inst in effects {
+        if !inst.enabled {
+            continue;
+        }
+        // Clamp amount to a well-behaved range; UI slider is 0..=2 but
+        // serialized projects might carry values from older builds.
+        let amount = inst.amount.clamp(0.0, 4.0);
+        let frag = build_one_effect(&inst.effect_id, amount);
         if let Some(f) = frag {
-            out.push_str(f);
+            out.push_str(&f);
         }
     }
     out
+}
+
+/// Single-effect fragment. Kept separate from the loop so tests can
+/// assert on individual chains without constructing a whole slice.
+fn build_one_effect(id: &str, amount: f32) -> Option<String> {
+    let frag: String = match id {
+        // ---- Static effects: amount scales magnitude ----
+        "blur" => format!(",boxblur={:.2}:2", 4.0 * amount),
+        "vignette" => format!(",vignette=PI/{:.2}", (5.0 / amount.max(0.2)).max(0.5)),
+        "sepia" => ",colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131".into(),
+        "bw" => ",hue=s=0".into(),
+        "glitch" => format!(
+            ",chromashift=cbh={:.1}:crh=-{:.1}",
+            4.0 * amount,
+            4.0 * amount
+        ),
+        "rgb_split" => format!(
+            ",chromashift=cbh={:.1}:crh=-{:.1}",
+            6.0 * amount,
+            6.0 * amount
+        ),
+        "flash" => format!(
+            ",eq=brightness={:.3}:contrast={:.3}",
+            0.15 * amount,
+            1.0 + 0.1 * amount
+        ),
+        "mirror" => ",hflip".into(),
+        "kaleido" => ",vflip,hflip".into(),
+        "old_film" => ",curves=preset=vintage,noise=alls=15:allf=t".into(),
+        "vhs" => format!(
+            ",chromashift=cbh=2:crh=-2,noise=alls={:.0}:allf=t",
+            8.0 * amount
+        ),
+        "light_leak" => format!(
+            ",colorbalance=rm={:.3}:gm={:.3}",
+            0.15 * amount,
+            0.05 * amount
+        ),
+        "warm" => format!(
+            ",colorbalance=rm={:.3}:bm=-{:.3}",
+            0.1 * amount,
+            0.1 * amount
+        ),
+        "cool" => format!(
+            ",colorbalance=bm={:.3}:rm=-{:.3}",
+            0.1 * amount,
+            0.1 * amount
+        ),
+        "cinematic" => ",curves=preset=strong_contrast,colorbalance=bm=0.1".into(),
+        "vivid" => format!(
+            ",eq=saturation={:.3}:contrast={:.3}",
+            1.0 + 0.4 * amount,
+            1.0 + 0.05 * amount
+        ),
+        "matte" => format!(
+            ",eq=saturation={:.3}:brightness={:.3}:contrast={:.3}",
+            (1.0 - 0.15 * amount).max(0.0),
+            -0.02 * amount,
+            1.0 + 0.05 * amount
+        ),
+        "noir" => ",hue=s=0,curves=preset=strong_contrast".into(),
+        "sunset" => format!(
+            ",colorbalance=rm={:.3}:gm={:.3}:bm=-{:.3}",
+            0.2 * amount,
+            0.05 * amount,
+            0.15 * amount
+        ),
+        "ocean" => format!(
+            ",colorbalance=bm={:.3}:gm={:.3}:rm=-{:.3}",
+            0.2 * amount,
+            0.05 * amount,
+            0.15 * amount
+        ),
+        "fade" => format!(",fade=t=in:st=0:d={:.3}", 0.6 * amount.max(0.1)),
+        "pastel" => format!(
+            ",eq=saturation={:.3}:brightness={:.3}",
+            (1.0 - 0.25 * amount).max(0.0),
+            0.05 * amount
+        ),
+        "neon" => format!(
+            ",eq=saturation={:.3}:contrast={:.3}",
+            1.0 + 0.6 * amount,
+            1.0 + 0.15 * amount
+        ),
+        "gold" => format!(
+            ",colorbalance=rm={:.3}:gm={:.3}:bm=-{:.3}",
+            0.15 * amount,
+            0.1 * amount,
+            0.1 * amount
+        ),
+
+        // ---- Animated: shake ----
+        // Smooth, deterministic motion via sin/cos of `t`. The old
+        // `random()` version jittered per frame but was not time-based,
+        // so it looked like noise rather than a shake.
+        //
+        // Amplitude: 4 px * amount (clamped). Frequency: fixed at 8 Hz
+        // so it stays perceptible across the amount range; "larger
+        // amount = slower" is reserved for zoom_pulse.
+        "shake" => {
+            let amp = (4.0 * amount).clamp(0.5, 16.0);
+            // crop w/h = iw-2*amp, i h-2*amp, offset oscillates in [-amp, amp].
+            format!(
+                ",crop=iw-{w}:ih-{h}:{ax}+{amp:.2}*sin(8*t*PI):{ay}+{amp:.2}*cos(8*t*PI)",
+                w = 2.0 * amp,
+                h = 2.0 * amp,
+                ax = amp,
+                ay = amp,
+                amp = amp,
+            )
+        }
+
+        // ---- Animated: zoom_pulse ----
+        // A slow breathing zoom. Implemented with crop+scale rather than
+        // zoompan because zoompan changes the output frame count and we
+        // are inside a per-clip chain that already has a fixed fps.
+        //
+        // Amount controls both amplitude (zoom depth) and frequency:
+        //   amount 0.5  -> ~4px amplitude, ~1.5 Hz
+        //   amount 1.0  -> ~8px amplitude, ~1.0 Hz
+        //   amount 2.0  -> ~16px amplitude, ~0.7 Hz
+        //
+        // Crop is centered (offset -(A/2) from each side), so the visible
+        // window does not drift.
+        "zoom_pulse" => {
+            let amp = (8.0 * amount).clamp(2.0, 40.0);
+            let freq = (1.0 / amount.max(0.25)).clamp(0.3, 3.0);
+            // iw-2*amp .. iw (zoom 1x..1+2amp/iw). We oscillate the crop
+            // size between (iw-amp) and iw, using sin mapped to [0,1].
+            // Crop x/y stay centered: (iw-ow)/2.
+            //
+            // The `crop` filter accepts expressions in `t` and `ow`/`oh`
+            // which refer to the output size. Use `sin(2*PI*t*freq)`.
+            format!(
+                ",crop=w='iw-{amp:.2}*(1+sin(2*PI*t*{freq:.3}))/2':                 h='ih-{amp:.2}*(1+sin(2*PI*t*{freq:.3}))/2':                 x='(iw-ow)/2':y='(ih-oh)/2',                 scale=iw:ih:flags=bicubic"
+            )
+        }
+
+        _ => return None,
+    };
+    Some(frag)
 }
 
 /// Build an `,atempo=x` chain that supports 0.5..=2.0 per stage.
@@ -489,7 +621,7 @@ pub fn plan_from_project(
                         speed: c.speed,
                         z_order: z,
                         is_image: false,
-                        effects: c.effects.iter().map(|e| e.effect_id.clone()).collect(),
+                        effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
                     });
@@ -504,7 +636,7 @@ pub fn plan_from_project(
                         speed: c.speed,
                         z_order: z,
                         is_image: true,
-                        effects: c.effects.iter().map(|e| e.effect_id.clone()).collect(),
+                        effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
                     });
@@ -708,7 +840,7 @@ mod tests {
                 speed: 1.0,
                 z_order: 0,
                 is_image: false,
-                effects: vec![],
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
             }],
