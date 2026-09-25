@@ -18,6 +18,13 @@ pub struct PropertiesState {
     pub tab: PropertiesTab,
     /// Pending edits to be committed via SetClipCommand.
     pub pending: Vec<PendingEdit>,
+    /// Live text buffers for the caption-segment editors, keyed by
+    /// (clip_id, segment_idx). Populated on first render, edited in
+    /// place, and dropped when the edit commits (blur / Enter).
+    pub caption_edit_buffers: std::collections::HashMap<(Uuid, usize), String>,
+    /// The (clip_id, idx) currently holding keyboard focus in a caption
+    /// editor. Used to detect blur → commit.
+    pub caption_edit_focus: Option<(Uuid, usize)>,
 }
 
 #[derive(Debug)]
@@ -33,6 +40,13 @@ pub enum PendingEdit {
     TrimStart(u64),
     TrimDuration(u64),
     TrackIndex(usize),
+    /// Edit the text of caption segment `idx` on the currently-selected
+    /// Captions clip. Committed once per edit (blur or Enter), never
+    /// per keystroke.
+    CaptionSegmentText {
+        idx: usize,
+        text: String,
+    },
 }
 
 pub fn show(
@@ -117,14 +131,40 @@ pub fn show(
             egui::RichText::new(format!("{n} segment{}", if n == 1 { "" } else { "s" }))
                 .color(egui::Color32::from_gray(200)),
         );
+        ui.label(
+            egui::RichText::new("Edit any text and press Enter (or click away) to save.")
+                .small()
+                .color(egui::Color32::from_gray(140)),
+        );
         ui.add_space(4.0);
         ui.separator();
         ui.add_space(4.0);
+
+        let clip_id = clip.id;
+        let mut local_edits: Vec<PendingEdit> = Vec::new();
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for (i, seg) in segments.iter().enumerate() {
+                    let key = (clip_id, i);
+                    let original = seg.text.clone();
+
+                    // Initialize the buffer on first render of this
+                    // segment in this session.
+                    state
+                        .caption_edit_buffers
+                        .entry(key)
+                        .or_insert_with(|| original.clone());
+
+                    // Take the buffer out of the map so we can hand a
+                    // `&mut String` to TextEdit without holding a
+                    // mutable borrow on `state` for the whole closure.
+                    let mut buf = state
+                        .caption_edit_buffers
+                        .remove(&key)
+                        .unwrap_or_else(|| original.clone());
+
                     ui.horizontal(|ui| {
                         ui.label(
                             egui::RichText::new(format!("{:>2}", i + 1))
@@ -142,18 +182,46 @@ pub fn show(
                             .color(egui::Color32::from_gray(150)),
                         );
                     });
-                    ui.label(
-                        egui::RichText::new(&seg.text)
-                            .size(12.0)
-                            .color(egui::Color32::from_gray(225)),
+
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut buf)
+                            .id(egui::Id::new(("cap_seg_edit", clip_id, i)))
+                            .desired_width(f32::INFINITY),
                     );
-                    if i + 1 < segments.len() {
-                        ui.add_space(4.0);
-                        ui.separator();
-                        ui.add_space(4.0);
+
+                    let had_focus = state.caption_edit_focus == Some(key);
+                    let has_focus = resp.has_focus();
+                    let enter_pressed =
+                        has_focus && ui.input(|inp| inp.key_pressed(egui::Key::Enter));
+
+                    if has_focus {
+                        state.caption_edit_focus = Some(key);
                     }
+
+                    // Commit on blur (had focus last frame, lost it now)
+                    // or on Enter while focused. Never on every keystroke.
+                    let commit = (had_focus && !has_focus) || enter_pressed;
+                    if commit {
+                        if buf != original {
+                            local_edits.push(PendingEdit::CaptionSegmentText {
+                                idx: i,
+                                text: buf.clone(),
+                            });
+                        }
+                        state.caption_edit_focus = None;
+                        // Buffer intentionally dropped: next frame
+                        // re-reads from the (now updated) segment.
+                    } else {
+                        state.caption_edit_buffers.insert(key, buf);
+                    }
+
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
                 }
             });
+
+        state.pending.extend(local_edits);
         return;
     }
 
