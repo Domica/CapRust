@@ -17,6 +17,9 @@ pub struct SetClipCommand {
     pub volume_db: Option<f32>,
     pub track_index: Option<usize>,
     pub name: Option<Option<String>>,
+    /// Only meaningful on TextOverlay clips: sets the drawtext style id.
+    /// No-op on other clip kinds.
+    pub text_style: Option<String>,
     before: Option<Clip>,
 }
 
@@ -33,6 +36,7 @@ impl SetClipCommand {
             volume_db: None,
             track_index: None,
             name: None,
+            text_style: None,
             before: None,
         }
     }
@@ -74,6 +78,11 @@ impl SetClipCommand {
         self.name = Some(v);
         self
     }
+    /// Set the TextOverlay drawtext style. No-op on other clip kinds.
+    pub fn text_style(mut self, v: impl Into<String>) -> Self {
+        self.text_style = Some(v.into());
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -108,6 +117,11 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.name.clone() {
             c.name = v;
+        }
+        if let Some(v) = self.text_style.clone() {
+            if let crate::clip::ClipType::TextOverlay { style, .. } = &mut c.clip_type {
+                *style = v;
+            }
         }
         Ok(())
     }

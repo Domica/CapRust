@@ -171,6 +171,7 @@ preview-volume = Glasnoća
 props-heading = Svojstva
 props-empty = Odaberi isječak za uređivanje svojstava.
 props-name = Naziv:
+props-text-style = Stil:
 props-tab-video = Video
 props-tab-sound = Zvuk
 props-tab-effects = Efekti

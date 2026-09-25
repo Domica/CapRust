@@ -3367,17 +3367,57 @@ impl CapRustApp {
                                 tracing::info!("set transition in = '{preset_id}'");
                             }
                             AssetTab::Text => {
-                                let clip = caprust_core::Clip::new_text(
-                                    preset_id,
-                                    0,
-                                    self.playhead_ms,
-                                    3000,
-                                    true,
-                                );
-                                let cmd =
-                                    caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                                tracing::info!("inserted text clip '{preset_id}'");
+                                // Two cases:
+                                //   - selected clip is a TextOverlay →
+                                //     apply the preset as its style.
+                                //   - anything else → create a fresh
+                                //     TextOverlay clip on the playhead
+                                //     with the preset style and a
+                                //     sensible placeholder text.
+                                let is_text = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == clip_id)
+                                    .map(|c| {
+                                        matches!(
+                                            c.clip_type,
+                                            caprust_core::ClipType::TextOverlay { .. }
+                                        )
+                                    })
+                                    .unwrap_or(false);
+                                if is_text {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(
+                                            clip_id,
+                                        )
+                                        .text_style(preset_id);
+                                    let _ =
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                    tracing::info!("set text style = '{preset_id}'");
+                                } else {
+                                    let mut clip = caprust_core::Clip::new_text(
+                                        "Double-click to edit",
+                                        0,
+                                        self.playhead_ms,
+                                        3000,
+                                        true,
+                                    );
+                                    if let caprust_core::ClipType::TextOverlay { style, .. } =
+                                        &mut clip.clip_type
+                                    {
+                                        *style = preset_id.to_string();
+                                    }
+                                    let cmd =
+                                        caprust_core::commands::ripple::RippleInsertCommand::new(
+                                            clip,
+                                        );
+                                    let _ =
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                    tracing::info!(
+                                        "inserted TextOverlay clip with style '{preset_id}'"
+                                    );
+                                }
                             }
                             AssetTab::Media | AssetTab::Templates => {}
                         }
@@ -3432,6 +3472,12 @@ impl CapRustApp {
                                         id, idx, text,
                                     );
                                     let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                                }
+                                PendingEdit::TextStyle(v) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .text_style(v);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
                                 PendingEdit::Name(v) => {
                                     let trimmed = v.trim().to_string();

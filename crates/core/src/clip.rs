@@ -21,6 +21,11 @@ pub enum ClipType {
         content: String,
         font_size: f32,
         above: bool,
+        /// Preset id from the asset browser Text tab. Empty / "default"
+        /// falls back to plain white text. Mapping to drawtext options
+        /// lives in build_filtergraph.
+        #[serde(default)]
+        style: String,
     },
     /// AI-generated captions spanning the clip's duration.
     Captions {
@@ -179,6 +184,7 @@ impl Clip {
                 content: content.to_string(),
                 font_size: 24.0,
                 above,
+                style: "default".to_string(),
             },
             speed: 1.0,
             reversed: false,

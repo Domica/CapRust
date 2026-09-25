@@ -58,6 +58,9 @@ pub struct TextClip {
     pub duration_sec: f64,
     pub above: bool,
     pub z_order: u32,
+    /// Preset id ("default", "bold", "subtitle", "lower", "quote",
+    /// "caption", "glow", "handwrite"). Empty == "default".
+    pub style: String,
 }
 
 /// Audio counterpart.
@@ -312,7 +315,9 @@ impl RenderPlan {
         }
 
         // -------- Text overlays (drawtext) --------
-        // Two passes: below video? Not supported yet; all go on top for now.
+        // Each preset tweaks fontcolor, fontsize, box, border, shadow or
+        // italic. The base layout (x/y/above/centre) stays the same so
+        // switching styles never moves the text off the frame.
         for (t_i, t) in self.text_clips.iter().enumerate() {
             let v_next = format!("v_txt{t_i}");
             let escaped = t
@@ -320,18 +325,33 @@ impl RenderPlan {
                 .replace('\\', "\\\\")
                 .replace(':', "\\:")
                 .replace('\'', "\\'");
-            // Approximate vertical position: above=true → top, else bottom.
+            // Vertical position: above=true → top, else bottom.
             let y = if t.above {
                 "h*0.08".to_string()
             } else {
                 "h*0.82".to_string()
             };
+            // Style parameters. Any combination not matched falls back to
+            // plain white text.
+            let style_opts: String = match t.style.as_str() {
+                "bold" => ":borderw=2:bordercolor=black".into(),
+                "subtitle" => ":box=1:boxcolor=black@0.5:boxborderw=8".into(),
+                "lower" => ":box=1:boxcolor=black@0.7:boxborderw=6".into(),
+                "quote" => ":italics=1:shadowcolor=black@0.6:shadowx=3:shadowy=3".into(),
+                "caption" => ":fontcolor=yellow:borderw=2:bordercolor=black".into(),
+                "glow" => {
+                    ":shadowcolor=cyan@0.8:shadowx=4:shadowy=4:borderw=1:bordercolor=white".into()
+                }
+                "handwrite" => ":font='Comic Sans MS'".into(),
+                _ => String::new(),
+            };
             fg.push_str(&format!(
-            "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x=(w-text_w)/2:y={y}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
+            "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x=(w-text_w)/2:y={y}{style_opts}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
             v_prev = v_prev,
             escaped = escaped,
             fs = t.font_size.round() as i32,
             y = y,
+            style_opts = style_opts,
             start = t.timeline_start_sec,
             end = t.timeline_start_sec + t.duration_sec,
             t_i = t_i,
@@ -975,6 +995,7 @@ pub fn plan_from_project(
                     content,
                     font_size,
                     above,
+                    style,
                 } => {
                     text_clips.push(TextClip {
                         content: content.clone(),
@@ -983,6 +1004,7 @@ pub fn plan_from_project(
                         duration_sec: c.duration_ms as f64 / 1000.0,
                         above: *above || track_kind == TrackKind::Overlay,
                         z_order: z,
+                        style: style.clone(),
                     });
                 }
                 ClipType::Captions { segments, .. } => {
@@ -1011,6 +1033,10 @@ pub fn plan_from_project(
                             // pinned overlay; force above = true.
                             above: true,
                             z_order: z,
+                            // Burned-in captions use the "caption" preset
+                            // (yellow, black border) regardless of the
+                            // style selector on any unrelated Text clip.
+                            style: "caption".to_string(),
                         });
                     }
                 }
