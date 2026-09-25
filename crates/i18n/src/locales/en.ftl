@@ -33,6 +33,16 @@ menu-view-zoom-out = Zoom Out
 
 # Right-click clip menu
 clip-ctx-delete = Delete
+clip-ctx-copy = Copy
+clip-ctx-paste = Paste
+clip-ctx-duplicate = Duplicate
+clip-ctx-ripple-delete = Ripple delete
+clip-ctx-speed = Speed
+clip-ctx-mute = Mute clip
+clip-ctx-unmute = Unmute clip
+toast-clip-copied = Clip copied
+toast-clip-pasted = Clip pasted
+toast-clip-duplicated = Clip duplicated
 clip-ctx-split = Split at playhead
 clip-ctx-reverse = Reverse
 clip-ctx-mirror-h = Mirror horizontally
