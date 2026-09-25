@@ -739,6 +739,129 @@ fn atempo_chain(speed: f32) -> String {
 // Every parameter is a distinct, load-bearing input to the render plan;
 // bundling them into a struct just shuffles the same fields around.
 #[allow(clippy::too_many_arguments)]
+/// Cumulative audio shift per clip caused by xfade chains.
+///
+/// A clip that participates in an xfade chain on its track appears in
+/// the render output earlier than its original timeline position, by
+/// the sum of the xfade durations upstream of it in that chain (the
+/// video pipeline compresses the run by that amount via `xfade`).
+/// Without this shift the audio of that clip plays D seconds too late
+/// per transition, which is heard as a growing drift after each
+/// transition.
+///
+/// Returns clip_id -> shift_seconds for every clip inside a chain.
+/// Clips on follower tracks (Audio, Captions, Text) inherit the shift
+/// of the video clip they overlapped most in the ORIGINAL timeline.
+fn compute_xfade_audio_shifts(
+    project: &caprust_core::ProjectState,
+) -> std::collections::HashMap<uuid::Uuid, f64> {
+    use std::collections::HashMap;
+
+    let mut shifts: HashMap<uuid::Uuid, f64> = HashMap::new();
+
+    // Pass 1: per-track xfade chains.
+    let mut by_track: std::collections::BTreeMap<usize, Vec<&caprust_core::Clip>> =
+        std::collections::BTreeMap::new();
+    for c in &project.clips {
+        by_track.entry(c.track_index).or_default().push(c);
+    }
+
+    for (_t, mut clips) in by_track {
+        clips.sort_by_key(|c| c.start_time_ms);
+        let mut cumulative = 0.0_f64;
+        let mut prev: Option<&caprust_core::Clip> = None;
+        for c in clips {
+            if let Some(p) = prev {
+                let prev_end = p.start_time_ms + p.duration_ms;
+                let gap_sec =
+                    ((c.start_time_ms as i64 - prev_end as i64).unsigned_abs() as f64) / 1000.0;
+                let has_xfade = c.transition_in.as_deref().map(is_xfade_id).unwrap_or(false);
+                if has_xfade && gap_sec <= ADJACENCY_TOL_SEC {
+                    let prev_dur = p.duration_ms as f64 / 1000.0;
+                    let curr_dur = c.duration_ms as f64 / 1000.0;
+                    let d = XFADE_DUR_SEC
+                        .min(prev_dur * 0.5)
+                        .min(curr_dur * 0.5)
+                        .max(0.05);
+                    cumulative += d;
+                } else {
+                    cumulative = 0.0;
+                }
+            }
+            if cumulative > 0.0 {
+                shifts.insert(c.id, cumulative);
+            }
+            prev = Some(c);
+        }
+    }
+
+    // Pass 2: follower tracks inherit their parent video's shift.
+    // Snapshot video shifts for overlap lookup.
+    let video_shifts: Vec<(u64, u64, f64)> = project
+        .clips
+        .iter()
+        .filter(|c| shifts.contains_key(&c.id))
+        .map(|c| {
+            (
+                c.start_time_ms,
+                c.start_time_ms + c.duration_ms,
+                *shifts.get(&c.id).unwrap(),
+            )
+        })
+        .collect();
+
+    if video_shifts.is_empty() {
+        return shifts;
+    }
+
+    let followers: Vec<uuid::Uuid> = project
+        .clips
+        .iter()
+        .filter(|c| !shifts.contains_key(&c.id))
+        .filter(|c| {
+            project
+                .tracks
+                .get(c.track_index)
+                .map(|t| {
+                    !matches!(
+                        t.kind,
+                        caprust_core::TrackKind::Video | caprust_core::TrackKind::Overlay
+                    )
+                })
+                .unwrap_or(false)
+        })
+        .map(|c| c.id)
+        .collect();
+
+    for fid in followers {
+        let Some(fc) = project.clips.iter().find(|c| c.id == fid) else {
+            continue;
+        };
+        let fs = fc.start_time_ms;
+        let fe = fc.start_time_ms + fc.duration_ms;
+        let mut best: Option<(u64, f64)> = None;
+        for (vs, ve, sh) in &video_shifts {
+            let ov_start = fs.max(*vs);
+            let ov_end = fe.min(*ve);
+            if ov_start < ov_end {
+                let ov = ov_end - ov_start;
+                if best.is_none_or(|(bo, _)| ov > bo) {
+                    best = Some((ov, *sh));
+                }
+            }
+        }
+        if let Some((_, sh)) = best {
+            shifts.insert(fid, sh);
+        }
+    }
+
+    shifts
+}
+
+// plan_from_project has one argument per render dimension the caller
+// knows about. Bundling them into a struct would just move the same
+// fields behind one more layer. The signature is stable; leave it.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_from_project(
     project: &caprust_core::ProjectState,
     width: u32,
@@ -921,6 +1044,11 @@ pub fn plan_from_project(
 
     let audio_from_video = !has_audio_track;
 
+    // Clips downstream of an xfade appear earlier in the render than
+    // their original timeline position; shift their audio to match so
+    // the mix stays in sync. See compute_xfade_audio_shifts.
+    let xfade_audio_shifts = compute_xfade_audio_shifts(project);
+
     for t_idx in audio_source_tracks {
         let mut clips: Vec<&caprust_core::Clip> = project
             .clips
@@ -973,9 +1101,11 @@ pub fn plan_from_project(
                 }
                 let dur_sec = c.duration_ms as f64 / 1000.0;
                 let idx = register_input(&mut inputs, path, 0.0, dur_sec);
+                let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
+                let start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
                 audio_clips.push(AudioClip {
                     input_index: idx,
-                    timeline_start_sec: c.start_time_ms as f64 / 1000.0,
+                    timeline_start_sec: start_sec,
                     duration_sec: dur_sec,
                     speed: c.speed,
                     gain_db: c.volume_db,
