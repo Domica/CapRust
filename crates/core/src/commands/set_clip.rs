@@ -16,6 +16,7 @@ pub struct SetClipCommand {
     pub flip_v: Option<bool>,
     pub volume_db: Option<f32>,
     pub track_index: Option<usize>,
+    pub name: Option<Option<String>>,
     before: Option<Clip>,
 }
 
@@ -31,6 +32,7 @@ impl SetClipCommand {
             flip_v: None,
             volume_db: None,
             track_index: None,
+            name: None,
             before: None,
         }
     }
@@ -67,6 +69,11 @@ impl SetClipCommand {
         self.track_index = Some(v);
         self
     }
+    /// Set the clip name. Pass `None` to clear it back to file-derived.
+    pub fn name(mut self, v: Option<String>) -> Self {
+        self.name = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -98,6 +105,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.track_index {
             c.track_index = v;
+        }
+        if let Some(v) = self.name.clone() {
+            c.name = v;
         }
         Ok(())
     }

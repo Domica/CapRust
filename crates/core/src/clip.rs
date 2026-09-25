@@ -87,6 +87,10 @@ pub struct Clip {
     /// Audio clip is the sole audio source.
     #[serde(default)]
     pub audio_detached: bool,
+    /// User-editable display name. None = derive from the source file
+    /// name at render time.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 impl Clip {
@@ -109,6 +113,7 @@ impl Clip {
             transition_in: None,
             transition_out: None,
             audio_detached: false,
+            name: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -133,6 +138,7 @@ impl Clip {
             transition_in: None,
             transition_out: None,
             audio_detached: false,
+            name: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -157,6 +163,7 @@ impl Clip {
             transition_in: None,
             transition_out: None,
             audio_detached: false,
+            name: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -182,6 +189,7 @@ impl Clip {
             transition_in: None,
             transition_out: None,
             audio_detached: false,
+            name: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -213,6 +221,7 @@ impl Clip {
             transition_in: None,
             transition_out: None,
             audio_detached: false,
+            name: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -245,6 +254,7 @@ impl Clip {
             transition_in: None,
             transition_out: None,
             audio_detached: false,
+            name: None,
             source_duration_ms: 0,
             media_id: None,
         }
