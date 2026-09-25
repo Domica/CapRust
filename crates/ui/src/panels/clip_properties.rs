@@ -53,6 +53,8 @@ pub enum PendingEdit {
     },
     /// Set or clear the clip's display name. Empty string = clear.
     Name(String),
+    /// Set the drawtext style id on a TextOverlay clip.
+    TextStyle(String),
 }
 
 pub fn show(
@@ -121,6 +123,47 @@ pub fn show(
         }
     });
     ui.separator();
+
+    // --- TextOverlay style picker ---
+    if let ClipType::TextOverlay { style, .. } = &clip.clip_type {
+        const STYLES: &[(&str, &str)] = &[
+            ("default", "asset-text-default"),
+            ("bold", "asset-text-bold"),
+            ("subtitle", "asset-text-subtitle"),
+            ("lower", "asset-text-lower"),
+            ("quote", "asset-text-quote"),
+            ("caption", "asset-text-caption"),
+            ("glow", "asset-text-glow"),
+            ("handwrite", "asset-text-handwrite"),
+        ];
+        let current = if style.is_empty() {
+            "default"
+        } else {
+            style.as_str()
+        };
+        let current_label = STYLES
+            .iter()
+            .find(|(id, _)| *id == current)
+            .map(|(_, key)| tr(key))
+            .unwrap_or_else(|| current.to_string());
+        ui.horizontal(|ui| {
+            ui.label(tr("props-text-style"));
+            egui::ComboBox::from_id_salt("text_style_combo")
+                .selected_text(current_label)
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    for (id, key) in STYLES {
+                        let selected = *id == current;
+                        if ui.selectable_label(selected, tr(key)).clicked() && !selected {
+                            state
+                                .pending
+                                .push(PendingEdit::TextStyle((*id).to_string()));
+                        }
+                    }
+                });
+        });
+        ui.separator();
+    }
 
     // --- Captions: read-only transcript view ---
     //
