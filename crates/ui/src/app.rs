@@ -2461,9 +2461,11 @@ impl CapRustApp {
                                         egui::Id::new(("clip", clip_id)),
                                         egui::Sense::click(),
                                     );
-                                    if resp.clicked() {
-                                        pending_actions.push(ClipAction::Select(clip_id));
-                                    }
+                                    // Selection is driven from the drag-start
+                                    // path below (see pointer_down block).
+                                    // Firing Select here as well would toggle
+                                    // twice on a Ctrl+click (once on press,
+                                    // once on release), cancelling out.
 
                                     let pointer_on_clip = ui.rect_contains_pointer(clip_rect);
                                     const TRIM_ZONE: f32 = 8.0;
@@ -2503,7 +2505,19 @@ impl CapRustApp {
                                         && pointer_down
                                         && clip_drag_snapshot.is_none()
                                     {
-                                        pending_actions.push(ClipAction::Select(clip_id));
+                                        // Ctrl held → let the modifier logic
+                                        // in the Select handler decide
+                                        // (toggle). Plain click on an
+                                        // already-selected clip is a no-op
+                                        // so the whole multi-selection can
+                                        // be dragged without collapsing to
+                                        // one clip.
+                                        let ctrl =
+                                            ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                                        let already = self.selected_clips.contains(&clip_id);
+                                        if ctrl || !already {
+                                            pending_actions.push(ClipAction::Select(clip_id));
+                                        }
                                         pending_actions
                                             .push(ClipAction::DragStart(clip_id, idx, start_ms));
                                         if let Some(e) = hovered_edge {
@@ -2869,15 +2883,22 @@ impl CapRustApp {
                             self.playhead_ms = target;
                         }
                         ClipAction::Select(id) => {
-                            if ctx.input(|i| i.modifiers.ctrl || i.modifiers.command) {
+                            let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                            if ctrl {
+                                // Ctrl+click toggles membership.
                                 if self.selected_clips.contains(&id) {
                                     self.selected_clips.retain(|&x| x != id);
                                 } else {
                                     self.selected_clips.push(id);
                                 }
-                            } else {
+                            } else if !self.selected_clips.contains(&id) {
+                                // Plain click on an unselected clip
+                                // replaces the selection.
                                 self.selected_clips = vec![id];
                             }
+                            // Plain click on an already-selected clip
+                            // keeps the multi-selection so the whole
+                            // group can be dragged together.
                         }
                         ClipAction::SetTrimEdge(id, edge) => {
                             if let Some(d) = &mut self.clip_drag {
