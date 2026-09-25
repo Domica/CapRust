@@ -121,6 +121,9 @@ preview-back-5 = Back 5 s
 preview-fwd-5 = Forward 5 s
 preview-fwd-30 = Forward 30 s
 preview-loop = Loop
+preview-mute = Mute
+preview-unmute = Unmute
+preview-volume = Volume
 
 # Properties panel
 props-heading = Properties

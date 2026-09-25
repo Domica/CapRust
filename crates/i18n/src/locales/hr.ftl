@@ -121,6 +121,9 @@ preview-back-5 = Natrag 5 s
 preview-fwd-5 = Naprijed 5 s
 preview-fwd-30 = Naprijed 30 s
 preview-loop = Ponavljaj
+preview-mute = Utišaj
+preview-unmute = Uključi zvuk
+preview-volume = Glasnoća
 
 # Properties panel
 props-heading = Svojstva
