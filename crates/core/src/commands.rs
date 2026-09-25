@@ -1,6 +1,7 @@
 //! Command pattern (undo/redo).
 
 pub mod delete_clip;
+pub mod edit_caption_segment;
 pub mod move_clip;
 pub mod relink;
 pub mod ripple;

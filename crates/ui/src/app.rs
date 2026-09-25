@@ -2387,6 +2387,12 @@ impl CapRustApp {
                                     let c = caprust_core::commands::set_effect::SetTransitionCommand::new(id, false, None);
                                     let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
                                 }
+                                PendingEdit::CaptionSegmentText { idx, text } => {
+                                    let c = caprust_core::commands::edit_caption_segment::EditCaptionSegmentCommand::new(
+                                        id, idx, text,
+                                    );
+                                    let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                                }
                                 other => {
                                     let cmd = field_cmd.take().unwrap_or_else(|| {
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)
