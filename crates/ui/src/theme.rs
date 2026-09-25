@@ -194,6 +194,24 @@ impl Theme {
         Color32::from_rgb(self.playhead[0], self.playhead[1], self.playhead[2])
     }
 
+    /// Border color drawn around every clip on the timeline. Uses the
+    /// pastel track color so the border is always a different hue from
+    /// the clip's own saturated fill, which is what makes two adjacent
+    /// clips distinguishable at a glance.
+    ///
+    /// Dark theme: pastel kept bright — reads as a light outline on the
+    /// dark clip fill.
+    /// Light theme: pastel darkened — reads as a deeper outline so it
+    /// still contrasts on a lighter lane.
+    pub fn clip_border_color(&self, kind: TrackKind) -> Color32 {
+        let [r, g, b] = self.track_color(kind);
+        let base = Color32::from_rgb(r, g, b);
+        match self.mode {
+            ThemeMode::Light => base.gamma_multiply(0.55),
+            ThemeMode::Dark | ThemeMode::Custom => base.gamma_multiply(1.15),
+        }
+    }
+
     /// Lane background. Pastel tint that respects theme mode: brighter
     /// wash on light chrome, darker wash on dark. Hidden tracks are
     /// dimmed further so the difference between visible/hidden is
