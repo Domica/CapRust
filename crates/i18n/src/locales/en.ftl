@@ -170,6 +170,7 @@ preview-volume = Volume
 # Properties panel
 props-heading = Properties
 props-empty = Select a clip to edit its properties.
+props-name = Name:
 props-tab-video = Video
 props-tab-sound = Sound
 props-tab-effects = Effects

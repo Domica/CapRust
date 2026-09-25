@@ -2421,32 +2421,72 @@ impl CapRustApp {
                                             egui::StrokeKind::Inside,
                                         );
                                     }
-                                    let label = match &ctype {
-                                        caprust_core::ClipType::TextOverlay { content, .. } => {
-                                            content.clone()
-                                        }
-                                        caprust_core::ClipType::Captions { .. } => {
-                                            "💬 Captions".into()
-                                        }
-                                        caprust_core::ClipType::Narration { .. } => {
-                                            "🎙 Narration".into()
-                                        }
-                                        caprust_core::ClipType::Video { path, .. }
-                                        | caprust_core::ClipType::Audio { path, .. }
-                                        | caprust_core::ClipType::Image { path, .. } => {
-                                            std::path::Path::new(path)
-                                                .file_name()
-                                                .map(|s| s.to_string_lossy().to_string())
-                                                .unwrap_or_else(|| "clip".into())
-                                        }
+                                    let (label_full, label_short) = {
+                                        let full = self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|cc| cc.id == clip_id)
+                                            .and_then(|cc| cc.name.clone())
+                                            .unwrap_or_else(|| match &ctype {
+                                                caprust_core::ClipType::TextOverlay {
+                                                    content,
+                                                    ..
+                                                } => content.clone(),
+                                                caprust_core::ClipType::Captions { .. } => {
+                                                    "💬 Captions".into()
+                                                }
+                                                caprust_core::ClipType::Narration { .. } => {
+                                                    "🎙 Narration".into()
+                                                }
+                                                caprust_core::ClipType::Video { path, .. }
+                                                | caprust_core::ClipType::Audio { path, .. }
+                                                | caprust_core::ClipType::Image { path, .. } => {
+                                                    std::path::Path::new(path)
+                                                        .file_name()
+                                                        .map(|s| s.to_string_lossy().to_string())
+                                                        .unwrap_or_else(|| "clip".into())
+                                                }
+                                            });
+                                        // Truncate to 12 chars + ellipsis. Count
+                                        // in chars so emoji-heavy names don't
+                                        // overflow the visual budget.
+                                        let short = if full.chars().count() > 12 {
+                                            let mut s: String = full.chars().take(12).collect();
+                                            s.push('…');
+                                            s
+                                        } else {
+                                            full.clone()
+                                        };
+                                        (full, short)
                                     };
                                     p.text(
                                         clip_rect.left_top() + egui::vec2(6.0, 4.0),
                                         egui::Align2::LEFT_TOP,
-                                        label,
+                                        &label_short,
                                         egui::FontId::proportional(11.0),
                                         egui::Color32::WHITE,
                                     );
+                                    // Hover tooltip with full name — only when
+                                    // the name was truncated. Uses the pointer
+                                    // position (ui.rect_contains_pointer)
+                                    // rather than a Response, since the clip
+                                    // painter has no interactive Response here.
+                                    if label_full != label_short
+                                        && pointer_hover
+                                            .map(|pp| clip_rect.contains(pp))
+                                            .unwrap_or(false)
+                                        && self.clip_drag.is_none()
+                                    {
+                                        egui::show_tooltip_at_pointer(
+                                            ui.ctx(),
+                                            ui.layer_id(),
+                                            egui::Id::new(("clip_name_tip", clip_id)),
+                                            |ui| {
+                                                ui.label(&label_full);
+                                            },
+                                        );
+                                    }
 
                                     // Effect/transition badge (top-right of clip)
                                     if let Some(fx_clip) =
@@ -3392,6 +3432,18 @@ impl CapRustApp {
                                         id, idx, text,
                                     );
                                     let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                                }
+                                PendingEdit::Name(v) => {
+                                    let trimmed = v.trim().to_string();
+                                    let new_name = if trimmed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(trimmed)
+                                    };
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .name(new_name);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
                                 other => {
                                     let cmd = field_cmd.take().unwrap_or_else(|| {

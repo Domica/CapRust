@@ -25,6 +25,10 @@ pub struct PropertiesState {
     /// The (clip_id, idx) currently holding keyboard focus in a caption
     /// editor. Used to detect blur → commit.
     pub caption_edit_focus: Option<(Uuid, usize)>,
+    /// Text buffer for the name field while it has focus.
+    pub name_buffer: Option<String>,
+    /// True while the name field holds focus (used to detect blur).
+    pub name_focus: bool,
 }
 
 #[derive(Debug)]
@@ -47,6 +51,8 @@ pub enum PendingEdit {
         idx: usize,
         text: String,
     },
+    /// Set or clear the clip's display name. Empty string = clear.
+    Name(String),
 }
 
 pub fn show(
@@ -85,6 +91,34 @@ pub fn show(
                 .monospace()
                 .color(egui::Color32::from_gray(180)),
         );
+    });
+
+    // --- Name ---
+    // Editable display name. Empty clears it, falling back to the file
+    // name at render time.
+    ui.horizontal(|ui| {
+        ui.label(tr("props-name"));
+        let current = clip.name.clone().unwrap_or_default();
+        let mut buf = state.name_buffer.clone().unwrap_or_else(|| current.clone());
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut buf)
+                .desired_width(f32::INFINITY)
+                .hint_text("(file name)"),
+        );
+        let had_focus = state.name_focus;
+        let has_focus = resp.has_focus();
+        if has_focus {
+            state.name_focus = true;
+            state.name_buffer = Some(buf.clone());
+        }
+        if (had_focus && !has_focus) || (has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+        {
+            if buf != current {
+                state.pending.push(PendingEdit::Name(buf.clone()));
+            }
+            state.name_focus = false;
+            state.name_buffer = None;
+        }
     });
     ui.separator();
 
