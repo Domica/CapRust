@@ -1853,18 +1853,14 @@ impl CapRustApp {
                             }
                             let ph_x =
                                 ruler_rect.left() + self.playhead_ms as f32 * px_per_ms - scroll_x;
-                            if ph_x >= ruler_rect.left() && ph_x <= ruler_rect.right() {
-                                rp.line_segment(
-                                    [
-                                        egui::Pos2::new(ph_x, ruler_rect.top()),
-                                        egui::Pos2::new(ph_x, ruler_rect.bottom()),
-                                    ],
-                                    egui::Stroke::new(
-                                        2.0_f32,
-                                        egui::Color32::from_rgb(230, 70, 70),
-                                    ),
-                                );
-                            }
+                            let ph_visible =
+                                ph_x >= ruler_rect.left() && ph_x <= ruler_rect.right();
+                            // Playhead line is drawn after the lane loop:
+                            // Full mode needs the bottom of the last lane,
+                            // which is only known once every row has been
+                            // allocated. Compact mode will use ruler_rect
+                            // alone, but we defer both for a single code
+                            // path.
                             if ui.input(|i| i.pointer.primary_clicked()) {
                                 if let Some(p) = ui.ctx().pointer_interact_pos() {
                                     if ruler_rect.contains(p) {
@@ -1879,6 +1875,9 @@ impl CapRustApp {
                             // Lanes
                             let mut top_y_opt: Option<f32> = None;
                             let mut rows_actual: Vec<(usize, f32)> = Vec::new();
+                            // Tracked so the playhead overlay can span
+                            // the entire stack in Full mode.
+                            let mut lane_stack_bottom: Option<f32> = None;
                             for &idx in &order {
                                 let track = &updated_tracks[idx];
                                 let row_h = track.height;
@@ -1889,6 +1888,7 @@ impl CapRustApp {
                                 if top_y_opt.is_none() {
                                     top_y_opt = Some(lane_rect.top());
                                 }
+                                lane_stack_bottom = Some(lane_rect.bottom());
                                 rows_actual.push((idx, row_h));
 
                                 let p = ui.painter_at(lane_rect);
@@ -2249,6 +2249,42 @@ impl CapRustApp {
                                     pending_actions.push(ClipAction::DragEnd(d.clip_id));
                                 }
                             }
+                            // Playhead overlay: draw once, after every
+                            // lane is allocated, so Full mode can span
+                            // the entire stack.
+                            if ph_visible {
+                                let lane_bottom = lane_stack_bottom.unwrap_or(ruler_rect.bottom());
+                                let line_bottom = match theme_snapshot.playhead_size {
+                                    crate::theme::PlayheadSize::Compact => ruler_rect.bottom(),
+                                    crate::theme::PlayheadSize::Full => lane_bottom,
+                                };
+                                let overlay_rect = egui::Rect::from_x_y_ranges(
+                                    ph_x..=ph_x,
+                                    ruler_rect.top()..=line_bottom,
+                                );
+                                let op = ui.painter_at(overlay_rect);
+                                op.line_segment(
+                                    [
+                                        egui::Pos2::new(ph_x, ruler_rect.top()),
+                                        egui::Pos2::new(ph_x, line_bottom),
+                                    ],
+                                    egui::Stroke::new(2.0_f32, theme_snapshot.playhead_color()),
+                                );
+                                // Grab handle: small filled triangle at
+                                // the top so the user can see where to
+                                // click to seek.
+                                let tri = vec![
+                                    egui::Pos2::new(ph_x - 5.0, ruler_rect.top()),
+                                    egui::Pos2::new(ph_x + 5.0, ruler_rect.top()),
+                                    egui::Pos2::new(ph_x, ruler_rect.top() + 6.0),
+                                ];
+                                op.add(egui::Shape::convex_polygon(
+                                    tri,
+                                    theme_snapshot.playhead_color(),
+                                    egui::Stroke::NONE,
+                                ));
+                            }
+
                             if let Some(t) = top_y_opt {
                                 self.timeline_row_layout = (t, rows_actual);
                             }
