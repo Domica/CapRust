@@ -924,6 +924,12 @@ pub fn plan_from_project(
 
     // Z-order index assigned to each clip as we walk tracks bottom-up.
     for (z, &t_idx) in video_track_order.iter().enumerate() {
+        // The eye chip on the track header toggles `visible`. Hidden
+        // tracks are excluded from the render entirely — clips on them
+        // do not contribute video, text overlays, or anything else.
+        if !project.tracks[t_idx].visible {
+            continue;
+        }
         let z = z as u32;
         let track_kind = project.tracks[t_idx].kind;
         let mut clips: Vec<&caprust_core::Clip> = project
@@ -1025,114 +1031,88 @@ pub fn plan_from_project(
     // clip on A1 renders silent: has_audio_track becomes true, the
     // fallback to video is skipped, and the Captions clip contributes
     // nothing.
-    let audio_track_clip_count: usize = project
-        .tracks
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| t.kind == TrackKind::Audio)
-        .map(|(i, _)| {
-            project
-                .clips
-                .iter()
-                .filter(|c| c.track_index == i)
-                .filter(|c| {
-                    matches!(
-                        &c.clip_type,
-                        ClipType::Audio { .. }
-                            | ClipType::Video { .. }
-                            | ClipType::Narration { .. }
-                    )
-                })
-                .count()
-        })
-        .sum();
+    // Harvest audio from every clip in one flat pass. A clip contributes
+    // to the mix unless:
+    //   - its track is muted (track-header mute chip),
+    //   - it is a Video clip whose audio was detached (SeparateAudio
+    //     marks the video and moves the audio to a sibling Audio clip;
+    //     the video must not double).
+    // Images, TextOverlay and Captions never contribute audio.
+    //
+    // The previous version branched on "does any Audio track hold at
+    // least one clip": if yes, ONLY Audio tracks were scanned, so a
+    // video clip with embedded audio on V1 was silently dropped the
+    // moment any Audio track existed. That was the 'detached audio
+    // mutes the next clip' bug.
+    let mut audio_from_video = false;
+    let mut audio_track_clip_count: usize = 0;
 
-    let has_audio_track = audio_track_clip_count > 0;
-
-    let audio_source_tracks: Vec<usize> = if has_audio_track {
-        project
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.kind == TrackKind::Audio)
-            .map(|(i, _)| i)
-            .collect()
-    } else {
-        // Use the exact same track order that produced video_clips so
-        // embedded audio is harvested from EVERY video-bearing track —
-        // including Overlay, which the plain Video filter missed.
-        video_track_order.clone()
-    };
-
-    let audio_from_video = !has_audio_track;
-
-    for t_idx in audio_source_tracks {
-        let mut clips: Vec<&caprust_core::Clip> = project
-            .clips
-            .iter()
-            .filter(|c| c.track_index == t_idx)
-            .collect();
-        clips.sort_by_key(|c| c.start_time_ms);
-        for c in clips {
-            // Narration clips resolve to a cached WAV on disk. The path
-            // is deterministic from (text, voice_id) via
-            // core::cache::narration_path, so the same project can be
-            // opened on another machine and re-synthesized.
-            let narration_path_owned: Option<String> = match &c.clip_type {
-                ClipType::Narration { voice_id, text, .. } => Some(
-                    caprust_core::cache::narration_path(models_dir, text, voice_id)
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-                _ => None,
-            };
-
-            // Any clip on an Audio track contributes its embedded
-            // audio, regardless of whether the source file is an audio
-            // container or a video container. The previous version
-            // gated the Video arm on `audio_from_video`, which is false
-            // whenever a dedicated Audio track exists — so a video
-            // dropped on an Audio track (the manual detach-audio
-            // workflow until that feature ships) produced silence.
-            let path_opt: Option<&String> = match &c.clip_type {
-                ClipType::Audio { path, .. } => Some(path),
-                // A video clip whose audio has been explicitly detached
-                // is silent in the mix — the detached Audio clip is the
-                // sole source for that span. See SeparateAudioCommand.
-                ClipType::Video { path, .. } if !c.audio_detached => Some(path),
-                ClipType::Video { .. } => None,
-                ClipType::Narration { .. } => narration_path_owned.as_ref(),
-                _ => None,
-            };
-            if let Some(path) = path_opt {
-                // Narration WAVs are cached on demand. If the file is not
-                // there yet (project shared, cache cleared, first render),
-                // skip the audio with a warning rather than letting
-                // ffmpeg fail with an unhelpful error. F5 wires the UI
-                // synthesis flow that populates this cache.
-                if matches!(&c.clip_type, ClipType::Narration { .. })
-                    && !std::path::Path::new(path).is_file()
-                {
-                    tracing::warn!(
-                        "narration clip {} has no cached WAV at {} — skipping",
-                        c.id,
-                        path
-                    );
-                    continue;
-                }
-                let dur_sec = c.duration_ms as f64 / 1000.0;
-                let idx = register_input(&mut inputs, path, 0.0, dur_sec);
-                let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
-                let start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
-                audio_clips.push(AudioClip {
-                    input_index: idx,
-                    timeline_start_sec: start_sec,
-                    duration_sec: dur_sec,
-                    speed: c.speed,
-                    gain_db: c.volume_db,
-                });
-            }
+    for c in project.clips.iter() {
+        let Some(track) = project.tracks.get(c.track_index) else {
+            continue;
+        };
+        if track.muted {
+            continue;
         }
+        let is_audio_track = track.kind == TrackKind::Audio;
+
+        let narration_path_owned: Option<String> = match &c.clip_type {
+            ClipType::Narration { voice_id, text, .. } => Some(
+                caprust_core::cache::narration_path(models_dir, text, voice_id)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            _ => None,
+        };
+
+        let path_opt: Option<&String> = match &c.clip_type {
+            ClipType::Audio { path, .. } => {
+                if is_audio_track {
+                    audio_track_clip_count += 1;
+                }
+                Some(path)
+            }
+            ClipType::Video { path, .. } if !c.audio_detached => {
+                if is_audio_track {
+                    audio_track_clip_count += 1;
+                } else {
+                    audio_from_video = true;
+                }
+                Some(path)
+            }
+            ClipType::Video { .. } => None,
+            ClipType::Narration { .. } => {
+                if is_audio_track {
+                    audio_track_clip_count += 1;
+                }
+                narration_path_owned.as_ref()
+            }
+            _ => None,
+        };
+
+        let Some(path) = path_opt else { continue };
+
+        if matches!(&c.clip_type, ClipType::Narration { .. })
+            && !std::path::Path::new(path).is_file()
+        {
+            tracing::warn!(
+                "narration clip {} has no cached WAV at {} — skipping",
+                c.id,
+                path
+            );
+            continue;
+        }
+        let dur_sec = c.duration_ms as f64 / 1000.0;
+        let idx = register_input(&mut inputs, path, 0.0, dur_sec);
+        let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
+        let start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+        audio_clips.push(AudioClip {
+            input_index: idx,
+            timeline_start_sec: start_sec,
+            duration_sec: dur_sec,
+            speed: c.speed,
+            gain_db: c.volume_db,
+        });
     }
 
     if video_clips.is_empty() && text_clips.is_empty() {
