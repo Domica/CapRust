@@ -95,16 +95,31 @@ impl RenderPlan {
     pub fn build_filtergraph(&self) -> Result<(String, String, Option<String>)> {
         let mut fg = String::new();
 
-        // -------- VIDEO: per-clip chains --------
-        let mut v_labels: Vec<String> = Vec::with_capacity(self.video_clips.len());
+        // -------- VIDEO pipeline --------
+        //
+        // Two-phase build:
+        //
+        //  Phase 1 — per clip: decode, trim, scale/pad, fps, effects.
+        //             Output: [v_baseN] with local PTS starting at 0.
+        //             NO PTS shift yet — the shift is applied at the run
+        //             output so that xfade offsets are relative to the
+        //             run's own timeline, not the global timeline.
+        //
+        //  Phase 2 — per z-order track: group adjacent clips into "runs"
+        //             where each non-first clip carries a transition_in
+        //             id and touches the previous clip within
+        //             ADJACENCY_TOL_SEC. Within a run, chain xfade. A
+        //             single-clip run is just the phase-1 output with a
+        //             PTS shift and, optionally, a fade-from/to-black
+        //             edge.
+        //
+        // Phase 3 — overlay all run outputs on v_base in z-order.
+
+        // ---- Phase 1: base chain per clip ----
+        let mut v_base_labels: Vec<String> = Vec::with_capacity(self.video_clips.len());
         for (i, c) in self.video_clips.iter().enumerate() {
-            let in_label = if c.is_image {
-                // Images need `-loop 1` on the input; the input label still works.
-                format!("[{}:v]", c.input_index)
-            } else {
-                format!("[{}:v]", c.input_index)
-            };
-            let v_out = format!("v{i}_pre");
+            let in_label = format!("[{}:v]", c.input_index);
+            let v_out = format!("v_b{i}");
 
             let setpts = if (c.speed - 1.0).abs() < 0.001 {
                 String::from("setpts=PTS-STARTPTS")
@@ -112,7 +127,6 @@ impl RenderPlan {
                 format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed)
             };
 
-            // Base chain: trim, reset, scale, fps.
             fg.push_str(&format!(
             "{in_label}trim=duration={dur:.6},{setpts},scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={num}/{den}",
             dur = c.duration_sec,
@@ -122,37 +136,148 @@ impl RenderPlan {
             den = self.fps_den,
         ));
 
-            // Effect chain
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
 
-            // Edge transitions (fade in/out)
-            let fade_in = if c.transition_in.as_deref() == Some("fade") {
-                ",fade=t=in:st=0:d=0.35".to_string()
-            } else {
-                String::new()
-            };
-            let fade_out = if c.transition_out.as_deref() == Some("fade") {
-                let st = (c.duration_sec - 0.35).max(0.0);
-                format!(",fade=t=out:st={st:.3}:d=0.35")
-            } else {
-                String::new()
-            };
-            fg.push_str(&fade_in);
-            fg.push_str(&fade_out);
-
-            // Shift this clip's PTS to its position on the timeline.
-            // Without this, `overlay` matches by PTS and everything past
-            // the first clip is shown at the wrong moment (usually black).
-            fg.push_str(&format!(
-                ",setpts=PTS+{start:.6}/TB[{v_out}];",
-                start = c.timeline_start_sec,
-                v_out = v_out,
-            ));
-            v_labels.push(v_out);
+            fg.push_str(&format!("[{v_out}];"));
+            v_base_labels.push(v_out);
         }
 
-        // -------- Black base --------
+        // ---- Phase 2: runs per z-order ----
+        //
+        // A "run" is a maximal sequence of clips on the same z_order
+        // where clip[k] has a valid xfade transition_in AND its start
+        // time touches clip[k-1]'s end (within ADJACENCY_TOL_SEC).
+        //
+        // Clips that don't belong to a multi-clip run become single-
+        // clip runs; those keep the legacy fade-from/to-black behaviour
+        // when transition_in/out == Some("fade").
+
+        #[derive(Debug)]
+        struct Run {
+            z_order: u32,
+            start_sec: f64,
+            /// Indices into self.video_clips.
+            members: Vec<usize>,
+        }
+
+        let mut by_track: std::collections::BTreeMap<u32, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (i, c) in self.video_clips.iter().enumerate() {
+            by_track.entry(c.z_order).or_default().push(i);
+        }
+
+        let mut runs: Vec<Run> = Vec::new();
+        for (z, mut members) in by_track {
+            members.sort_by(|&a, &b| {
+                self.video_clips[a]
+                    .timeline_start_sec
+                    .partial_cmp(&self.video_clips[b].timeline_start_sec)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            let mut current: Vec<usize> = Vec::new();
+            for &idx in &members {
+                if current.is_empty() {
+                    current.push(idx);
+                    continue;
+                }
+                let prev = &self.video_clips[*current.last().unwrap()];
+                let next = &self.video_clips[idx];
+                let prev_end = prev.timeline_start_sec + prev.duration_sec;
+                let gap = (next.timeline_start_sec - prev_end).abs();
+                let has_xfade = next
+                    .transition_in
+                    .as_deref()
+                    .map(is_xfade_id)
+                    .unwrap_or(false);
+                if has_xfade && gap <= ADJACENCY_TOL_SEC {
+                    current.push(idx);
+                } else {
+                    runs.push(Run {
+                        z_order: z,
+                        start_sec: self.video_clips[current[0]].timeline_start_sec,
+                        members: std::mem::take(&mut current),
+                    });
+                    current.push(idx);
+                }
+            }
+            if !current.is_empty() {
+                runs.push(Run {
+                    z_order: z,
+                    start_sec: self.video_clips[current[0]].timeline_start_sec,
+                    members: current,
+                });
+            }
+        }
+
+        // ---- Phase 2b: render each run ----
+        let mut run_labels: Vec<(u32, f64, String)> = Vec::with_capacity(runs.len());
+        for (ri, run) in runs.iter().enumerate() {
+            let out_label = format!("v_run{ri}");
+
+            if run.members.len() == 1 {
+                // Single clip: apply legacy fade from/to-black edges
+                // when requested, then shift PTS to timeline position.
+                let idx = run.members[0];
+                let c = &self.video_clips[idx];
+                let mut tail = String::new();
+                if c.transition_in.as_deref() == Some("fade") {
+                    tail.push_str(",fade=t=in:st=0:d=0.35");
+                }
+                if c.transition_out.as_deref() == Some("fade") {
+                    let st = (c.duration_sec - 0.35).max(0.0);
+                    tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35"));
+                }
+                fg.push_str(&format!(
+                    "[{base}]{tail},setpts=PTS+{start:.6}/TB[{out}];",
+                    base = v_base_labels[idx],
+                    tail = tail,
+                    start = run.start_sec,
+                    out = out_label,
+                ));
+            } else {
+                // Xfade chain. Each link uses the requested transition
+                // from the SECOND clip of the pair, and a fixed duration
+                // of XFADE_DUR_SEC (clamped to half of either clip).
+                let mut current_label = v_base_labels[run.members[0]].clone();
+                let mut current_dur = self.video_clips[run.members[0]].duration_sec;
+                for (k, &idx) in run.members.iter().enumerate().skip(1) {
+                    let c = &self.video_clips[idx];
+                    let xfade_id = c
+                        .transition_in
+                        .as_deref()
+                        .and_then(xfade_name)
+                        .unwrap_or("fade");
+                    let d = XFADE_DUR_SEC
+                        .min(current_dur * 0.5)
+                        .min(c.duration_sec * 0.5)
+                        .max(0.05);
+                    let offset = (current_dur - d).max(0.0);
+                    let link_out = format!("v_xf{ri}_{k}");
+                    fg.push_str(&format!(
+                        "[{a}][{b}]xfade=transition={name}:duration={d:.3}:offset={offset:.6}[{link_out}];",
+                        a = current_label,
+                        b = v_base_labels[idx],
+                        name = xfade_id,
+                        d = d,
+                        offset = offset,
+                        link_out = link_out,
+                    ));
+                    current_label = link_out;
+                    current_dur = current_dur + c.duration_sec - d;
+                }
+                fg.push_str(&format!(
+                    "[{current_label}]setpts=PTS+{start:.6}/TB[{out}];",
+                    start = run.start_sec,
+                    out = out_label,
+                ));
+            }
+
+            run_labels.push((run.z_order, run.start_sec, out_label));
+        }
+
+        // ---- Phase 3: black base + overlay in z-order ----
         fg.push_str(&format!(
             "color=c=black:s={w}x{h}:r={num}/{den}:d={dur:.6}[v_base];",
             w = self.width,
@@ -162,27 +287,16 @@ impl RenderPlan {
             dur = self.total_duration_sec,
         ));
 
-        // -------- Composite clips in z-order --------
-        // Sort a copy of indices by (z_order, timeline_start) so higher z is later.
-        let mut order: Vec<usize> = (0..self.video_clips.len()).collect();
-        order.sort_by(|&a, &b| {
-            let ca = &self.video_clips[a];
-            let cb = &self.video_clips[b];
-            ca.z_order.cmp(&cb.z_order).then(
-                ca.timeline_start_sec
-                    .partial_cmp(&cb.timeline_start_sec)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
+        run_labels.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
         });
 
         let mut v_prev = String::from("v_base");
-        for (overlay_i, &clip_i) in order.iter().enumerate() {
-            let v_next = format!("v_ov{overlay_i}");
+        for (i, (_z, _start, label)) in run_labels.iter().enumerate() {
+            let v_next = format!("v_ov{i}");
             fg.push_str(&format!(
-                "[{v_prev}][{clip}]overlay=shortest=0:eof_action=pass[v_ov{overlay_i}];",
-                v_prev = v_prev,
-                clip = v_labels[clip_i],
-                overlay_i = overlay_i,
+                "[{v_prev}][{label}]overlay=shortest=0:eof_action=pass[{v_next}];",
             ));
             v_prev = v_next;
         }
@@ -352,6 +466,38 @@ impl RenderPlan {
         args.push(output.to_string_lossy().to_string());
         args
     }
+}
+
+/// Two clips are considered adjacent for xfade purposes when their
+/// timeline gap is under this many seconds. Matches audio and video
+/// seams that the user placed by dragging; leaves room for rounding.
+pub const ADJACENCY_TOL_SEC: f64 = 0.05;
+
+/// Fixed crossfade duration for MVP. Clamped down to half of the
+/// shorter adjacent clip so very short clips still get a transition.
+pub const XFADE_DUR_SEC: f64 = 0.5;
+
+/// True if `id` is a transition we know how to hand to xfade.
+pub fn is_xfade_id(id: &str) -> bool {
+    xfade_name(id).is_some()
+}
+
+/// Map a preset id to the ffmpeg `xfade=transition=...` keyword.
+pub fn xfade_name(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "fade" => "fade",
+        "slide_l" => "slideleft",
+        "slide_r" => "slideright",
+        "slide_u" => "slideup",
+        "slide_d" => "slidedown",
+        "wipe_l" => "wipeleft",
+        "wipe_r" => "wiperight",
+        "zoom_in" => "circleopen",
+        "zoom_out" => "circleclose",
+        "rotate" => "radial",
+        "blur_t" => "fadeblack",
+        _ => return None,
+    })
 }
 
 /// Translate a list of effect instances into an ffmpeg filter chain.
@@ -814,6 +960,26 @@ pub fn plan_from_project(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xfade_mapping_covers_all_ids() {
+        for id in [
+            "fade", "slide_l", "slide_r", "slide_u", "slide_d", "wipe_l", "wipe_r", "zoom_in",
+            "zoom_out", "rotate", "blur_t",
+        ] {
+            assert!(is_xfade_id(id), "{id} should be a valid xfade id");
+        }
+        assert!(!is_xfade_id("none"));
+        assert!(!is_xfade_id("glitch"));
+    }
+
+    #[test]
+    fn xfade_names_match_ffmpeg_keywords() {
+        assert_eq!(xfade_name("fade"), Some("fade"));
+        assert_eq!(xfade_name("slide_l"), Some("slideleft"));
+        assert_eq!(xfade_name("zoom_in"), Some("circleopen"));
+        assert_eq!(xfade_name("blur_t"), Some("fadeblack"));
+    }
 
     #[test]
     fn atempo_chain_handles_extremes() {
