@@ -534,13 +534,7 @@ pub fn plan_from_project(
         .iter()
         .enumerate()
         .filter(|(_, t)| t.kind == TrackKind::Audio)
-        .map(|(i, _)| {
-            project
-                .clips
-                .iter()
-                .filter(|c| c.track_index == i)
-                .count()
-        })
+        .map(|(i, _)| project.clips.iter().filter(|c| c.track_index == i).count())
         .sum();
 
     let has_audio_track = audio_track_clip_count > 0;

@@ -123,8 +123,7 @@ impl AudioPlayer {
         // point ffmpeg may not have written anything yet (file size 0), and
         // clamping would reset the seek to 0 — so a call with start_ms=3300
         // would silently play from the very beginning of the source.
-        std::fs::metadata(path)
-            .with_context(|| format!("stat {}", path.display()))?;
+        std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
         let byte_offset = pcm_seek_offset(start_ms, TARGET_SAMPLE_RATE);
 
         // SPSC ring buffer, f32 samples (interleaved stereo).
@@ -447,7 +446,10 @@ mod tests {
         let player = AudioPlayer::play_sine(440.0)?;
         std::thread::sleep(Duration::from_millis(200));
         let pos = player.playhead_ms();
-        assert!(pos > 0, "expected some samples to have played, got {pos} ms");
+        assert!(
+            pos > 0,
+            "expected some samples to have played, got {pos} ms"
+        );
         Ok(())
     }
 
