@@ -159,6 +159,9 @@ pub struct CapRustApp {
     /// Clipboard for Copy/Paste on the timeline. Holds a full clip
     /// snapshot; Paste assigns a new id and inserts at the playhead.
     pub clip_clipboard: Option<caprust_core::Clip>,
+    /// Pending track rename: (track_index, edit_buffer). Some while the
+    /// rename modal is open.
+    pub track_rename: Option<(usize, String)>,
     /// Clips waiting to be transcribed, in order. Populated by
     /// "caption all in track"; drained sequentially because only one
     /// caption_rx slot exists at a time.
@@ -316,6 +319,7 @@ impl CapRustApp {
             next_job_id: 1,
             caption_job_id: None,
             clip_clipboard: None,
+            track_rename: None,
             caption_queue: std::collections::VecDeque::new(),
             caption_batch_total: 0,
             caption_batch_current: 0,
@@ -1998,6 +2002,8 @@ impl CapRustApp {
                 let mut updated_tracks = self.project.tracks.clone();
                 let mut header_changed = false;
                 let mut pending_delete_track: Option<usize> = None;
+                let mut pending_duplicate_track: Option<usize> = None;
+                let mut pending_rename_track: Option<usize> = None;
                 let mut pending_actions: Vec<ClipAction> = Vec::new();
                 let mut pending_drop: Option<(uuid::Uuid, usize, u64)> = None;
 
@@ -2090,6 +2096,12 @@ impl CapRustApp {
                                         }
                                         if hev.delete_requested {
                                             pending_delete_track = Some(idx);
+                                        }
+                                        if hev.duplicate_requested {
+                                            pending_duplicate_track = Some(idx);
+                                        }
+                                        if hev.rename_requested {
+                                            pending_rename_track = Some(idx);
                                         }
                                     },
                                 );
@@ -2821,6 +2833,24 @@ impl CapRustApp {
                             }
                         }
                     }
+                }
+                if let Some(idx) = pending_duplicate_track {
+                    let cmd =
+                        caprust_core::commands::duplicate_track::DuplicateTrackCommand::new(idx);
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("duplicate track failed: {e}");
+                    } else {
+                        tracing::info!("duplicate track {idx}");
+                    }
+                }
+                if let Some(idx) = pending_rename_track {
+                    let name = self
+                        .project
+                        .tracks
+                        .get(idx)
+                        .map(|t| t.name.clone())
+                        .unwrap_or_default();
+                    self.track_rename = Some((idx, name));
                 }
 
                 for a in pending_actions {
@@ -3756,6 +3786,70 @@ impl CapRustApp {
         }
     }
 
+    /// Modal for renaming the currently-selected track. Opened from
+    /// the track header context menu.
+    fn show_track_rename_window(&mut self, ctx: &egui::Context) {
+        let Some((idx, mut buf)) = self.track_rename.clone() else {
+            return;
+        };
+
+        let mut commit = false;
+        let mut cancel = false;
+
+        egui::Window::new(tr("tk-rename-title"))
+            .id(egui::Id::new("track_rename_modal"))
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut buf)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Track name"),
+                );
+                resp.request_focus();
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    commit = true;
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    cancel = true;
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let ok = egui::Button::new(
+                        egui::RichText::new(tr("tk-rename-ok"))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    )
+                    .fill(egui::Color32::from_rgb(34, 139, 230));
+                    if ui.add(ok).clicked() {
+                        commit = true;
+                    }
+                    if ui.button(tr("tk-rename-cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if cancel {
+            self.track_rename = None;
+            return;
+        }
+        if commit {
+            let trimmed = buf.trim().to_string();
+            if !trimmed.is_empty() {
+                if let Some(t) = self.project.tracks.get_mut(idx) {
+                    t.name = trimmed;
+                }
+                tracing::info!("renamed track {idx}");
+            }
+            self.track_rename = None;
+        } else {
+            self.track_rename = Some((idx, buf));
+        }
+    }
+
     fn show_model_prompt_window(&mut self, ctx: &egui::Context) {
         let Some(kind) = self.model_prompt else {
             return;
@@ -4299,6 +4393,9 @@ impl eframe::App for CapRustApp {
         }
         if self.model_prompt.is_some() {
             self.show_model_prompt_window(ctx);
+        }
+        if self.track_rename.is_some() {
+            self.show_track_rename_window(ctx);
         }
         self.show_toasts(ctx);
         self.show_update_toast(ctx);

@@ -147,6 +147,11 @@ tk-lock = Zaključaj
 tk-view = Prikaži u pregledu
 tk-mute = Isključi zvuk
 tk-delete = Obriši traku
+tk-rename = Preimenuj traku…
+tk-duplicate = Dupliciraj traku
+tk-rename-title = Preimenuj traku
+tk-rename-ok = Preimenuj
+tk-rename-cancel = Odustani
 
 # Preview
 preview-heading = Pregled
