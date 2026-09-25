@@ -2264,11 +2264,13 @@ impl CapRustApp {
                                     crate::theme::PlayheadSize::Compact => ruler_rect.bottom(),
                                     crate::theme::PlayheadSize::Full => lane_bottom,
                                 };
-                                let overlay_rect = egui::Rect::from_x_y_ranges(
-                                    ph_x..=ph_x,
-                                    ruler_rect.top()..=line_bottom,
-                                );
-                                let op = ui.painter_at(overlay_rect);
+                                // Use the UI's own painter. painter_at
+                                // with a zero-width rect (ph_x..=ph_x)
+                                // produces a degenerate clip rect and
+                                // silently draws nothing — the original
+                                // invisible-playhead bug. The UI's clip
+                                // already covers the timeline area.
+                                let op = ui.painter();
                                 op.line_segment(
                                     [
                                         egui::Pos2::new(ph_x, ruler_rect.top()),
