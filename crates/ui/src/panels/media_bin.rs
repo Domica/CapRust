@@ -332,7 +332,11 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             .width(90.0)
             .show_ui(ui, |ui| {
                 for f in MediaFilter::all() {
-                    ui.selectable_value(&mut state.filter, f, tr(&format!("media-filter-{}", f.key())));
+                    ui.selectable_value(
+                        &mut state.filter,
+                        f,
+                        tr(&format!("media-filter-{}", f.key())),
+                    );
                 }
             });
         ui.separator();
@@ -686,11 +690,13 @@ mod sort_filter_tests {
             make("b.mp3", MediaKind::Audio, 2),
             make("c.png", MediaKind::Image, 3),
         ];
-        let filtered: Vec<_> = items.iter().filter(|m| MediaFilter::Video.matches(m.kind)).collect();
+        let filtered: Vec<_> = items
+            .iter()
+            .filter(|m| MediaFilter::Video.matches(m.kind))
+            .collect();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "a.mp4");
     }
-
 
     #[test]
     fn sort_dir_descending_reverses_ascending() {
@@ -698,7 +704,10 @@ mod sort_filter_tests {
         // Ascending ostaje kak je
         let asc = SortDirection::Ascending;
         assert_eq!(asc.flipped(), SortDirection::Descending);
-        assert_eq!(SortDirection::Descending.flipped(), SortDirection::Ascending);
+        assert_eq!(
+            SortDirection::Descending.flipped(),
+            SortDirection::Ascending
+        );
     }
 
     #[test]

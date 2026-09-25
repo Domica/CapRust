@@ -433,7 +433,6 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Audio tab
 // ---------------------------------------------------------------------------
@@ -465,8 +464,8 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
         // the value is preserved so unmuting restores the previous level).
         ui.add_enabled_ui(!settings.muted, |ui| {
             ui.label(tr("set-audio-volume"));
-            let slider = egui::Slider::new(&mut settings.master_volume, 0.0..=1.0)
-                .show_value(false);
+            let slider =
+                egui::Slider::new(&mut settings.master_volume, 0.0..=1.0).show_value(false);
             ui.add_sized([200.0, 20.0], slider);
 
             // Show as integer percent so the user sees a stable value.
@@ -483,4 +482,3 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
             .color(egui::Color32::from_gray(130)),
     );
 }
-
