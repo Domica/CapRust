@@ -842,12 +842,34 @@ pub fn plan_from_project(
     // An empty Audio track (e.g. auto-created default) should NOT disable
     // the fallback to embedded audio in Video clips — otherwise projects
     // with only video+audio-embedded playback would produce silence.
+    // Count only clips on Audio tracks that can actually produce audio.
+    // A Captions or TextOverlay clip that happens to sit on an Audio
+    // track (the UI currently mis-assigns track_index when creating
+    // Captions clips) must not disable the fallback to video-embedded
+    // audio. Otherwise a video-only project with one stray Captions
+    // clip on A1 renders silent: has_audio_track becomes true, the
+    // fallback to video is skipped, and the Captions clip contributes
+    // nothing.
     let audio_track_clip_count: usize = project
         .tracks
         .iter()
         .enumerate()
         .filter(|(_, t)| t.kind == TrackKind::Audio)
-        .map(|(i, _)| project.clips.iter().filter(|c| c.track_index == i).count())
+        .map(|(i, _)| {
+            project
+                .clips
+                .iter()
+                .filter(|c| c.track_index == i)
+                .filter(|c| {
+                    matches!(
+                        &c.clip_type,
+                        ClipType::Audio { .. }
+                            | ClipType::Video { .. }
+                            | ClipType::Narration { .. }
+                    )
+                })
+                .count()
+        })
         .sum();
 
     let has_audio_track = audio_track_clip_count > 0;
@@ -890,9 +912,16 @@ pub fn plan_from_project(
                 _ => None,
             };
 
+            // Any clip on an Audio track contributes its embedded
+            // audio, regardless of whether the source file is an audio
+            // container or a video container. The previous version
+            // gated the Video arm on `audio_from_video`, which is false
+            // whenever a dedicated Audio track exists — so a video
+            // dropped on an Audio track (the manual detach-audio
+            // workflow until that feature ships) produced silence.
             let path_opt: Option<&String> = match &c.clip_type {
                 ClipType::Audio { path, .. } => Some(path),
-                ClipType::Video { path, .. } if audio_from_video => Some(path),
+                ClipType::Video { path, .. } => Some(path),
                 ClipType::Narration { .. } => narration_path_owned.as_ref(),
                 _ => None,
             };
