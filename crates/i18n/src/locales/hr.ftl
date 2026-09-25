@@ -249,3 +249,66 @@ update-toast-skip = Preskoči ovu verziju
 set-appearance-updates = Ažuriranja
 set-appearance-check-updates = Provjeri ažuriranja pri pokretanju
 set-appearance-updates-hint = Tiha provjera, jednom dnevno. Možeš preskočiti ili odgoditi pojedinu verziju.
+
+# Asset browser — coming-soon marker
+asset-coming-soon = Uskoro
+
+# Transitions
+asset-transition-none = Bez
+asset-transition-fade = Postupno
+asset-transition-slide_l = Klizanje lijevo
+asset-transition-slide_r = Klizanje desno
+asset-transition-slide_u = Klizanje gore
+asset-transition-slide_d = Klizanje dolje
+asset-transition-zoom_in = Povećanje
+asset-transition-zoom_out = Smanjenje
+asset-transition-wipe_l = Brisanje lijevo
+asset-transition-wipe_r = Brisanje desno
+asset-transition-rotate = Rotacija
+asset-transition-blur_t = Zamućeni rez
+
+# Effects
+asset-effect-blur = Zamućenje
+asset-effect-vignette = Vinjeta
+asset-effect-glitch = Greška
+asset-effect-rgb_split = RGB razdvajanje
+asset-effect-shake = Tresi
+asset-effect-zoom_pulse = Pulsirajući zoom
+asset-effect-flash = Bljesak
+asset-effect-mirror = Zrcalo
+asset-effect-kaleido = Kaleidoskop
+asset-effect-old_film = Stari film
+asset-effect-vhs = VHS
+asset-effect-light_leak = Svjetlosno propuštanje
+asset-effect-particle = Čestice
+asset-effect-sparkle = Iskre
+asset-effect-ghost = Duh
+asset-effect-lens_flare = Odbljesak
+
+# Filters
+asset-filter-none = Bez
+asset-filter-warm = Toplo
+asset-filter-cool = Hladno
+asset-filter-bw = Crno-bijelo
+asset-filter-sepia = Sepija
+asset-filter-cinematic = Filmski
+asset-filter-vintage = Retro
+asset-filter-vivid = Živopisno
+asset-filter-matte = Mat
+asset-filter-noir = Noar
+asset-filter-sunset = Zalazak
+asset-filter-ocean = Ocean
+asset-filter-fade = Izblijedjelo
+asset-filter-pastel = Pastel
+asset-filter-neon = Neon
+asset-filter-gold = Zlatno
+
+# Text styles
+asset-text-default = Zadano
+asset-text-bold = Podebljani naslov
+asset-text-subtitle = Podnaslov
+asset-text-lower = Donja trećina
+asset-text-quote = Citat
+asset-text-caption = Titl
+asset-text-glow = Neon
+asset-text-handwrite = Rukopis

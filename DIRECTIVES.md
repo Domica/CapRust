@@ -345,7 +345,9 @@ Reference impl: `media-io::audio_mix::MixInputState`.
 - Dark-first, Material-like: 6 px corners, subtle borders, no harsh strokes.
 - Accent-driven: selection, hover, active states derive from `theme.accent`.
 - Toggle buttons show **pressed-in** state: darker bg + inset border + accent icon.
-- Icons: Phosphor font (`egui_phosphor::regular`).
+- Icons: **Phosphor font only** (`egui_phosphor::regular`). Never mix Unicode glyphs, emoji, or ad-hoc character symbols in UI chrome — they render at different baselines and weights, and break i18n-agnostic layout. The one historical exception was the media-bin emoji fallback, which is retired.
+- Preset metadata (asset browser): store FTL keys, not literal labels (§8). A `Preset { label_key: &'static str, ... }` must never carry translated text; use `tr(label_key)` at render time.
+- Coming-soon presets: render dimmed with a "Coming soon" hover tooltip and return `false` from the click handler. Never silently no-op a click.
 - Panels are resizable. The timeline panel is user-resizable and caches row geometry.
 - Media bin grid: dynamic column count based on panel width.
 - Start screen content is centered both axes.
@@ -430,7 +432,8 @@ A feature is done only when all are true:
 | G — Preview kroz filtergraph | ✅ | Zadnji fix: perf (457a8c9) |
 | **H — Audio playback u preview** | ✅ | cpal + ringbuf |
 | **F — AI modeli (Whisper + Piper)** | ✅ | Captions + naracija |
-| **R — Update checker** | ⏳ Planned | GitHub Releases API + toast, §23.4 |
+| **R — Update checker** | ✅ | GitHub Releases + snooze/skip |
+| **T — Transition polish** | ⏳ Planned | xfade for slide/zoom/wipe/rotate, §J+ |
 | **G — Hardware encoding** | ⏳ Planned | NVENC / AMF / QSV, Settings → General |
 | **I — CLAP audio pluginovi** | ⏳ Planned | |
 | **J — Animacije (zoom_pulse, shake, particle)** | ⏳ Planned | |
