@@ -1198,6 +1198,11 @@ impl CapRustApp {
         let source_path = std::path::PathBuf::from(path_str);
         let source_start_ms = 0u64;
         let duration_ms = source_clip.duration_ms;
+        // Captions clip lands under its source: same timeline start and
+        // duration, so the user can see the transcript directly below
+        // the video/audio it came from. `source_start_ms` stays 0 until
+        // clip trimming is wired through to the extraction step.
+        let insert_at_ms = source_clip.start_time_ms;
 
         let req = crate::media_jobs::CaptionRequest {
             model_id,
@@ -1206,6 +1211,7 @@ impl CapRustApp {
             source_path,
             source_start_ms,
             duration_ms,
+            insert_at_ms,
         };
 
         // Demo path does not touch ffmpeg or whisper; it returns fake

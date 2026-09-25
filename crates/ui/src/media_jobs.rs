@@ -193,8 +193,15 @@ pub struct CaptionRequest {
     /// First audio source to transcribe: absolute file path plus the
     /// source-side window inside that file.
     pub source_path: std::path::PathBuf,
+    /// Offset inside the source file where the clip's audio begins.
+    /// Used only for ffmpeg extraction (`-ss` before decoding).
     pub source_start_ms: u64,
+    /// Length of the source window to transcribe.
     pub duration_ms: u64,
+    /// Timeline position where the resulting Captions clip should be
+    /// inserted. This is the source clip's `start_time_ms`, so the
+    /// Captions clip lands directly under its video/audio source.
+    pub insert_at_ms: u64,
 }
 
 /// Result of a transcription job.
@@ -266,7 +273,7 @@ pub fn spawn_demo_caption_job(
                 model_id: req.model_id,
                 language: req.language,
                 segments,
-                insert_at_ms: req.source_start_ms,
+                insert_at_ms: req.insert_at_ms,
                 duration_ms: total,
             }));
         })
@@ -322,7 +329,7 @@ fn run_caption_job(
         model_id: req.model_id.clone(),
         language: req.language.clone(),
         segments,
-        insert_at_ms: req.source_start_ms,
+        insert_at_ms: req.insert_at_ms,
         duration_ms: req.duration_ms,
     })
 }
