@@ -26,3 +26,4 @@ Thumbs.db
 # User projects (not committed)
 *.caprust
 cache/
+DIRECTIVES.md
