@@ -6,6 +6,7 @@
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org/)
+[![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20(local)-purple.svg)](#what-is-caprust)
 
 ---
 
@@ -26,7 +27,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Multi-track magnetic timeline | Yes |
 | Effects + transitions | Yes — preview + export |
 | Preview = Export filtergraph | Yes — same RenderPlan, no surprises |
-| AI captions + narration | Planned — Whisper + Piper |
+| AI captions + narration | Yes — local Whisper + Piper |
 | Zero-config install | Yes — Portable .exe |
 
 ---
@@ -158,8 +159,8 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | i18n | English + Croatian | Done |
 | Preview | Real-time through export filtergraph | Done — perf polish ongoing |
 | Export | Video with effects + transitions | Done — audio mux test in progress |
-| **H** | Audio playback in preview | Next |
-| **F** | AI models — Whisper, Piper | Planned |
+| **H** | Audio playback in preview | Done |
+| **F** | AI models — Whisper, Piper | Done |
 | **I** | CLAP audio plugins | Planned |
 | **J** | Animations — zoom pulse, shake, particle | Planned |
 | **N** | MCP server — AI-driven editing | Planned |

@@ -297,10 +297,36 @@ Reference impl: `media-io::audio_mix::MixInputState`.
 - **Never bundle** weights in the binary.
 - Default dir: `%APPDATA%/CapRust/models/`; overridable in Settings.
 - Registry: `core::models::ModelRegistry` with `ModelStatus` (NotDownloaded, Downloading, Ready, Error).
-- Captions: Whisper family (tiny/base/small/medium).
-- Narration: Piper voices (en_US lessac/amy, hr_HR ivan, de_DE thorsten).
-- Downloads: HTTP via `reqwest` in a later phase. Until then `start_download` writes a `.placeholder` file.
-- When no model is ready and the user clicks a caption/narration button, open the model-prompt dialog.
+- Downloads: `core::models::download::download_file` uses `ureq` (blocking, rustls) to stream into `<dest>.part`, then renames. Optional SHA-256 verification; on mismatch the `.part` is removed and the destination never touched.
+- On startup `ModelRegistry::scan_local(models_dir)` sets Ready for any model already on disk.
+
+### 11.1 Captions (Whisper)
+
+- Crate: `whisper-rs` 0.14, **CPU backend only** (`default-features = false`). GGML, ggml-base, ggml-cpu all compiled via cmake in the build script; requires `cmake` + a C++ toolchain in the image (present in the devcontainer and GitHub runners).
+- Models: `ggerganov/whisper.cpp` GGML files on Hugging Face — tiny / base / small / medium. Cached as `<models_dir>/whisper-<size>.bin`.
+- Engine: `media-io::whisper::WhisperEngine` (`load` / `transcribe`). Timestamps come back as centiseconds from whisper.cpp and are converted to milliseconds in the engine; text is trimmed.
+- Audio input: `media-io::whisper::extract_16khz_mono_f32(ffmpeg, source, start_ms, dur_ms)` shells out to ffmpeg with `-f f32le -ac 1 -ar 16000` and reads raw samples from stdout.
+- UI: 💬 button in the timeline toolbar. Wait-and-insert: the job runs on a background thread (`media_jobs::spawn_caption_job`) and a populated `ClipType::Captions` is inserted only after success. In-flight state lives in `CapRustApp::caption_rx`; the update tick calls `drain_caption_job`.
+- Render: `ClipType::Captions` expands into one `TextClip` (drawtext with an `enable` window) per segment inside `build_filtergraph`. Preview and export share the graph (§21), so both pick this up automatically.
+
+### 11.2 Narration (Piper)
+
+- **Subprocess integration**, same philosophy as ffmpeg (§10): no ONNX runtime, no FFI, no version lock-in.
+- Binary: `media-io::piper::ensure_binary(models_dir)` downloads the pinned `2023.11.14-2` release archive (tar.gz on Linux/macOS, zip on Windows), extracts into `<models_dir>/piper/`, and returns the executable path. Cached; only runs when the user first triggers narration.
+- Voices: `.onnx` + sibling `.onnx.json` config. Registry ids like `piper-en-lessac`, `piper-hr-ivan`. Path: `<models_dir>/piper-<voice>.onnx`.
+- Engine: `media-io::piper::synthesize(bin, onnx, text, wav)` writes text to Piper's stdin, reads the generated WAV from `--output_file`.
+- Cache: `<models_dir>/narration/<blake3(voice_id|text)>.wav` — deterministic across machines (see `core::cache::narration_path`). Project files store `text` + `voice_id`, not the WAV, so the asset is regenerable and sync-friendly.
+- UI: 🎙 button opens the `narration_input` modal (voice picker + multiline text). On Synthesize, `media_jobs::spawn_narration_job` ensures the binary, synthesizes if cache-miss, ffprobes the WAV for its duration, and the update loop (`drain_narration_job`) inserts a `ClipType::Narration` on the first Audio track (auto-created if missing).
+- Missing WAV at export/preview time is skipped with a warning rather than letting ffmpeg fail on a missing input.
+
+### 11.3 Threading
+
+- Every long-running AI task runs on a dedicated named thread (`caprust-caption`, `caprust-narration`) and reports back through `std::sync::mpsc`. The UI polls with `try_recv()` in its update loop and never blocks.
+- Result types live in `crates/ui/src/media_jobs.rs` (`CaptionResult`, `NarrationResult`).
+
+### 11.4 Model prompt
+
+- When no model of the requested kind is Ready and the user clicks 💬 or 🎙, `CapRustApp::model_prompt` is set to the kind and a centered modal asks the user to download one. Downloading is not yet wired end-to-end (Settings → Models is the manual path for now).
 
 ---
 
@@ -402,8 +428,10 @@ A feature is done only when all are true:
 | E2-A — Multi-track + image + text + effects | ✅ | |
 | E2-B — xfade tranzicije | ✅ | |
 | G — Preview kroz filtergraph | ✅ | Zadnji fix: perf (457a8c9) |
-| **H — Audio playback u preview** | ⏳ Next | cpal + ringbuf |
-| **F — AI modeli (Whisper + Piper)** | ⏳ Planned | Nakon H |
+| **H — Audio playback u preview** | ✅ | cpal + ringbuf |
+| **F — AI modeli (Whisper + Piper)** | ✅ | Captions + naracija |
+| **R — Update checker** | ⏳ Planned | GitHub Releases API + toast, §23.4 |
+| **G — Hardware encoding** | ⏳ Planned | NVENC / AMF / QSV, Settings → General |
 | **I — CLAP audio pluginovi** | ⏳ Planned | |
 | **J — Animacije (zoom_pulse, shake, particle)** | ⏳ Planned | |
 | **K — Real-time efekt preview bez restarta** | ⏳ Planned | |
@@ -558,6 +586,41 @@ When file moves, media library re-finds it by hash (local folder or cloud folder
           dispatch.rs     - tool -> Command mapping
 
 **Timeline:** Phase N, after F (AI models are the reason to have MCP at all).
+
+---
+
+### 23.4 Update Checker (planned)
+
+**Goal:** tell the user when a newer release is available, without
+auto-updating.
+
+- Endpoint: `https://api.github.com/repos/Domica/CapRust/releases/latest`.
+- Compare `tag_name` against `env!("CARGO_PKG_VERSION")`.
+- Throttle: at most once per 24 h. Cache the last check time and result
+  under `%APPDATA%/CapRust/last_update_check.json`.
+- UI: small toast in a corner of the editor: *"New version v0.X.Y — Download"*.
+  Click opens the release page in the system browser. No auto-download.
+- Respect `AppSettings.check_for_updates: bool` (default true).
+- Failure is silent — network errors never surface as dialogs.
+
+### 23.5 Hardware encoding (planned)
+
+**Goal:** use the GPU for H.264 export on machines that have it.
+
+- Settings → General → **Encoder** dropdown:
+  - `Auto` (default — pick the best available)
+  - `Software (libx264)` — universal fallback
+  - `NVIDIA NVENC` (h264_nvenc, hevc_nvenc, av1_nvenc)
+  - `AMD AMF` (h264_amf, hevc_amf)
+  - `Intel QSV` (h264_qsv, hevc_qsv)
+- Detect at startup by parsing `ffmpeg -encoders`. Hide options the
+  installed ffmpeg build does not provide.
+- Persist in `AppSettings.hardware_encoder: String` (`"auto"`,
+  `"libx264"`, `"h264_nvenc"`, ...).
+- Export window shows the active encoder and falls back to libx264 with
+  a warning if the chosen hardware encoder fails at runtime.
+- H.264 first; H.265 / AV1 follow once the plumbing is proven.
+- Perf target: 5-10x vs libx264 medium on NVENC, 3-5x on AMF/QSV.
 
 ---
 
