@@ -72,6 +72,35 @@ impl Toast {
     }
 }
 
+/// Kinds of long-running jobs the jobs bar can display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobKind {
+    Caption,
+    Narration,
+    Export,
+}
+
+/// One in-flight background job. `progress` < 0.0 means indeterminate
+/// (no reliable signal from the producer).
+#[derive(Debug, Clone)]
+pub struct BackgroundJob {
+    pub id: u64,
+    pub kind: JobKind,
+    pub label: String,
+    pub progress: f32,
+    pub started_at: std::time::Instant,
+}
+
+impl BackgroundJob {
+    pub const INDETERMINATE: f32 = -1.0;
+    pub fn is_indeterminate(&self) -> bool {
+        self.progress < 0.0
+    }
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.started_at.elapsed()
+    }
+}
+
 pub struct CapRustApp {
     pub mode: AppMode,
     pub project: ProjectState,
@@ -119,6 +148,16 @@ pub struct CapRustApp {
     /// Transient notifications shown top-right. Expired entries are
     /// pruned each frame; the user can dismiss early with the ✕ button.
     pub toasts: Vec<Toast>,
+    /// In-flight background jobs (caption, narration, export). Rendered
+    /// by show_jobs_bar above the timeline while any are live.
+    pub jobs: Vec<BackgroundJob>,
+    pub next_job_id: u64,
+    /// Active job id per pipeline. Some while the corresponding job
+    /// runs; None otherwise. Used to update/finish the matching
+    /// BackgroundJob without a lookup by kind.
+    pub caption_job_id: Option<u64>,
+    pub narration_job_id: Option<u64>,
+    pub export_job_id: Option<u64>,
     /// Receiver for the background update-check thread. Cleared after
     /// first successful receive.
     pub update_rx: Option<
@@ -261,6 +300,11 @@ impl CapRustApp {
             narration_input: Default::default(),
             update_available: None,
             toasts: Vec::new(),
+            jobs: Vec::new(),
+            next_job_id: 1,
+            caption_job_id: None,
+            narration_job_id: None,
+            export_job_id: None,
             update_rx,
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
@@ -916,6 +960,8 @@ impl CapRustApp {
             text,
         };
         let rx = crate::media_jobs::spawn_narration_job(ffprobe, req);
+        let job_id = self.begin_job(JobKind::Narration, tr("job-narration"));
+        self.narration_job_id = Some(job_id);
         self.narration_rx = Some(rx);
         self.toast(tr("toast-narration-started"));
         tracing::info!("narration: job spawned");
@@ -946,16 +992,25 @@ impl CapRustApp {
                         self.playhead_ms
                     );
                 }
+                if let Some(id) = self.narration_job_id.take() {
+                    self.finish_job(id);
+                }
                 self.narration_rx = None;
             }
             Ok(Err(msg)) => {
                 tracing::error!("narration: job failed: {msg}");
                 self.toast(format!("{}: {msg}", tr("toast-narration-failed")));
+                if let Some(id) = self.narration_job_id.take() {
+                    self.finish_job(id);
+                }
                 self.narration_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 tracing::error!("narration: job thread vanished");
+                if let Some(id) = self.narration_job_id.take() {
+                    self.finish_job(id);
+                }
                 self.narration_rx = None;
             }
         }
@@ -1168,6 +1223,8 @@ impl CapRustApp {
             };
             crate::media_jobs::spawn_caption_job(ffmpeg, req)
         };
+        let job_id = self.begin_job(JobKind::Caption, tr("job-caption"));
+        self.caption_job_id = Some(job_id);
         self.caption_rx = Some(rx);
         self.caption_job_started = Some(std::time::Instant::now());
         self.toast(tr("toast-caption-started"));
@@ -1190,6 +1247,9 @@ impl CapRustApp {
                     // project file across saves.
                     tracing::warn!("caption: job returned 0 segments — not inserting a clip");
                     self.toast(tr("toast-caption-empty"));
+                    if let Some(id) = self.caption_job_id.take() {
+                        self.finish_job(id);
+                    }
                     self.caption_rx = None;
                     self.caption_job_started = None;
                     return;
@@ -1217,18 +1277,27 @@ impl CapRustApp {
                     );
                     self.toast(tr("toast-caption-added"));
                 }
+                if let Some(id) = self.caption_job_id.take() {
+                    self.finish_job(id);
+                }
                 self.caption_rx = None;
                 self.caption_job_started = None;
             }
             Ok(Err(msg)) => {
                 tracing::error!("caption: job failed: {msg}");
                 self.toast(format!("{}: {msg}", tr("toast-caption-failed")));
+                if let Some(id) = self.caption_job_id.take() {
+                    self.finish_job(id);
+                }
                 self.caption_rx = None;
                 self.caption_job_started = None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 tracing::error!("caption: job thread vanished");
+                if let Some(id) = self.caption_job_id.take() {
+                    self.finish_job(id);
+                }
                 self.caption_rx = None;
                 self.caption_job_started = None;
             }
@@ -1273,6 +1342,98 @@ impl CapRustApp {
                 self.update_rx = None;
             }
         }
+    }
+
+    /// Register a new background job and return its id. Callers store
+    /// the id so drain paths can update progress or finish it.
+    fn begin_job(&mut self, kind: JobKind, label: impl Into<String>) -> u64 {
+        let id = self.next_job_id;
+        self.next_job_id += 1;
+        self.jobs.push(BackgroundJob {
+            id,
+            kind,
+            label: label.into(),
+            progress: BackgroundJob::INDETERMINATE,
+            started_at: std::time::Instant::now(),
+        });
+        id
+    }
+
+    /// Update a job's progress (0.0..=1.0). No-op if the id is gone.
+    fn update_job_progress(&mut self, id: u64, progress: f32) {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            j.progress = progress.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Remove a job from the list. No-op if already gone.
+    fn finish_job(&mut self, id: u64) {
+        self.jobs.retain(|j| j.id != id);
+    }
+
+    /// Thin bar above the timeline listing live background jobs.
+    /// Auto-hides when the list is empty.
+    fn show_jobs_bar(&mut self, ctx: &egui::Context) {
+        if self.jobs.is_empty() {
+            return;
+        }
+
+        egui::TopBottomPanel::bottom("jobs_bar")
+            .exact_height(34.0)
+            .resizable(false)
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.add_space(8.0);
+                    let n = self.jobs.len();
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} job{} running",
+                            n,
+                            if n == 1 { "" } else { "s" }
+                        ))
+                        .small()
+                        .color(egui::Color32::from_gray(170)),
+                    );
+                    ui.separator();
+
+                    for j in &self.jobs {
+                        ui.label(
+                            egui::RichText::new(&j.label)
+                                .small()
+                                .color(egui::Color32::from_gray(220)),
+                        );
+                        let bar_w = 120.0;
+                        if j.is_indeterminate() {
+                            // Spinner substitute: animated dots via
+                            // progress bar in a spinning style is not
+                            // built into egui. Use a low-alpha bar that
+                            // repaints; the caller requests repaint so
+                            // the pulse is visible.
+                            let pulse = 0.15 + 0.15 * (j.elapsed().as_secs_f32() * 3.0).sin();
+                            ui.add(
+                                egui::ProgressBar::new(pulse)
+                                    .desired_width(bar_w)
+                                    .desired_height(8.0),
+                            );
+                        } else {
+                            ui.add(
+                                egui::ProgressBar::new(j.progress)
+                                    .desired_width(bar_w)
+                                    .desired_height(8.0),
+                            );
+                        }
+                        ui.label(
+                            egui::RichText::new(format!("{:.1}s", j.elapsed().as_secs_f32()))
+                                .small()
+                                .monospace()
+                                .color(egui::Color32::from_gray(150)),
+                        );
+                        ui.add_space(12.0);
+                    }
+                    ctx.request_repaint();
+                });
+            });
     }
 
     /// Push a transient notification. Auto-dismisses after 4s.
@@ -2464,6 +2625,10 @@ impl CapRustApp {
                 }
             });
 
+        // Jobs bar sits above the timeline so it's visible from any
+        // panel. It auto-hides when no jobs are live.
+        self.show_jobs_bar(ctx);
+
         self.show_timeline(ctx);
 
         // Central preview (frame + transport)
@@ -3194,6 +3359,8 @@ impl CapRustApp {
 
         let rx =
             caprust_media_io::exporter::spawn_export(std::path::PathBuf::from(ffmpeg), plan, out);
+        let job_id = self.begin_job(JobKind::Export, tr("job-export"));
+        self.export_job_id = Some(job_id);
         self.export_rx = Some(rx);
         self.export_in_progress = true;
         self.export_progress = 0.0;
@@ -3201,15 +3368,28 @@ impl CapRustApp {
     }
 
     fn poll_export(&mut self) {
-        let Some(rx) = self.export_rx.as_ref() else {
-            return;
-        };
-        while let Ok(ev) = rx.try_recv() {
+        // Drain all pending events into a local Vec first, then process
+        // them. Holding `&Receiver` across the loop would conflict with
+        // the `&mut self` calls (finish_job) that the event handlers
+        // need.
+        let mut events: Vec<ExportEvent> = Vec::new();
+        {
+            let Some(rx) = self.export_rx.as_ref() else {
+                return;
+            };
+            while let Ok(ev) = rx.try_recv() {
+                events.push(ev);
+            }
+        }
+        for ev in events {
             match ev {
                 ExportEvent::Started => {
                     tracing::info!("export: ffmpeg started");
                 }
                 ExportEvent::Progress(p) => {
+                    if let Some(id) = self.export_job_id {
+                        self.update_job_progress(id, p);
+                    }
                     self.export_progress = p;
                 }
                 ExportEvent::Log(line) => {
@@ -3217,11 +3397,17 @@ impl CapRustApp {
                 }
                 ExportEvent::Finished { output } => {
                     tracing::info!("export: finished → {}", output.display());
+                    if let Some(id) = self.export_job_id.take() {
+                        self.finish_job(id);
+                    }
                     self.export_in_progress = false;
                     self.export_finished_path = Some(output.to_string_lossy().to_string());
                 }
                 ExportEvent::Failed(msg) => {
                     tracing::error!("export failed: {msg}");
+                    if let Some(id) = self.export_job_id.take() {
+                        self.finish_job(id);
+                    }
                     self.export_in_progress = false;
                 }
             }
