@@ -886,6 +886,12 @@ pub fn plan_from_project(
     let mut inputs: Vec<InputSpec> = Vec::new();
     let mut video_clips: Vec<VideoClip> = Vec::new();
     let mut audio_clips: Vec<AudioClip> = Vec::new();
+    // Clips downstream of an xfade appear earlier in the render than
+    // their original timeline position; shift their audio and their
+    // burned-in captions to match so the mix and the on-screen text
+    // stay in sync with the shortened video.
+    let xfade_audio_shifts = compute_xfade_audio_shifts(project);
+
     let mut text_clips: Vec<TextClip> = Vec::new();
 
     let register_input =
@@ -978,7 +984,14 @@ pub fn plan_from_project(
                     // enable window. Coordinates are relative to the clip's
                     // start: whisper reports absolute source times, the clip
                     // holds them relative to its own timeline position.
-                    let clip_start_sec = c.start_time_ms as f64 / 1000.0;
+                    //
+                    // The clip's effective start is shifted left by the
+                    // upstream xfade durations on its track (same shift
+                    // applied to the audio mix) so the burned-in text
+                    // lands on top of the same frame it was transcribed
+                    // from, not D seconds late after a transition.
+                    let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
+                    let clip_start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
                     for seg in segments {
                         let seg_start_sec = clip_start_sec + seg.start_ms as f64 / 1000.0;
                         let seg_end_sec = clip_start_sec + seg.end_ms as f64 / 1000.0;
@@ -1052,11 +1065,6 @@ pub fn plan_from_project(
     };
 
     let audio_from_video = !has_audio_track;
-
-    // Clips downstream of an xfade appear earlier in the render than
-    // their original timeline position; shift their audio to match so
-    // the mix stays in sync. See compute_xfade_audio_shifts.
-    let xfade_audio_shifts = compute_xfade_audio_shifts(project);
 
     for t_idx in audio_source_tracks {
         let mut clips: Vec<&caprust_core::Clip> = project
