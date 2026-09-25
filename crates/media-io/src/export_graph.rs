@@ -1096,7 +1096,11 @@ pub fn plan_from_project(
             // workflow until that feature ships) produced silence.
             let path_opt: Option<&String> = match &c.clip_type {
                 ClipType::Audio { path, .. } => Some(path),
-                ClipType::Video { path, .. } => Some(path),
+                // A video clip whose audio has been explicitly detached
+                // is silent in the mix — the detached Audio clip is the
+                // sole source for that span. See SeparateAudioCommand.
+                ClipType::Video { path, .. } if !c.audio_detached => Some(path),
+                ClipType::Video { .. } => None,
                 ClipType::Narration { .. } => narration_path_owned.as_ref(),
                 _ => None,
             };

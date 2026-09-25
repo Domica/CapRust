@@ -2522,6 +2522,28 @@ impl CapRustApp {
                                                 .push(ClipAction::GenerateCaptions(clip_id));
                                             ui.close_menu();
                                         }
+                                        // Separate audio only applies to clips that
+                                        // actually have an embedded audio track and
+                                        // have not already been detached.
+                                        let can_detach = self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|c| c.id == clip_id)
+                                            .map(|c| {
+                                                matches!(
+                                                    c.clip_type,
+                                                    caprust_core::ClipType::Video { .. }
+                                                ) && !c.audio_detached
+                                            })
+                                            .unwrap_or(false);
+                                        if can_detach
+                                            && ui.button(tr("clip-ctx-separate-audio")).clicked()
+                                        {
+                                            pending_actions
+                                                .push(ClipAction::SeparateAudio(clip_id));
+                                            ui.close_menu();
+                                        }
                                         if self.settings.enable_shortcuts {
                                             ui.separator();
                                             if ui
@@ -2729,6 +2751,21 @@ impl CapRustApp {
                     match a {
                         ClipAction::GenerateCaptions(id) => {
                             self.start_caption_job(Some(id));
+                        }
+                        ClipAction::SeparateAudio(id) => {
+                            let cmd =
+                                caprust_core::commands::separate_audio::SeparateAudioCommand::new(
+                                    id,
+                                );
+                            if let Err(e) =
+                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                            {
+                                tracing::error!("separate audio failed: {e}");
+                                self.toast(tr("toast-separate-audio-failed"));
+                            } else {
+                                tracing::info!("separate audio: created Audio clip from {id}");
+                                self.toast(tr("toast-separate-audio-done"));
+                            }
                         }
                         ClipAction::SetPlayhead(ms) => {
                             let target = ms.min(total_ms.max(1));
@@ -3943,6 +3980,7 @@ enum ClipAction {
     ToggleFlipH(uuid::Uuid),
     ToggleFlipV(uuid::Uuid),
     GenerateCaptions(uuid::Uuid),
+    SeparateAudio(uuid::Uuid),
 }
 
 impl eframe::App for CapRustApp {

@@ -81,6 +81,12 @@ pub struct Clip {
     pub transition_in: Option<String>,
     #[serde(default)]
     pub transition_out: Option<String>,
+    /// True when the user has explicitly separated this video's audio
+    /// onto an Audio track. The video continues to render, but its
+    /// embedded audio is not harvested into the mix — the detached
+    /// Audio clip is the sole audio source.
+    #[serde(default)]
+    pub audio_detached: bool,
 }
 
 impl Clip {
@@ -102,6 +108,7 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            audio_detached: false,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -125,6 +132,7 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            audio_detached: false,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -148,6 +156,7 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            audio_detached: false,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -172,6 +181,7 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            audio_detached: false,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -202,6 +212,7 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            audio_detached: false,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -233,6 +244,7 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            audio_detached: false,
             source_duration_ms: 0,
             media_id: None,
         }

@@ -5,6 +5,7 @@ pub mod edit_caption_segment;
 pub mod move_clip;
 pub mod relink;
 pub mod ripple;
+pub mod separate_audio;
 pub mod set_clip;
 pub mod set_effect;
 pub mod split_clip;
