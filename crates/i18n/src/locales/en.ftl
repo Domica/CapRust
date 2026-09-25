@@ -224,3 +224,10 @@ cancel = Cancel
 close = Close
 yes = Yes
 no = No
+
+set-tab-audio = Audio
+set-audio-hint = Controls how the preview plays back through your speakers. Export volume is set per-clip on the timeline.
+set-audio-volume = Volume
+set-audio-mute = Mute
+set-audio-unmute = Unmute
+set-audio-preview-only = These settings affect preview only, not export.

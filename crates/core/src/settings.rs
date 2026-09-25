@@ -14,6 +14,19 @@ pub struct AppSettings {
     pub ffprobe_path: Option<String>,
     /// Keyboard shortcuts on/off (mirrors the old flag).
     pub enable_shortcuts: bool,
+    /// Master audio volume for preview playback, 0.0..=1.0.
+    /// Applied to the cpal stream on top of any per-clip volume.
+    /// Does not affect export (export uses each clip's own volume_db).
+    #[serde(default = "default_master_volume")]
+    pub master_volume: f32,
+    /// When true, the preview audio stream is muted regardless of
+    /// master_volume. Persisted so the state survives restarts.
+    #[serde(default)]
+    pub muted: bool,
+}
+
+fn default_master_volume() -> f32 {
+    1.0
 }
 
 impl Default for AppSettings {
@@ -27,6 +40,8 @@ impl Default for AppSettings {
             ffmpeg_path: None,
             ffprobe_path: None,
             enable_shortcuts: true,
+            master_volume: default_master_volume(),
+            muted: false,
         }
     }
 }

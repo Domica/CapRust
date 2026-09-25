@@ -224,3 +224,10 @@ cancel = Odustani
 close = Zatvori
 yes = Da
 no = Ne
+
+set-tab-audio = Audio
+set-audio-hint = Kontrolira kako preview svira kroz zvučnike. Glasnoća izvoza postavlja se po klipu na timelineu.
+set-audio-volume = Glasnoća
+set-audio-mute = Utišaj
+set-audio-unmute = Uključi zvuk
+set-audio-preview-only = Ove postavke utječu samo na preview, ne na izvoz.
