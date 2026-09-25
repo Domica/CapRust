@@ -91,6 +91,12 @@ ENV NEXTEST_HIDE_PROGRESS_BAR=false
 # -----------------------------------------------------------------------------
 # 5) User shell tweaks
 # -----------------------------------------------------------------------------
+# Cargo registry volume is mounted as root; take ownership so the
+# vscode user can write crates into it after every container rebuild.
+USER root
+RUN mkdir -p /usr/local/cargo/registry /usr/local/cargo/git \
+    && chown -R vscode:vscode /usr/local/cargo
+
 USER vscode
 RUN echo 'export PATH="/usr/local/cargo/bin:$PATH"' >> ~/.bashrc \
     && echo '# Aliases' >> ~/.bashrc \
