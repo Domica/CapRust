@@ -1073,6 +1073,37 @@ impl CapRustApp {
                 self.start_caption_job(None);
             }
         }
+        if ev.download_models_clicked {
+            // Pick the family with more missing entries so the first
+            // screen the user sees is the one that needs attention.
+            let models_dir = self.settings.effective_models_dir();
+            self.project.models.scan_local(&models_dir);
+            let captions_missing = self
+                .project
+                .models
+                .models
+                .iter()
+                .filter(|m| m.kind == caprust_core::ModelKind::Caption)
+                .filter(|m| m.status != caprust_core::ModelStatus::Ready)
+                .count();
+            let narration_missing = self
+                .project
+                .models
+                .models
+                .iter()
+                .filter(|m| m.kind == caprust_core::ModelKind::Narration)
+                .filter(|m| m.status != caprust_core::ModelStatus::Ready)
+                .count();
+            let kind = if narration_missing > captions_missing {
+                caprust_core::ModelKind::Narration
+            } else {
+                caprust_core::ModelKind::Caption
+            };
+            tracing::info!(
+                "models: download icon clicked (captions missing {captions_missing}, narration missing {narration_missing}) — opening {kind:?}"
+            );
+            self.model_prompt = Some(kind);
+        }
         if ev.captions_all_clicked {
             let track_idx = self
                 .selected_clips
@@ -1914,12 +1945,42 @@ impl CapRustApp {
                 let can_undo = self.undo_stack.can_undo();
                 let can_redo = self.undo_stack.can_redo();
                 let mut tools = self.timeline_tools;
+
+                // Compute model availability once per frame so the
+                // download icon can tint itself and explain its state
+                // in a tooltip.
+                let models_dir = self.settings.effective_models_dir();
+                let _ = models_dir; // reserved for a future filesystem scan inside this frame
+                let captions_total = self
+                    .project
+                    .models
+                    .models
+                    .iter()
+                    .filter(|m| m.kind == caprust_core::ModelKind::Caption)
+                    .count();
+                let narration_total = self
+                    .project
+                    .models
+                    .models
+                    .iter()
+                    .filter(|m| m.kind == caprust_core::ModelKind::Narration)
+                    .count();
+                let captions_ready = self.project.models.ready_captions().len();
+                let narration_ready = self.project.models.ready_narration().len();
+                let availability = crate::timeline::toolbar::ModelAvailability::Status {
+                    captions_ready,
+                    narration_ready,
+                    captions_total,
+                    narration_total,
+                };
+
                 let ev = crate::timeline::toolbar::show(
                     ui,
                     &mut tools,
                     can_undo,
                     can_redo,
                     self.playhead_ms,
+                    availability,
                 );
                 self.timeline_tools = tools;
                 self.handle_timeline_events(ev);
