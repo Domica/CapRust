@@ -74,6 +74,89 @@ pub fn show(
     });
     ui.separator();
 
+    // --- Captions: read-only transcript view ---
+    //
+    // Captions clips have no editable geometry or effects; the useful
+    // information is the transcript itself. Show model, language,
+    // segment count, and the segment list with timestamps so the user
+    // can verify a transcription without opening the .caprust JSON.
+    if let ClipType::Captions {
+        model_id,
+        language,
+        segments,
+    } = &clip.clip_type
+    {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Model")
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+            ui.label(egui::RichText::new(model_id).monospace().size(11.0));
+            ui.separator();
+            ui.label(
+                egui::RichText::new("Language")
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+            ui.label(egui::RichText::new(language).monospace().size(11.0));
+        });
+
+        let n = segments.len();
+        ui.add_space(2.0);
+        if n == 0 {
+            ui.label(
+                egui::RichText::new("No speech detected. (Empty segments — the clip can be deleted from the timeline.)")
+                    .italics()
+                    .color(egui::Color32::from_gray(150)),
+            );
+            return;
+        }
+        ui.label(
+            egui::RichText::new(format!("{n} segment{}", if n == 1 { "" } else { "s" }))
+                .color(egui::Color32::from_gray(200)),
+        );
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (i, seg) in segments.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:>2}", i + 1))
+                                .monospace()
+                                .color(egui::Color32::from_gray(130)),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} → {}",
+                                format_duration(seg.start_ms),
+                                format_duration(seg.end_ms)
+                            ))
+                            .monospace()
+                            .size(10.5)
+                            .color(egui::Color32::from_gray(150)),
+                        );
+                    });
+                    ui.label(
+                        egui::RichText::new(&seg.text)
+                            .size(12.0)
+                            .color(egui::Color32::from_gray(225)),
+                    );
+                    if i + 1 < segments.len() {
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                    }
+                }
+            });
+        return;
+    }
+
     // --- Tabs ---
     ui.horizontal(|ui| {
         ui.selectable_value(&mut state.tab, PropertiesTab::Video, tr("props-tab-video"));
