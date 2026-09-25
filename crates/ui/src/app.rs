@@ -119,6 +119,8 @@ pub struct CapRustApp {
     pub preview: PreviewState,
     pub selected_clips: Vec<uuid::Uuid>,
     pub clip_drag: Option<ClipDrag>,
+    /// Rubber-band selection in progress, if any.
+    pub marquee: Option<MarqueeState>,
     pub settings: AppSettings,
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<uuid::Uuid>,
@@ -214,6 +216,15 @@ pub struct CapRustApp {
     pub job_runner: JobRunner,
 }
 
+/// Rubber-band selection state. `start` and `current` are in screen
+/// coordinates; the marquee becomes a rect between them and clips whose
+/// rects intersect it on release are added to `selected_clips`.
+#[derive(Debug, Clone, Copy)]
+pub struct MarqueeState {
+    pub start: egui::Pos2,
+    pub current: egui::Pos2,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClipDrag {
     pub clip_id: uuid::Uuid,
@@ -301,6 +312,7 @@ impl CapRustApp {
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
+            marquee: None,
             settings,
             ffmpeg_status: ffmpeg_status.clone(),
             last_dnd_payload: None,
@@ -2002,6 +2014,9 @@ impl CapRustApp {
                 let mut updated_tracks = self.project.tracks.clone();
                 let mut header_changed = false;
                 let mut pending_delete_track: Option<usize> = None;
+                // (clip_id, screen rect) for marquee hit test on release.
+                let mut all_clip_rects: Vec<(uuid::Uuid, egui::Rect)> = Vec::new();
+                let mut all_lane_rects: Vec<egui::Rect> = Vec::new();
                 let mut pending_duplicate_track: Option<usize> = None;
                 let mut pending_rename_track: Option<usize> = None;
                 let mut pending_actions: Vec<ClipAction> = Vec::new();
@@ -2224,6 +2239,7 @@ impl CapRustApp {
                                 }
                                 lane_stack_bottom = Some(lane_rect.bottom());
                                 rows_actual.push((idx, row_h));
+                                all_lane_rects.push(lane_rect);
 
                                 let p = ui.painter_at(lane_rect);
                                 let bg = theme_snapshot.track_lane_bg(track.kind, track.visible);
@@ -2310,6 +2326,7 @@ impl CapRustApp {
                                     if clip_rect.width() < 2.0 {
                                         continue;
                                     }
+                                    all_clip_rects.push((clip_id, clip_rect));
 
                                     let color = match &ctype {
                                         caprust_core::ClipType::Video { .. } => {
@@ -2819,6 +2836,82 @@ impl CapRustApp {
                                     theme_snapshot.playhead_color(),
                                     egui::Stroke::NONE,
                                 ));
+                            }
+
+                            // ---- Marquee (rubber-band) selection ----
+                            {
+                                let pointer_pos = ui.ctx().pointer_interact_pos();
+                                let pressed = ui.input(|i| i.pointer.primary_pressed());
+                                let released = ui.input(|i| i.pointer.any_released());
+                                let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                let shift = ui.input(|i| i.modifiers.shift);
+
+                                // Start: press inside a lane but not on a clip.
+                                if pressed && self.marquee.is_none() && !pan_mode {
+                                    if let Some(pp) = pointer_pos {
+                                        let on_lane = all_lane_rects.iter().any(|r| r.contains(pp));
+                                        let on_clip =
+                                            all_clip_rects.iter().any(|(_, r)| r.contains(pp));
+                                        if on_lane && !on_clip {
+                                            self.marquee = Some(MarqueeState {
+                                                start: pp,
+                                                current: pp,
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // Update in-progress.
+                                if let (Some(m), Some(pp)) = (self.marquee.as_mut(), pointer_pos) {
+                                    m.current = pp;
+                                }
+
+                                // Cancel on Esc.
+                                if esc {
+                                    self.marquee = None;
+                                }
+
+                                // Finalize on release.
+                                if released {
+                                    if let Some(m) = self.marquee.take() {
+                                        let rect = egui::Rect::from_two_pos(m.start, m.current);
+                                        // Shift = additive; no modifier
+                                        // replaces the selection.
+                                        if !shift {
+                                            self.selected_clips.clear();
+                                        }
+                                        for (id, cr) in &all_clip_rects {
+                                            if rect.intersects(*cr)
+                                                && !self.selected_clips.contains(id)
+                                            {
+                                                self.selected_clips.push(*id);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Render the marquee while active.
+                                if let Some(m) = self.marquee {
+                                    let rect = egui::Rect::from_two_pos(m.start, m.current);
+                                    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                                        egui::Order::Foreground,
+                                        egui::Id::new("marquee_overlay"),
+                                    ));
+                                    painter.rect_filled(
+                                        rect,
+                                        2.0,
+                                        egui::Color32::from_rgba_unmultiplied(90, 160, 240, 40),
+                                    );
+                                    painter.rect_stroke(
+                                        rect,
+                                        2.0,
+                                        egui::Stroke::new(
+                                            1.5_f32,
+                                            egui::Color32::from_rgb(120, 180, 240),
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
                             }
 
                             if let Some(t) = top_y_opt {
