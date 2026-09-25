@@ -182,6 +182,7 @@ props-effects-hint = Odaberi filter, tranziciju ili audio efekt iz lijevog panel
 exp-title = ⬆  Izvoz videa
 exp-summary = Sažetak
 exp-duration = Trajanje
+exp-clip-count = Isječaka
 exp-destination = Odredište
 exp-browse = Odaberi…
 exp-output = Izlaz

@@ -93,7 +93,7 @@ fn default_videos_dir() -> String {
 }
 
 /// Returns true if the user clicked Export.
-pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
+pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64, clip_count: usize) -> bool {
     let mut clicked_export = false;
 
     // --- Summary ---
@@ -104,6 +104,7 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64) -> bool {
         tr("exp-duration"),
         format_duration(duration_ms)
     ));
+    ui.label(format!("{}: {}", tr("exp-clip-count"), clip_count));
     ui.add_space(12.0);
     ui.separator();
 

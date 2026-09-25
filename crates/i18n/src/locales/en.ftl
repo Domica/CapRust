@@ -182,6 +182,7 @@ props-effects-hint = Pick a filter, transition, or audio effect from the left pa
 exp-title = ⬆  Export video
 exp-summary = Summary
 exp-duration = Duration
+exp-clip-count = Clips
 exp-destination = Destination
 exp-browse = Browse…
 exp-output = Output
