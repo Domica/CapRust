@@ -283,3 +283,89 @@ fn run_caption_job(
         duration_ms: req.duration_ms,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Narration jobs (Piper TTS)
+// ---------------------------------------------------------------------------
+
+/// Request for a narration synthesis job.
+#[derive(Debug)]
+pub struct NarrationRequest {
+    pub voice_id: String,
+    /// Full path to the voice ONNX model (sibling .onnx.json must exist).
+    pub voice_onnx_path: std::path::PathBuf,
+    pub models_dir: std::path::PathBuf,
+    /// Text to speak. Typically short (a few hundred chars).
+    pub text: String,
+}
+
+/// Result of a narration synthesis job.
+#[derive(Debug)]
+pub struct NarrationResult {
+    pub voice_id: String,
+    pub text: String,
+    /// Where the WAV was written (deterministic cache path).
+    pub wav_path: std::path::PathBuf,
+    /// Duration of the generated WAV, milliseconds. Measured with ffprobe.
+    pub duration_ms: u64,
+}
+
+/// Spawn a background thread that ensures the Piper binary is present,
+/// synthesizes `text`, and measures the resulting WAV duration.
+/// Returns a channel the UI polls in `drain_narration_job`.
+pub fn spawn_narration_job(
+    ffprobe: std::path::PathBuf,
+    req: NarrationRequest,
+) -> std::sync::mpsc::Receiver<Result<NarrationResult, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-narration".into())
+        .spawn(move || {
+            let result = run_narration_job(&ffprobe, &req);
+            let _ = tx.send(result);
+        })
+        .expect("spawn narration thread");
+
+    rx
+}
+
+fn run_narration_job(
+    ffprobe: &std::path::Path,
+    req: &NarrationRequest,
+) -> Result<NarrationResult, String> {
+    // 1) Ensure Piper binary is on disk (downloads on first use).
+    let piper_bin = caprust_media_io::piper::ensure_binary(&req.models_dir)
+        .map_err(|e| format!("piper binary: {e}"))?;
+
+    // 2) Compute cache path and skip synthesis if it already exists.
+    let wav_path = caprust_core::cache::narration_path(&req.models_dir, &req.text, &req.voice_id);
+
+    if !wav_path.is_file() {
+        tracing::info!(
+            "narration: synthesizing {} chars with voice {}",
+            req.text.len(),
+            req.voice_id
+        );
+        caprust_media_io::piper::synthesize(&piper_bin, &req.voice_onnx_path, &req.text, &wav_path)
+            .map_err(|e| format!("piper synthesize: {e}"))?;
+    } else {
+        tracing::info!("narration: cache hit at {}", wav_path.display());
+    }
+
+    // 3) Measure duration with ffprobe (Piper does not tell us).
+    let duration_ms = match caprust_media_io::ffprobe::probe(ffprobe, &wav_path) {
+        Ok(p) => p.duration_ms,
+        Err(e) => {
+            tracing::warn!("narration: ffprobe failed ({e}), defaulting to 3000ms");
+            3_000
+        }
+    };
+
+    Ok(NarrationResult {
+        voice_id: req.voice_id.clone(),
+        text: req.text.clone(),
+        wav_path,
+        duration_ms,
+    })
+}

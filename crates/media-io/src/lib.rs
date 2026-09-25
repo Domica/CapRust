@@ -5,6 +5,7 @@ pub mod export_graph;
 pub mod export_progress;
 pub mod exporter;
 pub mod ffprobe;
+pub mod piper;
 pub mod player;
 pub mod preview_render;
 pub mod streamer;
