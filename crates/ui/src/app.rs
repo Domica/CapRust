@@ -947,6 +947,34 @@ impl CapRustApp {
         self.project.tracks.len() - 1
     }
 
+    /// Return the index of the dedicated Captions track, creating it
+    /// if missing. §7.1: the Captions lane is a singleton, so we never
+    /// spawn a second one.
+    ///
+    /// Captions clips belong here — not on the currently-selected track
+    /// and not on the Overlay lane. Putting them elsewhere pollutes
+    /// `audio_track_clip_count` (an Audio track that contained only a
+    /// stray Captions clip used to disable the video-embedded audio
+    /// fallback in the export plan) and hides the captions lane in the
+    /// timeline.
+    fn ensure_captions_track(&mut self) -> usize {
+        if let Some((i, _)) = self
+            .project
+            .tracks
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.kind == caprust_core::TrackKind::Captions)
+        {
+            return i;
+        }
+        self.project.tracks.push(caprust_core::Track::new(
+            "Captions",
+            caprust_core::TrackKind::Captions,
+        ));
+        tracing::info!("caption: auto-created Captions track");
+        self.project.tracks.len() - 1
+    }
+
     /// Handle a 💬 click. If a model is ready and no job is in flight,
     /// spawn a Whisper transcription over the first audio-bearing clip
     /// on the timeline and remember the receiver. If no model is ready,
@@ -1035,8 +1063,9 @@ impl CapRustApp {
         };
         match rx.try_recv() {
             Ok(Ok(result)) => {
+                let captions_track = self.ensure_captions_track();
                 let clip = caprust_core::Clip::new_captions(
-                    0,
+                    captions_track,
                     result.insert_at_ms,
                     result.duration_ms.max(1000),
                     &result.model_id,
