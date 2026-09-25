@@ -179,3 +179,107 @@ impl JobRunner {
         thumbs_ready
     }
 }
+
+// ---------------------------------------------------------------------------
+// Caption jobs (Whisper transcription)
+// ---------------------------------------------------------------------------
+
+/// Request for a caption transcription job.
+#[derive(Debug)]
+pub struct CaptionRequest {
+    pub model_id: String,
+    pub model_path: std::path::PathBuf,
+    pub language: String,
+    /// First audio source to transcribe: absolute file path plus the
+    /// source-side window inside that file.
+    pub source_path: std::path::PathBuf,
+    pub source_start_ms: u64,
+    pub duration_ms: u64,
+}
+
+/// Result of a transcription job.
+#[derive(Debug)]
+pub struct CaptionResult {
+    pub model_id: String,
+    pub language: String,
+    pub segments: Vec<caprust_core::CaptionSegment>,
+    /// Timeline position where the resulting Captions clip should be
+    /// inserted (the playhead at request time, or the source clip start).
+    pub insert_at_ms: u64,
+    pub duration_ms: u64,
+}
+
+/// Spawn a background thread that extracts mono 16 kHz f32 audio, runs
+/// Whisper, and sends the resulting segments back through the returned
+/// `Receiver`.
+///
+/// Returns immediately. `ffmpeg` must be Some — caller is responsible
+/// for verifying availability before calling.
+pub fn spawn_caption_job(
+    ffmpeg: std::path::PathBuf,
+    req: CaptionRequest,
+) -> std::sync::mpsc::Receiver<Result<CaptionResult, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-caption".into())
+        .spawn(move || {
+            let result = run_caption_job(&ffmpeg, &req);
+            let _ = tx.send(result);
+        })
+        .expect("spawn caption thread");
+
+    rx
+}
+
+fn run_caption_job(
+    ffmpeg: &std::path::Path,
+    req: &CaptionRequest,
+) -> Result<CaptionResult, String> {
+    tracing::info!(
+        "caption: extracting PCM from {} ({}ms @ {})",
+        req.source_path.display(),
+        req.duration_ms,
+        req.source_start_ms
+    );
+
+    // 1) ffmpeg → mono f32 16 kHz
+    let samples = caprust_media_io::whisper::extract_16khz_mono_f32(
+        ffmpeg,
+        &req.source_path,
+        req.source_start_ms,
+        req.duration_ms,
+    )
+    .map_err(|e| format!("PCM extract: {e}"))?;
+
+    if samples.is_empty() {
+        return Err("no audio samples produced (source may be silent)".into());
+    }
+
+    // 2) load model + transcribe
+    let engine = caprust_media_io::whisper::WhisperEngine::load(&req.model_path)
+        .map_err(|e| format!("whisper load: {e}"))?;
+
+    let lang = if req.language.is_empty() || req.language == "multi" {
+        None
+    } else {
+        Some(req.language.as_str())
+    };
+    let segments = engine
+        .transcribe(&samples, lang)
+        .map_err(|e| format!("whisper transcribe: {e}"))?;
+
+    tracing::info!(
+        "caption: transcribed {} segments for {}",
+        segments.len(),
+        req.source_path.display()
+    );
+
+    Ok(CaptionResult {
+        model_id: req.model_id.clone(),
+        language: req.language.clone(),
+        segments,
+        insert_at_ms: req.source_start_ms,
+        duration_ms: req.duration_ms,
+    })
+}

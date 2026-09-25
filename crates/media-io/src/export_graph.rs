@@ -517,6 +517,28 @@ pub fn plan_from_project(
                         z_order: z,
                     });
                 }
+                ClipType::Captions { segments, .. } => {
+                    // Each caption segment becomes its own drawtext with an
+                    // enable window. Coordinates are relative to the clip's
+                    // start: whisper reports absolute source times, the clip
+                    // holds them relative to its own timeline position.
+                    let clip_start_sec = c.start_time_ms as f64 / 1000.0;
+                    for seg in segments {
+                        let seg_start_sec = clip_start_sec + seg.start_ms as f64 / 1000.0;
+                        let seg_end_sec = clip_start_sec + seg.end_ms as f64 / 1000.0;
+                        let seg_dur = (seg_end_sec - seg_start_sec).max(0.05);
+                        text_clips.push(TextClip {
+                            content: seg.text.clone(),
+                            font_size: 32.0,
+                            timeline_start_sec: seg_start_sec,
+                            duration_sec: seg_dur,
+                            // Captions always render above everything except
+                            // pinned overlay; force above = true.
+                            above: true,
+                            z_order: z,
+                        });
+                    }
+                }
                 _ => {}
             }
         }
