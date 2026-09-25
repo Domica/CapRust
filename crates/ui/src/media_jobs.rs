@@ -232,6 +232,49 @@ pub fn spawn_caption_job(
     rx
 }
 
+/// Demo-mode caption job. Activated by a zero-byte `DEMO` file in the
+/// models directory. Returns a handful of evenly spaced fake segments
+/// so the rest of the caption pipeline (insert, track routing, project
+/// save) can be exercised without a real Whisper model on disk.
+/// Delete the DEMO file to go back to real transcription.
+pub fn spawn_demo_caption_job(
+    req: CaptionRequest,
+) -> std::sync::mpsc::Receiver<Result<CaptionResult, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-caption-demo".into())
+        .spawn(move || {
+            // Small sleep so the UI toast/progress states are visible.
+            std::thread::sleep(std::time::Duration::from_millis(400));
+
+            let total = req.duration_ms.max(4000);
+            let per = total / 4;
+            let seg = |i: u64, text: &str| caprust_core::CaptionSegment {
+                start_ms: i * per,
+                end_ms: ((i + 1) * per).saturating_sub(80),
+                text: text.to_string(),
+            };
+            let segments = vec![
+                seg(0, "DEMO caption — first line"),
+                seg(1, "DEMO caption — second line"),
+                seg(2, "DEMO caption — third line"),
+                seg(3, "DEMO caption — fourth line"),
+            ];
+
+            let _ = tx.send(Ok(CaptionResult {
+                model_id: req.model_id,
+                language: req.language,
+                segments,
+                insert_at_ms: req.source_start_ms,
+                duration_ms: total,
+            }));
+        })
+        .expect("spawn caption demo thread");
+
+    rx
+}
+
 fn run_caption_job(
     ffmpeg: &std::path::Path,
     req: &CaptionRequest,
