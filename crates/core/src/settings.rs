@@ -23,6 +23,14 @@ pub struct AppSettings {
     /// master_volume. Persisted so the state survives restarts.
     #[serde(default)]
     pub muted: bool,
+    /// When true, the app checks GitHub Releases for a newer version on
+    /// startup (throttled to once per 24 h, silent on failure).
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_master_volume() -> f32 {
@@ -42,6 +50,7 @@ impl Default for AppSettings {
             enable_shortcuts: true,
             master_volume: default_master_volume(),
             muted: false,
+            check_for_updates: true,
         }
     }
 }

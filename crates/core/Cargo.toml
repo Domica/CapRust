@@ -8,6 +8,7 @@ license.workspace = true
 ureq = { workspace = true }
 sha2 = "0.10"
 blake3 = { workspace = true }
+open = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
