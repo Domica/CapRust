@@ -28,6 +28,9 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Effects + transitions | Yes — preview + export |
 | Preview = Export filtergraph | Yes — same RenderPlan, no surprises |
 | AI captions + narration | Yes — local Whisper + Piper |
+| Animations (zoom pulse, shake) | Yes — preview + export |
+| Update checker | Yes — GitHub Releases, opt-out |
+| Hardware encoding | Planned — NVENC / AMF / QSV |
 | Zero-config install | Yes — Portable .exe |
 
 ---
@@ -60,6 +63,25 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - Quality selector: 1/4, 1/2, 1:1
 - Frame-accurate playhead
 - Wall-clock playback timing — immune to UI frame rate
+
+### Animations
+- **Zoom pulse** — sinusoidal crop+scale breathing zoom; amplitude and
+  frequency scale with the effect amount
+- **Shake** — deterministic sin/cos camera shake with a fixed 8 Hz
+  frequency and amount-driven amplitude
+- **Amount-aware effects** — every preset uses the per-clip amount to
+  scale its magnitude; disabled stages are skipped without removing
+  them from the clip
+- Particle animation — planned
+
+### Updates
+- **Startup check** — silent GitHub Releases API request, once per
+  24 h, opt-out in Settings → Appearance
+- **Toast** — three actions: Download (opens release page),
+  Remind me later (snooze 7 days), Skip this version (silent until a
+  newer release appears)
+- **No auto-download** — the app only notifies and links; nothing is
+  written to disk by the updater
 
 ### Export
 - **Multi-track compositing** — V1 / V2 / Overlay z-order
@@ -162,7 +184,9 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | **H** | Audio playback in preview | Done |
 | **F** | AI models — Whisper, Piper | Done |
 | **I** | CLAP audio plugins | Planned |
-| **J** | Animations — zoom pulse, shake, particle | Planned |
+| **J** | Animations — zoom pulse, shake | Done — particle planned |
+| **R** | Update checker | Done |
+| **G** | Hardware encoding — NVENC / AMF / QSV | Planned |
 | **N** | MCP server — AI-driven editing | Planned |
 | **O** | Cloud sync | Planned |
 | **P** | Mobile — iOS / Android | Planned |
