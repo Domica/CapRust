@@ -715,8 +715,17 @@ mod sort_filter_tests {
         use super::SortDirection;
         assert_eq!(SortDirection::Ascending.key(), "asc");
         assert_eq!(SortDirection::Descending.key(), "desc");
-        assert_eq!(SortDirection::Ascending.icon(), "\u{2193}");
-        assert_eq!(SortDirection::Descending.icon(), "\u{2191}");
+        // Icons come from egui-phosphor (see SortDirection::icon). Compare
+        // against the crate constants instead of hardcoded glyphs so the
+        // test survives icon-font updates.
+        assert_eq!(
+            SortDirection::Ascending.icon(),
+            egui_phosphor::regular::SORT_ASCENDING
+        );
+        assert_eq!(
+            SortDirection::Descending.icon(),
+            egui_phosphor::regular::SORT_DESCENDING
+        );
     }
 
     #[test]
