@@ -156,6 +156,10 @@ pub struct CapRustApp {
     /// runs; None otherwise. Used to update/finish the matching
     /// BackgroundJob without a lookup by kind.
     pub caption_job_id: Option<u64>,
+    /// Clips waiting to be transcribed, in order. Populated by
+    /// "caption all in track"; drained sequentially because only one
+    /// caption_rx slot exists at a time.
+    pub caption_queue: std::collections::VecDeque<uuid::Uuid>,
     pub narration_job_id: Option<u64>,
     pub export_job_id: Option<u64>,
     /// Receiver for the background update-check thread. Cleared after
@@ -303,6 +307,7 @@ impl CapRustApp {
             jobs: Vec::new(),
             next_job_id: 1,
             caption_job_id: None,
+            caption_queue: std::collections::VecDeque::new(),
             narration_job_id: None,
             export_job_id: None,
             update_rx,
@@ -1061,6 +1066,24 @@ impl CapRustApp {
                 self.start_caption_job(None);
             }
         }
+        if ev.captions_all_clicked {
+            let track_idx = self
+                .selected_clips
+                .first()
+                .and_then(|id| self.project.clips.iter().find(|c| c.id == *id))
+                .map(|c| c.track_index)
+                .or_else(|| {
+                    self.project
+                        .tracks
+                        .iter()
+                        .position(|t| t.kind == caprust_core::TrackKind::Video)
+                        .filter(|idx| self.project.clips.iter().any(|c| c.track_index == *idx))
+                });
+            match track_idx {
+                Some(t) => self.start_caption_jobs_for_track(t),
+                None => self.toast(tr("toast-caption-no-selection")),
+            }
+        }
         if ev.narration_clicked {
             // Refresh from disk so manually-placed Piper voices (and
             // ones added since startup) are seen without a restart.
@@ -1227,6 +1250,58 @@ impl CapRustApp {
         if removed > 0 {
             tracing::info!("caption: pruned {removed} empty captions clip(s) on load");
         }
+    }
+
+    /// Queue every audio-bearing clip on `track_index` for
+    /// transcription, in timeline order. Starts the first immediately;
+    /// the rest run as each job completes.
+    fn start_caption_jobs_for_track(&mut self, track_index: usize) {
+        let mut sources: Vec<(uuid::Uuid, u64)> = self
+            .project
+            .clips
+            .iter()
+            .filter(|c| c.track_index == track_index)
+            .filter(|c| c.duration_ms > 0)
+            .filter(|c| {
+                matches!(
+                    &c.clip_type,
+                    caprust_core::ClipType::Audio { .. } | caprust_core::ClipType::Video { .. }
+                )
+            })
+            .map(|c| (c.id, c.start_time_ms))
+            .collect();
+        sources.sort_by_key(|(_, start)| *start);
+
+        if sources.is_empty() {
+            self.toast(tr("toast-caption-no-audio"));
+            tracing::info!("caption: no audio-bearing clips on track {track_index}");
+            return;
+        }
+
+        let n = sources.len();
+        self.caption_queue.clear();
+        self.caption_queue
+            .extend(sources.into_iter().map(|(id, _)| id));
+        tracing::info!("caption: queued {n} clips for transcription");
+        self.toast(format!("{} · {}", tr("toast-caption-queued"), n));
+
+        self.pump_caption_queue();
+    }
+
+    /// Start the next queued caption job if one is waiting and no
+    /// other caption job is in flight.
+    fn pump_caption_queue(&mut self) {
+        if self.caption_rx.is_some() {
+            return;
+        }
+        let Some(next) = self.caption_queue.pop_front() else {
+            return;
+        };
+        tracing::info!(
+            "caption: starting next queued clip ({} remaining)",
+            self.caption_queue.len()
+        );
+        self.start_caption_job(Some(next));
     }
 
     /// Handle a 💬 click. If a model is ready and no job is in flight,
@@ -1406,6 +1481,7 @@ impl CapRustApp {
                     }
                     self.caption_rx = None;
                     self.caption_job_started = None;
+                    self.pump_caption_queue();
                     return;
                 }
                 let captions_track = self.ensure_captions_track();
@@ -1436,6 +1512,7 @@ impl CapRustApp {
                 }
                 self.caption_rx = None;
                 self.caption_job_started = None;
+                self.pump_caption_queue();
             }
             Ok(Err(msg)) => {
                 tracing::error!("caption: job failed: {msg}");
@@ -1445,6 +1522,7 @@ impl CapRustApp {
                 }
                 self.caption_rx = None;
                 self.caption_job_started = None;
+                self.pump_caption_queue();
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -1454,6 +1532,7 @@ impl CapRustApp {
                 }
                 self.caption_rx = None;
                 self.caption_job_started = None;
+                self.pump_caption_queue();
             }
         }
     }
@@ -3331,8 +3410,13 @@ impl CapRustApp {
             .default_width(440.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                start_clicked =
-                    crate::panels::export_window::show(ui, &mut self.export_state, total_ms);
+                let clip_count = self.project.clips.len();
+                start_clicked = crate::panels::export_window::show(
+                    ui,
+                    &mut self.export_state,
+                    total_ms,
+                    clip_count,
+                );
 
                 // Progress section
                 if self.export_in_progress {
