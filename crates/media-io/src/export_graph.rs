@@ -229,10 +229,20 @@ impl RenderPlan {
                     let st = (c.duration_sec - 0.35).max(0.0);
                     tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35"));
                 }
+                // ffmpeg requires `[label]filter`, never `[label],filter`.
+                // Strip the leading comma that all our fragments carry and
+                // fall back to a pass-through `null` when no edge filter
+                // applies, so the chain is always syntactically valid.
+                let tail_clean = tail.trim_start_matches(',');
+                let chain = if tail_clean.is_empty() {
+                    "null".to_string()
+                } else {
+                    tail_clean.to_string()
+                };
                 fg.push_str(&format!(
-                    "[{base}]{tail},setpts=PTS+{start:.6}/TB[{out}];",
+                    "[{base}]{chain},setpts=PTS+{start:.6}/TB[{out}];",
                     base = v_base_labels[idx],
-                    tail = tail,
+                    chain = chain,
                     start = run.start_sec,
                     out = out_label,
                 ));
