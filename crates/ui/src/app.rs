@@ -88,6 +88,12 @@ pub struct CapRustApp {
     /// Wall-clock time the current caption job started, for the elapsed
     /// seconds indicator.
     pub caption_job_started: Option<std::time::Instant>,
+    /// Receiver for an in-flight narration synthesis. Same lifecycle as
+    /// caption_rx: Some while the job runs, None otherwise.
+    pub narration_rx:
+        Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::NarrationResult, String>>>,
+    /// Modal state for entering narration text.
+    pub narration_input: crate::panels::narration_input::NarrationInputState,
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
@@ -196,6 +202,8 @@ impl CapRustApp {
             model_prompt: None,
             caption_rx: None,
             caption_job_started: None,
+            narration_rx: None,
+            narration_input: Default::default(),
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
@@ -800,27 +808,108 @@ impl CapRustApp {
             }
         }
         if ev.narration_clicked {
-            let ready: Option<(String, String)> = self
-                .project
-                .models
-                .ready_narration()
-                .first()
-                .map(|m| (m.id.clone(), m.language.clone()));
-            if let Some((model_id, _lang)) = ready {
-                let clip = caprust_core::Clip::new_narration(
-                    0,
-                    self.playhead_ms,
-                    3000,
-                    &model_id,
-                    &model_id,
-                    "Narration text goes here",
-                );
-                let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+            let any_ready = !self.project.models.ready_narration().is_empty();
+            if any_ready {
+                if self.narration_rx.is_some() {
+                    tracing::info!("narration job already in flight, ignoring click");
+                } else {
+                    self.narration_input.open = true;
+                }
             } else {
                 self.model_prompt = Some(caprust_core::ModelKind::Narration);
             }
         }
+    }
+
+    /// Spawn a background Piper synthesis job. See `NarrationRequest`.
+    fn start_narration_job(&mut self, voice_id: String, text: String) {
+        let models_dir = self.settings.effective_models_dir();
+        let voice_onnx_path = self.project.models.local_path(&models_dir, &voice_id);
+        if !voice_onnx_path.is_file() {
+            tracing::warn!(
+                "narration: voice {} not on disk at {}",
+                voice_id,
+                voice_onnx_path.display()
+            );
+            self.model_prompt = Some(caprust_core::ModelKind::Narration);
+            return;
+        }
+
+        let ffprobe = match self.ffmpeg_status.ffprobe.clone() {
+            Some(p) => std::path::PathBuf::from(p),
+            None => {
+                tracing::warn!("narration: ffprobe unavailable");
+                return;
+            }
+        };
+
+        let req = crate::media_jobs::NarrationRequest {
+            voice_id,
+            voice_onnx_path,
+            models_dir,
+            text,
+        };
+        let rx = crate::media_jobs::spawn_narration_job(ffprobe, req);
+        self.narration_rx = Some(rx);
+        tracing::info!("narration: job spawned");
+    }
+
+    fn drain_narration_job(&mut self) {
+        let Some(rx) = self.narration_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                let track_idx = self.ensure_audio_track();
+                let clip = caprust_core::Clip::new_narration(
+                    track_idx,
+                    self.playhead_ms,
+                    result.duration_ms.max(500),
+                    &result.voice_id,
+                    &result.voice_id,
+                    &result.text,
+                );
+                let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                    tracing::error!("narration: insert failed: {e}");
+                } else {
+                    tracing::info!(
+                        "narration: inserted clip ({}ms) at {}",
+                        result.duration_ms,
+                        self.playhead_ms
+                    );
+                }
+                self.narration_rx = None;
+            }
+            Ok(Err(msg)) => {
+                tracing::error!("narration: job failed: {msg}");
+                self.narration_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::error!("narration: job thread vanished");
+                self.narration_rx = None;
+            }
+        }
+    }
+
+    fn ensure_audio_track(&mut self) -> usize {
+        if let Some((i, _)) = self
+            .project
+            .tracks
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.kind == caprust_core::TrackKind::Audio)
+        {
+            return i;
+        }
+        let idx = self.project.tracks.len() + 1;
+        self.project.tracks.push(caprust_core::Track::new(
+            &format!("A{idx}"),
+            caprust_core::TrackKind::Audio,
+        ));
+        tracing::info!("narration: auto-created Audio track A{idx}");
+        self.project.tracks.len() - 1
     }
 
     /// Handle a 💬 click. If a model is ready and no job is in flight,
@@ -2802,6 +2891,7 @@ impl eframe::App for CapRustApp {
 
         // Drain background jobs (ffprobe results, thumbnails ready).
         self.drain_caption_job();
+        self.drain_narration_job();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 
         // Load any newly-ready thumbnails into the timeline texture cache.
@@ -2943,6 +3033,20 @@ impl eframe::App for CapRustApp {
         }
         if self.model_prompt.is_some() {
             self.show_model_prompt_window(ctx);
+        }
+        if self.narration_input.open {
+            let n_ev = crate::panels::narration_input::show(
+                ctx,
+                &mut self.narration_input,
+                &self.project.models,
+            );
+            if let Some((voice_id, text)) = n_ev.synthesize {
+                self.start_narration_job(voice_id, text);
+                self.narration_input.open = false;
+            }
+            if n_ev.closed {
+                self.narration_input.open = false;
+            }
         }
     }
 
