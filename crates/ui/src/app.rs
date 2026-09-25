@@ -156,6 +156,9 @@ pub struct CapRustApp {
     /// runs; None otherwise. Used to update/finish the matching
     /// BackgroundJob without a lookup by kind.
     pub caption_job_id: Option<u64>,
+    /// Clipboard for Copy/Paste on the timeline. Holds a full clip
+    /// snapshot; Paste assigns a new id and inserts at the playhead.
+    pub clip_clipboard: Option<caprust_core::Clip>,
     /// Clips waiting to be transcribed, in order. Populated by
     /// "caption all in track"; drained sequentially because only one
     /// caption_rx slot exists at a time.
@@ -312,6 +315,7 @@ impl CapRustApp {
             jobs: Vec::new(),
             next_job_id: 1,
             caption_job_id: None,
+            clip_clipboard: None,
             caption_queue: std::collections::VecDeque::new(),
             caption_batch_total: 0,
             caption_batch_current: 0,
@@ -2497,23 +2501,95 @@ impl CapRustApp {
                                     }
 
                                     resp.context_menu(|ui| {
-                                        let del = if self.settings.enable_shortcuts {
-                                            "Delete  (Del)"
+                                        // --- Copy / Paste / Duplicate ---
+                                        let copy_lbl = if self.settings.enable_shortcuts {
+                                            format!("{}  (Ctrl+C)", tr("clip-ctx-copy"))
                                         } else {
-                                            "Delete"
+                                            tr("clip-ctx-copy")
+                                        };
+                                        if ui.button(copy_lbl).clicked() {
+                                            pending_actions.push(ClipAction::Copy(clip_id));
+                                            ui.close_menu();
+                                        }
+                                        let paste_lbl = if self.settings.enable_shortcuts {
+                                            format!("{}  (Ctrl+V)", tr("clip-ctx-paste"))
+                                        } else {
+                                            tr("clip-ctx-paste")
+                                        };
+                                        if ui
+                                            .add_enabled(
+                                                self.clip_clipboard.is_some(),
+                                                egui::Button::new(paste_lbl),
+                                            )
+                                            .clicked()
+                                        {
+                                            pending_actions.push(ClipAction::Paste);
+                                            ui.close_menu();
+                                        }
+                                        let dup_lbl = if self.settings.enable_shortcuts {
+                                            format!("{}  (Ctrl+D)", tr("clip-ctx-duplicate"))
+                                        } else {
+                                            tr("clip-ctx-duplicate")
+                                        };
+                                        if ui.button(dup_lbl).clicked() {
+                                            pending_actions.push(ClipAction::Duplicate(clip_id));
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+
+                                        // --- Delete (hard) ---
+                                        let del = if self.settings.enable_shortcuts {
+                                            format!("{}  (Del)", tr("clip-ctx-delete"))
+                                        } else {
+                                            tr("clip-ctx-delete")
                                         };
                                         if ui.button(del).clicked() {
                                             pending_actions.push(ClipAction::Delete(clip_id));
                                             ui.close_menu();
                                         }
+                                        // --- Ripple delete ---
+                                        let rip_lbl = tr("clip-ctx-ripple-delete");
+                                        if ui.button(rip_lbl).clicked() {
+                                            pending_actions.push(ClipAction::RippleDelete(clip_id));
+                                            ui.close_menu();
+                                        }
+                                        // --- Split at playhead ---
                                         let spl = if self.settings.enable_shortcuts {
-                                            "Split at playhead  (S)"
+                                            format!("{}  (S)", tr("clip-ctx-split"))
                                         } else {
-                                            "Split at playhead"
+                                            tr("clip-ctx-split")
                                         };
                                         if ui.button(spl).clicked() {
                                             pending_actions
                                                 .push(ClipAction::Split(clip_id, self.playhead_ms));
+                                            ui.close_menu();
+                                        }
+                                        // --- Speed submenu ---
+                                        ui.menu_button(tr("clip-ctx-speed"), |ui| {
+                                            for v in [0.25_f32, 0.5, 1.0, 1.5, 2.0, 4.0] {
+                                                let label = format!("{v:.2}x");
+                                                if ui.button(label).clicked() {
+                                                    pending_actions
+                                                        .push(ClipAction::SetSpeed(clip_id, v));
+                                                    ui.close_menu();
+                                                }
+                                            }
+                                        });
+                                        // --- Mute clip ---
+                                        let muted = self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|c| c.id == clip_id)
+                                            .map(|c| c.volume_db <= -59.0)
+                                            .unwrap_or(false);
+                                        let mute_lbl = if muted {
+                                            tr("clip-ctx-unmute")
+                                        } else {
+                                            tr("clip-ctx-mute")
+                                        };
+                                        if ui.button(mute_lbl).clicked() {
+                                            pending_actions.push(ClipAction::MuteClip(clip_id));
                                             ui.close_menu();
                                         }
                                         ui.separator();
@@ -2749,24 +2825,6 @@ impl CapRustApp {
 
                 for a in pending_actions {
                     match a {
-                        ClipAction::GenerateCaptions(id) => {
-                            self.start_caption_job(Some(id));
-                        }
-                        ClipAction::SeparateAudio(id) => {
-                            let cmd =
-                                caprust_core::commands::separate_audio::SeparateAudioCommand::new(
-                                    id,
-                                );
-                            if let Err(e) =
-                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                            {
-                                tracing::error!("separate audio failed: {e}");
-                                self.toast(tr("toast-separate-audio-failed"));
-                            } else {
-                                tracing::info!("separate audio: created Audio clip from {id}");
-                                self.toast(tr("toast-separate-audio-done"));
-                            }
-                        }
                         ClipAction::SetPlayhead(ms) => {
                             let target = ms.min(total_ms.max(1));
                             if self.preview.playing
@@ -2923,6 +2981,105 @@ impl CapRustApp {
                         ClipAction::ToggleFlipV(id) => {
                             if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
                                 c.flip_v = !c.flip_v;
+                            }
+                        }
+                        ClipAction::GenerateCaptions(id) => {
+                            self.start_caption_job(Some(id));
+                        }
+                        ClipAction::SeparateAudio(id) => {
+                            let cmd =
+                                caprust_core::commands::separate_audio::SeparateAudioCommand::new(
+                                    id,
+                                );
+                            if let Err(e) =
+                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                            {
+                                tracing::error!("separate audio failed: {e}");
+                                self.toast(tr("toast-separate-audio-failed"));
+                            } else {
+                                tracing::info!("separate audio: created Audio clip from {id}");
+                                self.toast(tr("toast-separate-audio-done"));
+                            }
+                        }
+                        ClipAction::Copy(id) => {
+                            if let Some(c) = self.project.clips.iter().find(|c| c.id == id) {
+                                self.clip_clipboard = Some(c.clone());
+                                tracing::info!("copy: {id}");
+                                self.toast(tr("toast-clip-copied"));
+                            }
+                        }
+                        ClipAction::Paste => {
+                            if let Some(mut c) = self.clip_clipboard.clone() {
+                                c.id = uuid::Uuid::new_v4();
+                                c.start_time_ms = self.playhead_ms;
+                                if c.track_index >= self.project.tracks.len() {
+                                    c.track_index = 0;
+                                }
+                                let cmd =
+                                    caprust_core::commands::ripple::RippleInsertCommand::new(c);
+                                if let Err(e) =
+                                    self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                                {
+                                    tracing::error!("paste failed: {e}");
+                                } else {
+                                    self.toast(tr("toast-clip-pasted"));
+                                }
+                            }
+                        }
+                        ClipAction::Duplicate(id) => {
+                            if let Some(orig) =
+                                self.project.clips.iter().find(|c| c.id == id).cloned()
+                            {
+                                let mut c = orig;
+                                c.id = uuid::Uuid::new_v4();
+                                c.start_time_ms += c.duration_ms;
+                                let cmd =
+                                    caprust_core::commands::ripple::RippleInsertCommand::new(c);
+                                if let Err(e) =
+                                    self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                                {
+                                    tracing::error!("duplicate failed: {e}");
+                                } else {
+                                    self.toast(tr("toast-clip-duplicated"));
+                                }
+                            }
+                        }
+                        ClipAction::RippleDelete(id) => {
+                            let cmd = caprust_core::commands::delete_clip::DeleteClipCommand::new(
+                                id, true,
+                            );
+                            if let Err(e) =
+                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                            {
+                                tracing::error!("ripple delete failed: {e}");
+                            }
+                        }
+                        ClipAction::SetSpeed(id, v) => {
+                            let cmd =
+                                caprust_core::commands::set_clip::SetClipCommand::new(id).speed(v);
+                            if let Err(e) =
+                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                            {
+                                tracing::error!("set speed failed: {e}");
+                            } else {
+                                tracing::info!("set speed {v}x on {id}");
+                            }
+                        }
+                        ClipAction::MuteClip(id) => {
+                            let cur = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|c| c.id == id)
+                                .map(|c| c.volume_db)
+                                .unwrap_or(0.0);
+                            let target = if cur <= -59.0 { 0.0 } else { -60.0 };
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .volume_db(target);
+                            if let Err(e) =
+                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                            {
+                                tracing::error!("mute clip failed: {e}");
                             }
                         }
                     }
@@ -3981,6 +4138,12 @@ enum ClipAction {
     ToggleFlipV(uuid::Uuid),
     GenerateCaptions(uuid::Uuid),
     SeparateAudio(uuid::Uuid),
+    Copy(uuid::Uuid),
+    Paste,
+    Duplicate(uuid::Uuid),
+    RippleDelete(uuid::Uuid),
+    SetSpeed(uuid::Uuid, f32),
+    MuteClip(uuid::Uuid),
 }
 
 impl eframe::App for CapRustApp {

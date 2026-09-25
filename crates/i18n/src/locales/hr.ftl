@@ -33,6 +33,16 @@ menu-view-zoom-out = Umanji
 
 # Right-click clip menu
 clip-ctx-delete = Obriši
+clip-ctx-copy = Kopiraj
+clip-ctx-paste = Zalijepi
+clip-ctx-duplicate = Dupliciraj
+clip-ctx-ripple-delete = Ripple obriši
+clip-ctx-speed = Brzina
+clip-ctx-mute = Utišaj isječak
+clip-ctx-unmute = Odutišaj isječak
+toast-clip-copied = Isječak kopiran
+toast-clip-pasted = Isječak zalijepljen
+toast-clip-duplicated = Isječak dupliciran
 clip-ctx-split = Razdvoji na kursoru
 clip-ctx-reverse = Obrnuto
 clip-ctx-mirror-h = Zrcali vodoravno
