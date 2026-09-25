@@ -9,6 +9,7 @@ pub mod player;
 pub mod preview_render;
 pub mod streamer;
 pub mod thumbnail;
+pub mod whisper;
 
 #[cfg(feature = "ffmpeg")]
 pub mod mux;
