@@ -638,6 +638,15 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
         //
         // Uniform weights so the trail fades linearly; a non-uniform
         // ramp would darken the whole image more than the tail.
+        // ---- Temporal: ghost ----
+        // tmix blends N consecutive frames into the current one,
+        // producing motion trails. frames scales with amount but is
+        // clamped: a large value holds many full frames in memory
+        // (roughly w*h*4 bytes per frame), and 4K@60 with 30 frames
+        // would be hundreds of MB.
+        //
+        // Uniform weights so the trail fades linearly; a non-uniform
+        // ramp would darken the whole image more than the tail.
         "ghost" => {
             let frames = ((2.0 + 6.0 * amount).round() as i32).clamp(2, 12);
             let weights = (0..frames).map(|_| "1").collect::<Vec<_>>().join(" ");
@@ -1185,7 +1194,6 @@ mod tests {
 
     #[test]
     fn ghost_frame_count_clamps_between_2_and_12() {
-        // Even at high amount, tmix must not hold more than 12 frames.
         let g = build_one_effect("ghost", 4.0).unwrap();
         let n: i32 = g
             .split("frames=")
