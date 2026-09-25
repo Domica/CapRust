@@ -14,6 +14,7 @@ pub enum SettingsTab {
     Shortcuts,
     Language,
     Paths,
+    Audio,
 }
 
 pub struct SettingsEvents {
@@ -40,6 +41,7 @@ pub fn show(
         ui.selectable_value(tab, SettingsTab::Shortcuts, tr("set-tab-shortcuts"));
         ui.selectable_value(tab, SettingsTab::Language, tr("set-tab-language"));
         ui.selectable_value(tab, SettingsTab::Paths, tr("set-tab-paths"));
+        ui.selectable_value(tab, SettingsTab::Audio, tr("set-tab-audio"));
     });
     ui.separator();
 
@@ -51,6 +53,7 @@ pub fn show(
             SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
             SettingsTab::Language => show_language(ui, &mut settings.language),
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
+            SettingsTab::Audio => show_audio(ui, settings),
         });
 
     ui.separator();
@@ -429,3 +432,55 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
         );
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Audio tab
+// ---------------------------------------------------------------------------
+
+fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
+    ui.label(egui::RichText::new(tr("set-tab-audio")).strong());
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(tr("set-audio-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(12.0);
+
+    ui.horizontal(|ui| {
+        // Mute toggle on the left, matching the transport bar order.
+        let mute_label = if settings.muted {
+            tr("set-audio-unmute")
+        } else {
+            tr("set-audio-mute")
+        };
+        if ui.button(mute_label).clicked() {
+            settings.muted = !settings.muted;
+        }
+
+        ui.separator();
+
+        // Master volume slider. Disabled while muted (visual cue only;
+        // the value is preserved so unmuting restores the previous level).
+        ui.add_enabled_ui(!settings.muted, |ui| {
+            ui.label(tr("set-audio-volume"));
+            let slider = egui::Slider::new(&mut settings.master_volume, 0.0..=1.0)
+                .show_value(false);
+            ui.add_sized([200.0, 20.0], slider);
+
+            // Show as integer percent so the user sees a stable value.
+            let pct = (settings.master_volume * 100.0).round() as i32;
+            ui.label(format!("{pct}%"));
+        });
+    });
+
+    ui.add_space(8.0);
+    ui.label(
+        egui::RichText::new(tr("set-audio-preview-only"))
+            .small()
+            .italics()
+            .color(egui::Color32::from_gray(130)),
+    );
+}
+
