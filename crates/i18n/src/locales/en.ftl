@@ -147,6 +147,11 @@ tk-lock = Lock
 tk-view = Show in preview
 tk-mute = Mute
 tk-delete = Delete track
+tk-rename = Rename track…
+tk-duplicate = Duplicate track
+tk-rename-title = Rename track
+tk-rename-ok = Rename
+tk-rename-cancel = Cancel
 
 # Preview
 preview-heading = Preview

@@ -42,12 +42,16 @@ fn chip(ui: &mut Ui, icon: &str, tooltip: &str, warning: bool) -> bool {
 pub struct HeaderEvents {
     pub changed: bool,
     pub delete_requested: bool,
+    pub duplicate_requested: bool,
+    pub rename_requested: bool,
 }
 
 pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f32) -> HeaderEvents {
     let mut ev = HeaderEvents {
         changed: false,
         delete_requested: false,
+        duplicate_requested: false,
+        rename_requested: false,
     };
 
     // Paint the header row background in the track's own color before
@@ -65,19 +69,51 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f3
 
     ui.vertical(|ui| {
         // --- Row 1: icon + name ---
-        ui.horizontal(|ui| {
-            if track.pinned {
+        let row_resp = ui
+            .horizontal(|ui| {
+                if track.pinned {
+                    ui.label(
+                        RichText::new(ph::PUSH_PIN)
+                            .size(10.0)
+                            .color(Color32::from_rgb(120, 220, 140)),
+                    );
+                }
                 ui.label(
-                    RichText::new(ph::PUSH_PIN)
-                        .size(10.0)
-                        .color(Color32::from_rgb(120, 220, 140)),
+                    RichText::new(format!("{} {}", track.kind.icon(), track.name))
+                        .strong()
+                        .size(11.0),
                 );
-            }
-            ui.label(
-                RichText::new(format!("{} {}", track.kind.icon(), track.name))
-                    .strong()
-                    .size(11.0),
+            })
+            .response;
+
+        // Context menu on the name row. Rename and Duplicate are
+        // offered for editable kinds; Rename is disabled for the two
+        // singleton kinds to discourage cosmetic renaming of lanes
+        // that must stay identifiable ("Overlay", "Captions").
+        row_resp.context_menu(|ui| {
+            let editable = !matches!(
+                track.kind,
+                caprust_core::TrackKind::Overlay | caprust_core::TrackKind::Captions
             );
+            if ui
+                .add_enabled(editable, egui::Button::new(tr("tk-rename")))
+                .clicked()
+            {
+                ev.rename_requested = true;
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(editable, egui::Button::new(tr("tk-duplicate")))
+                .clicked()
+            {
+                ev.duplicate_requested = true;
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button(tr("tk-delete")).clicked() {
+                ev.delete_requested = true;
+                ui.close_menu();
+            }
         });
 
         // --- Row 2: chips ---
