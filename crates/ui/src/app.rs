@@ -80,6 +80,14 @@ pub struct CapRustApp {
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
     pub properties: PropertiesState,
     pub model_prompt: Option<caprust_core::ModelKind>,
+    /// Receiver for an in-flight caption transcription. When Some, the
+    /// timeline toolbar shows a "Transcribing…" label and the toolbar
+    /// click is ignored until the job finishes.
+    pub caption_rx:
+        Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::CaptionResult, String>>>,
+    /// Wall-clock time the current caption job started, for the elapsed
+    /// seconds indicator.
+    pub caption_job_started: Option<std::time::Instant>,
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
@@ -186,6 +194,8 @@ impl CapRustApp {
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
             model_prompt: None,
+            caption_rx: None,
+            caption_job_started: None,
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
@@ -783,17 +793,10 @@ impl CapRustApp {
                 .push(caprust_core::Track::new(&format!("V{idx}"), kind));
         }
         if ev.captions_clicked {
-            let ready = self.project.models.ready_captions();
-            if let Some(model) = ready.first() {
-                let model_id = model.id.clone();
-                let lang = model.language.clone();
-                let clip =
-                    caprust_core::Clip::new_captions(0, self.playhead_ms, 4000, &model_id, &lang);
-                let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+            if self.caption_rx.is_some() {
+                tracing::info!("caption job already in flight, ignoring click");
             } else {
-                tracing::info!("no caption model ready — opening prompt");
-                self.model_prompt = Some(caprust_core::ModelKind::Caption);
+                self.start_caption_job();
             }
         }
         if ev.narration_clicked {
@@ -816,6 +819,132 @@ impl CapRustApp {
                 let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
             } else {
                 self.model_prompt = Some(caprust_core::ModelKind::Narration);
+            }
+        }
+    }
+
+    /// Handle a 💬 click. If a model is ready and no job is in flight,
+    /// spawn a Whisper transcription over the first audio-bearing clip
+    /// on the timeline and remember the receiver. If no model is ready,
+    /// open the model-prompt dialog instead.
+    fn start_caption_job(&mut self) {
+        let ready = self.project.models.ready_captions();
+        let Some(model) = ready.first() else {
+            tracing::info!("no caption model ready — opening prompt");
+            self.model_prompt = Some(caprust_core::ModelKind::Caption);
+            return;
+        };
+        let model_id = model.id.clone();
+        let language = model.language.clone();
+
+        let models_dir = self.settings.effective_models_dir();
+        let model_path = self.project.models.local_path(&models_dir, &model_id);
+        if !model_path.is_file() {
+            tracing::warn!(
+                "caption: model {} not on disk at {}",
+                model_id,
+                model_path.display()
+            );
+            self.model_prompt = Some(caprust_core::ModelKind::Caption);
+            return;
+        }
+
+        // Find the first clip with real audio: prefer an Audio clip, fall
+        // back to the first Video clip with duration > 0.
+        let source = self
+            .project
+            .clips
+            .iter()
+            .find(|c| {
+                matches!(&c.clip_type, caprust_core::ClipType::Audio { .. }) && c.duration_ms > 0
+            })
+            .or_else(|| {
+                self.project.clips.iter().find(|c| {
+                    matches!(&c.clip_type, caprust_core::ClipType::Video { .. })
+                        && c.duration_ms > 0
+                })
+            });
+
+        let Some(source_clip) = source else {
+            tracing::warn!("caption: no audio-bearing clip on timeline");
+            return;
+        };
+
+        let path_str = match &source_clip.clip_type {
+            caprust_core::ClipType::Audio { path, .. } => path.clone(),
+            caprust_core::ClipType::Video { path, .. } => path.clone(),
+            _ => return,
+        };
+        let source_path = std::path::PathBuf::from(path_str);
+        let source_start_ms = 0u64;
+        let duration_ms = source_clip.duration_ms;
+
+        let ffmpeg = match self.ffmpeg_status.ffmpeg.clone() {
+            Some(p) => std::path::PathBuf::from(p),
+            None => {
+                tracing::warn!("caption: ffmpeg not available");
+                return;
+            }
+        };
+
+        let req = crate::media_jobs::CaptionRequest {
+            model_id,
+            model_path,
+            language,
+            source_path,
+            source_start_ms,
+            duration_ms,
+        };
+
+        let rx = crate::media_jobs::spawn_caption_job(ffmpeg, req);
+        self.caption_rx = Some(rx);
+        self.caption_job_started = Some(std::time::Instant::now());
+        tracing::info!("caption: job spawned ({duration_ms}ms source)");
+    }
+
+    /// Poll the in-flight caption job. On success, insert a populated
+    /// Captions clip at the source's timeline position. On failure, log
+    /// and clear state so the user can retry.
+    fn drain_caption_job(&mut self) {
+        let Some(rx) = self.caption_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                let clip = caprust_core::Clip::new_captions(
+                    0,
+                    result.insert_at_ms,
+                    result.duration_ms.max(1000),
+                    &result.model_id,
+                    &result.language,
+                );
+                let mut clip = clip;
+                if let caprust_core::ClipType::Captions { segments, .. } = &mut clip.clip_type {
+                    *segments = result.segments.clone();
+                }
+                let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                    tracing::error!("caption: insert failed: {e}");
+                } else {
+                    tracing::info!(
+                        "caption: inserted clip with {} segments at {}ms",
+                        result.segments.len(),
+                        result.insert_at_ms
+                    );
+                }
+                self.caption_rx = None;
+                self.caption_job_started = None;
+            }
+            Ok(Err(msg)) => {
+                tracing::error!("caption: job failed: {msg}");
+                self.caption_rx = None;
+                self.caption_job_started = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::error!("caption: job thread vanished");
+                self.caption_rx = None;
+                self.caption_job_started = None;
             }
         }
     }
@@ -2668,6 +2797,7 @@ impl eframe::App for CapRustApp {
         self.poll_export();
 
         // Drain background jobs (ffprobe results, thumbnails ready).
+        self.drain_caption_job();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 
         // Load any newly-ready thumbnails into the timeline texture cache.
