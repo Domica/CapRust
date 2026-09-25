@@ -316,6 +316,10 @@ impl CapRustApp {
                 let entry = caprust_core::recent::entry_from(&self.project, path);
                 self.recent.push(entry);
                 tracing::info!("Loaded project {path}");
+                // Prune empty Captions clips left behind by older builds
+                // that inserted a placeholder whenever a model was picked
+                // in the prompt.
+                self.cleanup_phantom_captions();
                 // Auto-regenerate thumbnails for older projects or after cache clear.
                 self.regen_missing_thumbnails();
             }
@@ -979,38 +983,74 @@ impl CapRustApp {
         self.project.tracks.len() - 1
     }
 
+    /// Drop Captions clips that carry no segments. These are leftovers
+    /// from an older build that inserted an empty clip whenever a model
+    /// was picked in the prompt, and would otherwise accumulate every
+    /// time the project is opened and re-saved.
+    fn cleanup_phantom_captions(&mut self) {
+        let before = self.project.clips.len();
+        self.project.clips.retain(|c| {
+            !matches!(
+                &c.clip_type,
+                caprust_core::ClipType::Captions { segments, .. } if segments.is_empty()
+            )
+        });
+        let removed = before - self.project.clips.len();
+        if removed > 0 {
+            tracing::info!("caption: pruned {removed} empty captions clip(s) on load");
+        }
+    }
+
     /// Handle a 💬 click. If a model is ready and no job is in flight,
     /// spawn a Whisper transcription over the first audio-bearing clip
     /// on the timeline and remember the receiver. If no model is ready,
     /// open the model-prompt dialog instead.
     fn start_caption_job(&mut self) {
-        // Refresh model status from the filesystem before deciding whether
-        // a caption model is available. scan_local() marks a model Ready
-        // when its file exists and is non-empty, so manually-placed
-        // weights (and downloads that completed after the last startup)
-        // are picked up without restarting the app.
+        // Demo bypass: a zero-byte `DEMO` file in the models folder
+        // activates a fake transcription path. Lets the caption pipeline
+        // be exercised end to end (insert, track routing, save) without
+        // a real Whisper model. Delete the file to go back to normal.
         let models_dir = self.settings.effective_models_dir();
-        self.project.models.scan_local(&models_dir);
-
-        let ready = self.project.models.ready_captions();
-        let Some(model) = ready.first() else {
-            tracing::info!("no caption model ready — opening prompt");
-            self.model_prompt = Some(caprust_core::ModelKind::Caption);
-            return;
-        };
-        let model_id = model.id.clone();
-        let language = model.language.clone();
-
-        let model_path = self.project.models.local_path(&models_dir, &model_id);
-        if !model_path.is_file() {
-            tracing::warn!(
-                "caption: model {} not on disk at {}",
-                model_id,
-                model_path.display()
-            );
-            self.model_prompt = Some(caprust_core::ModelKind::Caption);
-            return;
+        let demo_mode = models_dir.join("DEMO").exists();
+        if demo_mode {
+            tracing::info!("caption: DEMO marker present — bypassing model check");
         }
+
+        let (model_id, language, model_path) = if demo_mode {
+            (
+                "demo".to_string(),
+                self.settings.language.clone(),
+                std::path::PathBuf::new(),
+            )
+        } else {
+            // Refresh model status from the filesystem before deciding
+            // whether a caption model is available. scan_local() marks a
+            // model Ready when its file exists and is non-empty, so
+            // manually-placed weights (and downloads that completed
+            // after the last startup) are picked up without a restart.
+            self.project.models.scan_local(&models_dir);
+
+            let ready = self.project.models.ready_captions();
+            let Some(model) = ready.first() else {
+                tracing::info!("no caption model ready — opening prompt");
+                self.model_prompt = Some(caprust_core::ModelKind::Caption);
+                return;
+            };
+            let model_id = model.id.clone();
+            let language = model.language.clone();
+
+            let model_path = self.project.models.local_path(&models_dir, &model_id);
+            if !model_path.is_file() {
+                tracing::warn!(
+                    "caption: model {} not on disk at {}",
+                    model_id,
+                    model_path.display()
+                );
+                self.model_prompt = Some(caprust_core::ModelKind::Caption);
+                return;
+            }
+            (model_id, language, model_path)
+        };
 
         // Find the first clip with real audio: prefer an Audio clip, fall
         // back to the first Video clip with duration > 0.
@@ -1042,14 +1082,6 @@ impl CapRustApp {
         let source_start_ms = 0u64;
         let duration_ms = source_clip.duration_ms;
 
-        let ffmpeg = match self.ffmpeg_status.ffmpeg.clone() {
-            Some(p) => std::path::PathBuf::from(p),
-            None => {
-                tracing::warn!("caption: ffmpeg not available");
-                return;
-            }
-        };
-
         let req = crate::media_jobs::CaptionRequest {
             model_id,
             model_path,
@@ -1059,7 +1091,21 @@ impl CapRustApp {
             duration_ms,
         };
 
-        let rx = crate::media_jobs::spawn_caption_job(ffmpeg, req);
+        // Demo path does not touch ffmpeg or whisper; it returns fake
+        // segments from a background thread that mimics the real job's
+        // channel shape, so drain_caption_job needs no changes.
+        let rx = if demo_mode {
+            crate::media_jobs::spawn_demo_caption_job(req)
+        } else {
+            let ffmpeg = match self.ffmpeg_status.ffmpeg.clone() {
+                Some(p) => std::path::PathBuf::from(p),
+                None => {
+                    tracing::warn!("caption: ffmpeg not available");
+                    return;
+                }
+            };
+            crate::media_jobs::spawn_caption_job(ffmpeg, req)
+        };
         self.caption_rx = Some(rx);
         self.caption_job_started = Some(std::time::Instant::now());
         tracing::info!("caption: job spawned ({duration_ms}ms source)");
@@ -1074,6 +1120,16 @@ impl CapRustApp {
         };
         match rx.try_recv() {
             Ok(Ok(result)) => {
+                if result.segments.is_empty() {
+                    // No speech detected (or a stub job returned nothing).
+                    // Do not insert an empty Captions clip — it renders as
+                    // a phantom block on the timeline and pollutes the
+                    // project file across saves.
+                    tracing::warn!("caption: job returned 0 segments — not inserting a clip");
+                    self.caption_rx = None;
+                    self.caption_job_started = None;
+                    return;
+                }
                 let captions_track = self.ensure_captions_track();
                 let clip = caprust_core::Clip::new_captions(
                     captions_track,
@@ -2866,23 +2922,40 @@ impl CapRustApp {
             return;
         }
 
-        if let Some((model_id, lang)) = chosen {
-            let clip = match kind {
-                caprust_core::ModelKind::Caption => {
-                    caprust_core::Clip::new_captions(0, self.playhead_ms, 4000, &model_id, &lang)
-                }
-                caprust_core::ModelKind::Narration => caprust_core::Clip::new_narration(
-                    0,
-                    self.playhead_ms,
-                    3000,
-                    &model_id,
-                    &model_id,
-                    "Narration text goes here",
-                ),
-            };
-            let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+        if let Some((model_id, _lang)) = chosen {
+            // Do NOT insert a placeholder clip here. Clicking "Use" on a
+            // model is a signal to run the actual job; the job's drain
+            // path is the only place that ever inserts a Captions or
+            // Narration clip, and it inserts real content (segments or a
+            // rendered WAV). Inserting an empty clip from the prompt was
+            // the source of phantom zero-segment Captions clips on
+            // track 0 every time a user picked a model.
+            //
+            // Also: give the model registry a chance to see whether the
+            // weights are actually on disk before dispatching. A model
+            // marked Ready in the JSON but missing from disk would
+            // otherwise dispatch and fail silently.
+            let models_dir = self.settings.effective_models_dir();
+            self.project.models.scan_local(&models_dir);
+
             self.model_prompt = None;
+            match kind {
+                caprust_core::ModelKind::Caption => {
+                    // start_caption_job re-checks readiness; if still not
+                    // ready it re-opens this prompt, which is the desired
+                    // behaviour when a download has not actually happened.
+                    self.start_caption_job();
+                }
+                caprust_core::ModelKind::Narration => {
+                    if self.project.models.ready_narration().is_empty() {
+                        // Re-open prompt; nothing to narrate with yet.
+                        self.model_prompt = Some(caprust_core::ModelKind::Narration);
+                    } else {
+                        self.narration_input.open = true;
+                    }
+                }
+            }
+            let _ = model_id; // reserved for future "pin this model" behaviour
         }
     }
 
