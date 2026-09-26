@@ -29,6 +29,9 @@ pub struct SetClipCommand {
     pub speed_end: Option<Option<f32>>,
     pub speed_ease: Option<crate::clip::EaseCurve>,
     pub speed_range: Option<crate::clip::SpeedRampRange>,
+    /// Some(v) = replace the auto-reframe keypoints with `v` (empty
+    /// Vec clears them). None = leave untouched.
+    pub auto_reframe: Option<Vec<crate::clip::ReframeKeypoint>>,
     before: Option<Clip>,
 }
 
@@ -53,6 +56,7 @@ impl SetClipCommand {
             speed_end: None,
             speed_ease: None,
             speed_range: None,
+            auto_reframe: None,
             before: None,
         }
     }
@@ -129,6 +133,12 @@ impl SetClipCommand {
         self.speed_ease = Some(v);
         self
     }
+
+    /// Replace the auto-reframe keypoints. Empty Vec = clear.
+    pub fn auto_reframe(mut self, v: Vec<crate::clip::ReframeKeypoint>) -> Self {
+        self.auto_reframe = Some(v);
+        self
+    }
     pub fn speed_range(mut self, v: crate::clip::SpeedRampRange) -> Self {
         self.speed_range = Some(v);
         self
@@ -193,6 +203,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.speed_range {
             c.speed_range = v;
+        }
+        if let Some(v) = self.auto_reframe.clone() {
+            c.auto_reframe = v;
         }
         Ok(())
     }

@@ -67,6 +67,9 @@ pub enum PendingEdit {
     VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
     /// Set or clear the auto-duck sidechain control clip.
     DuckAgainst(Option<Uuid>),
+    /// Replace the auto-reframe keypoints on the clip. Empty Vec =
+    /// clear the pan path and fall back to source fit.
+    AutoReframe(Vec<caprust_core::clip::ReframeKeypoint>),
     /// Enable or disable the speed ramp end. Some(x) = ramp to x.
     SpeedEnd(Option<f32>),
     /// Set the easing curve of the speed ramp.
