@@ -37,7 +37,12 @@ pub struct BackgroundRemover {
     model: RunnableModel,
 }
 
-type RunnableModel = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+// tract 0.23 renamed the runnable plan type; the prelude alias
+// `RunnableModel` is the stable name going forward.
+// tract 0.23 wraps the runnable plan in an Arc; `run()` takes
+// `self: &Arc<Self>` so the alias carries the Arc.
+type RunnableModel =
+    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
 
 impl BackgroundRemover {
     /// Load and optimize a u2netp ONNX model from disk.
@@ -95,7 +100,7 @@ impl BackgroundRemover {
 
         // The model already applies sigmoid on d0; values are in
         // 0..1. Scale to 0..255 and resample up to the caller's size.
-        let d0 = d0.to_array_view::<f32>()?;
+        let d0 = d0.to_plain_array_view::<f32>()?;
         let mut small = vec![0u8; (INPUT_SIZE * INPUT_SIZE) as usize];
         for y in 0..INPUT_SIZE as usize {
             for x in 0..INPUT_SIZE as usize {
@@ -141,7 +146,7 @@ impl BackgroundRemover {
 /// still works.
 fn find_d0(outputs: &[TValue]) -> Result<&TValue> {
     for (i, t) in outputs.iter().enumerate() {
-        let view = match t.to_array_view::<f32>() {
+        let view = match t.to_plain_array_view::<f32>() {
             Ok(v) => v,
             Err(_) => continue,
         };

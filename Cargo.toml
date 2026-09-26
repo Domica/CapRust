@@ -41,10 +41,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Face detection (auto-reframe, Phase P2).
-# tract-onnx 0.22 is pure Rust (no libonnxruntime dependency) and has
-# MSRV 1.83+, which matches our devcontainer. 0.23.x requires Rust
-# 1.91 and is not usable here yet.
-tract-onnx = { version = "0.22", default-features = false }
+# tract-onnx 0.23 is pure Rust (no libonnxruntime dependency). It
+# added support for the pytorch_half_pixel Resize coordinate mode,
+# which u2netp (and most PyTorch-exported ONNX models) rely on. MSRV
+# is 1.91, pinned via rust-toolchain.toml.
+tract-onnx = { version = "0.23", default-features = false }
 
 # Audio playback (preview)
 cpal = "0.15"

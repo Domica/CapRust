@@ -67,7 +67,12 @@ pub struct FaceDetector {
     model: RunnableModel,
 }
 
-type RunnableModel = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+// tract 0.23 renamed the runnable plan type; the prelude alias
+// `RunnableModel` is the stable name going forward.
+// tract 0.23 wraps the runnable plan in an Arc; `run()` takes
+// `self: &Arc<Self>` so the alias carries the Arc.
+type RunnableModel =
+    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
 
 impl FaceDetector {
     /// Load and optimize a YuNet ONNX model from disk.
@@ -129,15 +134,15 @@ impl FaceDetector {
         // ONNX output order (see module docs). Indexing is explicit on
         // purpose -- a silent shape mismatch would be far worse than
         // the readability cost.
-        let cls_8 = outputs[0].to_array_view::<f32>()?;
-        let cls_16 = outputs[1].to_array_view::<f32>()?;
-        let cls_32 = outputs[2].to_array_view::<f32>()?;
-        let obj_8 = outputs[3].to_array_view::<f32>()?;
-        let obj_16 = outputs[4].to_array_view::<f32>()?;
-        let obj_32 = outputs[5].to_array_view::<f32>()?;
-        let bbox_8 = outputs[6].to_array_view::<f32>()?;
-        let bbox_16 = outputs[7].to_array_view::<f32>()?;
-        let bbox_32 = outputs[8].to_array_view::<f32>()?;
+        let cls_8 = outputs[0].to_plain_array_view::<f32>()?;
+        let cls_16 = outputs[1].to_plain_array_view::<f32>()?;
+        let cls_32 = outputs[2].to_plain_array_view::<f32>()?;
+        let obj_8 = outputs[3].to_plain_array_view::<f32>()?;
+        let obj_16 = outputs[4].to_plain_array_view::<f32>()?;
+        let obj_32 = outputs[5].to_plain_array_view::<f32>()?;
+        let bbox_8 = outputs[6].to_plain_array_view::<f32>()?;
+        let bbox_16 = outputs[7].to_plain_array_view::<f32>()?;
+        let bbox_32 = outputs[8].to_plain_array_view::<f32>()?;
 
         let cls = [cls_8, cls_16, cls_32];
         let obj = [obj_8, obj_16, obj_32];
