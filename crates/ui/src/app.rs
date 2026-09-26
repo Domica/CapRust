@@ -1769,6 +1769,9 @@ impl CapRustApp {
         let sha = m.sha256.clone();
         let dir = self.settings.effective_models_dir();
         let (filename, aux_url) = match m.kind {
+            // Caption = Whisper GGML .bin; everything else on the
+            // registry is ONNX.
+            caprust_core::ModelKind::Caption => (format!("{model_id}.bin"), None),
             caprust_core::ModelKind::Narration => (
                 format!("{model_id}.onnx"),
                 // Piper voices need the sibling .onnx.json config at
@@ -1776,7 +1779,7 @@ impl CapRustApp {
                 // <voice>.onnx.json next to <voice>.onnx.
                 Some(format!("{url}.json")),
             ),
-            _ => (format!("{model_id}.bin"), None),
+            caprust_core::ModelKind::FaceDetector => (format!("{model_id}.onnx"), None),
         };
         let target = dir.join(filename);
         tracing::info!(
@@ -4673,6 +4676,10 @@ impl CapRustApp {
         let title = match tab {
             caprust_core::ModelKind::Caption => tr("mp-captions-title"),
             caprust_core::ModelKind::Narration => tr("mp-narration-title"),
+            // FaceDetector is not reachable from the prompt tabs (only
+            // Caption / Narration are listed), but the match must stay
+            // exhaustive so a future tab addition compiles.
+            caprust_core::ModelKind::FaceDetector => tr("mp-face-title"),
         };
 
         let mut open = true;
@@ -4883,6 +4890,11 @@ impl CapRustApp {
                     } else {
                         self.narration_input.open = true;
                     }
+                }
+                caprust_core::ModelKind::FaceDetector => {
+                    // The P2 auto-reframe path picks the model up from
+                    // the registry on demand; there is no user-facing
+                    // action to trigger here beyond the success toast.
                 }
             }
             let _ = model_id; // reserved for future "pin this model" behaviour

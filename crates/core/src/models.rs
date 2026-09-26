@@ -11,6 +11,9 @@ pub mod download;
 pub enum ModelKind {
     Caption,
     Narration,
+    /// Face detector for auto-reframe (Phase P2). Single small ONNX
+    /// file, no sibling config. Downloaded on demand like the others.
+    FaceDetector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +186,23 @@ impl Default for ModelRegistry {
                     "de",
                     63,
                     "German male voice.",
+                ),
+                // --- Face detection (auto-reframe, Phase P2) ---
+                // YuNet, ~230 KB, Apache 2.0, fixed 320x320 input.
+                // SHA-256 intentionally left empty for now: F1b treats
+                // an empty checksum as "skip verification". Fill it in
+                // once the file is stable in the opencv_zoo repo (see
+                // DIRECTIVES §30 TODO).
+                ModelInfo::new(
+                    "yunet-face",
+                    "YuNet face detector",
+                    ModelKind::FaceDetector,
+                    "multi",
+                    1,
+                    "Small CPU face detector used by Auto-reframe.",
+                )
+                .with_url(
+                    "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
                 ),
             ],
         }
@@ -422,7 +442,9 @@ impl ModelRegistry {
     ) -> std::path::PathBuf {
         let kind = models.iter().find(|m| m.id == id).map(|m| m.kind);
         let filename = match kind {
-            Some(ModelKind::Narration) => format!("{id}.onnx"),
+            // Caption models are Whisper GGML .bin files; everything
+            // else on the registry is ONNX.
+            Some(ModelKind::Narration | ModelKind::FaceDetector) => format!("{id}.onnx"),
             _ => format!("{id}.bin"),
         };
         models_dir.join(filename)
