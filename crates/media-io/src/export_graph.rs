@@ -1565,10 +1565,15 @@ fn compute_xfade_audio_shifts(
 ///
 /// Rules:
 ///   * Backslashes are replaced with forward slashes. Windows accepts
-///     both, and forward slashes dodge ffmpeg's escape semantics
-///     where `\\` means a literal backslash.
-///   * The value is wrapped in single quotes, so the filter parser
-///     does not treat a colon (`C:`) or a comma as a separator.
+///     both, and forward slashes dodge ffmpeg's escape semantics.
+///   * Colons are escaped as `\:`. The filter option parser splits
+///     on `:` at a level below where single-quote quoting applies, so
+///     a Windows drive letter like `F:` would otherwise be truncated
+///     to just `F`. This is what caused
+///     `Failed to avformat_open_input 'F'` on every Windows path.
+///   * The value is wrapped in single quotes so the outer
+///     filter-description parser does not treat commas or semicolons
+///     inside the path as separators.
 ///   * A path containing a single quote cannot be represented this
 ///     way. `movie=` on Windows video files almost never hits this,
 ///     so we reject rather than trying to build a two-level escape
@@ -1581,7 +1586,10 @@ fn escape_movie_path(path: &std::path::Path) -> Option<String> {
         return None;
     }
     let normalized = s.replace('\\', "/");
-    Some(format!("'{normalized}'"))
+    // Escape the colon so a Windows drive letter survives the filter
+    // option parser. Single-quote quoting does not protect it.
+    let colon_escaped = normalized.replace(':', "\\:");
+    Some(format!("'{colon_escaped}'"))
 }
 
 /// Resolve the mask path for a clip. The stored path is relative to
@@ -2270,7 +2278,9 @@ mod tests {
     fn escape_movie_path_windows_backslashes() {
         let p = std::path::Path::new("C:\\proj\\cache\\masks\\abc.mkv");
         let escaped = escape_movie_path(p).expect("no single quote");
-        assert_eq!(escaped, "'C:/proj/cache/masks/abc.mkv'");
+        // Drive letter colon must be escaped or ffmpeg's option parser
+        // truncates the value at `C`.
+        assert_eq!(escaped, "'C\\:/proj/cache/masks/abc.mkv'");
     }
 
     #[test]
@@ -2361,13 +2371,13 @@ mod tests {
 
     #[test]
     fn bg_removal_windows_path_normalized() {
-        // Backslashes become forward slashes in the movie= argument;
-        // a raw Windows path would otherwise fight ffmpeg's own
-        // escape semantics.
+        // Backslashes become forward slashes, and the drive letter
+        // colon is escaped (\:) so ffmpeg's option parser does not
+        // truncate the value at 'C'.
         let plan = single_video_plan_with_mask(Some("C:\\proj\\cache\\masks\\abc.mkv"));
         let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
         assert!(
-            fg.contains("C:/proj/cache/masks/abc.mkv"),
+            fg.contains("C\\:/proj/cache/masks/abc.mkv"),
             "expected normalized path in filtergraph: {fg}"
         );
     }
