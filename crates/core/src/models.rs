@@ -208,16 +208,17 @@ impl Default for ModelRegistry {
                     // media.githubusercontent.com serves the LFS
                     // binary (raw.* returns the pointer).
                     //
-                    // 2022mar, not 2023mar: the 2023 export uses
-                    // symbolic input dims that produce Resize nodes
-                    // with sizes computed from the input shape, and
-                    // tract-onnx 0.23 cannot reconcile the symbolic
-                    // expression ("Clashing resolution for
-                    // expression. 640=640 != 320"). 2022mar has a
-                    // fixed 320x320 input and plain Resize ops, which
-                    // tract handles fine. Accuracy difference is
-                    // negligible for auto-reframe.
-                    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2022mar.onnx",
+                    // 2022mar, not 2023mar: the 2023 export has
+                    // symbolic Resize nodes tract-onnx 0.23 cannot
+                    // reconcile ("Clashing resolution for expression.
+                    // 640=640 != 320"). 2022mar is the fixed-input
+                    // version and parses cleanly.
+                    //
+                    // The opencv_zoo repo removed 2022mar from its
+                    // main branch; a Hugging Face mirror hosts it.
+                    // If this mirror ever disappears, fall back to
+                    // SCRFD or another fixed-input face detector.
+                    "https://huggingface.co/casual02/model-resnet_custom_v3/resolve/main/face_detection_yunet_2022mar.onnx",
                 ),
                 // --- Background removal (Phase P3) ---
                 // u2netp, the lightweight variant of U^2-Net. ~4.7 MB,
