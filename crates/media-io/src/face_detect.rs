@@ -18,7 +18,7 @@
 //! frame, so downstream code can crop without knowing the source
 //! resolution.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
@@ -128,7 +128,7 @@ impl FaceDetector {
         let outputs = self
             .model
             .run(tvec!(input.into()))
-            .context("YuNet inference")?;
+            .map_err(|e| anyhow!("YuNet inference: {e:?}"))?;
 
         if outputs.len() != 12 {
             return Err(anyhow!(
