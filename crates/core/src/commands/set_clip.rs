@@ -32,6 +32,9 @@ pub struct SetClipCommand {
     /// Some(v) = replace the auto-reframe keypoints with `v` (empty
     /// Vec clears them). None = leave untouched.
     pub auto_reframe: Option<Vec<crate::clip::ReframeKeypoint>>,
+    /// Some(Some(p)) = set the mask path. Some(None) = clear it.
+    /// None = leave untouched.
+    pub bg_removal: Option<Option<String>>,
     before: Option<Clip>,
 }
 
@@ -57,6 +60,7 @@ impl SetClipCommand {
             speed_ease: None,
             speed_range: None,
             auto_reframe: None,
+            bg_removal: None,
             before: None,
         }
     }
@@ -139,6 +143,12 @@ impl SetClipCommand {
         self.auto_reframe = Some(v);
         self
     }
+
+    /// Set or clear the background-removal mask path.
+    pub fn bg_removal(mut self, v: Option<String>) -> Self {
+        self.bg_removal = Some(v);
+        self
+    }
     pub fn speed_range(mut self, v: crate::clip::SpeedRampRange) -> Self {
         self.speed_range = Some(v);
         self
@@ -206,6 +216,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.auto_reframe.clone() {
             c.auto_reframe = v;
+        }
+        if let Some(v) = self.bg_removal.clone() {
+            c.bg_removal = v;
         }
         Ok(())
     }

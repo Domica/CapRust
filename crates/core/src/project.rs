@@ -113,6 +113,7 @@ impl ProjectState {
                 k.cx_norm.to_bits().hash(&mut h);
                 k.cy_norm.to_bits().hash(&mut h);
             }
+            c.bg_removal.hash(&mut h);
             // NOTE: c.name and c.media_id intentionally excluded.
         }
 
