@@ -203,6 +203,12 @@ pub struct Clip {
     /// project aspect ratio and pans the crop to follow these points.
     #[serde(default)]
     pub auto_reframe: Vec<ReframeKeypoint>,
+    /// Path to the per-clip alpha mask (Phase P3c). Relative to the
+    /// project directory, e.g. "cache/masks/<clip_id>.mkv". None =
+    /// no background removal. Populated by the P3c job, consumed by
+    /// the P3d render graph as an `alphamerge` input.
+    #[serde(default)]
+    pub bg_removal: Option<String>,
 }
 
 impl Clip {
@@ -234,6 +240,7 @@ impl Clip {
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
+            bg_removal: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -267,6 +274,7 @@ impl Clip {
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
+            bg_removal: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -300,6 +308,7 @@ impl Clip {
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
+            bg_removal: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -335,6 +344,7 @@ impl Clip {
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
+            bg_removal: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -375,6 +385,7 @@ impl Clip {
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
+            bg_removal: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -416,6 +427,7 @@ impl Clip {
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
+            bg_removal: None,
             source_duration_ms: 0,
             media_id: None,
         }

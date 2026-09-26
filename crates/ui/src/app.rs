@@ -82,6 +82,9 @@ pub enum JobKind {
     /// Auto-reframe analysis (Phase P2c-3b): frame extraction + YuNet
     /// detection + keypoint computation.
     Reframe,
+    /// Background removal (Phase P3c): per-frame u2netp inference,
+    /// mask written as FFV1 MKV into the project cache.
+    BgRemoval,
 }
 
 /// One in-flight background job. `progress` < 0.0 means indeterminate
@@ -166,6 +169,16 @@ pub struct CapRustApp {
         Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::ReframeResult, String>>>,
     /// Job id for the auto-reframe bar entry.
     pub reframe_job_id: Option<u64>,
+    /// Receiver for an in-flight background-removal job (Phase P3c).
+    /// Emits Started / Progress / Finished / Failed events.
+    pub bg_removal_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::BgRemovalEvent>>,
+    /// Job id for the background-removal bar entry.
+    pub bg_removal_job_id: Option<u64>,
+    /// Relative mask path (e.g. "cache/masks/<clip>.mkv") for the
+    /// in-flight background-removal job. Stored here so the drain can
+    /// write it into the clip without recomputing or consulting the
+    /// filesystem.
+    pub bg_removal_rel_path: Option<String>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -383,6 +396,9 @@ impl CapRustApp {
             narration_rx: None,
             reframe_rx: None,
             reframe_job_id: None,
+            bg_removal_rx: None,
+            bg_removal_job_id: None,
+            bg_removal_rel_path: None,
             narration_input: Default::default(),
             update_available: None,
             toasts: Vec::new(),
@@ -1355,6 +1371,210 @@ impl CapRustApp {
         self.reframe_rx = Some(rx);
         self.toast(tr("toast-reframe-started"));
         tracing::info!("reframe: job spawned for clip {clip_id}");
+    }
+
+    /// Poll the in-flight background-removal job. Events arrive as
+    /// Started / Progress / Finished / Failed. On Finished, write the
+    /// mask path into the clip through SetClipCommand (undoable). On
+    /// Failed, toast and clear state.
+    fn drain_bg_removal_job(&mut self) {
+        // Take the receiver so we can process every queued event and
+        // put it back only while the stream is still live. Same shape
+        // as drain_model_download.
+        let Some(rx) = self.bg_removal_rx.take() else {
+            return;
+        };
+        let mut still_live = true;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::media_jobs::BgRemovalEvent::Started { total_frames }) => {
+                    tracing::info!("bg-removal: started, {total_frames} frames to process");
+                    if let Some(id) = self.bg_removal_job_id {
+                        self.update_job_progress(id, 0.0);
+                    }
+                }
+                Ok(crate::media_jobs::BgRemovalEvent::Progress { done, total }) => {
+                    let p = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    };
+                    if let Some(id) = self.bg_removal_job_id {
+                        self.update_job_progress(id, p);
+                    }
+                }
+                Ok(crate::media_jobs::BgRemovalEvent::Finished {
+                    clip_id,
+                    mask_path,
+                    frame_count,
+                }) => {
+                    let rel = self.bg_removal_rel_path.take();
+                    let stored = match rel {
+                        Some(r) => Some(r),
+                        None => {
+                            // Fallback: derive from the absolute path
+                            // relative to the project dir. Should not
+                            // happen, but a missing key would silently
+                            // drop the mask and waste the whole job.
+                            let proj = self.project.project_path.clone();
+                            proj.and_then(|p| {
+                                mask_path
+                                    .strip_prefix(&p)
+                                    .ok()
+                                    .map(|r| r.to_string_lossy().into_owned())
+                            })
+                        }
+                    };
+                    if let Some(rel) = stored {
+                        let cmd = caprust_core::commands::set_clip::SetClipCommand::new(clip_id)
+                            .bg_removal(Some(rel));
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("bg-removal: apply failed: {e}");
+                            self.toast(format!("{}: {e}", tr("toast-bg-removal-failed")));
+                        } else {
+                            tracing::info!(
+                                "bg-removal: clip {} mask applied ({frame_count} frames)",
+                                clip_id
+                            );
+                            self.toast(tr("toast-bg-removal-done"));
+                        }
+                    } else {
+                        tracing::warn!("bg-removal: finished but no relative path available");
+                        self.toast(tr("toast-bg-removal-failed"));
+                    }
+                    if let Some(id) = self.bg_removal_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::BgRemovalEvent::Failed(msg)) => {
+                    tracing::error!("bg-removal: job failed: {msg}");
+                    self.toast(format!("{}: {msg}", tr("toast-bg-removal-failed")));
+                    if let Some(id) = self.bg_removal_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.bg_removal_rel_path = None;
+                    still_live = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("bg-removal: receiver disconnected unexpectedly");
+                    if let Some(id) = self.bg_removal_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.bg_removal_rel_path = None;
+                    still_live = false;
+                    break;
+                }
+            }
+        }
+        if still_live {
+            self.bg_removal_rx = Some(rx);
+        }
+    }
+
+    /// Kick off a background-removal job for the given clip. Requires
+    /// the u2netp model on disk, ffmpeg + ffprobe, and a saved project
+    /// (so the mask cache has somewhere to live). Silently no-ops with
+    /// a toast on any missing prerequisite.
+    fn start_bg_removal_job(&mut self, clip_id: uuid::Uuid) {
+        if self.bg_removal_rx.is_some() {
+            self.toast(tr("toast-bg-removal-busy"));
+            return;
+        }
+        let Some(project_path) = self.project.project_path.clone() else {
+            self.toast(tr("toast-bg-removal-needs-project"));
+            return;
+        };
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. }
+            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-bg-removal-needs-video"));
+                return;
+            }
+        };
+        let t_start_ms = clip.start_time_ms;
+        let duration_ms = clip.duration_ms;
+        if duration_ms == 0 {
+            self.toast(tr("toast-bg-removal-needs-video"));
+            return;
+        }
+
+        // Model: resolve u2netp path from the registry.
+        self.project
+            .models
+            .scan_local(&self.settings.effective_models_dir());
+        let models_dir = self.settings.effective_models_dir();
+        let model_path = self
+            .project
+            .models
+            .models
+            .iter()
+            .find(|m| m.kind == caprust_core::ModelKind::BackgroundRemover)
+            .map(|m| {
+                caprust_core::models::ModelRegistry::local_path_static(
+                    &self.project.models.models,
+                    &models_dir,
+                    &m.id,
+                )
+            });
+        let Some(model_path) = model_path.filter(|p| p.is_file()) else {
+            self.toast(tr("toast-bg-removal-needs-model"));
+            return;
+        };
+
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-bg-removal-needs-ffmpeg"));
+            return;
+        };
+        let Some(ffprobe) = self.ffmpeg_status.ffprobe.clone() else {
+            self.toast(tr("toast-bg-removal-needs-ffmpeg"));
+            return;
+        };
+
+        let fps = {
+            let fr = &self.project.frame_rate;
+            if fr.den == 0 {
+                30.0
+            } else {
+                fr.num as f64 / fr.den as f64
+            }
+        };
+
+        // Mask is stored at a path relative to the project so the
+        // .caprust file stays portable across machines. The worker
+        // gets the absolute path.
+        let rel = format!("cache/masks/{clip_id}.mkv");
+        let abs = caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
+
+        let req = crate::media_jobs::BgRemovalRequest {
+            clip_id,
+            source_path,
+            t_start_ms,
+            duration_ms,
+            fps,
+            model_path,
+            mask_output: abs,
+            max_side: 480,
+        };
+        let rx = crate::media_jobs::spawn_bg_removal_job(
+            std::path::PathBuf::from(ffmpeg),
+            std::path::PathBuf::from(ffprobe),
+            req,
+        );
+        let job_id = self.begin_job(JobKind::BgRemoval, tr("job-bg-removal"));
+        self.bg_removal_job_id = Some(job_id);
+        self.bg_removal_rx = Some(rx);
+        // Remember the relative path so drain can store it in the clip
+        // without recomputing. Keyed on the job id because at most one
+        // job runs at a time and clip_id is recoverable from Finished.
+        self.bg_removal_rel_path = Some(rel);
+        self.toast(tr("toast-bg-removal-started"));
+        tracing::info!("bg-removal: job spawned for clip {clip_id}");
     }
 
     /// Poll the in-flight reframe job. On success, write the keypoints
@@ -4193,6 +4413,15 @@ impl CapRustApp {
                                 PendingEdit::StartReframe => {
                                     self.start_reframe_job(id);
                                 }
+                                PendingEdit::StartBgRemoval => {
+                                    self.start_bg_removal_job(id);
+                                }
+                                PendingEdit::ClearBgRemoval => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .bg_removal(None);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
                                 PendingEdit::AutoReframe(kps) => {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)
@@ -5315,6 +5544,7 @@ impl eframe::App for CapRustApp {
         self.drain_caption_job();
         self.drain_narration_job();
         self.drain_reframe_job();
+        self.drain_bg_removal_job();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 
         // Load any newly-ready thumbnails into the timeline texture cache.

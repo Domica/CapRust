@@ -75,6 +75,13 @@ pub enum PendingEdit {
     /// and hands it to start_reframe_job. No payload because the
     /// result arrives asynchronously through reframe_rx.
     StartReframe,
+    /// Clear the background-removal mask path. The mask file itself
+    /// stays in cache until the user clears the project cache.
+    ClearBgRemoval,
+    /// Start a background-removal job for the currently-selected clip.
+    /// Dispatcher resolves the clip id from the selection and hands
+    /// it to start_bg_removal_job.
+    StartBgRemoval,
     /// Enable or disable the speed ramp end. Some(x) = ramp to x.
     SpeedEnd(Option<f32>),
     /// Set the easing curve of the speed ramp.
@@ -456,6 +463,57 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                     .clicked()
                 {
                     state.pending.push(PendingEdit::StartReframe);
+                }
+            });
+        });
+    });
+
+    ui.add_space(10.0);
+    ui.separator();
+
+    // --- Background removal ---
+    ui.label(egui::RichText::new(tr("props-video-bg-removal")).strong());
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(tr("props-bg-removal-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.horizontal(|ui| {
+        let can_run = matches!(
+            clip.clip_type,
+            ClipType::Video { .. } | ClipType::Image { .. }
+        );
+        let has_mask = clip.bg_removal.is_some();
+        if has_mask {
+            ui.label(
+                egui::RichText::new(tr("props-bg-removal-done"))
+                    .small()
+                    .color(egui::Color32::from_gray(200)),
+            );
+        } else {
+            ui.label(
+                egui::RichText::new(tr("props-bg-removal-none"))
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if has_mask
+                && ui
+                    .button(tr("props-bg-removal-clear"))
+                    .on_hover_text(tr("props-bg-removal-clear-hint"))
+                    .clicked()
+            {
+                state.pending.push(PendingEdit::ClearBgRemoval);
+            }
+            ui.add_enabled_ui(can_run, |ui| {
+                if ui
+                    .button(tr("props-bg-removal-run"))
+                    .on_hover_text(tr("props-bg-removal-run-hint"))
+                    .clicked()
+                {
+                    state.pending.push(PendingEdit::StartBgRemoval);
                 }
             });
         });

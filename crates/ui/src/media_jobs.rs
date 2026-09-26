@@ -601,3 +601,277 @@ fn run_reframe_job(
         frames_with_face,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Background removal (Phase P3c-2)
+// ---------------------------------------------------------------------------
+
+/// Progress events emitted by a background-removal job. Modeled on
+/// `caprust_core::models::DownloadEvent`: the worker sends these over
+/// an mpsc channel, the UI drains them per frame.
+#[derive(Debug)]
+pub enum BgRemovalEvent {
+    /// Emitted after probe + extraction, before the per-frame loop.
+    Started { total_frames: usize },
+    /// Emitted every N frames (see PROGRESS_STRIDE) so the UI does not
+    /// repaint on every single frame.
+    Progress { done: usize, total: usize },
+    /// Terminal success. `mask_path` is the FFV1 MKV on disk.
+    Finished {
+        clip_id: uuid::Uuid,
+        mask_path: std::path::PathBuf,
+        frame_count: usize,
+    },
+    /// Terminal failure. `reason` is a user-readable string.
+    Failed(String),
+}
+
+/// Progress event stride: emit every Nth frame. A 30s / 30fps clip is
+/// 900 frames; emitting 900 events would be wasteful. 25 keeps the
+/// progress bar smooth at ~1.2 s per step on typical hardware.
+pub const PROGRESS_STRIDE: usize = 25;
+
+/// Request for a background-removal job. Everything the worker needs
+/// to run end to end, with no back-reference into the project state.
+#[derive(Debug)]
+pub struct BgRemovalRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: std::path::PathBuf,
+    /// Offset inside the source where the clip begins.
+    pub t_start_ms: u64,
+    /// Length of the source window to process.
+    pub duration_ms: u64,
+    /// Frame rate to sample and encode at. Must match the project's
+    /// frame rate so the mask aligns with the render output 1:1.
+    pub fps: f64,
+    /// Path to the u2netp ONNX model on disk.
+    pub model_path: std::path::PathBuf,
+    /// Where to write the FFV1 MKV mask. Resolved by the caller via
+    /// `caprust_core::cache::mask_path`.
+    pub mask_output: std::path::PathBuf,
+    /// Downscale the longer side of each extracted frame to at most
+    /// this before running inference. u2netp runs at 320x320
+    /// internally, so 480 gives the mask a little more source detail
+    /// than a bare 320 without dominating memory (30 s / 30 fps at
+    /// 480p is ~350 MB of frame buffers).
+    pub max_side: u32,
+}
+
+/// Spawn a background thread that runs the full background-removal
+/// pipeline: probe source dimensions, extract sampled frames, run
+/// u2netp on each, and write the per-frame alpha masks to a single
+/// FFV1 Matroska file. Emits `BgRemovalEvent`s as it progresses.
+///
+/// Returns immediately with a receiver. `ffmpeg` and `ffprobe` must
+/// be valid paths.
+pub fn spawn_bg_removal_job(
+    ffmpeg: std::path::PathBuf,
+    ffprobe: std::path::PathBuf,
+    req: BgRemovalRequest,
+) -> std::sync::mpsc::Receiver<BgRemovalEvent> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-bg-removal".into())
+        .spawn(move || {
+            run_bg_removal_job(&ffmpeg, &ffprobe, &req, &tx);
+        })
+        .expect("spawn bg-removal thread");
+
+    rx
+}
+
+fn run_bg_removal_job(
+    ffmpeg: &std::path::Path,
+    ffprobe: &std::path::Path,
+    req: &BgRemovalRequest,
+    tx: &std::sync::mpsc::Sender<BgRemovalEvent>,
+) {
+    if let Err(reason) = run_bg_removal_inner(ffmpeg, ffprobe, req, tx) {
+        tracing::error!("bg-removal: {reason}");
+        let _ = tx.send(BgRemovalEvent::Failed(reason));
+    }
+}
+
+fn run_bg_removal_inner(
+    ffmpeg: &std::path::Path,
+    ffprobe: &std::path::Path,
+    req: &BgRemovalRequest,
+    tx: &std::sync::mpsc::Sender<BgRemovalEvent>,
+) -> Result<(), String> {
+    // 1. Probe for native dimensions.
+    let probe = caprust_media_io::ffprobe::probe(ffprobe, &req.source_path)
+        .map_err(|e| format!("probe {}: {e}", req.source_path.display()))?;
+    if !probe.has_video {
+        return Err("source has no video stream".into());
+    }
+    let src_w = probe
+        .width
+        .ok_or_else(|| "probe: missing width".to_string())?;
+    let src_h = probe
+        .height
+        .ok_or_else(|| "probe: missing height".to_string())?;
+    if src_w < 2 || src_h < 2 {
+        return Err(format!("invalid source dimensions {src_w}x{src_h}"));
+    }
+
+    // 2. Extract sampled frames at the project's frame rate.
+    let frames = caprust_media_io::frame_extract::extract_rgb_frames(
+        ffmpeg,
+        &req.source_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("frame extraction: {e}"))?;
+
+    let total = frames.len();
+    if total == 0 {
+        return Err("no frames extracted".into());
+    }
+    let _ = tx.send(BgRemovalEvent::Started {
+        total_frames: total,
+    });
+    tracing::info!(
+        "bg-removal: clip {} -- {} frames to process",
+        req.clip_id,
+        total
+    );
+
+    // 3. Load the model once.
+    let model = caprust_media_io::background_removal::BackgroundRemover::load(&req.model_path)
+        .map_err(|e| format!("load u2netp: {e}"))?;
+
+    // 4. Open the FFV1 writer on the output path.
+    let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
+
+    // 5. Per-frame inference + write.
+    for (i, frame) in frames.iter().enumerate() {
+        let mask = model
+            .infer_mask(&frame.rgb, frame.width, frame.height)
+            .map_err(|e| format!("infer frame {i}: {e}"))?;
+        writer
+            .write_frame(&mask)
+            .map_err(|e| format!("write frame {i}: {e}"))?;
+
+        if (i + 1) % PROGRESS_STRIDE == 0 || i + 1 == total {
+            let _ = tx.send(BgRemovalEvent::Progress { done: i + 1, total });
+        }
+    }
+
+    // 6. Flush and close the writer.
+    writer
+        .finish()
+        .map_err(|e| format!("flush mask writer: {e}"))?;
+
+    let _ = tx.send(BgRemovalEvent::Finished {
+        clip_id: req.clip_id,
+        mask_path: req.mask_output.clone(),
+        frame_count: total,
+    });
+    tracing::info!(
+        "bg-removal: clip {} done -- {} frames -> {}",
+        req.clip_id,
+        total,
+        req.mask_output.display()
+    );
+    Ok(())
+}
+
+/// Subprocess wrapper for the ffmpeg that writes the mask sequence.
+/// Raw grayscale frames are piped on stdin; ffmpeg encodes them as
+/// FFV1 in Matroska, lossless, single channel.
+struct MaskWriter {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    frame_bytes: usize,
+}
+
+impl MaskWriter {
+    fn write_frame(&mut self, mask: &[u8]) -> std::io::Result<()> {
+        debug_assert_eq!(mask.len(), self.frame_bytes);
+        std::io::Write::write_all(&mut self.stdin, mask)
+    }
+
+    fn finish(mut self) -> Result<(), String> {
+        // Drop stdin first so ffmpeg sees EOF and can finalize the
+        // container. Then wait for the process.
+        drop(self.stdin);
+        let status = self
+            .child
+            .wait()
+            .map_err(|e| format!("wait ffmpeg mask writer: {e}"))?;
+        if !status.success() {
+            return Err(format!("ffmpeg mask writer exited {status}"));
+        }
+        Ok(())
+    }
+}
+
+fn spawn_mask_writer(
+    ffmpeg: &std::path::Path,
+    output: &std::path::Path,
+    first_frame: &caprust_media_io::frame_extract::RgbFrame,
+    fps: f64,
+) -> Result<MaskWriter, String> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let w = first_frame.width;
+    let h = first_frame.height;
+    let args: Vec<String> = vec![
+        "-y".into(),
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-f".into(),
+        "rawvideo".into(),
+        "-pix_fmt".into(),
+        "gray".into(),
+        "-s".into(),
+        format!("{w}x{h}"),
+        "-r".into(),
+        format!("{fps:.6}"),
+        "-i".into(),
+        "-".into(),
+        "-c:v".into(),
+        "ffv1".into(),
+        "-pix_fmt".into(),
+        "gray".into(),
+        output.to_string_lossy().into_owned(),
+    ];
+    tracing::debug!("bg-removal: mask writer args: {:?}", args);
+    let mut child = std::process::Command::new(ffmpeg)
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg mask writer: {e}"))?;
+
+    if let Some(mut err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(&mut err);
+            for line in reader.lines().map_while(std::result::Result::ok) {
+                if !line.trim().is_empty() {
+                    tracing::warn!("bg-removal ffmpeg: {line}");
+                }
+            }
+        });
+    }
+
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "ffmpeg mask writer: stdin missing".to_string())?;
+
+    Ok(MaskWriter {
+        child,
+        stdin,
+        frame_bytes: (w as usize) * (h as usize),
+    })
+}
