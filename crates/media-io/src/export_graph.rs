@@ -1217,15 +1217,24 @@ fn build_speed_ramp_setpts(
 /// Build an `asplit, atrim xN, atempo xN, concat` block that applies a
 /// piecewise-constant speed ramp to an audio stream. Emits one or more
 /// full ffmpeg chain lines (each `;`-terminated), reading from
-/// `in_label` and writing to `out_label`.
+/// `in_label` and writing to `out_name`.
 ///
 /// Uses the same RampSegment list as build_speed_ramp_setpts, so every
 /// segment boundary and speed matches the video side exactly. That
 /// removes the mid-ramp A/V drift the previous ease-weighted-mean
 /// approximation introduced.
+///
+/// Argument conventions -- easy to get wrong; a mismatch produces a
+/// double-bracket label and ffmpeg rejects the filtergraph:
+///   * `in_label` is a COMPLETE ffmpeg label including the brackets,
+///     e.g. `"[0:a]"`. Interpolated verbatim.
+///   * `out_name` is a BARE name with no brackets, e.g. `"a0_pre"`.
+///     This function wraps it in `[...]` on the way out.
+///   * `prefix` is a BARE name used to build the internal asplit and
+///     atrim labels: `"a0r"` yields `[a0r_sp0]` and `[a0r_sg0]`.
 fn build_speed_ramp_atempo_segments(
     in_label: &str,
-    out_label: &str,
+    out_name: &str,
     segments: &[RampSegment],
     prefix: &str,
 ) -> String {
@@ -1266,7 +1275,7 @@ fn build_speed_ramp_atempo_segments(
             .map(|l| format!("[{l}]"))
             .collect::<String>(),
         n = n,
-        out = out_label,
+        out = out_name,
     ));
 
     out
