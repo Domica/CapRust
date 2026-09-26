@@ -4,6 +4,7 @@ use crate::i18n_helper::tr;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
+use egui_phosphor::regular as ph;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -379,7 +380,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     .color(Color32::from_gray(120)),
             );
             ui.label(
-                RichText::new("Click 📥 Clips / 🎵 Music / 🖼 Images above.")
+                RichText::new("Click Clips / Music / Images above.")
                     .small()
                     .color(Color32::from_gray(90)),
             );
@@ -582,7 +583,7 @@ fn draw_card(
             ui.painter().text(
                 x_rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "✕",
+                ph::X,
                 FontId::proportional(12.0),
                 Color32::WHITE,
             );

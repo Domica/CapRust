@@ -3,6 +3,7 @@
 use crate::i18n_helper::tr;
 use caprust_core::{Clip, ClipType, ProjectState};
 use egui::Ui;
+use egui_phosphor::regular as ph;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -823,14 +824,14 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         .show(ui, |ui| {
             ui.label("In");
             ui.label(clip.transition_in.clone().unwrap_or_else(|| "—".into()));
-            if clip.transition_in.is_some() && ui.small_button("✕").clicked() {
+            if clip.transition_in.is_some() && ui.small_button(ph::X).clicked() {
                 state.pending.push(PendingEdit::ClearTransitionIn);
             }
             ui.end_row();
 
             ui.label("Out");
             ui.label(clip.transition_out.clone().unwrap_or_else(|| "—".into()));
-            if clip.transition_out.is_some() && ui.small_button("✕").clicked() {
+            if clip.transition_out.is_some() && ui.small_button(ph::X).clicked() {
                 state.pending.push(PendingEdit::ClearTransitionOut);
             }
             ui.end_row();
@@ -853,9 +854,9 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         let mut to_remove: Option<String> = None;
         for fx in &clip.effects {
             ui.horizontal(|ui| {
-                ui.label(format!("✨ {}", fx.effect_id));
+                ui.label(format!("{} {}", ph::SPARKLE, fx.effect_id));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("✕").clicked() {
+                    if ui.small_button(ph::X).clicked() {
                         to_remove = Some(fx.effect_id.clone());
                     }
                 });

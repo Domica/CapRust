@@ -2,6 +2,7 @@
 
 use caprust_core::AspectRatio;
 use egui::{Color32, RichText, Ui, Vec2};
+use egui_phosphor::regular as ph;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewQuality {
@@ -112,24 +113,30 @@ pub fn show_transport(
             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
             |ui| {
                 ui.horizontal(|ui| {
-                    if transport_button(ui, "⏪", "Back 30 s", Vec2::new(34.0, 28.0)) {
+                    if transport_button(ui, ph::REWIND, "Back 30 s", Vec2::new(34.0, 28.0)) {
                         ev.seek_back_30 = true;
                     }
-                    if transport_button(ui, "⏮", "Back 5 s", Vec2::new(30.0, 28.0)) {
+                    if transport_button(ui, ph::SKIP_BACK, "Back 5 s", Vec2::new(30.0, 28.0)) {
                         ev.seek_back_5 = true;
                     }
-                    let play_icon = if state.playing { "⏸" } else { "▶" };
+                    let play_icon = if state.playing { ph::PAUSE } else { ph::PLAY };
                     if transport_button(ui, play_icon, "Play / Pause", Vec2::new(38.0, 32.0)) {
                         ev.toggle_play = true;
                     }
-                    if transport_button(ui, "⏭", "Forward 5 s", Vec2::new(30.0, 28.0)) {
+                    if transport_button(ui, ph::SKIP_FORWARD, "Forward 5 s", Vec2::new(30.0, 28.0))
+                    {
                         ev.seek_fwd_5 = true;
                     }
-                    if transport_button(ui, "⏩", "Forward 30 s", Vec2::new(34.0, 28.0)) {
+                    if transport_button(ui, ph::FAST_FORWARD, "Forward 30 s", Vec2::new(34.0, 28.0))
+                    {
                         ev.seek_fwd_30 = true;
                     }
                     ui.separator();
-                    let loop_txt = if state.loop_playback { "🔁" } else { "➡" };
+                    let loop_txt = if state.loop_playback {
+                        ph::REPEAT
+                    } else {
+                        ph::ARROW_RIGHT
+                    };
                     if transport_button(ui, loop_txt, "Loop", Vec2::new(30.0, 28.0)) {
                         ev.toggle_loop = true;
                     }
@@ -162,7 +169,11 @@ pub fn show_transport(
             ui.separator();
 
             // Mute toggle button.
-            let mute_icon = if muted { "🔇" } else { "🔊" };
+            let mute_icon = if muted {
+                ph::SPEAKER_SLASH
+            } else {
+                ph::SPEAKER_HIGH
+            };
             if transport_button(ui, mute_icon, "Mute", Vec2::new(28.0, 26.0)) {
                 ev.toggle_mute = true;
             }
