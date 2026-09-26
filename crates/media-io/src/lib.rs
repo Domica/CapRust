@@ -6,6 +6,7 @@ pub mod export_progress;
 pub mod exporter;
 pub mod face_detect;
 pub mod ffprobe;
+pub mod frame_extract;
 pub mod piper;
 pub mod player;
 pub mod preview_render;
