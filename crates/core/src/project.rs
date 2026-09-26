@@ -120,8 +120,10 @@ impl ProjectState {
             t.kind.hash(&mut h);
             t.muted.hash(&mut h);
             t.visible.hash(&mut h);
-            t.locked.hash(&mut h);
             t.pinned.hash(&mut h);
+            // t.locked is UI-only (blocks clip drag); t.name, t.id
+            // and t.height are render-neutral. Excluded so a rename
+            // or a lock toggle does not trigger a preview respawn.
         }
 
         h.finish()
