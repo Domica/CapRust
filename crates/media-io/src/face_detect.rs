@@ -82,11 +82,19 @@ impl FaceDetector {
         }
         let model = tract_onnx::onnx()
             .model_for_path(model_path)
-            .with_context(|| format!("load ONNX model: {}", model_path.display()))?
+            .map_err(|e| {
+                // Same reasoning as background_removal.rs: tract's
+                // Display hides the operator name, the Debug form
+                // carries it.
+                anyhow!(
+                    "load ONNX model {}: {e:?}\n  (if this is an operator tract-onnx 0.23 does not support, check DIRECTIVES section 30 for known model issues)",
+                    model_path.display()
+                )
+            })?
             .into_optimized()
-            .context("optimize ONNX model")?
+            .map_err(|e| anyhow!("optimize ONNX model: {e:?}"))?
             .into_runnable()
-            .context("build runnable plan")?;
+            .map_err(|e| anyhow!("build runnable plan: {e:?}"))?;
         tracing::info!("face_detect: loaded {}", model_path.display());
         Ok(Self { model })
     }
