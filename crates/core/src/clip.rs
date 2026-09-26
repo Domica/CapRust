@@ -62,6 +62,16 @@ fn default_effect_amount() -> f32 {
     1.0
 }
 
+/// One point in a clip's volume automation curve. `t_ms` is relative
+/// to the clip's own start (0 = clip head). `gain_db` is the target
+/// gain at that instant. Between keyframes the renderer interpolates
+/// linearly in the dB domain.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VolumeKeyframe {
+    pub t_ms: u64,
+    pub gain_db: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     pub id: Uuid,
@@ -103,6 +113,11 @@ pub struct Clip {
     /// Fade-out duration in ms. Same semantics as fade_in_ms.
     #[serde(default)]
     pub fade_out_ms: u64,
+    /// Volume automation curve. Empty = static `volume_db`. Non-empty
+    /// = piecewise-linear in dB between sorted keyframes, held flat
+    /// before the first and after the last.
+    #[serde(default)]
+    pub volume_keyframes: Vec<VolumeKeyframe>,
 }
 
 impl Clip {
@@ -128,6 +143,7 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            volume_keyframes: Vec::new(),
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -155,6 +171,7 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            volume_keyframes: Vec::new(),
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -182,6 +199,7 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            volume_keyframes: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -211,6 +229,7 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            volume_keyframes: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -245,6 +264,7 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            volume_keyframes: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -280,6 +300,7 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            volume_keyframes: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }

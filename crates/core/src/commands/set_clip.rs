@@ -22,6 +22,7 @@ pub struct SetClipCommand {
     pub text_style: Option<String>,
     pub fade_in_ms: Option<u64>,
     pub fade_out_ms: Option<u64>,
+    pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
     before: Option<Clip>,
 }
 
@@ -41,6 +42,7 @@ impl SetClipCommand {
             text_style: None,
             fade_in_ms: None,
             fade_out_ms: None,
+            volume_keyframes: None,
             before: None,
         }
     }
@@ -95,6 +97,12 @@ impl SetClipCommand {
         self.fade_out_ms = Some(v);
         self
     }
+    /// Replace the whole automation curve. Pass an empty Vec to fall
+    /// back to the static `volume_db`.
+    pub fn volume_keyframes(mut self, v: Vec<crate::clip::VolumeKeyframe>) -> Self {
+        self.volume_keyframes = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -140,6 +148,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.fade_out_ms {
             c.fade_out_ms = v;
+        }
+        if let Some(v) = self.volume_keyframes.clone() {
+            c.volume_keyframes = v;
         }
         Ok(())
     }
