@@ -1741,9 +1741,15 @@ impl CapRustApp {
         let url = m.url.clone();
         let sha = m.sha256.clone();
         let dir = self.settings.effective_models_dir();
-        let filename = match m.kind {
-            caprust_core::ModelKind::Narration => format!("{model_id}.onnx"),
-            _ => format!("{model_id}.bin"),
+        let (filename, aux_url) = match m.kind {
+            caprust_core::ModelKind::Narration => (
+                format!("{model_id}.onnx"),
+                // Piper voices need the sibling .onnx.json config at
+                // <url>.json. The runtime (piper.rs) looks for
+                // <voice>.onnx.json next to <voice>.onnx.
+                Some(format!("{url}.json")),
+            ),
+            _ => (format!("{model_id}.bin"), None),
         };
         let target = dir.join(filename);
         tracing::info!(
@@ -1751,7 +1757,13 @@ impl CapRustApp {
             model_id,
             target.display()
         );
-        let rx = caprust_core::models::spawn_model_download(model_id.to_string(), url, target, sha);
+        let rx = caprust_core::models::spawn_model_download_with_aux(
+            model_id.to_string(),
+            url,
+            target,
+            sha,
+            aux_url,
+        );
         self.model_download = Some((model_id.to_string(), rx));
     }
 
