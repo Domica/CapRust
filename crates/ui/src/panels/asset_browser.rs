@@ -271,7 +271,7 @@ const EFFECTS: &[Preset] = &[
         label_key: "asset-effect-particle",
         icon: ph::SPARKLE,
         color: [180, 180, 210],
-        coming_soon: true,
+        coming_soon: false,
     },
     Preset {
         id: "sparkle",
@@ -292,7 +292,7 @@ const EFFECTS: &[Preset] = &[
         label_key: "asset-effect-lens_flare",
         icon: ph::SUN_HORIZON,
         color: [240, 200, 130],
-        coming_soon: true,
+        coming_soon: false,
     },
 ];
 
