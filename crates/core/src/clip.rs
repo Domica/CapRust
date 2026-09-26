@@ -119,6 +119,21 @@ pub struct VolumeKeyframe {
     pub gain_db: f32,
 }
 
+/// One auto-reframe keypoint: at time `t_ms` relative to the clip
+/// start, the crop rectangle should be centered at
+/// `(cx_norm, cy_norm)`, expressed as a fraction of the available
+/// horizontal / vertical travel. 0 = crop flush against the left /
+/// top edge, 1 = flush against the right / bottom edge, 0.5 = centered.
+///
+/// Populated by the P2c detector pass. Empty Vec = no reframe; the
+/// render graph then uses the source frame as-is.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ReframeKeypoint {
+    pub t_ms: u64,
+    pub cx_norm: f32,
+    pub cy_norm: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     pub id: Uuid,
@@ -183,6 +198,11 @@ pub struct Clip {
     /// Where the ramp lives inside the clip.
     #[serde(default)]
     pub speed_range: SpeedRampRange,
+    /// Auto-reframe keypoints (Phase P2c). Empty = source is used
+    /// as-is. Non-empty = the render graph crops the source to the
+    /// project aspect ratio and pans the crop to follow these points.
+    #[serde(default)]
+    pub auto_reframe: Vec<ReframeKeypoint>,
 }
 
 impl Clip {
@@ -213,6 +233,7 @@ impl Clip {
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
+            auto_reframe: Vec::new(),
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -245,6 +266,7 @@ impl Clip {
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
+            auto_reframe: Vec::new(),
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -277,6 +299,7 @@ impl Clip {
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
+            auto_reframe: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -311,6 +334,7 @@ impl Clip {
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
+            auto_reframe: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -350,6 +374,7 @@ impl Clip {
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
+            auto_reframe: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -390,6 +415,7 @@ impl Clip {
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
+            auto_reframe: Vec::new(),
             source_duration_ms: 0,
             media_id: None,
         }

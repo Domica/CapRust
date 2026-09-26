@@ -54,6 +54,8 @@ pub struct VideoClip {
     pub transition_in: Option<String>,
     /// Transition preset id on the out edge.
     pub transition_out: Option<String>,
+    /// Auto-reframe keypoints (Phase P2c). Empty = render as-is.
+    pub auto_reframe: Vec<caprust_core::clip::ReframeKeypoint>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -184,14 +186,31 @@ impl RenderPlan {
                 }
             };
 
+            // Fit chain: with auto-reframe, crop to the target
+            // aspect (with pan) and scale exactly to (w, h). Without
+            // it, letterbox/pillarbox into (w, h) as before.
+            let fit_chain = match build_auto_reframe_crop(
+                &c.auto_reframe,
+                self.width,
+                self.height,
+            ) {
+                Some(crop) => format!(
+                    "{crop},scale={w}:{h}:flags=bicubic,setsar=1",
+                    w = self.width,
+                    h = self.height,
+                ),
+                None => format!(
+                    "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                    w = self.width,
+                    h = self.height,
+                ),
+            };
             fg.push_str(&format!(
-            "{in_label}trim=duration={dur:.6},{setpts},scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={num}/{den}",
-            dur = c.duration_sec,
-            w = self.width,
-            h = self.height,
-            num = self.fps_num,
-            den = self.fps_den,
-        ));
+                "{in_label}trim=duration={dur:.6},{setpts},{fit_chain},fps={num}/{den}",
+                dur = c.duration_sec,
+                num = self.fps_num,
+                den = self.fps_den,
+            ));
 
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
@@ -1171,6 +1190,58 @@ fn compute_speed_ramp_segments(
     Some(segments)
 }
 
+/// Build a `crop` filter that pans a target-aspect window over the
+/// source frame, following the clip's auto-reframe keypoints
+/// (Phase P2c). Returns None when fewer than two keypoints are
+/// present -- a single point is a static crop and better handled by
+/// a manual crop, which is not part of this phase.
+///
+/// The crop rectangle keeps the target aspect ratio and is sized to
+/// cover the source: whichever dimension is "extra" gets trimmed. Its
+/// centre is placed according to a piecewise-linear interpolation
+/// between keypoints, keyed on `t` in seconds. `t` here is the
+/// post-setpts clip-relative time, so the caller must run this filter
+/// AFTER `setpts=PTS-STARTPTS`. This is why the base chain splits the
+/// auto-reframe branch into its own arm rather than prepending to the
+/// existing fit chain.
+///
+/// Coordinates are clamped to [0, 1] so a stray keypoint cannot walk
+/// the crop out of the source frame.
+fn build_auto_reframe_crop(
+    keypoints: &[caprust_core::clip::ReframeKeypoint],
+    target_w: u32,
+    target_h: u32,
+) -> Option<String> {
+    if keypoints.len() < 2 || target_w == 0 || target_h == 0 {
+        return None;
+    }
+    let aspect = target_w as f64 / target_h as f64;
+
+    let build_expr = |sel: fn(&caprust_core::clip::ReframeKeypoint) -> f32| -> String {
+        let n = keypoints.len();
+        let mut expr = format!("{:.6}", sel(&keypoints[n - 1]));
+        for i in (0..n - 1).rev() {
+            let a = keypoints[i];
+            let b = keypoints[i + 1];
+            let ta = a.t_ms as f64 / 1000.0;
+            let tb = b.t_ms as f64 / 1000.0;
+            let dt = (tb - ta).max(1e-6);
+            let va = sel(&a) as f64;
+            let vb = sel(&b) as f64;
+            let seg = format!("({va:.6}+({vb:.6}-{va:.6})*(t-{ta:.6})/{dt:.6})");
+            expr = format!("if(lt(t\\,{tb:.6})\\,{seg}\\,{expr})");
+        }
+        format!("min(max({expr}\\,0)\\,1)")
+    };
+
+    let cx_expr = build_expr(|k| k.cx_norm);
+    let cy_expr = build_expr(|k| k.cy_norm);
+
+    Some(format!(
+        "crop=w='min(iw\\,ih*{aspect:.6})':h='min(ih\\,iw/{aspect:.6})':x='({cx_expr})*(iw-ow)':y='({cy_expr})*(ih-oh)'"
+    ))
+}
+
 /// Build a `setpts=PTS-STARTPTS,setpts=\'<expr>\'` chain for a clip with
 /// a speed ramp. Returns None when no ramp applies.
 ///
@@ -1533,6 +1604,7 @@ pub fn plan_from_project(
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
+                        auto_reframe: c.auto_reframe.clone(),
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -1551,6 +1623,7 @@ pub fn plan_from_project(
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
+                        auto_reframe: c.auto_reframe.clone(),
                     });
                 }
                 ClipType::TextOverlay {
@@ -1948,6 +2021,7 @@ mod tests {
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
+                auto_reframe: Vec::new(),
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -2058,6 +2132,57 @@ mod tests {
     }
 
     #[test]
+    fn auto_reframe_crop_needs_two_keypoints() {
+        use caprust_core::clip::ReframeKeypoint;
+        let one = vec![ReframeKeypoint {
+            t_ms: 0,
+            cx_norm: 0.5,
+            cy_norm: 0.5,
+        }];
+        assert!(
+            build_auto_reframe_crop(&one, 1920, 1080).is_none(),
+            "one keypoint must not emit a crop filter"
+        );
+        assert!(
+            build_auto_reframe_crop(&[], 1920, 1080).is_none(),
+            "empty keypoints must not emit a crop filter"
+        );
+    }
+
+    #[test]
+    fn auto_reframe_crop_emits_interpolated_expression() {
+        use caprust_core::clip::ReframeKeypoint;
+        let kps = vec![
+            ReframeKeypoint {
+                t_ms: 0,
+                cx_norm: 0.2,
+                cy_norm: 0.5,
+            },
+            ReframeKeypoint {
+                t_ms: 1000,
+                cx_norm: 0.8,
+                cy_norm: 0.5,
+            },
+        ];
+        let frag = build_auto_reframe_crop(&kps, 1920, 1080).expect("two keypoints produce a crop");
+        // aspect = 1920 / 1080 = 1.777...
+        assert!(frag.starts_with("crop="), "must start with crop: {frag}");
+        assert!(
+            frag.contains("iw"),
+            "crop uses input width in expression: {frag}"
+        );
+        assert!(
+            frag.contains("ih"),
+            "crop uses input height in expression: {frag}"
+        );
+        // Both keypoint values must appear in the piecewise expression.
+        assert!(frag.contains("0.200000"), "first cx_norm missing: {frag}");
+        assert!(frag.contains("0.800000"), "second cx_norm missing: {frag}");
+        // Clamping guards the crop from leaving the source frame.
+        assert!(frag.contains("min(max("), "must clamp coordinates: {frag}");
+    }
+
+    #[test]
     fn particle_produces_atmospheric_chain() {
         let p = build_one_effect("particle", 1.0).expect("particle chain");
         assert!(p.contains("noise="), "particle should emit noise");
@@ -2127,6 +2252,7 @@ mod tests {
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
+                auto_reframe: Vec::new(),
             }],
             audio_clips: vec![],
             text_clips: vec![],
