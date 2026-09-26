@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2-dev \
     # Handy for scripting and testing
     jq \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
