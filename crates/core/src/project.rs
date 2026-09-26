@@ -107,6 +107,12 @@ impl ProjectState {
                 k.t_ms.hash(&mut h);
                 k.gain_db.to_bits().hash(&mut h);
             }
+            c.auto_reframe.len().hash(&mut h);
+            for k in &c.auto_reframe {
+                k.t_ms.hash(&mut h);
+                k.cx_norm.to_bits().hash(&mut h);
+                k.cy_norm.to_bits().hash(&mut h);
+            }
             // NOTE: c.name and c.media_id intentionally excluded.
         }
 
@@ -160,6 +166,33 @@ mod tests {
         }
         let h2 = p.render_hash();
         assert_ne!(h1, h2, "amount change must invalidate the render hash");
+    }
+
+    #[test]
+    fn render_hash_changes_on_reframe_keypoint_edit() {
+        use crate::clip::ReframeKeypoint;
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("test.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let h1 = p.render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.auto_reframe = vec![
+                ReframeKeypoint {
+                    t_ms: 0,
+                    cx_norm: 0.3,
+                    cy_norm: 0.5,
+                },
+                ReframeKeypoint {
+                    t_ms: 1000,
+                    cx_norm: 0.7,
+                    cy_norm: 0.5,
+                },
+            ];
+        }
+        let h2 = p.render_hash();
+        assert_ne!(h1, h2, "reframe keypoints must invalidate the render hash");
     }
 
     #[test]
