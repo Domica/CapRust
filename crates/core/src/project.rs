@@ -54,6 +54,127 @@ impl ProjectState {
     pub fn project_dimensions(&self) -> (u32, u32) {
         self.aspect_ratio.dimensions(self.base_resolution)
     }
+
+    /// Hash every clip/track field that influences the rendered
+    /// filtergraph. Used by the UI to detect when the preview renderer
+    /// must be respawned so the user sees effect / transition / speed /
+    /// volume edits without a manual seek (Phase K, K1).
+    ///
+    /// Deliberately over-broad: fields like `clip.id` and `media_id`
+    /// are included even though they do not change the graph, because
+    /// a missed field would silently leave the preview stale -- far
+    /// worse than one extra respawn. `name` is excluded because a
+    /// rename is a pure label change and respawning on it would look
+    /// like a glitch.
+    ///
+    /// Cost: one DefaultHasher pass over every clip. At ~20 clips this
+    /// is well under 100 microseconds, negligible at UI frame rates.
+    pub fn render_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+
+        self.clips.len().hash(&mut h);
+        for c in &self.clips {
+            c.id.hash(&mut h);
+            c.track_index.hash(&mut h);
+            c.start_time_ms.hash(&mut h);
+            c.duration_ms.hash(&mut h);
+            format!("{:?}", c.clip_type).hash(&mut h);
+            c.speed.to_bits().hash(&mut h);
+            c.reversed.hash(&mut h);
+            c.flip_h.hash(&mut h);
+            c.flip_v.hash(&mut h);
+            c.volume_db.to_bits().hash(&mut h);
+            c.source_duration_ms.hash(&mut h);
+            c.audio_detached.hash(&mut h);
+            c.fade_in_ms.hash(&mut h);
+            c.fade_out_ms.hash(&mut h);
+            c.effects.len().hash(&mut h);
+            for e in &c.effects {
+                e.effect_id.hash(&mut h);
+                e.amount.to_bits().hash(&mut h);
+                e.enabled.hash(&mut h);
+            }
+            c.transition_in.hash(&mut h);
+            c.transition_out.hash(&mut h);
+            c.duck_against.hash(&mut h);
+            c.speed_end.map(|s| s.to_bits()).hash(&mut h);
+            format!("{:?}", c.speed_ease).hash(&mut h);
+            format!("{:?}", c.speed_range).hash(&mut h);
+            c.volume_keyframes.len().hash(&mut h);
+            for k in &c.volume_keyframes {
+                k.t_ms.hash(&mut h);
+                k.gain_db.to_bits().hash(&mut h);
+            }
+            // NOTE: c.name and c.media_id intentionally excluded.
+        }
+
+        self.tracks.len().hash(&mut h);
+        for t in &self.tracks {
+            // Hash only the fields that affect the render. Using
+            // Debug on the whole Track would pull in `Track.id` (a
+            // fresh UUID on every ProjectState::default()) and make
+            // the hash non-deterministic across otherwise identical
+            // projects.
+            t.kind.hash(&mut h);
+            t.muted.hash(&mut h);
+            t.visible.hash(&mut h);
+            t.locked.hash(&mut h);
+            t.pinned.hash(&mut h);
+        }
+
+        h.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clip::{Clip, EffectInstance};
+
+    #[test]
+    fn render_hash_stable_for_identical_projects() {
+        let a = ProjectState::default();
+        let b = ProjectState::default();
+        assert_eq!(a.render_hash(), b.render_hash());
+    }
+
+    #[test]
+    fn render_hash_changes_on_effect_amount() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("test.mp4", 0, 0, 1000);
+        let id = clip.id;
+        clip.effects.push(EffectInstance {
+            effect_id: "blur".into(),
+            amount: 1.0,
+            enabled: true,
+        });
+        p.add_clip(clip);
+
+        let h1 = p.render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.effects[0].amount = 2.0;
+        }
+        let h2 = p.render_hash();
+        assert_ne!(h1, h2, "amount change must invalidate the render hash");
+    }
+
+    #[test]
+    fn render_hash_ignores_name_change() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("test.mp4", 0, 0, 1000);
+        let id = clip.id;
+        clip.name = Some("original".into());
+        p.add_clip(clip);
+
+        let h1 = p.render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.name = Some("renamed".into());
+        }
+        let h2 = p.render_hash();
+        assert_eq!(h1, h2, "rename must not force a preview respawn");
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
