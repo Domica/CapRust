@@ -74,7 +74,8 @@ impl WhisperEngine {
         // P1: per-word timing for progressive-reveal captions. whisper
         // still reports segment times; token times are extra data we
         // fold into WordTiming below. Cheap on CPU.
-        params.set_token_timestamps(true);
+        // TEMP: disabled to diagnose Windows crash.
+        params.set_token_timestamps(false);
 
         let mut state = self
             .ctx
