@@ -75,6 +75,45 @@ pub struct TextClip {
     /// Preset id ("default", "bold", "subtitle", "lower", "quote",
     /// "caption", "glow", "handwrite"). Empty == "default".
     pub style: String,
+    /// Motion transform (normalized x/y offset, scale, rotation stub).
+    /// Default = identity, matches pre-feature layout.
+    pub motion: caprust_core::clip::TextMotion,
+    /// Procedural effect (Blink / Pulse / ColorCycle). None = static.
+    pub effect: Option<caprust_core::clip::TextEffect>,
+}
+
+/// Effect option suffix for a drawtext body. Blink = hard on/off via
+/// `alpha`; Pulse = sinusoid on `alpha`; ColorCycle = `fontcolor_expr`
+/// using ffmpeg's text-expansion (`%{eif:EXPR:x:2}`) to rotate the RGB
+/// components. Backslash-colon inside the expansion survives the
+/// filter parser and lets the expansion see the inner colon.
+fn build_text_effect_opts(effect: Option<&caprust_core::clip::TextEffect>) -> String {
+    use caprust_core::clip::TextEffectKind;
+    let Some(e) = effect else {
+        return String::new();
+    };
+    let p = (e.period as f64).max(0.05);
+    match e.kind {
+        TextEffectKind::Blink => {
+            let half = p / 2.0;
+            format!(":alpha='if(lt(mod(t,{p:.3}),{half:.3}),1,0)'")
+        }
+        TextEffectKind::Pulse => {
+            let a = (e.amount as f64).clamp(0.0, 1.0);
+            let lo = 1.0 - a;
+            format!(":alpha='{lo:.3}+{a:.3}*0.5*(1+sin(2*PI*t/{p:.3}))'")
+        }
+        TextEffectKind::ColorCycle => {
+            let k = 2.0 * std::f64::consts::PI / p;
+            let ph = 2.0 * std::f64::consts::PI / 3.0;
+            format!(
+                ":fontcolor_expr=0x%{{eif\\:128+127*sin({k:.6}*t)\\:x\\:2}}%{{eif\\:128+127*sin({k:.6}*t+{ph1:.6})\\:x\\:2}}%{{eif\\:128+127*sin({k:.6}*t+{ph2:.6})\\:x\\:2}}",
+                k = k,
+                ph1 = ph,
+                ph2 = 2.0 * ph,
+            )
+        }
+    }
 }
 
 /// Audio counterpart.
@@ -451,12 +490,23 @@ impl RenderPlan {
                 .replace('\\', "\\\\")
                 .replace(':', "\\:")
                 .replace('\'', "\\'");
-            // Vertical position: above=true → top, else bottom.
-            let y = if t.above {
-                "h*0.08".to_string()
+            let y_base = if t.above { "h*0.08" } else { "h*0.82" };
+            let mx = t.motion.x;
+            let my = t.motion.y;
+            let x_expr = if mx.abs() < 1e-4 {
+                "(w-text_w)/2".to_string()
             } else {
-                "h*0.82".to_string()
+                format!("(w-text_w)/2+({mx:.4})*w")
             };
+            let y = if my.abs() < 1e-4 {
+                y_base.to_string()
+            } else {
+                format!("{y_base}+({my:.4})*h")
+            };
+            let fs = ((t.font_size as f64) * (t.motion.scale as f64))
+                .round()
+                .max(1.0) as i32;
+            let effect_opts = build_text_effect_opts(t.effect.as_ref());
             // Style parameters. Any combination not matched falls back to
             // plain white text.
             let style_opts: String = match t.style.as_str() {
@@ -472,12 +522,14 @@ impl RenderPlan {
                 _ => String::new(),
             };
             fg.push_str(&format!(
-            "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x=(w-text_w)/2:y={y}{style_opts}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
+            "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x={x_expr}:y={y}{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
             v_prev = v_prev,
             escaped = escaped,
-            fs = t.font_size.round() as i32,
+            fs = fs,
+            x_expr = x_expr,
             y = y,
             style_opts = style_opts,
+            effect_opts = effect_opts,
             start = t.timeline_start_sec,
             end = t.timeline_start_sec + t.duration_sec,
             t_i = t_i,
@@ -1774,6 +1826,8 @@ pub fn plan_from_project(
                     font_size,
                     above,
                     style,
+                    motion,
+                    effect,
                 } => {
                     text_clips.push(TextClip {
                         content: content.clone(),
@@ -1783,6 +1837,8 @@ pub fn plan_from_project(
                         above: *above || track_kind == TrackKind::Overlay,
                         z_order: z,
                         style: style.clone(),
+                        motion: *motion,
+                        effect: *effect,
                     });
                 }
                 ClipType::Captions { segments, .. } => {
@@ -1823,6 +1879,8 @@ pub fn plan_from_project(
                                 above: true,
                                 z_order: z,
                                 style: "caption".to_string(),
+                                motion: caprust_core::clip::TextMotion::default(),
+                                effect: None,
                             });
                         } else {
                             let mut acc = String::new();
@@ -1851,6 +1909,8 @@ pub fn plan_from_project(
                                     above: true,
                                     z_order: z,
                                     style: "caption".to_string(),
+                                    motion: caprust_core::clip::TextMotion::default(),
+                                    effect: None,
                                 });
                             }
                         }
@@ -2527,5 +2587,107 @@ mod tests {
         let (fg, _, _) = plan.build_filtergraph().unwrap();
         assert!(fg.contains("scale=1920:1080"));
         assert!(fg.contains("fps=30/1"));
+    }
+}
+
+#[cfg(test)]
+mod text_motion_render_tests {
+    use super::*;
+    use caprust_core::clip::{TextEffect, TextEffectKind, TextMotion};
+
+    fn base() -> TextClip {
+        TextClip {
+            content: "hello".into(),
+            font_size: 32.0,
+            timeline_start_sec: 0.0,
+            duration_sec: 1.0,
+            above: false,
+            z_order: 0,
+            style: "default".into(),
+            motion: TextMotion::default(),
+            effect: None,
+        }
+    }
+
+    #[test]
+    fn no_effect_no_opts() {
+        assert!(build_text_effect_opts(None).is_empty());
+        let t = base();
+        assert!(build_text_effect_opts(t.effect.as_ref()).is_empty());
+    }
+
+    #[test]
+    fn motion_offsets_build_expected_exprs() {
+        let mut t = base();
+        t.motion = TextMotion {
+            x: 0.25,
+            y: -0.1,
+            rotation: 0.0,
+            scale: 1.0,
+        };
+        let mx = t.motion.x;
+        let my = t.motion.y;
+        let x_expr = format!("(w-text_w)/2+({mx:.4})*w");
+        let y_base = if t.above { "h*0.08" } else { "h*0.82" };
+        let y_expr = format!("{y_base}+({my:.4})*h");
+        assert_eq!(x_expr, "(w-text_w)/2+(0.2500)*w");
+        assert_eq!(y_expr, "h*0.82+(-0.1000)*h");
+    }
+
+    #[test]
+    fn motion_scale_multiplies_font_size() {
+        let mut t = base();
+        t.motion.scale = 1.5;
+        let fs = ((t.font_size as f64) * (t.motion.scale as f64))
+            .round()
+            .max(1.0) as i32;
+        assert_eq!(fs, 48);
+    }
+
+    #[test]
+    fn blink_emits_alpha_mod_expr() {
+        let e = TextEffect {
+            kind: TextEffectKind::Blink,
+            period: 1.0,
+            amount: 1.0,
+        };
+        let opts = build_text_effect_opts(Some(&e));
+        assert!(opts.contains(":alpha="), "alpha: {opts}");
+        assert!(opts.contains("mod(t,1.000)"), "period: {opts}");
+    }
+
+    #[test]
+    fn pulse_emits_alpha_sine_expr() {
+        let e = TextEffect {
+            kind: TextEffectKind::Pulse,
+            period: 0.5,
+            amount: 0.4,
+        };
+        let opts = build_text_effect_opts(Some(&e));
+        assert!(opts.contains(":alpha="), "alpha: {opts}");
+        assert!(opts.contains("sin(2*PI*t/0.500)"), "sine: {opts}");
+    }
+
+    #[test]
+    fn color_cycle_emits_fontcolor_expr() {
+        let e = TextEffect {
+            kind: TextEffectKind::ColorCycle,
+            period: 1.0,
+            amount: 1.0,
+        };
+        let opts = build_text_effect_opts(Some(&e));
+        assert!(opts.contains(":fontcolor_expr=0x"), "fce: {opts}");
+        assert!(opts.contains("%{eif"), "eif: {opts}");
+    }
+
+    #[test]
+    fn zero_period_is_clamped() {
+        let e = TextEffect {
+            kind: TextEffectKind::Pulse,
+            period: 0.0,
+            amount: 1.0,
+        };
+        let opts = build_text_effect_opts(Some(&e));
+        assert!(opts.contains("/0.050"), "clamped period: {opts}");
     }
 }

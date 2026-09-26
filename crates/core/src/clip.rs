@@ -26,6 +26,10 @@ pub enum ClipType {
         /// lives in build_filtergraph.
         #[serde(default)]
         style: String,
+        #[serde(default)]
+        motion: TextMotion,
+        #[serde(default)]
+        effect: Option<TextEffect>,
     },
     /// AI-generated captions spanning the clip's duration.
     Captions {
@@ -107,6 +111,66 @@ pub enum SpeedRampRange {
     /// The ramp occupies the last N milliseconds of the clip; the
     /// earlier portion runs at `speed`.
     LastN(u64),
+}
+
+/// Text motion transform. Offsets are normalized fractions of the
+/// frame: 0.0 = centered (pre-feature behaviour), -1.0 / +1.0 =
+/// flush against the frame edge. Applied on top of the existing
+/// above/below baseline, so Default renders identically to before.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct TextMotion {
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+    /// Degrees. Stored for forward-compat; v1 does NOT render
+    /// rotation (ffmpeg drawtext has no rotate). See DIRECTIVES §30.
+    #[serde(default)]
+    pub rotation: f32,
+    /// Multiplier on `font_size`. 1.0 = no scaling.
+    #[serde(default = "default_motion_scale")]
+    pub scale: f32,
+}
+
+fn default_motion_scale() -> f32 {
+    1.0
+}
+
+impl Default for TextMotion {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            rotation: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
+/// Procedural text effect. Period in seconds; amount scales the
+/// amplitude for effects that have one (blink ignores it).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextEffectKind {
+    /// Hard on/off every `period/2`.
+    Blink,
+    /// Alpha oscillates between `1-amount` and `1`.
+    Pulse,
+    /// Hue cycles through the RGB wheel, `period` seconds per turn.
+    ColorCycle,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct TextEffect {
+    pub kind: TextEffectKind,
+    #[serde(default = "default_effect_period")]
+    pub period: f32,
+    #[serde(default = "default_effect_amount")]
+    pub amount: f32,
+}
+
+fn default_effect_period() -> f32 {
+    1.0
 }
 
 /// One point in a clip's volume automation curve. `t_ms` is relative
@@ -325,6 +389,8 @@ impl Clip {
                 font_size: 24.0,
                 above,
                 style: "default".to_string(),
+                motion: TextMotion::default(),
+                effect: None,
             },
             speed: 1.0,
             reversed: false,
@@ -435,5 +501,85 @@ impl Clip {
 
     pub fn end_time_ms(&self) -> u64 {
         self.start_time_ms + self.duration_ms
+    }
+}
+
+#[cfg(test)]
+mod text_motion_tests {
+    use super::*;
+
+    #[test]
+    fn text_motion_default_is_identity() {
+        let m = TextMotion::default();
+        assert_eq!(m.x, 0.0);
+        assert_eq!(m.y, 0.0);
+        assert_eq!(m.rotation, 0.0);
+        assert_eq!(m.scale, 1.0);
+    }
+
+    #[test]
+    fn text_overlay_deserializes_without_motion_or_effect() {
+        let json = r#"{
+            "TextOverlay": {
+                "content": "hi",
+                "font_size": 24.0,
+                "above": true,
+                "style": "default"
+            }
+        }"#;
+        let ct: ClipType = serde_json::from_str(json).expect("legacy deserializes");
+        match ct {
+            ClipType::TextOverlay {
+                motion,
+                effect,
+                style,
+                ..
+            } => {
+                assert_eq!(style, "default");
+                assert_eq!(motion, TextMotion::default());
+                assert!(effect.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn text_effect_kind_serde_is_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&TextEffectKind::Blink).unwrap(),
+            "\"blink\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TextEffectKind::Pulse).unwrap(),
+            "\"pulse\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TextEffectKind::ColorCycle).unwrap(),
+            "\"color_cycle\""
+        );
+    }
+
+    #[test]
+    fn text_overlay_round_trip_with_motion_and_effect() {
+        let ct = ClipType::TextOverlay {
+            content: "x".into(),
+            font_size: 32.0,
+            above: false,
+            style: "bold".into(),
+            motion: TextMotion {
+                x: 0.25,
+                y: -0.1,
+                rotation: 15.0,
+                scale: 1.5,
+            },
+            effect: Some(TextEffect {
+                kind: TextEffectKind::Pulse,
+                period: 0.8,
+                amount: 0.5,
+            }),
+        };
+        let s = serde_json::to_string(&ct).unwrap();
+        let back: ClipType = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, ct);
     }
 }
