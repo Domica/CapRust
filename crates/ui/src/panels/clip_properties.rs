@@ -63,6 +63,12 @@ pub enum PendingEdit {
     Name(String),
     /// Set the drawtext style id on a TextOverlay clip.
     TextStyle(String),
+    /// Replace the motion transform on a TextOverlay clip.
+    TextMotion(caprust_core::clip::TextMotion),
+    /// Set or clear the procedural effect on a TextOverlay clip.
+    /// Some(Some(e)) = set, Some(None) = clear, None is not used
+    /// because this variant is only pushed with an action.
+    TextEffect(Option<caprust_core::clip::TextEffect>),
     /// Replace the whole volume automation curve on a clip.
     VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
     /// Set or clear the auto-duck sidechain control clip.
@@ -198,6 +204,143 @@ pub fn show(
                     }
                 });
         });
+        ui.separator();
+    }
+
+    // --- TextOverlay: motion transform + procedural effect ---
+    // Both are stored on the TextOverlay variant; the UI shows them
+    // only for that kind. Rotation is stored for forward-compat but
+    // NOT exposed here because drawtext has no rotate filter — a real
+    // rotation needs a PNG-overlay refactor (see DIRECTIVES §30).
+    if let ClipType::TextOverlay { motion, effect, .. } = &clip.clip_type {
+        use caprust_core::clip::{TextEffect, TextEffectKind, TextMotion};
+
+        // --- Motion ---
+        let mut m: TextMotion = *motion;
+        let mut motion_changed = false;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr("props-text-motion-header")).strong());
+            if ui.small_button(tr("props-text-motion-reset")).clicked() {
+                m = TextMotion::default();
+                motion_changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(tr("props-text-motion-x"));
+            motion_changed |= ui
+                .add(
+                    egui::DragValue::new(&mut m.x)
+                        .speed(0.01)
+                        .range(-1.0..=1.0)
+                        .fixed_decimals(3),
+                )
+                .changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label(tr("props-text-motion-y"));
+            motion_changed |= ui
+                .add(
+                    egui::DragValue::new(&mut m.y)
+                        .speed(0.01)
+                        .range(-1.0..=1.0)
+                        .fixed_decimals(3),
+                )
+                .changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label(tr("props-text-motion-scale"));
+            motion_changed |= ui
+                .add(
+                    egui::DragValue::new(&mut m.scale)
+                        .speed(0.05)
+                        .range(0.1..=5.0)
+                        .fixed_decimals(2),
+                )
+                .changed();
+        });
+        if motion_changed {
+            state.pending.push(PendingEdit::TextMotion(m));
+        }
+
+        ui.separator();
+
+        // --- Effect ---
+        let cur_effect: Option<TextEffect> = *effect;
+        let current_label = match cur_effect {
+            None => tr("props-text-effect-none"),
+            Some(e) => match e.kind {
+                TextEffectKind::Blink => tr("props-text-effect-blink"),
+                TextEffectKind::Pulse => tr("props-text-effect-pulse"),
+                TextEffectKind::ColorCycle => tr("props-text-effect-color-cycle"),
+            },
+        };
+        let mut pending_effect: Option<Option<TextEffect>> = None;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr("props-text-effect-header")).strong());
+            egui::ComboBox::from_id_salt("text_effect_combo")
+                .selected_text(current_label)
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(cur_effect.is_none(), tr("props-text-effect-none"))
+                        .clicked()
+                        && cur_effect.is_some()
+                    {
+                        pending_effect = Some(None);
+                    }
+                    for (k, key) in [
+                        (TextEffectKind::Blink, "props-text-effect-blink"),
+                        (TextEffectKind::Pulse, "props-text-effect-pulse"),
+                        (TextEffectKind::ColorCycle, "props-text-effect-color-cycle"),
+                    ] {
+                        let selected = cur_effect.map(|e| e.kind) == Some(k);
+                        if ui.selectable_label(selected, tr(key)).clicked() && !selected {
+                            let mut base = cur_effect.unwrap_or(TextEffect {
+                                kind: k,
+                                period: 1.0,
+                                amount: 1.0,
+                            });
+                            base.kind = k;
+                            pending_effect = Some(Some(base));
+                        }
+                    }
+                });
+        });
+        if let Some(v) = pending_effect {
+            state.pending.push(PendingEdit::TextEffect(v));
+        }
+
+        // Period + amount only when an effect is selected.
+        if let Some(cur_e) = cur_effect {
+            let mut e = cur_e;
+            let mut eff_changed = false;
+            ui.horizontal(|ui| {
+                ui.label(tr("props-text-effect-period"));
+                eff_changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut e.period)
+                            .speed(0.05)
+                            .range(0.05..=10.0)
+                            .fixed_decimals(2),
+                    )
+                    .changed();
+            });
+            ui.horizontal(|ui| {
+                ui.label(tr("props-text-effect-amount"));
+                eff_changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut e.amount)
+                            .speed(0.02)
+                            .range(0.0..=1.0)
+                            .fixed_decimals(2),
+                    )
+                    .changed();
+            });
+            if eff_changed {
+                state.pending.push(PendingEdit::TextEffect(Some(e)));
+            }
+        }
+
         ui.separator();
     }
 

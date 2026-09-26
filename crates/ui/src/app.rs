@@ -4404,6 +4404,18 @@ impl CapRustApp {
                                             .text_style(v);
                                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
+                                PendingEdit::TextMotion(m) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .text_motion(m);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
+                                PendingEdit::TextEffect(e) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .text_effect(e);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
                                 PendingEdit::VolumeKeyframes(v) => {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)
