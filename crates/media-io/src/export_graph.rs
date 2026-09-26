@@ -56,6 +56,11 @@ pub struct VideoClip {
     pub transition_out: Option<String>,
     /// Auto-reframe keypoints (Phase P2c). Empty = render as-is.
     pub auto_reframe: Vec<caprust_core::clip::ReframeKeypoint>,
+    /// Absolute path to the per-clip alpha mask (Phase P3d). None =
+    /// no background removal. Non-empty = the base chain gets a
+    /// maskedmerge over a black base. Ignored when auto_reframe is
+    /// also set (see resolve_bg_removal_path for the reason).
+    pub bg_removal_path: Option<std::path::PathBuf>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -205,17 +210,58 @@ impl RenderPlan {
                     h = self.height,
                 ),
             };
+            // Optional background-removal stage. When a mask is
+            // present, the video chain stops at an intermediate label
+            // and a maskedmerge over a black base finishes into v_out.
+            // Otherwise the chain writes v_out directly.
+            let mask_escaped = c.bg_removal_path.as_deref().and_then(escape_movie_path);
+            let mask_active = mask_escaped.is_some();
+            let video_out = if mask_active {
+                format!("v_pre{i}")
+            } else {
+                v_out.clone()
+            };
+
             fg.push_str(&format!(
                 "{in_label}trim=duration={dur:.6},{setpts},{fit_chain},fps={num}/{den}",
                 dur = c.duration_sec,
                 num = self.fps_num,
                 den = self.fps_den,
             ));
-
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
+            fg.push_str(&format!("[{video_out}];"));
 
-            fg.push_str(&format!("[{v_out}];"));
+            if let Some(mask) = mask_escaped {
+                // Mask chain: read the FFV1 gray sequence, reset PTS,
+                // force the project fps so the merge samples 1:1, and
+                // convert to a pixel format maskedmerge accepts.
+                // loop=0 holds the last frame if the sequence is
+                // shorter than the clip; the colour base below
+                // defines the clip's true length.
+                let mask_label = format!("m_b{i}");
+                let bg_label = format!("bg_b{i}");
+                fg.push_str(&format!(
+                    "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray[{mask_label}];",
+                    num = self.fps_num,
+                    den = self.fps_den,
+                ));
+                // Black base at project resolution and fps, matching
+                // the clip duration. This is the layer the merge
+                // falls back to outside the mask.
+                fg.push_str(&format!(
+                    "color=c=black:s={w}x{h}:r={num}/{den}:d={dur:.6}[{bg_label}];",
+                    w = self.width,
+                    h = self.height,
+                    num = self.fps_num,
+                    den = self.fps_den,
+                    dur = c.duration_sec,
+                ));
+                fg.push_str(&format!(
+                    "[{bg_label}][{video_out}][{mask_label}]maskedmerge[{v_out}];",
+                ));
+            }
+
             v_base_labels.push(v_out);
         }
 
@@ -1499,6 +1545,71 @@ fn compute_xfade_audio_shifts(
     shifts
 }
 
+/// Escape an absolute filesystem path for use as the value of
+/// `movie=...` inside an ffmpeg filter_complex string.
+///
+/// Rules:
+///   * Backslashes are replaced with forward slashes. Windows accepts
+///     both, and forward slashes dodge ffmpeg's escape semantics
+///     where `\\` means a literal backslash.
+///   * The value is wrapped in single quotes, so the filter parser
+///     does not treat a colon (`C:`) or a comma as a separator.
+///   * A path containing a single quote cannot be represented this
+///     way. `movie=` on Windows video files almost never hits this,
+///     so we reject rather than trying to build a two-level escape
+///     that is hard to reason about.
+///
+/// Returns None when the path contains a single quote.
+fn escape_movie_path(path: &std::path::Path) -> Option<String> {
+    let s = path.to_string_lossy();
+    if s.contains('\'') {
+        return None;
+    }
+    let normalized = s.replace('\\', "/");
+    Some(format!("'{normalized}'"))
+}
+
+/// Resolve the mask path for a clip. The stored path is relative to
+/// the project directory (e.g. "cache/masks/<clip>.mkv"); we join it
+/// with `project.project_path` to get an absolute path for ffmpeg.
+///
+/// Returns None when:
+///   * the clip has no bg_removal set;
+///   * the project has no project_path (unsaved);
+///   * the clip also has auto-reframe keypoints (mask would not align
+///     with the crop; see below);
+///   * the mask file is missing on disk.
+///
+/// The auto-reframe case is a known P3d limitation: auto-reframe
+/// crops the source per-frame, but the mask was generated against the
+/// whole frame. Fixing that means re-projecting the crop onto the
+/// mask, which is a follow-up. For now, auto-reframe wins and
+/// bg-removal is skipped for that clip with a warning.
+fn resolve_bg_removal_path(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::Clip,
+) -> Option<std::path::PathBuf> {
+    let rel = clip.bg_removal.as_ref()?;
+    if !clip.auto_reframe.is_empty() {
+        tracing::warn!(
+            "clip {} has both auto_reframe and bg_removal; skipping mask (unsupported combination)",
+            clip.id
+        );
+        return None;
+    }
+    let proj = project.project_path.as_ref()?;
+    let abs = std::path::Path::new(proj).join(rel);
+    if !abs.is_file() {
+        tracing::warn!(
+            "clip {} bg_removal mask missing on disk: {}",
+            clip.id,
+            abs.display()
+        );
+        return None;
+    }
+    Some(abs)
+}
+
 // plan_from_project has one argument per render dimension the caller
 // knows about. Bundling them into a struct would just move the same
 // fields behind one more layer. The signature is stable; leave it.
@@ -1605,6 +1716,7 @@ pub fn plan_from_project(
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
                         auto_reframe: c.auto_reframe.clone(),
+                        bg_removal_path: resolve_bg_removal_path(project, c),
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -1624,6 +1736,7 @@ pub fn plan_from_project(
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
                         auto_reframe: c.auto_reframe.clone(),
+                        bg_removal_path: resolve_bg_removal_path(project, c),
                     });
                 }
                 ClipType::TextOverlay {
@@ -2022,6 +2135,7 @@ mod tests {
                 transition_in: None,
                 transition_out: None,
                 auto_reframe: Vec::new(),
+                bg_removal_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -2128,6 +2242,118 @@ mod tests {
         assert!(
             contents.contains(&"plain segment"),
             "fallback drawtext must show the whole segment text: {contents:?}"
+        );
+    }
+
+    #[test]
+    fn escape_movie_path_unix_plain() {
+        let p = std::path::Path::new("/tmp/mask.mkv");
+        assert_eq!(escape_movie_path(p).as_deref(), Some("'/tmp/mask.mkv'"));
+    }
+
+    #[test]
+    fn escape_movie_path_windows_backslashes() {
+        let p = std::path::Path::new("C:\\proj\\cache\\masks\\abc.mkv");
+        let escaped = escape_movie_path(p).expect("no single quote");
+        assert_eq!(escaped, "'C:/proj/cache/masks/abc.mkv'");
+    }
+
+    #[test]
+    fn escape_movie_path_rejects_single_quote() {
+        let p = std::path::Path::new("/tmp/o'brien.mkv");
+        assert!(escape_movie_path(p).is_none());
+    }
+
+    fn single_video_plan_with_mask(mask: Option<&str>) -> RenderPlan {
+        RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: PathBuf::from("clip.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 1.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 1.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: None,
+                transition_out: None,
+                auto_reframe: Vec::new(),
+                bg_removal_path: mask.map(std::path::PathBuf::from),
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 1.0,
+            width: 320,
+            height: 240,
+            fps_num: 30,
+            fps_den: 1,
+            has_audio: false,
+            crf: 23,
+            preset: "veryfast".to_string(),
+        }
+    }
+
+    #[test]
+    fn bg_removal_emits_maskedmerge() {
+        let plan = single_video_plan_with_mask(Some("/tmp/mask.mkv"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("maskedmerge"),
+            "expected maskedmerge stage: {fg}"
+        );
+        assert!(
+            fg.contains("movie='"),
+            "expected movie= source for the mask: {fg}"
+        );
+        assert!(
+            fg.contains("/tmp/mask.mkv"),
+            "mask path missing from filtergraph: {fg}"
+        );
+        // The intermediate pre-merge label must be present so the
+        // video chain stops before the merge, and only the merged
+        // output feeds downstream.
+        assert!(
+            fg.contains("v_pre0"),
+            "expected intermediate v_pre0 label: {fg}"
+        );
+        assert!(
+            fg.contains("color=c=black"),
+            "expected black base for the merge: {fg}"
+        );
+    }
+
+    #[test]
+    fn bg_removal_absent_has_no_maskedmerge() {
+        let plan = single_video_plan_with_mask(None);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            !fg.contains("maskedmerge"),
+            "plain plan must not emit maskedmerge: {fg}"
+        );
+        assert!(
+            !fg.contains("v_pre0"),
+            "plain plan must not emit an intermediate label: {fg}"
+        );
+    }
+
+    #[test]
+    fn bg_removal_windows_path_normalized() {
+        // Backslashes become forward slashes in the movie= argument;
+        // a raw Windows path would otherwise fight ffmpeg's own
+        // escape semantics.
+        let plan = single_video_plan_with_mask(Some("C:\\proj\\cache\\masks\\abc.mkv"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("C:/proj/cache/masks/abc.mkv"),
+            "expected normalized path in filtergraph: {fg}"
         );
     }
 
@@ -2253,6 +2479,7 @@ mod tests {
                 transition_in: None,
                 transition_out: None,
                 auto_reframe: Vec::new(),
+                bg_removal_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
