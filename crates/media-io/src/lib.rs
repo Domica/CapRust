@@ -4,6 +4,7 @@ pub mod export;
 pub mod export_graph;
 pub mod export_progress;
 pub mod exporter;
+pub mod face_detect;
 pub mod ffprobe;
 pub mod piper;
 pub mod player;
