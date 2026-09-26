@@ -481,8 +481,11 @@ pub struct ReframeRequest {
     /// Target aspect ratio (width / height). E.g. 9.0/16.0 for a
     /// vertical short-form output; the crop rectangle fits this.
     pub target_aspect: f64,
-    /// Path to a YuNet ONNX file on disk.
+    /// Path to the face detector ONNX file on disk.
     pub model_path: std::path::PathBuf,
+    /// True = SCRFD-500M (640x640, distance decode). False = YuNet
+    /// (320x320, anchor decode).
+    pub model_is_scrfd: bool,
     /// Frames per second to sample. Auto-reframe only needs a rough
     /// path, so 4 fps is plenty and keeps the job fast.
     pub sample_fps: f64,
@@ -570,10 +573,23 @@ fn run_reframe_job(
     }
 
     // 3. Load the detector and run it.
-    let detector = caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
-        .map_err(|e| format!("load YuNet: {e}"))?;
-    let samples = caprust_media_io::auto_reframe::detect_face_centers(&frames, &detector)
-        .map_err(|e| format!("face detection: {e}"))?;
+    let samples = if req.model_is_scrfd {
+        let detector = caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
+            .map_err(|e| format!("load SCRFD: {e}"))?;
+        let mut out = Vec::with_capacity(frames.len());
+        for f in &frames {
+            let best = detector
+                .detect_best(&f.rgb, f.width, f.height)
+                .map_err(|e| format!("SCRFD inference: {e}"))?;
+            out.push((f.t_ms, best.map(|b| b.center())));
+        }
+        out
+    } else {
+        let detector = caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+            .map_err(|e| format!("load YuNet: {e}"))?;
+        caprust_media_io::auto_reframe::detect_face_centers(&frames, &detector)
+            .map_err(|e| format!("face detection: {e}"))?
+    };
 
     let frames_with_face = samples.iter().filter(|(_, c)| c.is_some()).count();
 
