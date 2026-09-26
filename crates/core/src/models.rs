@@ -277,10 +277,17 @@ impl ModelRegistry {
         for d in &defaults.models {
             match self.models.iter_mut().find(|m| m.id == d.id) {
                 Some(m) => {
-                    if m.url.is_empty() && !d.url.is_empty() {
+                    // Always take the current default URL / SHA-256
+                    // when the default has one. Registry URLs are not
+                    // user-editable, and we have historically shipped
+                    // wrong ones (the YuNet LFS pointer bug). A
+                    // project saved before the fix must follow the
+                    // fix or it will keep downloading a corrupt file
+                    // forever.
+                    if !d.url.is_empty() {
                         m.url = d.url.clone();
                     }
-                    if m.sha256.is_empty() && !d.sha256.is_empty() {
+                    if !d.sha256.is_empty() {
                         m.sha256 = d.sha256.clone();
                     }
                 }
