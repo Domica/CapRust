@@ -3857,6 +3857,12 @@ impl CapRustApp {
                                             .volume_keyframes(v);
                                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
+                                PendingEdit::SpeedEnd(v) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .speed_end(v);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
                                 PendingEdit::DuckAgainst(v) => {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)

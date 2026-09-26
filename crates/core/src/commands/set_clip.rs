@@ -24,6 +24,9 @@ pub struct SetClipCommand {
     pub fade_out_ms: Option<u64>,
     pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
     pub duck_against: Option<Option<Uuid>>,
+    /// Some(Some(x)) = ramp from `speed` to `x`.
+    /// Some(None) = clear ramp, use static `speed`.
+    pub speed_end: Option<Option<f32>>,
     before: Option<Clip>,
 }
 
@@ -45,6 +48,7 @@ impl SetClipCommand {
             fade_out_ms: None,
             volume_keyframes: None,
             duck_against: None,
+            speed_end: None,
             before: None,
         }
     }
@@ -111,6 +115,12 @@ impl SetClipCommand {
         self.duck_against = Some(v);
         self
     }
+    /// Enable or disable the speed ramp end. Pass `Some(x)` for a
+    /// linear ramp, `None` for static speed.
+    pub fn speed_end(mut self, v: Option<f32>) -> Self {
+        self.speed_end = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -162,6 +172,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.duck_against {
             c.duck_against = v;
+        }
+        if let Some(v) = self.speed_end {
+            c.speed_end = v;
         }
         Ok(())
     }

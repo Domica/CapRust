@@ -66,6 +66,8 @@ pub enum PendingEdit {
     VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
     /// Set or clear the auto-duck sidechain control clip.
     DuckAgainst(Option<Uuid>),
+    /// Enable or disable the speed ramp end. Some(x) = ramp to x.
+    SpeedEnd(Option<f32>),
 }
 
 pub fn show(
@@ -477,6 +479,83 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.end_row();
         });
+    ui.add_space(10.0);
+    ui.separator();
+
+    // ---- Speed ramp ----
+    ui.label(egui::RichText::new(tr("props-video-speed-ramp")).strong());
+    ui.add_space(4.0);
+    egui::Grid::new("clip_speed_grid")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(tr("props-field-speed-start"));
+            let mut s_start = clip.speed;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut s_start)
+                        .range(0.1..=8.0)
+                        .speed(0.05)
+                        .suffix(" x"),
+                )
+                .changed()
+            {
+                state.pending.push(PendingEdit::Speed(s_start));
+            }
+            ui.end_row();
+
+            let mut ramp_enabled = clip.speed_end.is_some();
+            ui.label(tr("props-field-speed-end"));
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut ramp_enabled, "").changed() {
+                    if ramp_enabled {
+                        // Default the ramp end to the current speed,
+                        // then the user drags it in the direction they
+                        // want. Zero-delta ramps are a no-op anyway.
+                        state.pending.push(PendingEdit::SpeedEnd(Some(clip.speed)));
+                    } else {
+                        state.pending.push(PendingEdit::SpeedEnd(None));
+                    }
+                }
+                let mut s_end = clip.speed_end.unwrap_or(clip.speed);
+                if ui
+                    .add_enabled(
+                        ramp_enabled,
+                        egui::DragValue::new(&mut s_end)
+                            .range(0.1..=8.0)
+                            .speed(0.05)
+                            .suffix(" x"),
+                    )
+                    .changed()
+                    && ramp_enabled
+                {
+                    state.pending.push(PendingEdit::SpeedEnd(Some(s_end)));
+                }
+            });
+            ui.end_row();
+        });
+
+    // Presets
+    ui.horizontal(|ui| {
+        ui.label(tr("props-field-speed-preset"));
+        let presets: &[(&str, f32, Option<f32>)] = &[
+            ("1x", 1.0, None),
+            ("0.5x", 0.5, None),
+            ("2x", 2.0, None),
+            ("4x", 4.0, None),
+            ("Slow-out", 1.0, Some(0.5)),
+            ("Fast-in", 0.5, Some(2.0)),
+            ("Ramp-up", 0.5, Some(2.0)),
+            ("Ramp-down", 2.0, Some(0.5)),
+        ];
+        for (label, start_v, end_v) in presets {
+            let selected = (clip.speed - *start_v).abs() < 0.01 && clip.speed_end == *end_v;
+            if ui.selectable_label(selected, *label).clicked() && !selected {
+                state.pending.push(PendingEdit::Speed(*start_v));
+                state.pending.push(PendingEdit::SpeedEnd(*end_v));
+            }
+        }
+    });
 }
 
 fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {

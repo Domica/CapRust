@@ -125,6 +125,12 @@ pub struct Clip {
     /// control speaks. None = no ducking.
     #[serde(default)]
     pub duck_against: Option<Uuid>,
+    /// Speed ramp end. When Some(x), the clip ramps linearly from
+    /// `speed` at the start to `x` at the end (in OUTPUT time). None =
+    /// static speed (uses `speed`). Audio uses the arithmetic mean of
+    /// the two for its constant-tempo approximation.
+    #[serde(default)]
+    pub speed_end: Option<f32>,
 }
 
 impl Clip {
@@ -152,6 +158,7 @@ impl Clip {
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            speed_end: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -181,6 +188,7 @@ impl Clip {
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            speed_end: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -210,6 +218,7 @@ impl Clip {
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            speed_end: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -241,6 +250,7 @@ impl Clip {
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            speed_end: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -277,6 +287,7 @@ impl Clip {
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            speed_end: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -314,6 +325,7 @@ impl Clip {
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            speed_end: None,
             source_duration_ms: 0,
             media_id: None,
         }
