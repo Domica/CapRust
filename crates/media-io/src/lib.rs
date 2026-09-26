@@ -1,5 +1,6 @@
 pub mod audio_mix;
 pub mod audio_player;
+pub mod auto_reframe;
 pub mod export;
 pub mod export_graph;
 pub mod export_progress;
