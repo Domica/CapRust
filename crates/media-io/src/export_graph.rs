@@ -76,6 +76,10 @@ pub struct AudioClip {
     pub fade_in_sec: f64,
     /// Fade-out duration in seconds. 0 = no fade.
     pub fade_out_sec: f64,
+    /// Volume automation. Empty = use gain_db only. Non-empty =
+    /// piecewise-linear in dB between sorted points, held flat before
+    /// the first and after the last.
+    pub volume_keyframes: Vec<caprust_core::clip::VolumeKeyframe>,
 }
 
 /// A fully-described render request.
@@ -371,7 +375,43 @@ impl RenderPlan {
                 let in_label = format!("[{}:a]", c.input_index);
                 let a_out = format!("a{i}_trim");
                 let atempo_chain = atempo_chain(c.speed);
-                let gain = if c.gain_db.abs() < 0.001 {
+                // Volume: an automation curve overrides the static
+                // gain_db. Piecewise-linear in dB between sorted
+                // keyframes, held flat before the first and after the
+                // last. ffmpeg's volume filter evaluates the expression
+                // per frame with eval=frame.
+                let gain = if !c.volume_keyframes.is_empty() {
+                    let kfs = &c.volume_keyframes;
+                    let expr = if kfs.len() == 1 {
+                        format!("{:.4}", kfs[0].gain_db)
+                    } else {
+                        let mut e = format!("{:.4}", kfs.last().unwrap().gain_db);
+                        for i in (0..kfs.len() - 1).rev() {
+                            let a = &kfs[i];
+                            let b = &kfs[i + 1];
+                            let ta = a.t_ms as f64 / 1000.0;
+                            let tb = b.t_ms as f64 / 1000.0;
+                            let dt = (tb - ta).max(0.0001);
+                            let seg = format!(
+                                "{:.4}+({:.4})*(t-{:.4})/{:.4}",
+                                a.gain_db,
+                                b.gain_db - a.gain_db,
+                                ta,
+                                dt
+                            );
+                            e = format!(
+                                "if(lt(t\\,{ta:.4})\\,{ga:.4}\\,if(lt(t\\,{tb:.4})\\,{seg}\\,{e}))",
+                                ta = ta,
+                                ga = a.gain_db,
+                                tb = tb,
+                                seg = seg,
+                                e = e,
+                            );
+                        }
+                        e
+                    };
+                    format!(",volume={expr}dB:eval=frame")
+                } else if c.gain_db.abs() < 0.001 {
                     String::new()
                 } else {
                     format!(",volume={:.4}dB", c.gain_db)
@@ -1169,6 +1209,9 @@ pub fn plan_from_project(
             fo = 0.0;
         }
 
+        let mut kfs = c.volume_keyframes.clone();
+        kfs.sort_by_key(|k| k.t_ms);
+
         audio_clips.push(AudioClip {
             input_index: idx,
             timeline_start_sec: start_sec,
@@ -1177,6 +1220,7 @@ pub fn plan_from_project(
             gain_db: c.volume_db,
             fade_in_sec: fi,
             fade_out_sec: fo,
+            volume_keyframes: kfs,
         });
     }
 
