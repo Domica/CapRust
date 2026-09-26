@@ -75,7 +75,7 @@ asset-search = Pretraži…
 asset-empty = Ovdje još nema stavki.
 asset-templates-hint = Spremljeni predlošci isječaka pojavit će se ovdje.
 media-heading = Medijska knjižnica
-media-import-clips = 📥 Isječci
+media-import-clips = Isječci
 media-import-music = 🎵 Glazba
 media-import-images = 🖼 Slike
 media-sort-label = Sortiraj:
@@ -220,7 +220,7 @@ props-effects-empty = Nema odabranog efekta.
 props-effects-hint = Odaberi filter, tranziciju ili audio efekt iz lijevog panela da ga pridružiš ovom isječku.
 
 # Export window
-exp-title = ⬆  Izvoz videa
+exp-title =  Izvoz videa
 exp-summary = Sažetak
 exp-duration = Trajanje
 exp-clip-count = Isječaka
@@ -237,7 +237,7 @@ exp-quality-large = Velika
 exp-advanced = Napredne opcije
 exp-bitrate = Bitrate mode
 exp-color-range = Raspon boja
-exp-button = ⬇  Izvezi
+exp-button =  Izvezi
 
 # Settings dialog
 set-title = Postavke
@@ -267,7 +267,7 @@ set-appearance-reset = Vrati na zadano
 set-models-heading = AI modeli
 set-models-captions = Titlovi (govor u tekst)
 set-models-narration = Naracija (tekst u govor)
-set-models-download = ⬇ Preuzmi
+set-models-download = Preuzmi
 set-models-enabled = Omogućeno
 set-shortcuts-heading = Tipkovnički prečaci
 set-shortcuts-enable = Omogući tipkovničke prečace
@@ -276,7 +276,7 @@ set-language-applied = Primjenjuje se odmah.
 set-paths-models = Mapa AI modela
 set-paths-ffmpeg = FFmpeg binarke
 set-paths-ffmpeg-hint = Koristi se za analizu medija, izradu sličica i izvoz. Ostavi prazno za automatsku detekciju iz PATH-a.
-set-paths-detect = 🔍 Detektiraj sada
+set-paths-detect = Detektiraj sada
 set-paths-detected = ✅ ffmpeg + ffprobe pronađeni
 set-paths-partial = ⚠ Nedostaje jedna binarka
 set-paths-not-detected = ❌ Nije pronađeno
@@ -285,10 +285,10 @@ set-cancel = Odustani
 set-save-hint = Promjene se spremaju klikom na Spremi.
 
 # Model prompt dialog
-mp-captions-title = 💬  Titlovi — odaberi model
-mp-narration-title = 🎙  Naracija — odaberi glas
+mp-captions-title =  Titlovi — odaberi model
+mp-narration-title =  Naracija — odaberi glas
 mp-intro = Za ovu radnju treba model. Preuzmi ga, zatim klikni Koristi.
-mp-use-this = ✓ Koristi ovaj
+mp-use-this = Koristi ovaj
 mp-cancel = Odustani
 mp-hint = Modeli se preuzimaju u Postavke → Putanje → Mapa AI modela.
 

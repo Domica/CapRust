@@ -75,7 +75,7 @@ asset-search = Search…
 asset-empty = No items here yet.
 asset-templates-hint = Saved clip templates will appear here.
 media-heading = Media Library
-media-import-clips = 📥 Clips
+media-import-clips = Clips
 media-import-music = 🎵 Music
 media-import-images = 🖼 Images
 media-sort-label = Sort:
@@ -220,7 +220,7 @@ props-effects-empty = No effect selected.
 props-effects-hint = Pick a filter, transition, or audio effect from the left panel to attach it to this clip.
 
 # Export window
-exp-title = ⬆  Export video
+exp-title =  Export video
 exp-summary = Summary
 exp-duration = Duration
 exp-clip-count = Clips
@@ -237,7 +237,7 @@ exp-quality-large = Large
 exp-advanced = Advanced options
 exp-bitrate = Bitrate mode
 exp-color-range = Color range
-exp-button = ⬇  Export
+exp-button =  Export
 
 # Settings dialog
 set-title = Settings
@@ -267,7 +267,7 @@ set-appearance-reset = Reset to defaults
 set-models-heading = AI Models
 set-models-captions = Captions (speech-to-text)
 set-models-narration = Narration (text-to-speech)
-set-models-download = ⬇ Download
+set-models-download = Download
 set-models-enabled = Enabled
 set-shortcuts-heading = Keyboard shortcuts
 set-shortcuts-enable = Enable keyboard shortcuts
@@ -276,7 +276,7 @@ set-language-applied = Applied immediately.
 set-paths-models = AI models folder
 set-paths-ffmpeg = FFmpeg binaries
 set-paths-ffmpeg-hint = Used for media probing, thumbnail extraction, and export. Leave empty to auto-detect from PATH.
-set-paths-detect = 🔍 Detect now
+set-paths-detect = Detect now
 set-paths-detected = ✅ ffmpeg + ffprobe detected
 set-paths-partial = ⚠ One binary missing
 set-paths-not-detected = ❌ Not detected
@@ -285,10 +285,10 @@ set-cancel = Cancel
 set-save-hint = Changes save to storage on Save.
 
 # Model prompt dialog
-mp-captions-title = 💬  Captions — choose a model
-mp-narration-title = 🎙  Narration — choose a voice
+mp-captions-title =  Captions — choose a model
+mp-narration-title =  Narration — choose a voice
 mp-intro = This action needs a model. Download one, then click Use.
-mp-use-this = ✓ Use this
+mp-use-this = Use this
 mp-cancel = Cancel
 mp-hint = Downloads go to Settings → Paths → AI models folder.
 

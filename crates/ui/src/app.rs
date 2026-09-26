@@ -18,6 +18,7 @@ use caprust_media_io::audio_player::AudioPlayer;
 use caprust_media_io::exporter::ExportEvent;
 use caprust_media_io::preview_render::PreviewRenderer;
 use eframe::egui;
+use egui_phosphor::regular as ph;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppMode {
@@ -473,7 +474,7 @@ impl CapRustApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(((ui.available_height() - 500.0) / 2.0).max(24.0));
-                ui.heading(egui::RichText::new("🎬 CapRust").size(34.0));
+                ui.heading(egui::RichText::new(format!("{} CapRust", ph::FILM_STRIP)).size(34.0));
                 ui.add_space(4.0);
                 ui.label("Social-first video editor");
                 ui.add_space(30.0);
@@ -814,7 +815,7 @@ impl CapRustApp {
     fn show_toolbar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("➕ Add Text").clicked() {
+                if ui.button(format!("{} Add Text", ph::PLUS)).clicked() {
                     let clip = Clip::new_text("Hello!", 0, self.playhead_ms, 3000, false);
                     let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
@@ -1814,7 +1815,7 @@ impl CapRustApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.button("✕").clicked() {
+                                    if ui.button(ph::X).clicked() {
                                         dismiss = Some(i);
                                     }
                                 },
@@ -2668,10 +2669,10 @@ impl CapRustApp {
                                                     ..
                                                 } => content.clone(),
                                                 caprust_core::ClipType::Captions { .. } => {
-                                                    "💬 Captions".into()
+                                                    format!("{} Captions", ph::CHAT_TEXT)
                                                 }
                                                 caprust_core::ClipType::Narration { .. } => {
-                                                    "🎙 Narration".into()
+                                                    format!("{} Narration", ph::MICROPHONE)
                                                 }
                                                 caprust_core::ClipType::Video { path, .. }
                                                 | caprust_core::ClipType::Audio { path, .. }
@@ -4377,10 +4378,13 @@ impl CapRustApp {
                     ui.add_space(8.0);
                     ui.separator();
                     ui.label(
-                        egui::RichText::new(format!("✓ Done: {path}"))
+                        egui::RichText::new(format!("{} Done: {path}", ph::CHECK))
                             .color(egui::Color32::from_rgb(120, 220, 120)),
                     );
-                    if ui.button("📂 Open folder").clicked() {
+                    if ui
+                        .button(format!("{} Open folder", ph::FOLDER_OPEN))
+                        .clicked()
+                    {
                         caprust_media_io::exporter::reveal_in_folder(std::path::Path::new(&path));
                     }
                     if ui.button("Dismiss").clicked() {
@@ -4533,7 +4537,10 @@ impl CapRustApp {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| match m.status {
                                     caprust_core::ModelStatus::NotDownloaded => {
-                                        if ui.button("⬇ Download").clicked() {
+                                        if ui
+                                            .button(format!("{} Download", ph::DOWNLOAD_SIMPLE))
+                                            .clicked()
+                                        {
                                             m.status = caprust_core::ModelStatus::Downloading;
                                             m.progress = 0.0;
                                         }

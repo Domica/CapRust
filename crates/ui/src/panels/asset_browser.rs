@@ -46,8 +46,8 @@ impl AssetTab {
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Media => "📁",
-            Self::Transitions => "⇄",
-            Self::Effects => "✨",
+            Self::Transitions => ph::ARROWS_LEFT_RIGHT,
+            Self::Effects => ph::SPARKLE,
             Self::Filters => "🎨",
             Self::Text => "T",
             Self::Templates => "🧩",
