@@ -230,6 +230,14 @@ pub fn spawn_caption_job(
 
     std::thread::Builder::new()
         .name("caprust-caption".into())
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let result = run_caption_job(&ffmpeg, &req);
             let _ = tx.send(result);
@@ -251,6 +259,14 @@ pub fn spawn_demo_caption_job(
 
     std::thread::Builder::new()
         .name("caprust-caption-demo".into())
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             // Small sleep so the UI toast/progress states are visible.
             std::thread::sleep(std::time::Duration::from_millis(400));
@@ -413,6 +429,14 @@ pub fn spawn_narration_job(
 
     std::thread::Builder::new()
         .name("caprust-narration".into())
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let result = run_narration_job(&ffprobe, &req);
             let _ = tx.send(result);
@@ -520,6 +544,14 @@ pub fn spawn_reframe_job(
 
     std::thread::Builder::new()
         .name("caprust-reframe".into())
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let result = run_reframe_job(&ffmpeg, &ffprobe, &req);
             let _ = tx.send(result);
@@ -689,6 +721,14 @@ pub fn spawn_bg_removal_job(
 
     std::thread::Builder::new()
         .name("caprust-bg-removal".into())
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        // Whisper.cpp and tract are stack-hungry; the
+        // Rust default 2 MB thread stack overflows on
+        // Windows during inference. 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             run_bg_removal_job(&ffmpeg, &ffprobe, &req, &tx);
         })

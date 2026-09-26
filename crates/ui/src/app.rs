@@ -1884,11 +1884,18 @@ impl CapRustApp {
                 std::path::PathBuf::new(),
             )
         } else {
-            // Refresh model status from the filesystem before deciding
-            // whether a caption model is available. scan_local() marks a
-            // model Ready when its file exists and is non-empty, so
-            // manually-placed weights (and downloads that completed
-            // after the last startup) are picked up without a restart.
+            // Refresh the registry from the built-in defaults before
+            // scanning. A project saved before a new model was added
+            // (e.g. whisper-tiny appearing in a later release, or a
+            // manually-placed file for an entry the snapshot did not
+            // have) would otherwise never see the entry. Idempotent:
+            // existing rows keep status, missing rows are cloned in.
+            self.project.models.merge_missing_defaults();
+
+            // scan_local() marks a model Ready when its file exists and
+            // is non-empty, so manually-placed weights (and downloads
+            // that completed after the last startup) are picked up
+            // without a restart.
             self.project.models.scan_local(&models_dir);
 
             let ready = self.project.models.ready_captions();
@@ -5610,6 +5617,13 @@ enum ClipAction {
 
 impl eframe::App for CapRustApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Refresh the model registry from the built-in defaults once
+        // per frame. Cheap (a dozen entries), idempotent, and makes
+        // every downstream read site automatically aware of any entry
+        // added in a newer build -- whisper-tiny being the case that
+        // surfaced this. Existing rows keep status/progress; missing
+        // rows are cloned in.
+        self.project.models.merge_missing_defaults();
         caprust_i18n::set_current_lang(&self.settings.language);
         self.theme.apply(ctx);
 
