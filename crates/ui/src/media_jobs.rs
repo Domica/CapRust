@@ -257,10 +257,20 @@ pub fn spawn_demo_caption_job(
 
             let total = req.duration_ms.max(4000);
             let per = total / 4;
-            let seg = |i: u64, text: &str| caprust_core::CaptionSegment {
-                start_ms: i * per,
-                end_ms: ((i + 1) * per).saturating_sub(80),
-                text: text.to_string(),
+            // P1: DEMO segments carry fake per-word timings so the
+            // progressive-reveal render path can be exercised end to end
+            // without a real Whisper model. Words are laid out evenly
+            // inside each segment; real whisper data replaces this when
+            // the DEMO marker is absent.
+            let seg = |i: u64, text: &str| {
+                let start = i * per;
+                let end = ((i + 1) * per).saturating_sub(80);
+                caprust_core::CaptionSegment {
+                    start_ms: start,
+                    end_ms: end,
+                    text: text.to_string(),
+                    words: fake_word_timings(text, start, end),
+                }
             };
             let segments = vec![
                 seg(0, "DEMO caption — first line"),
@@ -280,6 +290,38 @@ pub fn spawn_demo_caption_job(
         .expect("spawn caption demo thread");
 
     rx
+}
+
+/// Split `text` into evenly-timed fake word timings inside
+/// [start_ms, end_ms]. Used only by the DEMO caption path.
+fn fake_word_timings(
+    text: &str,
+    start_ms: u64,
+    end_ms: u64,
+) -> Vec<caprust_core::clip::WordTiming> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let span = end_ms.saturating_sub(start_ms).max(1);
+    let step = span / words.len() as u64;
+    words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let ws = start_ms + i as u64 * step;
+            let we = if i + 1 == words.len() {
+                end_ms
+            } else {
+                start_ms + (i as u64 + 1) * step
+            };
+            caprust_core::clip::WordTiming {
+                start_ms: ws,
+                end_ms: we,
+                text: (*w).to_string(),
+            }
+        })
+        .collect()
 }
 
 fn run_caption_job(

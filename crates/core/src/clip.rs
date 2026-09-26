@@ -42,11 +42,32 @@ pub enum ClipType {
     },
 }
 
+/// One word inside a caption segment, with its own timing. Used by
+/// the P1 progressive-reveal render path: the segment is expanded into
+/// one drawtext per word, each showing the accumulated text up to that
+/// word, so the caption "types itself" as the speaker talks.
+///
+/// Populated by whisper.rs when token timestamps are available. Older
+/// projects (and any segment where token grouping produced nothing)
+/// carry `words: vec![]` and fall back to the pre-P1 single-drawtext
+/// render.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WordTiming {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CaptionSegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    /// Per-word timings. Empty = no word data, render as one drawtext
+    /// for the whole segment (pre-P1 behaviour). Non-empty = render
+    /// one drawtext per word in progressive-reveal mode.
+    #[serde(default)]
+    pub words: Vec<WordTiming>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -1482,6 +1482,21 @@ pub fn plan_from_project(
             video_track_order.push(i);
         }
     }
+    // Text and Captions tracks also feed text_clips. Push them after
+    // Overlay so burned-in captions and text land above every video
+    // layer, matching the timeline's visual stacking. Without this,
+    // Captions placed on a Captions track were never visited by the
+    // clip loop and produced no drawtext at all.
+    for (i, t) in project.tracks.iter().enumerate() {
+        if t.kind == TrackKind::Text {
+            video_track_order.push(i);
+        }
+    }
+    for (i, t) in project.tracks.iter().enumerate() {
+        if t.kind == TrackKind::Captions {
+            video_track_order.push(i);
+        }
+    }
 
     // Z-order index assigned to each clip as we walk tracks bottom-up.
     for (z, &t_idx) in video_track_order.iter().enumerate() {
@@ -1565,26 +1580,64 @@ pub fn plan_from_project(
                     // applied to the audio mix) so the burned-in text
                     // lands on top of the same frame it was transcribed
                     // from, not D seconds late after a transition.
+                    //
+                    // Two render modes per segment:
+                    //   * words.is_empty() -- one drawtext for the whole
+                    //     segment. Pre-P1 behaviour, still used for any
+                    //     segment where token grouping produced nothing.
+                    //   * words not empty -- progressive reveal (P1):
+                    //     one drawtext per word, each showing the text
+                    //     accumulated up to that word. The caption
+                    //     "types itself" as the speaker talks, at the
+                    //     same centring the single-drawtext path uses,
+                    //     so nothing else needs to change.
                     let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
                     let clip_start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
                     for seg in segments {
                         let seg_start_sec = clip_start_sec + seg.start_ms as f64 / 1000.0;
                         let seg_end_sec = clip_start_sec + seg.end_ms as f64 / 1000.0;
-                        let seg_dur = (seg_end_sec - seg_start_sec).max(0.05);
-                        text_clips.push(TextClip {
-                            content: seg.text.clone(),
-                            font_size: 32.0,
-                            timeline_start_sec: seg_start_sec,
-                            duration_sec: seg_dur,
-                            // Captions always render above everything except
-                            // pinned overlay; force above = true.
-                            above: true,
-                            z_order: z,
-                            // Burned-in captions use the "caption" preset
-                            // (yellow, black border) regardless of the
-                            // style selector on any unrelated Text clip.
-                            style: "caption".to_string(),
-                        });
+
+                        if seg.words.is_empty() {
+                            let seg_dur = (seg_end_sec - seg_start_sec).max(0.05);
+                            text_clips.push(TextClip {
+                                content: seg.text.clone(),
+                                font_size: 32.0,
+                                timeline_start_sec: seg_start_sec,
+                                duration_sec: seg_dur,
+                                above: true,
+                                z_order: z,
+                                style: "caption".to_string(),
+                            });
+                        } else {
+                            let mut acc = String::new();
+                            for (wi, w) in seg.words.iter().enumerate() {
+                                if !acc.is_empty() {
+                                    acc.push(' ');
+                                }
+                                acc.push_str(w.text.trim());
+                                let word_start_sec = clip_start_sec + w.start_ms as f64 / 1000.0;
+                                // Each drawtext is on screen until the
+                                // next word starts; the last one stays
+                                // until the segment end. Clamped so a
+                                // stray zero-duration word cannot
+                                // produce an invisible enable window.
+                                let word_end_sec = if wi + 1 < seg.words.len() {
+                                    clip_start_sec + seg.words[wi + 1].start_ms as f64 / 1000.0
+                                } else {
+                                    seg_end_sec
+                                };
+                                let dur = (word_end_sec - word_start_sec).max(0.05);
+                                text_clips.push(TextClip {
+                                    content: acc.clone(),
+                                    font_size: 32.0,
+                                    timeline_start_sec: word_start_sec,
+                                    duration_sec: dur,
+                                    above: true,
+                                    z_order: z,
+                                    style: "caption".to_string(),
+                                });
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -1834,6 +1887,174 @@ mod tests {
         assert!(frag.contains("concat=n=4:v=0:a=1"), "concat tail: {frag}");
         assert!(frag.contains("atrim=start="), "each segment trims: {frag}");
         assert!(frag.ends_with("[out];"), "writes out_label: {frag}");
+    }
+
+    #[test]
+    fn captions_with_words_expand_to_progressive_drawtexts() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        use caprust_core::{Clip, ClipType};
+
+        // Two segments: the first has word timings (P1 progressive
+        // reveal), the second has none (fallback to a single drawtext).
+        // Both must appear in the plan with the correct shape.
+        let mut c = Clip::new_video("placeholder.mp4", 0, 0, 2000);
+        c.clip_type = ClipType::Captions {
+            language: "en".into(),
+            model_id: "test".into(),
+            segments: vec![
+                CaptionSegment {
+                    start_ms: 0,
+                    end_ms: 1000,
+                    text: "hello world".into(),
+                    words: vec![
+                        WordTiming {
+                            start_ms: 0,
+                            end_ms: 500,
+                            text: "hello".into(),
+                        },
+                        WordTiming {
+                            start_ms: 500,
+                            end_ms: 1000,
+                            text: "world".into(),
+                        },
+                    ],
+                },
+                CaptionSegment {
+                    start_ms: 1000,
+                    end_ms: 2000,
+                    text: "plain segment".into(),
+                    words: vec![],
+                },
+            ],
+        };
+
+        let plan = RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: PathBuf::from("placeholder.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 2.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 2.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: None,
+                transition_out: None,
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 2.0,
+            width: 320,
+            height: 240,
+            fps_num: 30,
+            fps_den: 1,
+            has_audio: false,
+            crf: 23,
+            preset: "veryfast".to_string(),
+        };
+        // Overwrite the video clip's type via the plan-construction
+        // path: rather than reimplement plan_from_project here, we
+        // simply run plan_from_project on a hand-built project.
+        drop(plan);
+        drop(c);
+
+        let mut project = caprust_core::ProjectState::default();
+        let mut clip = Clip::new_video("placeholder.mp4", 0, 0, 2000);
+        clip.clip_type = ClipType::Captions {
+            language: "en".into(),
+            model_id: "test".into(),
+            segments: vec![
+                CaptionSegment {
+                    start_ms: 0,
+                    end_ms: 1000,
+                    text: "hello world".into(),
+                    words: vec![
+                        WordTiming {
+                            start_ms: 0,
+                            end_ms: 500,
+                            text: "hello".into(),
+                        },
+                        WordTiming {
+                            start_ms: 500,
+                            end_ms: 1000,
+                            text: "world".into(),
+                        },
+                    ],
+                },
+                CaptionSegment {
+                    start_ms: 1000,
+                    end_ms: 2000,
+                    text: "plain segment".into(),
+                    words: vec![],
+                },
+            ],
+        };
+        // Captions clips live on the Captions track. plan_from_project
+        // still requires at least one clip on a Video track, so add a
+        // short placeholder video alongside.
+        let captions_track = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
+            .expect("captions track exists in default_tracks()");
+        clip.track_index = captions_track;
+        project.add_clip(clip);
+
+        let video_track = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::track::TrackKind::Video)
+            .expect("video track exists in default_tracks()");
+        let mut placeholder = Clip::new_video("placeholder.mp4", video_track, 0, 2000);
+        placeholder.clip_type = ClipType::Video {
+            path: "placeholder.mp4".into(),
+            duration_ms: 2000,
+        };
+        project.add_clip(placeholder);
+
+        let plan = plan_from_project(
+            &project,
+            320,
+            240,
+            30,
+            1,
+            23,
+            "veryfast",
+            std::path::Path::new("."),
+        )
+        .expect("plan built");
+
+        // Both segments must contribute text clips. Progressive reveal
+        // contributes one per word (2), fallback contributes one (1).
+        assert_eq!(
+            plan.text_clips.len(),
+            3,
+            "expected 2 word drawtexts + 1 fallback drawtext: {:#?}",
+            plan.text_clips
+        );
+
+        // Progressive reveal: accumulated text.
+        let contents: Vec<&str> = plan.text_clips.iter().map(|t| t.content.as_str()).collect();
+        assert!(
+            contents.contains(&"hello"),
+            "first word drawtext must show 'hello': {contents:?}"
+        );
+        assert!(
+            contents.contains(&"hello world"),
+            "second word drawtext must show accumulated 'hello world': {contents:?}"
+        );
+        assert!(
+            contents.contains(&"plain segment"),
+            "fallback drawtext must show the whole segment text: {contents:?}"
+        );
     }
 
     #[test]
