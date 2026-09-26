@@ -295,6 +295,8 @@ set-cancel = Cancel
 set-save-hint = Changes save to storage on Save.
 
 # Model prompt dialog
+mp-tab-captions = Captions
+mp-tab-narration = Narration
 mp-captions-title =  Captions — choose a model
 mp-narration-title =  Narration — choose a voice
 mp-intro = This action needs a model. Download one, then click Use.
