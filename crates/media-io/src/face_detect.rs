@@ -254,27 +254,36 @@ fn decode_3_output(
             .map_err(|e| anyhow!("YuNet 2022mar output[{i}] read: {e:?}"))?;
         let shape = view.shape();
         tracing::info!("YuNet 2022mar output[{}] shape = {:?}", i, shape);
-        if shape.len() == 3 && shape[2] == 15 {
-            let n_log = shape[1].min(3);
-            for j in 0..n_log {
-                let mut row = Vec::with_capacity(15);
-                for k in 0..15 {
-                    row.push(format!("{:.4}", view[[0, j, k]]));
+        match shape.len() {
+            // Most common export: [N, C]. Log a couple of rows so we
+            // can see whether the third column is a score, whether
+            // coordinates are absolute or normalized, etc.
+            2 => {
+                let n_log = shape[0].min(3);
+                let cols = shape[1];
+                for j in 0..n_log {
+                    let mut row = Vec::with_capacity(cols);
+                    for k in 0..cols {
+                        row.push(format!("{:.4}", view[[j, k]]));
+                    }
+                    tracing::info!("  output[{}] row[{}] = [{}]", i, j, row.join(", "));
                 }
-                tracing::info!("  row[{}] = [{}]", j, row.join(", "));
             }
-        } else if shape.len() == 3 && shape[1] == 15 {
-            // Alt layout: [1, 15, N]
-            let n_log = shape[2].min(3);
-            for j in 0..n_log {
-                let mut row = Vec::with_capacity(15);
-                for k in 0..15 {
-                    row.push(format!("{:.4}", view[[0, k, j]]));
+            // [1, N, C] layout.
+            3 => {
+                let n_log = shape[1].min(3);
+                let cols = shape[2];
+                for j in 0..n_log {
+                    let mut row = Vec::with_capacity(cols);
+                    for k in 0..cols {
+                        row.push(format!("{:.4}", view[[0, j, k]]));
+                    }
+                    tracing::info!("  output[{}] row[{}] = [{}]", i, j, row.join(", "));
                 }
-                tracing::info!("  col[{}] = [{}]", j, row.join(", "));
             }
-        } else {
-            tracing::warn!("  unexpected 3-output layout for stride head {i}");
+            n => {
+                tracing::warn!("  output[{i}] unexpected rank {n}");
+            }
         }
     }
     Ok(Vec::new())
