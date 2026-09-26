@@ -240,6 +240,10 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
     ui.add_space(12.0);
     ui.label(egui::RichText::new(tr("set-models-narration")).strong());
     show_model_group(ui, models, ModelKind::Narration);
+
+    ui.add_space(12.0);
+    ui.label(egui::RichText::new(tr("set-models-face")).strong());
+    show_model_group(ui, models, ModelKind::FaceDetector);
 }
 
 fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
