@@ -96,6 +96,13 @@ pub struct Clip {
     /// name at render time.
     #[serde(default)]
     pub name: Option<String>,
+    /// Fade-in duration in ms. Applied to the audio stream only (video
+    /// uses transition_in for visual fades). 0 = no fade.
+    #[serde(default)]
+    pub fade_in_ms: u64,
+    /// Fade-out duration in ms. Same semantics as fade_in_ms.
+    #[serde(default)]
+    pub fade_out_ms: u64,
 }
 
 impl Clip {
@@ -119,6 +126,8 @@ impl Clip {
             transition_out: None,
             audio_detached: false,
             name: None,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -144,6 +153,8 @@ impl Clip {
             transition_out: None,
             audio_detached: false,
             name: None,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -169,6 +180,8 @@ impl Clip {
             transition_out: None,
             audio_detached: false,
             name: None,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -196,6 +209,8 @@ impl Clip {
             transition_out: None,
             audio_detached: false,
             name: None,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -228,6 +243,8 @@ impl Clip {
             transition_out: None,
             audio_detached: false,
             name: None,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -261,6 +278,8 @@ impl Clip {
             transition_out: None,
             audio_detached: false,
             name: None,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
             source_duration_ms: 0,
             media_id: None,
         }

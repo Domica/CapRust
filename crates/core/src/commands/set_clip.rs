@@ -20,6 +20,8 @@ pub struct SetClipCommand {
     /// Only meaningful on TextOverlay clips: sets the drawtext style id.
     /// No-op on other clip kinds.
     pub text_style: Option<String>,
+    pub fade_in_ms: Option<u64>,
+    pub fade_out_ms: Option<u64>,
     before: Option<Clip>,
 }
 
@@ -37,6 +39,8 @@ impl SetClipCommand {
             track_index: None,
             name: None,
             text_style: None,
+            fade_in_ms: None,
+            fade_out_ms: None,
             before: None,
         }
     }
@@ -83,6 +87,14 @@ impl SetClipCommand {
         self.text_style = Some(v.into());
         self
     }
+    pub fn fade_in_ms(mut self, v: u64) -> Self {
+        self.fade_in_ms = Some(v);
+        self
+    }
+    pub fn fade_out_ms(mut self, v: u64) -> Self {
+        self.fade_out_ms = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -122,6 +134,12 @@ impl Command for SetClipCommand {
             if let crate::clip::ClipType::TextOverlay { style, .. } = &mut c.clip_type {
                 *style = v;
             }
+        }
+        if let Some(v) = self.fade_in_ms {
+            c.fade_in_ms = v;
+        }
+        if let Some(v) = self.fade_out_ms {
+            c.fade_out_ms = v;
         }
         Ok(())
     }
