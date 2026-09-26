@@ -235,6 +235,10 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 /// frame, if any. The caller (app.rs) hands it to start_model_download;
 /// this panel cannot spawn threads itself.
 fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) -> Option<String> {
+    // Backfill registry entries added since this project was saved,
+    // so a model introduced in a later build appears in Settings
+    // without requiring a project reopen.
+    models.merge_missing_defaults();
     ui.label(egui::RichText::new(tr("set-models-heading")).strong());
     ui.label(
         egui::RichText::new(format!(
