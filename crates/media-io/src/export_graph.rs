@@ -241,10 +241,17 @@ impl RenderPlan {
                 // defines the clip's true length.
                 let mask_label = format!("m_b{i}");
                 let bg_label = format!("bg_b{i}");
+                // The mask comes from the extraction pass at a
+                // different resolution than the render target, so it
+                // must be scaled + letterboxed the same way the video
+                // chain was, otherwise maskedmerge rejects the pair
+                // with "input link size mismatch".
                 fg.push_str(&format!(
-                    "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray[{mask_label}];",
+                    "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{mask_label}];",
                     num = self.fps_num,
                     den = self.fps_den,
+                    w = self.width,
+                    h = self.height,
                 ));
                 // Black base at project resolution and fps, matching
                 // the clip duration. This is the layer the merge
