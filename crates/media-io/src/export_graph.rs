@@ -77,11 +77,16 @@ pub struct AudioClip {
     pub timeline_start_sec: f64,
     pub duration_sec: f64,
     pub speed: f32,
-    /// Speed ramp end. Some(x) => audio tempo uses the ease-weighted
-    /// mean of `speed` and `x` (single-instance atempo can't ramp).
+    /// Speed ramp end. Some(x) => audio is split into segments and
+    /// atempo'd per segment (see build_speed_ramp_atempo_segments),
+    /// matching the video piecewise setpts windows.
     pub speed_end: Option<f32>,
-    /// Easing of the ramp. Only used to pick the weighted mean.
+    /// Easing of the ramp. Must match the source clip's speed_ease so
+    /// the audio segments land on the same boundaries as the video.
     pub speed_ease: caprust_core::clip::EaseCurve,
+    /// Where inside the clip the ramp lives. Must match the source
+    /// clip's speed_range for the same reason as speed_ease above.
+    pub speed_range: caprust_core::clip::SpeedRampRange,
     /// Linear gain from clip.volume_db.
     pub gain_db: f32,
     /// Fade-in duration in seconds. 0 = no fade.
@@ -415,33 +420,49 @@ impl RenderPlan {
             for (i, c) in self.audio_clips.iter().enumerate() {
                 let in_label = format!("[{}:a]", c.input_index);
                 let a_out = format!("a{i}_trim");
-                // Audio cannot vary tempo smoothly across a single
-                // atempo instance, so a speed ramp is approximated by
-                // the ease-weighted mean of the two endpoints. The
-                // video side uses an N-segment piecewise chain and
-                // therefore tracks the ease curve more closely than
-                // this single constant does.
-                //
-                // Consequences:
-                //   * Clip BOUNDARIES stay in sync: the mean chosen
-                //     here is the integral of the same curve, so total
-                //     clip duration matches the video side exactly.
-                //   * INSIDE a long ramp there is momentary drift of
-                //     up to ~0.15x around the mean. For short ramps
-                //     (typical of social edits) this is not audible.
-                //
-                // A segmented atempo chain (one atempo per piecewise
-                // step, joined with concat) would eliminate the
-                // mid-ramp drift entirely. Tracked in DIRECTIVES
-                // §28.2 as "Audio segmented ramp sync".
-                let effective_speed = match c.speed_end {
-                    Some(s_end) if (s_end - c.speed).abs() > 0.001 => {
-                        let t = ease_avg_progress(c.speed_ease) as f32;
-                        c.speed + (s_end - c.speed) * t
+                // Speed chain. If a ramp applies, split the source into
+                // N segments that match the video setpts windows and
+                // atempo each one, then concat. Otherwise use a single
+                // atempo for the static speed. The segmented path makes
+                // audio and video consume identical source windows per
+                // segment, so they cannot drift inside a ramp.
+                let ramped = c
+                    .speed_end
+                    .filter(|s_end| (s_end - c.speed).abs() > 0.001)
+                    .and_then(|s_end| {
+                        compute_speed_ramp_segments(
+                            c.speed,
+                            s_end,
+                            c.speed_ease,
+                            c.speed_range,
+                            c.duration_sec,
+                        )
+                    });
+
+                let (ramp_preamble, pre_gain_label) = match ramped {
+                    Some(segs) => {
+                        let pre = format!("a{i}_pre");
+                        let frag = build_speed_ramp_atempo_segments(
+                            &in_label,
+                            &pre,
+                            &segs,
+                            &format!("a{i}r"),
+                        );
+                        (frag, format!("[{pre}]"))
                     }
-                    _ => c.speed,
+                    None => {
+                        let atempo = atempo_chain(c.speed);
+                        (
+                            format!(
+                                "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}[a{i}_pre];",
+                                dur = c.duration_sec,
+                                atempo = atempo,
+                                i = i,
+                            ),
+                            format!("[a{i}_pre]"),
+                        )
+                    }
                 };
-                let atempo_chain = atempo_chain(effective_speed);
                 // Volume: an automation curve overrides the static
                 // gain_db. Piecewise-linear in dB between sorted
                 // keyframes, held flat before the first and after the
@@ -496,14 +517,17 @@ impl RenderPlan {
                 } else {
                     String::new()
                 };
-                fg.push_str(&format!(
-                "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}{gain}{fade_in}{fade_out}[{a_out}];",
-                dur = c.duration_sec,
-                atempo = atempo_chain,
-                gain = gain,
-                fade_in = fade_in,
-                fade_out = fade_out,
-            ));
+                fg.push_str(&ramp_preamble);
+                // Post-chain: gain, fades. If all are empty, pass
+                // through with `anull` so the chain is always valid.
+                let tail = format!("{gain}{fade_in}{fade_out}");
+                let tail_clean = tail.trim_start_matches(',');
+                let tail_chain = if tail_clean.is_empty() {
+                    "anull"
+                } else {
+                    tail_clean
+                };
+                fg.push_str(&format!("{pre_gain_label}{tail_chain}[{a_out}];"));
                 a_labels.push(a_out);
             }
 
@@ -1031,29 +1055,41 @@ fn ease_avg_progress(ease: caprust_core::clip::EaseCurve) -> f64 {
     }
 }
 
-/// Build a `setpts=PTS-STARTPTS,setpts='<expr>'` chain for a clip with a
-/// speed ramp. Returns None when no ramp applies (i.e. speed_end is
-/// absent, equals speed, or the clip has zero duration).
+/// One piecewise-constant segment of a speed ramp, expressed in both
+/// INPUT and OUTPUT time (relative to clip start).
 ///
-/// The ramp is approximated by a piecewise-constant speed curve sampled
-/// at RAMP_SEGMENTS points along the OUTPUT timeline. Each segment
-/// contributes one linear branch to a nested if() expression, which
-/// ffmpeg's setpts evaluates per frame. This keeps the visual curve
-/// close to the requested easing while staying a simple string.
+/// Both the video setpts builder and the audio atempo segmenter sample
+/// the same segments, so the two sides consume identical source
+/// windows at identical speeds. That is what removes the mid-ramp
+/// A/V drift the previous ease-weighted-mean approximation had.
+#[derive(Debug, Clone, Copy)]
+struct RampSegment {
+    /// Segment start in INPUT seconds, relative to clip start.
+    t_in_start: f64,
+    /// Segment end in INPUT seconds, relative to clip start.
+    t_in_end: f64,
+    /// Segment start in OUTPUT seconds, relative to clip start.
+    t_out_start: f64,
+    /// Constant speed used inside this segment.
+    speed: f64,
+}
+
+/// Compute the piecewise segments of a speed ramp. Returns None when
+/// no ramp applies (speed_end absent or equal to speed, or the clip
+/// has zero duration).
 ///
-/// Easing curves: Linear, EaseIn (t^2), EaseOut (1-(1-t)^2), EaseInOut
-/// (symmetrised).
-///
-/// Range: WholeClip (ramp spans the whole clip), FirstN(n) (ramp covers
-/// the first n output seconds, rest runs at speed_end), LastN(n) (ramp
-/// covers the last n output seconds, earlier portion runs at speed).
-fn build_speed_ramp_setpts(
+/// The ramp is approximated by RAMP_SEGMENTS constant-speed intervals
+/// sampled at their midpoints along the OUTPUT timeline. Each segment
+/// consumes `speed * dt_out` seconds of INPUT and produces `dt_out`
+/// seconds of OUTPUT, so input time tiles contiguously. Both the
+/// video and audio chains read this same list.
+fn compute_speed_ramp_segments(
     speed: f32,
     speed_end: f32,
     ease: caprust_core::clip::EaseCurve,
     range: caprust_core::clip::SpeedRampRange,
     clip_in_dur_s: f64,
-) -> Option<String> {
+) -> Option<Vec<RampSegment>> {
     use caprust_core::clip::SpeedRampRange;
 
     const RAMP_SEGMENTS: usize = 4;
@@ -1115,34 +1151,125 @@ fn build_speed_ramp_setpts(
         }
     };
 
-    // Piecewise-constant segments: (t_in_start, t_in_end, t_out_start, s_seg).
     let dt_out = total_out_dur / (RAMP_SEGMENTS as f64);
-    let mut segments: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(RAMP_SEGMENTS);
+    let mut segments: Vec<RampSegment> = Vec::with_capacity(RAMP_SEGMENTS);
     let mut t_in_acc = 0.0;
     for i in 0..RAMP_SEGMENTS {
         let t_out_start = i as f64 * dt_out;
         let t_out_mid = t_out_start + dt_out * 0.5;
         let s_mid = s_at(t_out_mid).max(0.01);
         let t_in_end = t_in_acc + s_mid * dt_out;
-        segments.push((t_in_acc, t_in_end, t_out_start, s_mid));
+        segments.push(RampSegment {
+            t_in_start: t_in_acc,
+            t_in_end,
+            t_out_start,
+            speed: s_mid,
+        });
         t_in_acc = t_in_end;
     }
 
-    // Nested if() from the tail backwards.
-    let build_branch = |t_in_s: f64, t_out_s: f64, s: f64| -> String {
-        format!("({t_out_s:.6}+(T/TB-{t_in_s:.6})/{s:.6})",)
+    Some(segments)
+}
+
+/// Build a `setpts=PTS-STARTPTS,setpts=\'<expr>\'` chain for a clip with
+/// a speed ramp. Returns None when no ramp applies.
+///
+/// The ramp is a nested if() over `T/TB` (output seconds): each
+/// segment contributes a linear branch mapping output time to a new
+/// PTS. Boundaries and speeds come from compute_speed_ramp_segments,
+/// shared with the audio side.
+fn build_speed_ramp_setpts(
+    speed: f32,
+    speed_end: f32,
+    ease: caprust_core::clip::EaseCurve,
+    range: caprust_core::clip::SpeedRampRange,
+    clip_in_dur_s: f64,
+) -> Option<String> {
+    let segments = compute_speed_ramp_segments(speed, speed_end, ease, range, clip_in_dur_s)?;
+    let n = segments.len();
+
+    // Branch: for INPUT time t_in inside the segment, output PTS is
+    //   t_out_start + (t_in - t_in_start) / speed.
+    let branch = |seg: &RampSegment| -> String {
+        format!(
+            "({t_out:.6}+(T/TB-{t_in:.6})/{s:.6})",
+            t_out = seg.t_out_start,
+            t_in = seg.t_in_start,
+            s = seg.speed,
+        )
     };
 
-    let (t_in_last, _e, t_out_last, s_last) = segments[RAMP_SEGMENTS - 1];
-    let mut expr = build_branch(t_in_last, t_out_last, s_last);
-
-    for i in (0..RAMP_SEGMENTS - 1).rev() {
-        let (t_in_s, t_in_e, t_out_s, s) = segments[i];
-        let seg = build_branch(t_in_s, t_out_s, s);
-        expr = format!("if(lt(T/TB\\,{t_in_e:.6})\\,{seg}\\,{expr})",);
+    // Nested if() from the tail backwards.
+    let mut expr = branch(&segments[n - 1]);
+    for seg in segments[..n - 1].iter().rev() {
+        let b = branch(seg);
+        expr = format!(
+            "if(lt(T/TB\\,{t_in_e:.6})\\,{b}\\,{expr})",
+            t_in_e = seg.t_in_end,
+            b = b,
+            expr = expr,
+        );
     }
 
-    Some(format!("setpts='TB*({expr})'"))
+    Some(format!("setpts=\'TB*({expr})\'"))
+}
+
+/// Build an `asplit, atrim xN, atempo xN, concat` block that applies a
+/// piecewise-constant speed ramp to an audio stream. Emits one or more
+/// full ffmpeg chain lines (each `;`-terminated), reading from
+/// `in_label` and writing to `out_label`.
+///
+/// Uses the same RampSegment list as build_speed_ramp_setpts, so every
+/// segment boundary and speed matches the video side exactly. That
+/// removes the mid-ramp A/V drift the previous ease-weighted-mean
+/// approximation introduced.
+fn build_speed_ramp_atempo_segments(
+    in_label: &str,
+    out_label: &str,
+    segments: &[RampSegment],
+    prefix: &str,
+) -> String {
+    let n = segments.len();
+    let mut out = String::new();
+
+    // Split the source into N branches.
+    let split_labels: Vec<String> = (0..n).map(|i| format!("{prefix}_sp{i}")).collect();
+    out.push_str(&format!(
+        "{in_label}asplit={n}{outs};",
+        in_label = in_label,
+        n = n,
+        outs = split_labels
+            .iter()
+            .map(|l| format!("[{l}]"))
+            .collect::<String>(),
+    ));
+
+    // One atrim + atempo per segment.
+    let seg_labels: Vec<String> = (0..n).map(|i| format!("{prefix}_sg{i}")).collect();
+    for (i, seg) in segments.iter().enumerate() {
+        let atempo = atempo_chain(seg.speed as f32);
+        out.push_str(&format!(
+            "[{split}]atrim=start={st:.6}:end={en:.6},asetpts=PTS-STARTPTS{atempo}[{sg}];",
+            split = split_labels[i],
+            st = seg.t_in_start,
+            en = seg.t_in_end,
+            atempo = atempo,
+            sg = seg_labels[i],
+        ));
+    }
+
+    // Concatenate segments end-to-end.
+    out.push_str(&format!(
+        "{ins}concat=n={n}:v=0:a=1[{out}];",
+        ins = seg_labels
+            .iter()
+            .map(|l| format!("[{l}]"))
+            .collect::<String>(),
+        n = n,
+        out = out_label,
+    ));
+
+    out
 }
 
 /// Build an `,atempo=x` chain that supports 0.5..=2.0 per stage.
@@ -1571,6 +1698,7 @@ pub fn plan_from_project(
             speed: c.speed,
             speed_end: c.speed_end,
             speed_ease: c.speed_ease,
+            speed_range: c.speed_range,
             gain_db: c.volume_db,
             fade_in_sec: fi,
             fade_out_sec: fo,
@@ -1647,6 +1775,56 @@ mod tests {
         let s = build_one_effect("sparkle", 1.0).expect("sparkle chain");
         assert!(s.contains("noise="), "sparkle should emit noise");
         assert!(s.contains("eq="), "sparkle should brighten via eq");
+    }
+
+    #[test]
+    fn ramp_segments_tile_input_time_and_increase_for_linear_ramp() {
+        use caprust_core::clip::{EaseCurve, SpeedRampRange};
+        let segs = compute_speed_ramp_segments(
+            1.0,
+            2.0,
+            EaseCurve::Linear,
+            SpeedRampRange::WholeClip,
+            4.0,
+        )
+        .expect("ramp segments");
+        assert_eq!(segs.len(), 4);
+        assert!(segs[0].t_in_start.abs() < 1e-9);
+        for w in segs.windows(2) {
+            assert!(
+                (w[0].t_in_end - w[1].t_in_start).abs() < 1e-9,
+                "input windows must tile: {:?} vs {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        // Linear 1x -> 2x: speeds must increase across segments.
+        for w in segs.windows(2) {
+            assert!(w[1].speed > w[0].speed, "speeds must rise: {w:?}");
+        }
+    }
+
+    #[test]
+    fn segmented_atempo_chain_has_one_stage_per_segment() {
+        use caprust_core::clip::{EaseCurve, SpeedRampRange};
+        let segs = compute_speed_ramp_segments(
+            1.0,
+            2.0,
+            EaseCurve::Linear,
+            SpeedRampRange::WholeClip,
+            4.0,
+        )
+        .unwrap();
+        let frag = build_speed_ramp_atempo_segments("[0:a]", "out", &segs, "a0r");
+        assert!(frag.contains("asplit=4"), "asplit with N=4: {frag}");
+        assert_eq!(
+            frag.matches("atempo=").count(),
+            4,
+            "one atempo per segment: {frag}"
+        );
+        assert!(frag.contains("concat=n=4:v=0:a=1"), "concat tail: {frag}");
+        assert!(frag.contains("atrim=start="), "each segment trims: {frag}");
+        assert!(frag.ends_with("[out];"), "writes out_label: {frag}");
     }
 
     #[test]
