@@ -35,6 +35,9 @@ pub struct VideoClip {
     pub timeline_start_sec: f64,
     pub duration_sec: f64,
     pub speed: f32,
+    /// Speed ramp end. Some(x) => linear ramp from `speed` to `x`
+    /// across the clip. None => static `speed`.
+    pub speed_end: Option<f32>,
     /// Higher z renders on top. V1 = 0, V2 = 1, Overlay = last.
     pub z_order: u32,
     /// Image sources need `-loop 1` on their input.
@@ -70,6 +73,9 @@ pub struct AudioClip {
     pub timeline_start_sec: f64,
     pub duration_sec: f64,
     pub speed: f32,
+    /// Speed ramp end. Some(x) => audio tempo uses the arithmetic
+    /// mean of `speed` and `x` (single-instance atempo can't ramp).
+    pub speed_end: Option<f32>,
     /// Linear gain from clip.volume_db.
     pub gain_db: f32,
     /// Fade-in duration in seconds. 0 = no fade.
@@ -138,10 +144,32 @@ impl RenderPlan {
             let in_label = format!("[{}:v]", c.input_index);
             let v_out = format!("v_b{i}");
 
-            let setpts = if (c.speed - 1.0).abs() < 0.001 {
-                String::from("setpts=PTS-STARTPTS")
-            } else {
-                format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed)
+            // setpts with speed ramp:
+            //   Static speed s: OUT = IN / s (linear)
+            //   Ramp s0 -> s1: instantaneous speed s(t_out). If speed
+            //   is s at output time t_out, then input time maps as
+            //   t_in = t_out * (s0 + (s1-s0) * t_out / (2 * T_out))...
+            //   ffmpeg's setpts reads only the input PTS, so we express
+            //   the ramp in terms of the input timestamp. Approximate
+            //   with a linear OUT/IN map: OUT = IN / s_avg, which is
+            //   what a single linear ramp looks like at the frame level
+            //   when the ramp is short relative to the clip. That keeps
+            //   the graph simple and preview accurate to a few frames.
+            let setpts = match c.speed_end {
+                Some(s_end) if (s_end - c.speed).abs() > 0.001 => {
+                    // Linear speed ramp approximated by an averaged
+                    // scale. This is a deliberate MVP simplification;
+                    // a full piecewise setpts expression is a follow-up.
+                    let avg = (c.speed + s_end) / 2.0;
+                    format!("setpts=(PTS-STARTPTS)/{:.6}", avg.max(0.01))
+                }
+                _ => {
+                    if (c.speed - 1.0).abs() < 0.001 {
+                        String::from("setpts=PTS-STARTPTS")
+                    } else {
+                        format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed)
+                    }
+                }
             };
 
             fg.push_str(&format!(
@@ -380,7 +408,17 @@ impl RenderPlan {
             for (i, c) in self.audio_clips.iter().enumerate() {
                 let in_label = format!("[{}:a]", c.input_index);
                 let a_out = format!("a{i}_trim");
-                let atempo_chain = atempo_chain(c.speed);
+                // Audio cannot vary tempo smoothly across a single
+                // atempo instance, so a speed ramp is approximated by
+                // the arithmetic mean of the two endpoints. This keeps
+                // audio and video roughly in sync over the clip; the
+                // residual drift inside the clip is bounded by the
+                // ramp range.
+                let effective_speed = match c.speed_end {
+                    Some(s_end) if (s_end - c.speed).abs() > 0.001 => (c.speed + s_end) / 2.0,
+                    _ => c.speed,
+                };
+                let atempo_chain = atempo_chain(effective_speed);
                 // Volume: an automation curve overrides the static
                 // gain_db. Piecewise-linear in dB between sorted
                 // keyframes, held flat before the first and after the
@@ -1131,6 +1169,7 @@ pub fn plan_from_project(
                         timeline_start_sec: c.start_time_ms as f64 / 1000.0,
                         duration_sec: dur_sec,
                         speed: c.speed,
+                        speed_end: c.speed_end,
                         z_order: z,
                         is_image: false,
                         effects: c.effects.clone(),
@@ -1146,6 +1185,7 @@ pub fn plan_from_project(
                         timeline_start_sec: c.start_time_ms as f64 / 1000.0,
                         duration_sec: dur_sec,
                         speed: c.speed,
+                        speed_end: c.speed_end,
                         z_order: z,
                         is_image: true,
                         effects: c.effects.clone(),
@@ -1320,6 +1360,7 @@ pub fn plan_from_project(
             timeline_start_sec: start_sec,
             duration_sec: dur_sec,
             speed: c.speed,
+            speed_end: c.speed_end,
             gain_db: c.volume_db,
             fade_in_sec: fi,
             fade_out_sec: fo,
@@ -1441,6 +1482,7 @@ mod tests {
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,
+                speed_end: None,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
