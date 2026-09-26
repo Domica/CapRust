@@ -198,9 +198,19 @@ impl PreviewRenderer {
                 use std::io::BufRead;
                 let reader = std::io::BufReader::new(&mut err);
                 for line in reader.lines().map_while(Result::ok) {
-                    if !line.trim().is_empty() {
-                        tracing::warn!("preview ffmpeg: {line}");
+                    let t = line.trim();
+                    if t.is_empty() {
+                        continue;
                     }
+                    // Some Windows ffmpeg builds ship libfontconfig
+                    // but not its config file, so it writes this
+                    // warning directly to stderr on every frame,
+                    // bypassing -loglevel. Filter it here rather than
+                    // spamming the log.
+                    if line.contains("Fontconfig error:") {
+                        continue;
+                    }
+                    tracing::warn!("preview ffmpeg: {line}");
                 }
             });
         }
