@@ -133,6 +133,12 @@ pub struct CapRustApp {
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
     pub properties: PropertiesState,
     pub model_prompt: Option<caprust_core::ModelKind>,
+    /// Active tab inside the model prompt window. Lets the user switch
+    /// between Caption and Narration model lists without closing and
+    /// re-opening the window (they are otherwise a single combined
+    /// dialog). Not persisted; reset to the initial kind every time the
+    /// prompt is opened.
+    pub model_prompt_tab: caprust_core::ModelKind,
     /// Active model download: (model_id, receiver). Only one download
     /// at a time for now; starting a second cancels the first by
     /// dropping the receiver.
@@ -362,6 +368,7 @@ impl CapRustApp {
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
             model_prompt: None,
+            model_prompt_tab: caprust_core::ModelKind::Caption,
             model_download: None,
             caption_rx: None,
             caption_job_started: None,
@@ -1175,6 +1182,7 @@ impl CapRustApp {
                 "models: download icon clicked (captions missing {captions_missing}, narration missing {narration_missing}) — opening {kind:?}"
             );
             self.model_prompt = Some(kind);
+            self.model_prompt_tab = kind;
         }
         if ev.captions_all_clicked {
             let track_idx = self
@@ -1208,6 +1216,7 @@ impl CapRustApp {
                 }
             } else {
                 self.model_prompt = Some(caprust_core::ModelKind::Narration);
+                self.model_prompt_tab = caprust_core::ModelKind::Narration;
             }
         }
     }
@@ -1223,6 +1232,7 @@ impl CapRustApp {
                 voice_onnx_path.display()
             );
             self.model_prompt = Some(caprust_core::ModelKind::Narration);
+            self.model_prompt_tab = caprust_core::ModelKind::Narration;
             return;
         }
 
@@ -1488,6 +1498,7 @@ impl CapRustApp {
             let Some(model) = ready.first() else {
                 tracing::info!("no caption model ready — opening prompt");
                 self.model_prompt = Some(caprust_core::ModelKind::Caption);
+                self.model_prompt_tab = caprust_core::ModelKind::Caption;
                 return;
             };
             let model_id = model.id.clone();
@@ -1501,6 +1512,7 @@ impl CapRustApp {
                     model_path.display()
                 );
                 self.model_prompt = Some(caprust_core::ModelKind::Caption);
+                self.model_prompt_tab = caprust_core::ModelKind::Caption;
                 return;
             }
             (model_id, language, model_path)
@@ -4635,14 +4647,30 @@ impl CapRustApp {
     }
 
     fn show_model_prompt_window(&mut self, ctx: &egui::Context) {
-        let Some(kind) = self.model_prompt else {
+        if self.model_prompt.is_none() {
             return;
-        };
+        }
+
+        // First frame after opening (or after any change to model_prompt)
+        // resets the active tab to the kind the caller requested. We
+        // track this by comparing the tab's "family" with the incoming
+        // kind only on prompt open — since model_prompt is Some for the
+        // whole lifetime, we simply initialise the tab at the same time
+        // the caller sets model_prompt. To avoid drift we sync here on
+        // the first frame: if the tab's family does not match `kind`,
+        // nothing to do (user already switched), so we only force-sync
+        // when the prompt was just opened. That signal is the `kind`
+        // value itself; the simplest robust approach is to reset the
+        // tab whenever the caller assigns model_prompt.
+        //
+        // Implementation detail: callers assign self.model_prompt
+        // together with self.model_prompt_tab. See start_*_job below.
 
         // Advance fake downloads while this dialog is up.
         self.project.models.tick_downloads(1.0 / 60.0);
 
-        let title = match kind {
+        let tab = self.model_prompt_tab;
+        let title = match tab {
             caprust_core::ModelKind::Caption => tr("mp-captions-title"),
             caprust_core::ModelKind::Narration => tr("mp-narration-title"),
         };
@@ -4659,6 +4687,40 @@ impl CapRustApp {
             .default_width(560.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
+                // Tab strip: switch between Caption and Narration
+                // model lists without closing the window. Needed
+                // because the toolbar's download icon opens the prompt
+                // for only one family at a time (the one with more
+                // missing entries), which left the other family
+                // unreachable from the UI once a tie occurred.
+                ui.horizontal(|ui| {
+                    let mut active = self.model_prompt_tab;
+                    if ui
+                        .selectable_label(
+                            active == caprust_core::ModelKind::Caption,
+                            tr("mp-tab-captions"),
+                        )
+                        .clicked()
+                    {
+                        active = caprust_core::ModelKind::Caption;
+                    }
+                    if ui
+                        .selectable_label(
+                            active == caprust_core::ModelKind::Narration,
+                            tr("mp-tab-narration"),
+                        )
+                        .clicked()
+                    {
+                        active = caprust_core::ModelKind::Narration;
+                    }
+                    if active != self.model_prompt_tab {
+                        self.model_prompt_tab = active;
+                    }
+                });
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+
                 ui.label(
                     egui::RichText::new("This action needs a model. Download one, then click Use.")
                         .color(egui::Color32::from_gray(180)),
@@ -4666,12 +4728,13 @@ impl CapRustApp {
                 ui.add_space(6.0);
                 ui.separator();
 
+                let tab = self.model_prompt_tab;
                 let ids: Vec<String> = self
                     .project
                     .models
                     .models
                     .iter()
-                    .filter(|m| m.kind == kind)
+                    .filter(|m| m.kind == tab)
                     .map(|m| m.id.clone())
                     .collect();
 
@@ -4802,7 +4865,10 @@ impl CapRustApp {
             self.project.models.scan_local(&models_dir);
 
             self.model_prompt = None;
-            match kind {
+            // Use the current tab, not the kind the prompt was originally
+            // opened with — the user may have switched tabs to pick a
+            // model from the other family.
+            match tab {
                 caprust_core::ModelKind::Caption => {
                     // start_caption_job re-checks readiness; if still not
                     // ready it re-opens this prompt, which is the desired
@@ -4813,6 +4879,7 @@ impl CapRustApp {
                     if self.project.models.ready_narration().is_empty() {
                         // Re-open prompt; nothing to narrate with yet.
                         self.model_prompt = Some(caprust_core::ModelKind::Narration);
+                        self.model_prompt_tab = caprust_core::ModelKind::Narration;
                     } else {
                         self.narration_input.open = true;
                     }

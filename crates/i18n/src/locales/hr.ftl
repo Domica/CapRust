@@ -295,6 +295,8 @@ set-cancel = Odustani
 set-save-hint = Promjene se spremaju klikom na Spremi.
 
 # Model prompt dialog
+mp-tab-captions = Titlovi
+mp-tab-narration = Naracija
 mp-captions-title =  Titlovi — odaberi model
 mp-narration-title =  Naracija — odaberi glas
 mp-intro = Za ovu radnju treba model. Preuzmi ga, zatim klikni Koristi.
