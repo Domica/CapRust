@@ -218,6 +218,34 @@ impl ModelRegistry {
             .filter(|m| m.kind == ModelKind::Narration && m.status == ModelStatus::Ready)
             .collect()
     }
+
+    /// Backfill `url` and `sha256` from the built-in defaults when the
+    /// loaded project's copy is missing them. Older projects carry a
+    /// frozen registry snapshot from the moment they were saved, so a
+    /// URL added later (e.g. for Piper voices in F1b) would never
+    /// reach them. Called on project load.
+    ///
+    /// Also adds any models present in the defaults but missing from
+    /// the loaded registry (new model added in a later release).
+    pub fn merge_missing_defaults(&mut self) {
+        let defaults = ModelRegistry::default();
+        for d in &defaults.models {
+            match self.models.iter_mut().find(|m| m.id == d.id) {
+                Some(m) => {
+                    if m.url.is_empty() && !d.url.is_empty() {
+                        m.url = d.url.clone();
+                    }
+                    if m.sha256.is_empty() && !d.sha256.is_empty() {
+                        m.sha256 = d.sha256.clone();
+                    }
+                }
+                None => {
+                    // Brand new model in a later build — surface it.
+                    self.models.push(d.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Progress events emitted by a background model download.

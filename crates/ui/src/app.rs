@@ -445,6 +445,11 @@ impl CapRustApp {
                 if let Some(parent) = std::path::Path::new(path).parent() {
                     state.project_path = Some(parent.to_string_lossy().to_string());
                 }
+                // Backfill any model URLs / SHA-256 that were missing in
+                // the saved snapshot (e.g. projects created before F1b
+                // added Piper URLs). Also adds brand-new models from
+                // later builds.
+                state.models.merge_missing_defaults();
                 self.project = state;
                 self.undo_stack = UndoStack::new();
                 self.mode = AppMode::Editor;
@@ -4656,10 +4661,19 @@ impl CapRustApp {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| match m.status {
                                     caprust_core::ModelStatus::NotDownloaded => {
-                                        if ui
-                                            .button(format!("{} Download", ph::DOWNLOAD_SIMPLE))
-                                            .clicked()
-                                        {
+                                        let has_url = !m.url.is_empty();
+                                        let btn = ui.add_enabled(
+                                            has_url,
+                                            egui::Button::new(format!(
+                                                "{} Download",
+                                                ph::DOWNLOAD_SIMPLE
+                                            )),
+                                        );
+                                        if !has_url {
+                                            btn.on_hover_text(
+                                                "No download URL configured for this model",
+                                            );
+                                        } else if btn.clicked() {
                                             // Defer the actual spawn until
                                             // after this borrow of
                                             // self.project.models ends.
