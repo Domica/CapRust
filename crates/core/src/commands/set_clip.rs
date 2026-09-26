@@ -20,6 +20,12 @@ pub struct SetClipCommand {
     /// Only meaningful on TextOverlay clips: sets the drawtext style id.
     /// No-op on other clip kinds.
     pub text_style: Option<String>,
+    /// Only meaningful on TextOverlay clips: replaces the motion
+    /// transform. No-op on other clip kinds.
+    pub text_motion: Option<crate::clip::TextMotion>,
+    /// Only meaningful on TextOverlay clips: Some(Some(x)) sets the
+    /// effect, Some(None) clears it, None leaves untouched.
+    pub text_effect: Option<Option<crate::clip::TextEffect>>,
     pub fade_in_ms: Option<u64>,
     pub fade_out_ms: Option<u64>,
     pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
@@ -52,6 +58,8 @@ impl SetClipCommand {
             track_index: None,
             name: None,
             text_style: None,
+            text_motion: None,
+            text_effect: None,
             fade_in_ms: None,
             fade_out_ms: None,
             volume_keyframes: None,
@@ -105,6 +113,17 @@ impl SetClipCommand {
     /// Set the TextOverlay drawtext style. No-op on other clip kinds.
     pub fn text_style(mut self, v: impl Into<String>) -> Self {
         self.text_style = Some(v.into());
+        self
+    }
+    /// Replace the TextOverlay motion transform. No-op on other kinds.
+    pub fn text_motion(mut self, v: crate::clip::TextMotion) -> Self {
+        self.text_motion = Some(v);
+        self
+    }
+    /// Set or clear the TextOverlay procedural effect. No-op on other
+    /// kinds. Pass None to remove an effect.
+    pub fn text_effect(mut self, v: Option<crate::clip::TextEffect>) -> Self {
+        self.text_effect = Some(v);
         self
     }
     pub fn fade_in_ms(mut self, v: u64) -> Self {
@@ -193,6 +212,16 @@ impl Command for SetClipCommand {
                 *style = v;
             }
         }
+        if let Some(v) = self.text_motion {
+            if let crate::clip::ClipType::TextOverlay { motion, .. } = &mut c.clip_type {
+                *motion = v;
+            }
+        }
+        if let Some(v) = self.text_effect {
+            if let crate::clip::ClipType::TextOverlay { effect, .. } = &mut c.clip_type {
+                *effect = v;
+            }
+        }
         if let Some(v) = self.fade_in_ms {
             c.fade_in_ms = v;
         }
@@ -234,5 +263,103 @@ impl Command for SetClipCommand {
 
     fn description(&self) -> String {
         format!("Edit clip {}", self.clip_id)
+    }
+}
+
+#[cfg(test)]
+mod text_motion_cmd_tests {
+    use super::*;
+    use crate::clip::{Clip, ClipType, TextEffect, TextEffectKind, TextMotion};
+    use crate::commands::UndoStack;
+    use crate::project::ProjectState;
+
+    fn project_with_text() -> (ProjectState, Uuid) {
+        let mut p = ProjectState::default();
+        let c = Clip::new_text("hi", 0, 0, 1000, false);
+        let id = c.id;
+        p.clips.push(c);
+        (p, id)
+    }
+
+    fn motion_of(p: &ProjectState, id: Uuid) -> TextMotion {
+        let c = p.clips.iter().find(|c| c.id == id).unwrap();
+        match &c.clip_type {
+            ClipType::TextOverlay { motion, .. } => *motion,
+            _ => panic!("not a TextOverlay"),
+        }
+    }
+
+    fn effect_of(p: &ProjectState, id: Uuid) -> Option<TextEffect> {
+        let c = p.clips.iter().find(|c| c.id == id).unwrap();
+        match &c.clip_type {
+            ClipType::TextOverlay { effect, .. } => *effect,
+            _ => panic!("not a TextOverlay"),
+        }
+    }
+
+    #[test]
+    fn text_motion_set_and_undo() {
+        let (mut p, id) = project_with_text();
+        let mut stack = UndoStack::default();
+        let before = motion_of(&p, id);
+
+        let new_motion = TextMotion {
+            x: 0.3,
+            y: -0.2,
+            rotation: 0.0,
+            scale: 1.5,
+        };
+        let cmd = SetClipCommand::new(id).text_motion(new_motion);
+        stack.execute(Box::new(cmd), &mut p).unwrap();
+        assert_eq!(motion_of(&p, id), new_motion);
+
+        stack.undo(&mut p).unwrap();
+        assert_eq!(motion_of(&p, id), before);
+    }
+
+    #[test]
+    fn text_effect_set_and_clear_roundtrip() {
+        let (mut p, id) = project_with_text();
+        let mut stack = UndoStack::default();
+
+        let e = TextEffect {
+            kind: TextEffectKind::Pulse,
+            period: 0.8,
+            amount: 0.5,
+        };
+        stack
+            .execute(
+                Box::new(SetClipCommand::new(id).text_effect(Some(e))),
+                &mut p,
+            )
+            .unwrap();
+        assert_eq!(effect_of(&p, id), Some(e));
+
+        stack
+            .execute(Box::new(SetClipCommand::new(id).text_effect(None)), &mut p)
+            .unwrap();
+        assert_eq!(effect_of(&p, id), None);
+
+        stack.undo(&mut p).unwrap();
+        assert_eq!(effect_of(&p, id), Some(e));
+    }
+
+    #[test]
+    fn text_motion_noop_on_video_clip() {
+        let mut p = ProjectState::default();
+        let c = Clip::new_video("x.mp4", 0, 0, 1000);
+        let id = c.id;
+        p.clips.push(c);
+        let mut stack = UndoStack::default();
+
+        let before = p.clips[0].clone();
+        let cmd = SetClipCommand::new(id).text_motion(TextMotion {
+            x: 0.5,
+            y: 0.5,
+            rotation: 0.0,
+            scale: 2.0,
+        });
+        stack.execute(Box::new(cmd), &mut p).unwrap();
+        assert_eq!(p.clips[0].clip_type, before.clip_type);
     }
 }
