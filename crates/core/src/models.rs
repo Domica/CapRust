@@ -281,15 +281,52 @@ pub fn spawn_model_download(
     target_path: std::path::PathBuf,
     expected_sha256: String,
 ) -> std::sync::mpsc::Receiver<DownloadEvent> {
+    spawn_model_download_with_aux(model_id, url, target_path, expected_sha256, None)
+}
+
+/// Like `spawn_model_download`, but optionally downloads a second file
+/// (aux) after the main one succeeds. Used for Piper voices: the ONNX
+/// model needs its sibling `.onnx.json` config to run, and that config
+/// lives at `<main_url>.json` on Hugging Face.
+///
+/// The aux file is written next to the main file with `.json` appended
+/// to the main target's filename (so `piper-en-lessac.onnx` produces
+/// `piper-en-lessac.onnx.json`, matching what `piper.rs` expects).
+///
+/// Aux file is NOT SHA-verified (the registry does not carry its hash);
+/// only size is checked by the caller indirectly through read success.
+pub fn spawn_model_download_with_aux(
+    model_id: String,
+    url: String,
+    target_path: std::path::PathBuf,
+    expected_sha256: String,
+    aux_url: Option<String>,
+) -> std::sync::mpsc::Receiver<DownloadEvent> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name(format!("caprust-model-dl-{model_id}"))
         .spawn(move || {
             let result = download_impl(&url, &target_path, &expected_sha256, &tx);
-            let _ = tx.send(match result {
-                Ok(()) => DownloadEvent::Done,
-                Err(e) => DownloadEvent::Failed(format!("{e}")),
-            });
+            match result {
+                Ok(()) => {
+                    if let Some(aux) = aux_url {
+                        let aux_target = std::path::PathBuf::from(format!(
+                            "{}.json",
+                            target_path.to_string_lossy()
+                        ));
+                        tracing::info!("model download: aux -> {}", aux_target.display());
+                        if let Err(e) = download_impl(&aux, &aux_target, "", &tx) {
+                            let _ =
+                                tx.send(DownloadEvent::Failed(format!("aux download failed: {e}")));
+                            return;
+                        }
+                    }
+                    let _ = tx.send(DownloadEvent::Done);
+                }
+                Err(e) => {
+                    let _ = tx.send(DownloadEvent::Failed(format!("{e}")));
+                }
+            }
         })
         .expect("spawn model download thread");
     rx
