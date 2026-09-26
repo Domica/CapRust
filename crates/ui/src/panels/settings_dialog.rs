@@ -20,6 +20,10 @@ pub enum SettingsTab {
 pub struct SettingsEvents {
     pub save: bool,
     pub close: bool,
+    /// Model id whose Download button was clicked this frame, if any.
+    /// The app layer consumes this by calling start_model_download; the
+    /// settings panel itself has no way to spawn threads.
+    pub download_requested: Option<String>,
 }
 
 pub fn show(
@@ -33,6 +37,7 @@ pub fn show(
     let mut ev = SettingsEvents {
         save: false,
         close: false,
+        download_requested: None,
     };
 
     ui.horizontal(|ui| {
@@ -49,7 +54,11 @@ pub fn show(
         .max_height(400.0)
         .show(ui, |ui| match tab {
             SettingsTab::Appearance => show_appearance(ui, theme, settings),
-            SettingsTab::Models => show_models(ui, models, settings),
+            SettingsTab::Models => {
+                if let Some(id) = show_models(ui, models, settings) {
+                    ev.download_requested = Some(id);
+                }
+            }
             SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
             SettingsTab::Language => show_language(ui, &mut settings.language),
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
@@ -222,7 +231,10 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 // AI Models
 // ---------------------------------------------------------------------------
 
-fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) {
+/// Returns the id of a model whose Download button was clicked this
+/// frame, if any. The caller (app.rs) hands it to start_model_download;
+/// this panel cannot spawn threads itself.
+fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) -> Option<String> {
     ui.label(egui::RichText::new(tr("set-models-heading")).strong());
     ui.label(
         egui::RichText::new(format!(
@@ -234,21 +246,33 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
     );
     ui.add_space(8.0);
 
+    let mut clicked: Option<String> = None;
+
     ui.label(egui::RichText::new(tr("set-models-captions")).strong());
-    show_model_group(ui, models, ModelKind::Caption);
+    if let Some(id) = show_model_group(ui, models, ModelKind::Caption) {
+        clicked = Some(id);
+    }
 
     ui.add_space(12.0);
     ui.label(egui::RichText::new(tr("set-models-narration")).strong());
-    show_model_group(ui, models, ModelKind::Narration);
+    if let Some(id) = show_model_group(ui, models, ModelKind::Narration) {
+        clicked = Some(id);
+    }
 
     ui.add_space(12.0);
     ui.label(egui::RichText::new(tr("set-models-face")).strong());
-    show_model_group(ui, models, ModelKind::FaceDetector);
+    if let Some(id) = show_model_group(ui, models, ModelKind::FaceDetector) {
+        clicked = Some(id);
+    }
+
+    clicked
 }
 
-fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
-    // NOTE: download location is read at Settings load; the fake downloader
-    // below will use `models_dir()` from core. Real HTTP comes in Faza D.
+/// Returns the id of a model whose Download button was clicked this
+/// frame, if any. Does not mutate `status` itself -- the real
+/// downloader in app.rs owns the state transition (see the note in the
+/// NotDownloaded arm).
+fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) -> Option<String> {
     let ids: Vec<String> = models
         .models
         .iter()
@@ -256,6 +280,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
         .map(|m| m.id.clone())
         .collect();
 
+    let mut download_request: Option<String> = None;
     for id in ids {
         let m = models.models.iter_mut().find(|m| m.id == id).unwrap();
         egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -281,11 +306,13 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
                     |ui| match m.status {
                         ModelStatus::NotDownloaded => {
                             if ui.button(tr("set-models-download")).clicked() {
-                                // TODO: capture actual dir from settings — currently
-                                // falls back to core default. Pass settings into
-                                // show_model_group in a follow-up PR.
-                                m.status = ModelStatus::Downloading;
-                                m.progress = 0.0;
+                                // Only report the click. Flipping status
+                                // here used to leave the button gone and
+                                // a fake 0% progress bar behind, because
+                                // nothing actually started a download.
+                                // start_model_download in app.rs owns
+                                // the state transition now.
+                                download_request = Some(id.clone());
                             }
                         }
                         ModelStatus::Downloading => {
@@ -309,6 +336,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) {
             });
         });
     }
+    download_request
 }
 
 // ---------------------------------------------------------------------------

@@ -5220,6 +5220,9 @@ impl CapRustApp {
                     &mut self.settings_tab,
                     &mut self.ffmpeg_status,
                 );
+                if let Some(id) = ev.download_requested.clone() {
+                    self.start_model_download(&id);
+                }
                 if ev.save {
                     // Re-detect ffmpeg with new paths
                     self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
