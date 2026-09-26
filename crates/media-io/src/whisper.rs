@@ -71,6 +71,10 @@ impl WhisperEngine {
         params.set_print_timestamps(false);
         params.set_translate(false);
         params.set_language(lang);
+        // P1: per-word timing for progressive-reveal captions. whisper
+        // still reports segment times; token times are extra data we
+        // fold into WordTiming below. Cheap on CPU.
+        params.set_token_timestamps(true);
 
         let mut state = self
             .ctx
@@ -102,10 +106,20 @@ impl WhisperEngine {
                 .map_err(|e| anyhow!("whisper segment {i} t1: {e}"))?;
             let start_ms = (t0.max(0) as u64).saturating_mul(10);
             let end_ms = (t1.max(0) as u64).saturating_mul(10);
+
+            // Collect token-level timings for this segment. whisper.cpp
+            // emits sub-word tokens; we accumulate them into whole words
+            // using the leading-whitespace heuristic (" Hel" starts a
+            // word, "lo" continues it). If token access fails on a given
+            // backend, fall back to an empty Vec and the pre-P1 single-
+            // drawtext render still works.
+            let words = collect_segment_words(&state, i).unwrap_or_default();
+
             out.push(CaptionSegment {
                 start_ms,
                 end_ms,
                 text,
+                words,
             });
         }
 
@@ -116,6 +130,77 @@ impl WhisperEngine {
         );
         Ok(out)
     }
+}
+
+/// Fold whisper's sub-word tokens for one segment into whole-word
+/// `WordTiming` entries. Heuristic: a token that begins with a space
+/// (or the first non-empty token in the segment) starts a new word;
+/// any other token extends the current word and updates its end time.
+///
+/// Token timestamps are in centiseconds in whisper.cpp; we multiply by
+/// 10 to match the millisecond units used by `CaptionSegment`.
+///
+/// Returns an empty Vec when token data is unavailable, when the
+/// segment has zero tokens, or when every token has t0 == t1 (a
+/// known whisper.cpp edge case for silence padding).
+fn collect_segment_words(
+    state: &whisper_rs::WhisperState,
+    seg_idx: i32,
+) -> Result<Vec<caprust_core::clip::WordTiming>> {
+    let n_tokens = state
+        .full_n_tokens(seg_idx)
+        .map_err(|e| anyhow!("whisper full_n_tokens({seg_idx}): {e}"))?;
+    if n_tokens <= 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut words: Vec<caprust_core::clip::WordTiming> = Vec::new();
+    let mut cur_text = String::new();
+    let mut cur_start: Option<u64> = None;
+    let mut cur_end: u64 = 0;
+
+    let commit = |text: &mut String, start: &mut Option<u64>, end: u64, out: &mut Vec<_>| {
+        if !text.is_empty() {
+            let owned = std::mem::take(text);
+            out.push(caprust_core::clip::WordTiming {
+                start_ms: start.unwrap_or(0),
+                end_ms: end.max(start.unwrap_or(0)),
+                text: owned.trim().to_string(),
+            });
+            *start = None;
+        }
+    };
+
+    for j in 0..n_tokens {
+        let tok = state
+            .full_get_token_text(seg_idx, j)
+            .map_err(|e| anyhow!("whisper token text ({seg_idx},{j}): {e}"))?;
+        if tok.is_empty() {
+            continue;
+        }
+
+        let data = state
+            .full_get_token_data(seg_idx, j)
+            .map_err(|e| anyhow!("whisper token data ({seg_idx},{j}): {e}"))?;
+        let t0_ms = (data.t0.max(0) as u64).saturating_mul(10);
+        let t1_ms = (data.t1.max(0) as u64).saturating_mul(10);
+
+        // A leading space (or the very first word) starts a new word.
+        let starts_word = cur_start.is_none() || tok.starts_with(' ');
+        if starts_word {
+            // Flush the previous word.
+            let end_for_prev = cur_end;
+            commit(&mut cur_text, &mut cur_start, end_for_prev, &mut words);
+            cur_start = Some(t0_ms);
+        }
+        cur_text.push_str(&tok);
+        cur_end = t1_ms;
+    }
+    // Flush the trailing word.
+    let end_for_last = cur_end;
+    commit(&mut cur_text, &mut cur_start, end_for_last, &mut words);
+
+    Ok(words)
 }
 
 /// Run ffmpeg to decode `source` into mono f32 samples at 16 kHz.
