@@ -819,6 +819,21 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             0.15 * amount,
             0.05 * amount
         ),
+
+        // ---- Warm bloom: lens_flare ----
+        // A true optical flare needs a sprite or a split+blend pair,
+        // which the single-chain contract here cannot express. We
+        // approximate the look instead: push highlights toward amber,
+        // lift saturation, and bleed highlights via gblur so bright
+        // areas bloom outward. Reads as "sunlight entering the lens".
+        "lens_flare" => format!(
+            ",colorbalance=rm={rm:.3}:gm={gm:.3}:bm={bm:.3},curves=preset=lighter,eq=saturation={sat:.3},gblur=sigma={s:.2}",
+            rm = 0.22 * amount,
+            gm = 0.10 * amount,
+            bm = -0.06 * amount,
+            sat = 1.0 + 0.12 * amount,
+            s = (1.5 + 4.0 * amount).clamp(1.0, 10.0),
+        ),
         "warm" => format!(
             ",colorbalance=rm={:.3}:bm=-{:.3}",
             0.1 * amount,
@@ -894,6 +909,28 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             let frames = ((2.0 + 6.0 * amount).round() as i32).clamp(2, 12);
             let weights = (0..frames).map(|_| "1").collect::<Vec<_>>().join(" ");
             format!(",tmix=frames={frames}:weights='{weights}'")
+        }
+
+        // ---- Temporal + spatial: particle ----
+        // No sprite system in ffmpeg, so we approximate atmospheric
+        // dust / snow with a temporal noise field softened by boxblur
+        // (noise -> soft orbs instead of sharp specks) and given short
+        // motion trails via tmix. Distinct from sparkle, which keeps
+        // the noise sharp and bright and skips the blur/trail stages.
+        "particle" => {
+            let s = (15.0 + 35.0 * amount).clamp(12.0, 55.0);
+            let b = (0.5 + 1.5 * amount).clamp(0.3, 3.0);
+            let frames = ((2.0 + 3.0 * amount).round() as i32).clamp(2, 6);
+            let weights = (0..frames).map(|_| "1").collect::<Vec<_>>().join(" ");
+            format!(
+                ",noise=alls={s:.0}:allf=t,boxblur={b:.2}:1,eq=brightness={br:.3}:contrast={c:.3},tmix=frames={frames}:weights='{weights}'",
+                s = s,
+                b = b,
+                br = 0.05 * amount,
+                c = 1.0 - 0.05 * amount,
+                frames = frames,
+                weights = weights,
+            )
         }
 
         // ---- Temporal + spatial: sparkle ----
@@ -1610,6 +1647,25 @@ mod tests {
         let s = build_one_effect("sparkle", 1.0).expect("sparkle chain");
         assert!(s.contains("noise="), "sparkle should emit noise");
         assert!(s.contains("eq="), "sparkle should brighten via eq");
+    }
+
+    #[test]
+    fn particle_produces_atmospheric_chain() {
+        let p = build_one_effect("particle", 1.0).expect("particle chain");
+        assert!(p.contains("noise="), "particle should emit noise");
+        assert!(p.contains("boxblur="), "particle should soften via boxblur");
+        assert!(p.contains("tmix="), "particle should trail via tmix");
+    }
+
+    #[test]
+    fn lens_flare_produces_warm_bloom_chain() {
+        let lf = build_one_effect("lens_flare", 1.0).expect("lens_flare chain");
+        assert!(
+            lf.contains("colorbalance="),
+            "lens_flare should warm via colorbalance"
+        );
+        assert!(lf.contains("curves="), "lens_flare should lift highlights");
+        assert!(lf.contains("gblur="), "lens_flare should bloom via gblur");
     }
 
     #[test]
