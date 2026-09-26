@@ -3767,6 +3767,7 @@ impl CapRustApp {
                     &self.project,
                     selected,
                     &mut self.properties,
+                    self.playhead_ms,
                 );
 
                 // Consume any pending edits → commands
@@ -3803,6 +3804,12 @@ impl CapRustApp {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)
                                             .text_style(v);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
+                                PendingEdit::VolumeKeyframes(v) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .volume_keyframes(v);
                                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
                                 PendingEdit::Name(v) => {
