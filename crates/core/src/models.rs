@@ -205,7 +205,11 @@ impl Default for ModelRegistry {
                     "Small CPU face detector used by Auto-reframe.",
                 )
                 .with_url(
-                    "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+                    // media.githubusercontent.com serves the LFS
+                    // binary. The plain raw.* host returns the Git LFS
+                    // pointer text (~130 bytes) which tract cannot
+                    // parse: 'invalid wire type value: 6'.
+                    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
                 ),
                 // --- Background removal (Phase P3) ---
                 // u2netp, the lightweight variant of U^2-Net. ~4.7 MB,
