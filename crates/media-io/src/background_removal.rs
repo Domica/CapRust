@@ -19,7 +19,7 @@
 //! this into the render graph as a mask for `alphamerge` /
 //! `alphaextract`.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
@@ -94,7 +94,7 @@ impl BackgroundRemover {
         let outputs = self
             .model
             .run(tvec!(input.into()))
-            .context("u2netp inference")?;
+            .map_err(|e| anyhow!("u2netp inference: {e:?}"))?;
 
         let d0 = find_d0(&outputs)?;
 
