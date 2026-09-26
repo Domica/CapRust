@@ -133,6 +133,13 @@ pub struct CapRustApp {
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
     pub properties: PropertiesState,
     pub model_prompt: Option<caprust_core::ModelKind>,
+    /// Active model download: (model_id, receiver). Only one download
+    /// at a time for now; starting a second cancels the first by
+    /// dropping the receiver.
+    pub model_download: Option<(
+        String,
+        std::sync::mpsc::Receiver<caprust_core::models::DownloadEvent>,
+    )>,
     /// Receiver for an in-flight caption transcription. When Some, the
     /// timeline toolbar shows a "Transcribing…" label and the toolbar
     /// click is ignored until the job finishes.
@@ -349,6 +356,7 @@ impl CapRustApp {
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
             model_prompt: None,
+            model_download: None,
             caption_rx: None,
             caption_job_started: None,
             narration_rx: None,
@@ -1642,6 +1650,104 @@ impl CapRustApp {
                 self.pump_caption_queue();
             }
         }
+    }
+
+    /// Poll the active model download. Updates ModelInfo progress and
+    /// status. Clears `model_download` on any terminal event.
+    fn drain_model_download(&mut self) {
+        use caprust_core::models::DownloadEvent;
+        let Some((model_id, rx)) = self.model_download.as_ref() else {
+            return;
+        };
+        let model_id = model_id.clone();
+        loop {
+            match rx.try_recv() {
+                Ok(DownloadEvent::Started { total_bytes }) => {
+                    tracing::info!(
+                        "model download {}: started (total={:?})",
+                        model_id,
+                        total_bytes
+                    );
+                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                        m.status = caprust_core::ModelStatus::Downloading;
+                        m.progress = 0.0;
+                    }
+                }
+                Ok(DownloadEvent::Progress { downloaded, total }) => {
+                    let pct = match total {
+                        Some(t) if t > 0 => downloaded as f32 / t as f32,
+                        _ => 0.0,
+                    };
+                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                        m.status = caprust_core::ModelStatus::Downloading;
+                        m.progress = pct.clamp(0.0, 1.0);
+                    }
+                }
+                Ok(DownloadEvent::Verifying) => {
+                    tracing::info!("model download {}: verifying SHA-256", model_id);
+                }
+                Ok(DownloadEvent::Done) => {
+                    tracing::info!("model download {}: done", model_id);
+                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                        m.status = caprust_core::ModelStatus::Ready;
+                        m.progress = 1.0;
+                        m.enabled = true;
+                    }
+                    self.model_download = None;
+                    break;
+                }
+                Ok(DownloadEvent::Failed(msg)) => {
+                    tracing::error!("model download {}: failed: {msg}", model_id);
+                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                        m.status = caprust_core::ModelStatus::Error;
+                        m.progress = 0.0;
+                    }
+                    self.toast(format!("Model download failed: {msg}"));
+                    self.model_download = None;
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("model download thread vanished");
+                    self.model_download = None;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Start a background download for the given model id. Uses the
+    /// registry's URL and SHA-256 fields, and the effective models
+    /// directory. No-op if a download is already in flight or the
+    /// model has no URL set.
+    fn start_model_download(&mut self, model_id: &str) {
+        if self.model_download.is_some() {
+            tracing::info!("model download already in flight, ignoring");
+            return;
+        }
+        let Some(m) = self.project.models.models.iter().find(|m| m.id == model_id) else {
+            return;
+        };
+        if m.url.is_empty() {
+            tracing::warn!("model {} has no URL set — cannot download", model_id);
+            self.toast(format!("No download URL configured for {}", m.name));
+            return;
+        }
+        let url = m.url.clone();
+        let sha = m.sha256.clone();
+        let dir = self.settings.effective_models_dir();
+        let filename = match m.kind {
+            caprust_core::ModelKind::Narration => format!("{model_id}.onnx"),
+            _ => format!("{model_id}.bin"),
+        };
+        let target = dir.join(filename);
+        tracing::info!(
+            "starting model download: {} -> {}",
+            model_id,
+            target.display()
+        );
+        let rx = caprust_core::models::spawn_model_download(model_id.to_string(), url, target, sha);
+        self.model_download = Some((model_id.to_string(), rx));
     }
 
     /// Poll the update-check thread. On success with Some(info), store
@@ -4490,6 +4596,7 @@ impl CapRustApp {
 
         let mut open = true;
         let mut chosen: Option<(String, String)> = None;
+        let mut chosen_download: Option<String> = None;
         let mut cancel = false;
 
         egui::Window::new(title)
@@ -4553,8 +4660,10 @@ impl CapRustApp {
                                             .button(format!("{} Download", ph::DOWNLOAD_SIMPLE))
                                             .clicked()
                                         {
-                                            m.status = caprust_core::ModelStatus::Downloading;
-                                            m.progress = 0.0;
+                                            // Defer the actual spawn until
+                                            // after this borrow of
+                                            // self.project.models ends.
+                                            chosen_download = Some(m.id.clone());
                                         }
                                     }
                                     caprust_core::ModelStatus::Downloading => {
@@ -4600,6 +4709,14 @@ impl CapRustApp {
                     );
                 });
             });
+
+        // A "Download" click deferred the spawn until after the
+        // mutable borrow of self.project.models inside the window's
+        // closure ended. Fire it now.
+        if let Some(id) = chosen_download.take() {
+            self.start_model_download(&id);
+            return;
+        }
 
         if cancel || !open {
             self.model_prompt = None;
@@ -4881,6 +4998,7 @@ impl eframe::App for CapRustApp {
 
         // Drain background jobs (ffprobe results, thumbnails ready).
         self.drain_update_check();
+        self.drain_model_download();
         self.drain_caption_job();
         self.drain_narration_job();
         let thumbs_ready = self.job_runner.drain(&mut self.project);

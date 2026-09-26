@@ -417,10 +417,23 @@ impl RenderPlan {
                 let a_out = format!("a{i}_trim");
                 // Audio cannot vary tempo smoothly across a single
                 // atempo instance, so a speed ramp is approximated by
-                // the arithmetic mean of the two endpoints. This keeps
-                // audio and video roughly in sync over the clip; the
-                // residual drift inside the clip is bounded by the
-                // ramp range.
+                // the ease-weighted mean of the two endpoints. The
+                // video side uses an N-segment piecewise chain and
+                // therefore tracks the ease curve more closely than
+                // this single constant does.
+                //
+                // Consequences:
+                //   * Clip BOUNDARIES stay in sync: the mean chosen
+                //     here is the integral of the same curve, so total
+                //     clip duration matches the video side exactly.
+                //   * INSIDE a long ramp there is momentary drift of
+                //     up to ~0.15x around the mean. For short ramps
+                //     (typical of social edits) this is not audible.
+                //
+                // A segmented atempo chain (one atempo per piecewise
+                // step, joined with concat) would eliminate the
+                // mid-ramp drift entirely. Tracked in DIRECTIVES
+                // §28.2 as "Audio segmented ramp sync".
                 let effective_speed = match c.speed_end {
                     Some(s_end) if (s_end - c.speed).abs() > 0.001 => {
                         let t = ease_avg_progress(c.speed_ease) as f32;
