@@ -79,6 +79,9 @@ pub enum JobKind {
     Caption,
     Narration,
     Export,
+    /// Auto-reframe analysis (Phase P2c-3b): frame extraction + YuNet
+    /// detection + keypoint computation.
+    Reframe,
 }
 
 /// One in-flight background job. `progress` < 0.0 means indeterminate
@@ -158,6 +161,11 @@ pub struct CapRustApp {
     /// caption_rx: Some while the job runs, None otherwise.
     pub narration_rx:
         Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::NarrationResult, String>>>,
+    /// Receiver for an in-flight auto-reframe analysis (Phase P2c-3b).
+    pub reframe_rx:
+        Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::ReframeResult, String>>>,
+    /// Job id for the auto-reframe bar entry.
+    pub reframe_job_id: Option<u64>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -373,6 +381,8 @@ impl CapRustApp {
             caption_rx: None,
             caption_job_started: None,
             narration_rx: None,
+            reframe_rx: None,
+            reframe_job_id: None,
             narration_input: Default::default(),
             update_available: None,
             toasts: Vec::new(),
@@ -1256,6 +1266,150 @@ impl CapRustApp {
         self.narration_rx = Some(rx);
         self.toast(tr("toast-narration-started"));
         tracing::info!("narration: job spawned");
+    }
+
+    /// Kick off an auto-reframe analysis for the given clip. Requires
+    /// the YuNet model on disk and ffmpeg + ffprobe. Silently no-ops
+    /// with a toast when any prerequisite is missing.
+    fn start_reframe_job(&mut self, clip_id: uuid::Uuid) {
+        if self.reframe_rx.is_some() {
+            self.toast(tr("toast-reframe-busy"));
+            return;
+        }
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. }
+            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-reframe-needs-video"));
+                return;
+            }
+        };
+        let t_start_ms = clip.start_time_ms;
+        let duration_ms = clip.duration_ms;
+        if duration_ms == 0 {
+            self.toast(tr("toast-reframe-needs-video"));
+            return;
+        }
+
+        // Model: resolve YuNet path from the registry.
+        self.project
+            .models
+            .scan_local(&self.settings.effective_models_dir());
+        let models_dir = self.settings.effective_models_dir();
+        let model_path = self
+            .project
+            .models
+            .models
+            .iter()
+            .find(|m| m.kind == caprust_core::ModelKind::FaceDetector)
+            .map(|m| {
+                caprust_core::models::ModelRegistry::local_path_static(
+                    &self.project.models.models,
+                    &models_dir,
+                    &m.id,
+                )
+            });
+        let Some(model_path) = model_path.filter(|p| p.is_file()) else {
+            self.toast(tr("toast-reframe-needs-model"));
+            return;
+        };
+
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-reframe-needs-ffmpeg"));
+            return;
+        };
+        let Some(ffprobe) = self.ffmpeg_status.ffprobe.clone() else {
+            self.toast(tr("toast-reframe-needs-ffmpeg"));
+            return;
+        };
+
+        let target_aspect = {
+            let (pw, ph) = self.project.project_dimensions();
+            if ph == 0 {
+                16.0 / 9.0
+            } else {
+                pw as f64 / ph as f64
+            }
+        };
+
+        let req = crate::media_jobs::ReframeRequest {
+            clip_id,
+            source_path,
+            t_start_ms,
+            duration_ms,
+            target_aspect,
+            model_path,
+            sample_fps: 4.0,
+            max_side: 480,
+        };
+        let rx = crate::media_jobs::spawn_reframe_job(
+            std::path::PathBuf::from(ffmpeg),
+            std::path::PathBuf::from(ffprobe),
+            req,
+        );
+        let job_id = self.begin_job(JobKind::Reframe, tr("job-reframe"));
+        self.reframe_job_id = Some(job_id);
+        self.reframe_rx = Some(rx);
+        self.toast(tr("toast-reframe-started"));
+        tracing::info!("reframe: job spawned for clip {clip_id}");
+    }
+
+    /// Poll the in-flight reframe job. On success, write the keypoints
+    /// into the clip through SetClipCommand (undoable). On failure,
+    /// toast and clear state.
+    fn drain_reframe_job(&mut self) {
+        let Some(rx) = self.reframe_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                if result.keypoints.is_empty() {
+                    tracing::warn!(
+                        "reframe: {} frames analysed, {} had a face, no keypoints produced",
+                        result.frames_analyzed,
+                        result.frames_with_face
+                    );
+                    self.toast(tr("toast-reframe-no-faces"));
+                } else {
+                    let cmd = caprust_core::commands::set_clip::SetClipCommand::new(result.clip_id)
+                        .auto_reframe(result.keypoints.clone());
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("reframe: apply failed: {e}");
+                        self.toast(format!("{}: {e}", tr("toast-reframe-failed")));
+                    } else {
+                        tracing::info!(
+                            "reframe: applied {} keypoints to clip {}",
+                            result.keypoints.len(),
+                            result.clip_id
+                        );
+                        self.toast(tr("toast-reframe-done"));
+                    }
+                }
+                if let Some(id) = self.reframe_job_id.take() {
+                    self.finish_job(id);
+                }
+                self.reframe_rx = None;
+            }
+            Ok(Err(msg)) => {
+                tracing::error!("reframe: job failed: {msg}");
+                self.toast(format!("{}: {msg}", tr("toast-reframe-failed")));
+                if let Some(id) = self.reframe_job_id.take() {
+                    self.finish_job(id);
+                }
+                self.reframe_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::warn!("reframe: receiver disconnected unexpectedly");
+                if let Some(id) = self.reframe_job_id.take() {
+                    self.finish_job(id);
+                }
+                self.reframe_rx = None;
+            }
+        }
     }
 
     fn drain_narration_job(&mut self) {
@@ -4035,6 +4189,9 @@ impl CapRustApp {
                                             .duck_against(v);
                                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
+                                PendingEdit::StartReframe => {
+                                    self.start_reframe_job(id);
+                                }
                                 PendingEdit::AutoReframe(kps) => {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)
@@ -5148,6 +5305,7 @@ impl eframe::App for CapRustApp {
         self.drain_model_download();
         self.drain_caption_job();
         self.drain_narration_job();
+        self.drain_reframe_job();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 
         // Load any newly-ready thumbnails into the timeline texture cache.
