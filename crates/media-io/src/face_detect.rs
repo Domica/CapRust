@@ -140,9 +140,20 @@ impl FaceDetector {
             .run(tvec!(input.into()))
             .map_err(|e| anyhow!("YuNet inference: {e:?}"))?;
 
+        // YuNet ships in two graph layouts:
+        //   2023mar: 12 outputs (cls, obj, bbox, kps per stride).
+        //   2022mar: 3 outputs, one per stride, each [1, N, 15].
+        // Dispatch on the count. 2022mar goes through a debug decoder
+        // for now (logs the layout so we can commit the real field
+        // order); 12-output models keep the existing path.
         if outputs.len() != 12 {
+            if outputs.len() == 3 {
+                let (scale, pad_x, pad_y) = letterbox_params(width, height);
+                let decoded = decode_3_output(&outputs, scale, pad_x, pad_y, width, height)?;
+                return Ok(nms(decoded, NMS_IOU_THRESHOLD));
+            }
             return Err(anyhow!(
-                "YuNet expected 12 output tensors, got {}",
+                "YuNet: expected 12 (2023mar) or 3 (2022mar) output tensors, got {}",
                 outputs.len()
             ));
         }
@@ -220,6 +231,55 @@ impl FaceDetector {
 /// Returns `(scale, pad_x, pad_y)` where `scale` is the linear scale
 /// applied to the source, and `(pad_x, pad_y)` is the zero-padding
 /// applied on the left and top of the resized image.
+/// Decode the 3-output YuNet layout (2022mar). Each output is one
+/// stride's detections. Layout is expected to be [1, N, 15]:
+///   [x, y, w, h, lm1x, lm1y, ..., lm5x, lm5y, score]
+/// Coordinates already in 320x320 input space (absolute, not anchor
+/// offsets).
+///
+/// Currently logs shape and the first few rows so we can verify the
+/// exact field order before committing a full decoder. Returns an
+/// empty vec until that verification lands.
+fn decode_3_output(
+    outputs: &[TValue],
+    _scale: f32,
+    _pad_x: u32,
+    _pad_y: u32,
+    _img_w: u32,
+    _img_h: u32,
+) -> Result<Vec<FaceBox>> {
+    for (i, out) in outputs.iter().enumerate() {
+        let view = out
+            .to_plain_array_view::<f32>()
+            .map_err(|e| anyhow!("YuNet 2022mar output[{i}] read: {e:?}"))?;
+        let shape = view.shape();
+        tracing::info!("YuNet 2022mar output[{}] shape = {:?}", i, shape);
+        if shape.len() == 3 && shape[2] == 15 {
+            let n_log = shape[1].min(3);
+            for j in 0..n_log {
+                let mut row = Vec::with_capacity(15);
+                for k in 0..15 {
+                    row.push(format!("{:.4}", view[[0, j, k]]));
+                }
+                tracing::info!("  row[{}] = [{}]", j, row.join(", "));
+            }
+        } else if shape.len() == 3 && shape[1] == 15 {
+            // Alt layout: [1, 15, N]
+            let n_log = shape[2].min(3);
+            for j in 0..n_log {
+                let mut row = Vec::with_capacity(15);
+                for k in 0..15 {
+                    row.push(format!("{:.4}", view[[0, k, j]]));
+                }
+                tracing::info!("  col[{}] = [{}]", j, row.join(", "));
+            }
+        } else {
+            tracing::warn!("  unexpected 3-output layout for stride head {i}");
+        }
+    }
+    Ok(Vec::new())
+}
+
 fn letterbox_params(width: u32, height: u32) -> (f32, u32, u32) {
     let scale = (INPUT_SIZE as f32 / width as f32).min(INPUT_SIZE as f32 / height as f32);
     let new_w = (width as f32 * scale).round() as u32;
