@@ -27,6 +27,8 @@ pub struct SetClipCommand {
     /// Some(Some(x)) = ramp from `speed` to `x`.
     /// Some(None) = clear ramp, use static `speed`.
     pub speed_end: Option<Option<f32>>,
+    pub speed_ease: Option<crate::clip::EaseCurve>,
+    pub speed_range: Option<crate::clip::SpeedRampRange>,
     before: Option<Clip>,
 }
 
@@ -49,6 +51,8 @@ impl SetClipCommand {
             volume_keyframes: None,
             duck_against: None,
             speed_end: None,
+            speed_ease: None,
+            speed_range: None,
             before: None,
         }
     }
@@ -116,9 +120,17 @@ impl SetClipCommand {
         self
     }
     /// Enable or disable the speed ramp end. Pass `Some(x)` for a
-    /// linear ramp, `None` for static speed.
+    /// ramp, `None` for static speed.
     pub fn speed_end(mut self, v: Option<f32>) -> Self {
         self.speed_end = Some(v);
+        self
+    }
+    pub fn speed_ease(mut self, v: crate::clip::EaseCurve) -> Self {
+        self.speed_ease = Some(v);
+        self
+    }
+    pub fn speed_range(mut self, v: crate::clip::SpeedRampRange) -> Self {
+        self.speed_range = Some(v);
         self
     }
 }
@@ -175,6 +187,12 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.speed_end {
             c.speed_end = v;
+        }
+        if let Some(v) = self.speed_ease {
+            c.speed_ease = v;
+        }
+        if let Some(v) = self.speed_range {
+            c.speed_range = v;
         }
         Ok(())
     }

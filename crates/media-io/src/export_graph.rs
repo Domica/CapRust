@@ -35,9 +35,13 @@ pub struct VideoClip {
     pub timeline_start_sec: f64,
     pub duration_sec: f64,
     pub speed: f32,
-    /// Speed ramp end. Some(x) => linear ramp from `speed` to `x`
-    /// across the clip. None => static `speed`.
+    /// Speed ramp end. Some(x) => ramp from `speed` to `x`. None =>
+    /// static `speed`.
     pub speed_end: Option<f32>,
+    /// Easing of the ramp. Ignored when `speed_end` is None.
+    pub speed_ease: caprust_core::clip::EaseCurve,
+    /// Where inside the clip the ramp lives.
+    pub speed_range: caprust_core::clip::SpeedRampRange,
     /// Higher z renders on top. V1 = 0, V2 = 1, Overlay = last.
     pub z_order: u32,
     /// Image sources need `-loop 1` on their input.
@@ -73,9 +77,11 @@ pub struct AudioClip {
     pub timeline_start_sec: f64,
     pub duration_sec: f64,
     pub speed: f32,
-    /// Speed ramp end. Some(x) => audio tempo uses the arithmetic
+    /// Speed ramp end. Some(x) => audio tempo uses the ease-weighted
     /// mean of `speed` and `x` (single-instance atempo can't ramp).
     pub speed_end: Option<f32>,
+    /// Easing of the ramp. Only used to pick the weighted mean.
+    pub speed_ease: caprust_core::clip::EaseCurve,
     /// Linear gain from clip.volume_db.
     pub gain_db: f32,
     /// Fade-in duration in seconds. 0 = no fade.
@@ -144,25 +150,26 @@ impl RenderPlan {
             let in_label = format!("[{}:v]", c.input_index);
             let v_out = format!("v_b{i}");
 
-            // setpts with speed ramp:
-            //   Static speed s: OUT = IN / s (linear)
-            //   Ramp s0 -> s1: instantaneous speed s(t_out). If speed
-            //   is s at output time t_out, then input time maps as
-            //   t_in = t_out * (s0 + (s1-s0) * t_out / (2 * T_out))...
-            //   ffmpeg's setpts reads only the input PTS, so we express
-            //   the ramp in terms of the input timestamp. Approximate
-            //   with a linear OUT/IN map: OUT = IN / s_avg, which is
-            //   what a single linear ramp looks like at the frame level
-            //   when the ramp is short relative to the clip. That keeps
-            //   the graph simple and preview accurate to a few frames.
+            // setpts with speed ramp: a piecewise-constant
+            // approximation of the requested ease curve, sampled at
+            // RAMP_SEGMENTS points along the output timeline. See
+            // build_speed_ramp_setpts.
             let setpts = match c.speed_end {
-                Some(s_end) if (s_end - c.speed).abs() > 0.001 => {
-                    // Linear speed ramp approximated by an averaged
-                    // scale. This is a deliberate MVP simplification;
-                    // a full piecewise setpts expression is a follow-up.
-                    let avg = (c.speed + s_end) / 2.0;
-                    format!("setpts=(PTS-STARTPTS)/{:.6}", avg.max(0.01))
-                }
+                Some(s_end) if (s_end - c.speed).abs() > 0.001 => build_speed_ramp_setpts(
+                    c.speed,
+                    s_end,
+                    c.speed_ease,
+                    c.speed_range,
+                    c.duration_sec,
+                )
+                .map(|ramp| format!("setpts=PTS-STARTPTS,{ramp}"))
+                .unwrap_or_else(|| {
+                    if (c.speed - 1.0).abs() < 0.001 {
+                        String::from("setpts=PTS-STARTPTS")
+                    } else {
+                        format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed)
+                    }
+                }),
                 _ => {
                     if (c.speed - 1.0).abs() < 0.001 {
                         String::from("setpts=PTS-STARTPTS")
@@ -415,7 +422,10 @@ impl RenderPlan {
                 // residual drift inside the clip is bounded by the
                 // ramp range.
                 let effective_speed = match c.speed_end {
-                    Some(s_end) if (s_end - c.speed).abs() > 0.001 => (c.speed + s_end) / 2.0,
+                    Some(s_end) if (s_end - c.speed).abs() > 0.001 => {
+                        let t = ease_avg_progress(c.speed_ease) as f32;
+                        c.speed + (s_end - c.speed) * t
+                    }
                     _ => c.speed,
                 };
                 let atempo_chain = atempo_chain(effective_speed);
@@ -940,6 +950,151 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
     Some(frag)
 }
 
+/// Normalised easing progress in [0, 1]. `t` is linear progress in
+/// [0, 1]; returns the eased value.
+fn ease_progress(t: f64, ease: caprust_core::clip::EaseCurve) -> f64 {
+    use caprust_core::clip::EaseCurve;
+    let t = t.clamp(0.0, 1.0);
+    match ease {
+        EaseCurve::Linear => t,
+        EaseCurve::EaseIn => t * t,
+        EaseCurve::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
+        EaseCurve::EaseInOut => {
+            if t < 0.5 {
+                2.0 * t * t
+            } else {
+                1.0 - 2.0 * (1.0 - t) * (1.0 - t)
+            }
+        }
+    }
+}
+
+/// Time-average of the easing progress over [0, 1]. Used to estimate
+/// the effective average speed of a ramp.
+fn ease_avg_progress(ease: caprust_core::clip::EaseCurve) -> f64 {
+    use caprust_core::clip::EaseCurve;
+    match ease {
+        EaseCurve::Linear => 0.5,
+        EaseCurve::EaseIn => 1.0 / 3.0,
+        EaseCurve::EaseOut => 2.0 / 3.0,
+        EaseCurve::EaseInOut => 0.5,
+    }
+}
+
+/// Build a `setpts=PTS-STARTPTS,setpts='<expr>'` chain for a clip with a
+/// speed ramp. Returns None when no ramp applies (i.e. speed_end is
+/// absent, equals speed, or the clip has zero duration).
+///
+/// The ramp is approximated by a piecewise-constant speed curve sampled
+/// at RAMP_SEGMENTS points along the OUTPUT timeline. Each segment
+/// contributes one linear branch to a nested if() expression, which
+/// ffmpeg's setpts evaluates per frame. This keeps the visual curve
+/// close to the requested easing while staying a simple string.
+///
+/// Easing curves: Linear, EaseIn (t^2), EaseOut (1-(1-t)^2), EaseInOut
+/// (symmetrised).
+///
+/// Range: WholeClip (ramp spans the whole clip), FirstN(n) (ramp covers
+/// the first n output seconds, rest runs at speed_end), LastN(n) (ramp
+/// covers the last n output seconds, earlier portion runs at speed).
+fn build_speed_ramp_setpts(
+    speed: f32,
+    speed_end: f32,
+    ease: caprust_core::clip::EaseCurve,
+    range: caprust_core::clip::SpeedRampRange,
+    clip_in_dur_s: f64,
+) -> Option<String> {
+    use caprust_core::clip::SpeedRampRange;
+
+    const RAMP_SEGMENTS: usize = 4;
+
+    let s0 = speed as f64;
+    let s1 = speed_end as f64;
+    if (s1 - s0).abs() < 0.001 || clip_in_dur_s <= 0.0 {
+        return None;
+    }
+
+    let s_ramp_avg = s0 + (s1 - s0) * ease_avg_progress(ease);
+
+    // Ramp duration in OUTPUT seconds and total OUTPUT duration.
+    let (ramp_out_dur, total_out_dur) = match range {
+        SpeedRampRange::WholeClip => {
+            let d = clip_in_dur_s / s_ramp_avg.max(0.01);
+            (d, d)
+        }
+        SpeedRampRange::FirstN(n_ms) => {
+            let n = (n_ms as f64 / 1000.0).max(0.0);
+            let ramp_in = s_ramp_avg * n;
+            let const_in = (clip_in_dur_s - ramp_in).max(0.0);
+            let const_out = const_in / s1.max(0.01);
+            (n, n + const_out)
+        }
+        SpeedRampRange::LastN(n_ms) => {
+            let n = (n_ms as f64 / 1000.0).max(0.0);
+            let ramp_in = s_ramp_avg * n;
+            let const_in = (clip_in_dur_s - ramp_in).max(0.0);
+            let const_out = const_in / s0.max(0.01);
+            (n, n + const_out)
+        }
+    };
+
+    // Speed at output time t.
+    let s_at = |t_out: f64| -> f64 {
+        match range {
+            SpeedRampRange::WholeClip => {
+                let u = (t_out / total_out_dur).clamp(0.0, 1.0);
+                s0 + (s1 - s0) * ease_progress(u, ease)
+            }
+            SpeedRampRange::FirstN(_) => {
+                if t_out < ramp_out_dur {
+                    let u = (t_out / ramp_out_dur).clamp(0.0, 1.0);
+                    s0 + (s1 - s0) * ease_progress(u, ease)
+                } else {
+                    s1
+                }
+            }
+            SpeedRampRange::LastN(_) => {
+                let ramp_start = (total_out_dur - ramp_out_dur).max(0.0);
+                if t_out < ramp_start {
+                    s0
+                } else {
+                    let u = ((t_out - ramp_start) / ramp_out_dur).clamp(0.0, 1.0);
+                    s0 + (s1 - s0) * ease_progress(u, ease)
+                }
+            }
+        }
+    };
+
+    // Piecewise-constant segments: (t_in_start, t_in_end, t_out_start, s_seg).
+    let dt_out = total_out_dur / (RAMP_SEGMENTS as f64);
+    let mut segments: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(RAMP_SEGMENTS);
+    let mut t_in_acc = 0.0;
+    for i in 0..RAMP_SEGMENTS {
+        let t_out_start = i as f64 * dt_out;
+        let t_out_mid = t_out_start + dt_out * 0.5;
+        let s_mid = s_at(t_out_mid).max(0.01);
+        let t_in_end = t_in_acc + s_mid * dt_out;
+        segments.push((t_in_acc, t_in_end, t_out_start, s_mid));
+        t_in_acc = t_in_end;
+    }
+
+    // Nested if() from the tail backwards.
+    let build_branch = |t_in_s: f64, t_out_s: f64, s: f64| -> String {
+        format!("({t_out_s:.6}+(T/TB-{t_in_s:.6})/{s:.6})",)
+    };
+
+    let (t_in_last, _e, t_out_last, s_last) = segments[RAMP_SEGMENTS - 1];
+    let mut expr = build_branch(t_in_last, t_out_last, s_last);
+
+    for i in (0..RAMP_SEGMENTS - 1).rev() {
+        let (t_in_s, t_in_e, t_out_s, s) = segments[i];
+        let seg = build_branch(t_in_s, t_out_s, s);
+        expr = format!("if(lt(T/TB\\,{t_in_e:.6})\\,{seg}\\,{expr})",);
+    }
+
+    Some(format!("setpts='TB*({expr})'"))
+}
+
 /// Build an `,atempo=x` chain that supports 0.5..=2.0 per stage.
 fn atempo_chain(speed: f32) -> String {
     let mut s = speed;
@@ -1170,6 +1325,8 @@ pub fn plan_from_project(
                         duration_sec: dur_sec,
                         speed: c.speed,
                         speed_end: c.speed_end,
+                        speed_ease: c.speed_ease,
+                        speed_range: c.speed_range,
                         z_order: z,
                         is_image: false,
                         effects: c.effects.clone(),
@@ -1186,6 +1343,8 @@ pub fn plan_from_project(
                         duration_sec: dur_sec,
                         speed: c.speed,
                         speed_end: c.speed_end,
+                        speed_ease: c.speed_ease,
+                        speed_range: c.speed_range,
                         z_order: z,
                         is_image: true,
                         effects: c.effects.clone(),
@@ -1361,6 +1520,7 @@ pub fn plan_from_project(
             duration_sec: dur_sec,
             speed: c.speed,
             speed_end: c.speed_end,
+            speed_ease: c.speed_ease,
             gain_db: c.volume_db,
             fade_in_sec: fi,
             fade_out_sec: fo,
@@ -1483,6 +1643,8 @@ mod tests {
                 duration_sec: 2.0,
                 speed: 1.0,
                 speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),

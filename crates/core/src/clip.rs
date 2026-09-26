@@ -62,6 +62,32 @@ fn default_effect_amount() -> f32 {
     1.0
 }
 
+/// Easing applied to a speed ramp's interpolation between `speed` and
+/// `speed_end`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum EaseCurve {
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+/// Which portion of a clip the speed ramp occupies. The complementary
+/// portion (if any) stays at `speed_end` (FirstN) or `speed` (LastN).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SpeedRampRange {
+    /// The ramp spans the entire clip.
+    #[default]
+    WholeClip,
+    /// The ramp occupies the first N milliseconds of the clip; the rest
+    /// runs at `speed_end`.
+    FirstN(u64),
+    /// The ramp occupies the last N milliseconds of the clip; the
+    /// earlier portion runs at `speed`.
+    LastN(u64),
+}
+
 /// One point in a clip's volume automation curve. `t_ms` is relative
 /// to the clip's own start (0 = clip head). `gain_db` is the target
 /// gain at that instant. Between keyframes the renderer interpolates
@@ -125,12 +151,17 @@ pub struct Clip {
     /// control speaks. None = no ducking.
     #[serde(default)]
     pub duck_against: Option<Uuid>,
-    /// Speed ramp end. When Some(x), the clip ramps linearly from
-    /// `speed` at the start to `x` at the end (in OUTPUT time). None =
-    /// static speed (uses `speed`). Audio uses the arithmetic mean of
-    /// the two for its constant-tempo approximation.
+    /// Speed ramp end. When Some(x), the clip ramps from `speed` to `x`
+    /// across the clip (or a sub-range, see speed_range). None = static
+    /// speed (uses `speed`).
     #[serde(default)]
     pub speed_end: Option<f32>,
+    /// Easing of the ramp between `speed` and `speed_end`.
+    #[serde(default)]
+    pub speed_ease: EaseCurve,
+    /// Where the ramp lives inside the clip.
+    #[serde(default)]
+    pub speed_range: SpeedRampRange,
 }
 
 impl Clip {
@@ -159,6 +190,8 @@ impl Clip {
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
+            speed_ease: EaseCurve::default(),
+            speed_range: SpeedRampRange::default(),
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -189,6 +222,8 @@ impl Clip {
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
+            speed_ease: EaseCurve::default(),
+            speed_range: SpeedRampRange::default(),
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -219,6 +254,8 @@ impl Clip {
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
+            speed_ease: EaseCurve::default(),
+            speed_range: SpeedRampRange::default(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -251,6 +288,8 @@ impl Clip {
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
+            speed_ease: EaseCurve::default(),
+            speed_range: SpeedRampRange::default(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -288,6 +327,8 @@ impl Clip {
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
+            speed_ease: EaseCurve::default(),
+            speed_range: SpeedRampRange::default(),
             source_duration_ms: 0,
             media_id: None,
         }
@@ -326,6 +367,8 @@ impl Clip {
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
+            speed_ease: EaseCurve::default(),
+            speed_range: SpeedRampRange::default(),
             source_duration_ms: 0,
             media_id: None,
         }
