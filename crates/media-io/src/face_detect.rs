@@ -80,17 +80,27 @@ impl FaceDetector {
         if !model_path.is_file() {
             return Err(anyhow!("face model not found: {}", model_path.display()));
         }
+        // Pin the input shape so tract can resolve Resize nodes that
+        // were exported with a computed 'size' input. Without this,
+        // tract's symbolic evaluator leaves the size unresolved and
+        // fails at graph optimization with
+        // 'Clashing resolution for expression. N != 320'.
         let model = tract_onnx::onnx()
             .model_for_path(model_path)
             .map_err(|e| {
-                // Same reasoning as background_removal.rs: tract's
-                // Display hides the operator name, the Debug form
-                // carries it.
                 anyhow!(
                     "load ONNX model {}: {e:?}\n  (if this is an operator tract-onnx 0.23 does not support, check DIRECTIVES section 30 for known model issues)",
                     model_path.display()
                 )
             })?
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(
+                    f32::datum_type(),
+                    tvec!(1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64),
+                ),
+            )
+            .map_err(|e| anyhow!("pin YuNet input shape: {e:?}"))?
             .into_optimized()
             .map_err(|e| anyhow!("optimize ONNX model: {e:?}"))?
             .into_runnable()
