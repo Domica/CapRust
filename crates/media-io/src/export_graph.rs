@@ -80,6 +80,12 @@ pub struct AudioClip {
     /// piecewise-linear in dB between sorted points, held flat before
     /// the first and after the last.
     pub volume_keyframes: Vec<caprust_core::clip::VolumeKeyframe>,
+    /// Source clip id, used to resolve duck_against UUIDs to indices
+    /// inside this same Vec.
+    pub clip_id: uuid::Uuid,
+    /// Auto-ducking: source clip id whose audio drives this clip's
+    /// sidechain. None = no ducking.
+    pub duck_against: Option<uuid::Uuid>,
 }
 
 /// A fully-described render request.
@@ -445,9 +451,8 @@ impl RenderPlan {
                 dur = self.total_duration_sec,
             ));
 
-            let mut a_prev = String::from("a_base");
+            // ---- Delay every clip to its timeline position ----
             for (i, c) in self.audio_clips.iter().enumerate() {
-                let a_next = format!("a_mix{i}");
                 let delay_ms = (c.timeline_start_sec * 1000.0).round() as i64;
                 fg.push_str(&format!(
                     "[{clip}]adelay={delay}|{delay}[a_delayed{i}];",
@@ -455,9 +460,107 @@ impl RenderPlan {
                     delay = delay_ms,
                     i = i,
                 ));
+            }
+
+            // ---- Auto-ducking (sidechaincompress) ----
+            // Resolve duck_against UUIDs to indices inside audio_clips,
+            // dropping self-references. A control clip is any clip that
+            // is the target of at least one duck. Its delayed stream is
+            // mixed into a single control bus, which is then asplit for
+            // each consumer.
+            let id_to_idx: std::collections::HashMap<uuid::Uuid, usize> = self
+                .audio_clips
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.clip_id, i))
+                .collect();
+
+            // (ducked_idx -> ctrl_idx)
+            let duck_map: std::collections::HashMap<usize, usize> = self
+                .audio_clips
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    c.duck_against
+                        .and_then(|u| id_to_idx.get(&u).copied())
+                        .filter(|&x| x != i)
+                        .map(|x| (i, x))
+                })
+                .collect();
+
+            let mut mixed_labels: Vec<String> = (0..self.audio_clips.len())
+                .map(|i| format!("a_delayed{i}"))
+                .collect();
+
+            if !duck_map.is_empty() {
+                // Control bus inputs: all distinct ctrl_idx values.
+                let mut ctrl_indices: Vec<usize> = duck_map.values().copied().collect();
+                ctrl_indices.sort_unstable();
+                ctrl_indices.dedup();
+
+                let ctrl_bus = "a_ctrl_in";
+                if ctrl_indices.len() == 1 {
+                    // Single control: alias via anull (pass-through).
+                    fg.push_str(&format!(
+                        "[a_delayed{idx}]anull[{bus}];",
+                        idx = ctrl_indices[0],
+                        bus = ctrl_bus,
+                    ));
+                } else {
+                    // Chain amix, output last link as ctrl_bus.
+                    let mut prev = format!("a_delayed{}", ctrl_indices[0]);
+                    let last = ctrl_indices.len() - 1;
+                    for (k, &idx) in ctrl_indices.iter().enumerate().skip(1) {
+                        let out = if k == last {
+                            ctrl_bus.to_string()
+                        } else {
+                            format!("a_ctrl_tmp{k}")
+                        };
+                        fg.push_str(&format!(
+                            "[{prev}][a_delayed{idx}]amix=inputs=2:duration=longest:dropout_transition=0[{out}];",
+                        ));
+                        prev = out;
+                    }
+                }
+
+                // asplit the control bus once per consumer.
+                let n_consumers = duck_map.len();
+                if n_consumers == 1 {
+                    let (ducked_idx, _) = duck_map.iter().next().map(|(a, b)| (*a, *b)).unwrap();
+                    let out = format!("a_ducked{ducked_idx}");
+                    fg.push_str(&format!(
+                        "[{ctrl_bus}][a_delayed{ducked_idx}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
+                    ));
+                    mixed_labels[ducked_idx] = out;
+                } else {
+                    // Split into N copies.
+                    let mut split = format!("[{ctrl_bus}]asplit={n_consumers}");
+                    for k in 0..n_consumers {
+                        split.push_str(&format!("[a_ctrl_k{k}]"));
+                    }
+                    split.push(';');
+                    fg.push_str(&split);
+
+                    for (k, (ducked_idx, _)) in duck_map.iter().enumerate() {
+                        let out = format!("a_ducked{ducked_idx}");
+                        fg.push_str(&format!(
+                            "[a_delayed{ducked_idx}][a_ctrl_k{k}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
+                        ));
+                        mixed_labels[*ducked_idx] = out;
+                    }
+                }
+            }
+
+            // ---- Final mix ----
+            let mut a_prev = String::from("a_base");
+            for (i, _c) in self.audio_clips.iter().enumerate() {
+                let a_next = format!("a_mix{i}");
                 fg.push_str(&format!(
-                "[{a_prev}][a_delayed{i}]amix=inputs=2:duration=longest:dropout_transition=0[{a_next}];"
-            ));
+                    "[{a_prev}][{clip}]amix=inputs=2:duration=longest:dropout_transition=0[{a_next}];",
+                    a_prev = a_prev,
+                    clip = mixed_labels[i],
+                    a_next = a_next,
+                ));
                 a_prev = a_next;
             }
             fg.push_str(&format!(
@@ -1221,6 +1324,8 @@ pub fn plan_from_project(
             fade_in_sec: fi,
             fade_out_sec: fo,
             volume_keyframes: kfs,
+            clip_id: c.id,
+            duck_against: c.duck_against,
         });
     }
 

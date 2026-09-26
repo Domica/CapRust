@@ -23,6 +23,7 @@ pub struct SetClipCommand {
     pub fade_in_ms: Option<u64>,
     pub fade_out_ms: Option<u64>,
     pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
+    pub duck_against: Option<Option<Uuid>>,
     before: Option<Clip>,
 }
 
@@ -43,6 +44,7 @@ impl SetClipCommand {
             fade_in_ms: None,
             fade_out_ms: None,
             volume_keyframes: None,
+            duck_against: None,
             before: None,
         }
     }
@@ -103,6 +105,12 @@ impl SetClipCommand {
         self.volume_keyframes = Some(v);
         self
     }
+    /// Set or clear the sidechain control clip. `None` disables
+    /// ducking on this clip.
+    pub fn duck_against(mut self, v: Option<Uuid>) -> Self {
+        self.duck_against = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -151,6 +159,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.volume_keyframes.clone() {
             c.volume_keyframes = v;
+        }
+        if let Some(v) = self.duck_against {
+            c.duck_against = v;
         }
         Ok(())
     }

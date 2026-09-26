@@ -118,6 +118,13 @@ pub struct Clip {
     /// before the first and after the last.
     #[serde(default)]
     pub volume_keyframes: Vec<VolumeKeyframe>,
+    /// Auto-ducking: id of the clip whose audio drives the sidechain
+    /// (typically a narration or spoken-word clip). When set on an
+    /// audio-bearing clip, the render sidechains this clip's audio
+    /// against that clip's stream, so it drops in level whenever the
+    /// control speaks. None = no ducking.
+    #[serde(default)]
+    pub duck_against: Option<Uuid>,
 }
 
 impl Clip {
@@ -144,6 +151,7 @@ impl Clip {
             fade_in_ms: 0,
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
+            duck_against: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -172,6 +180,7 @@ impl Clip {
             fade_in_ms: 0,
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
+            duck_against: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -200,6 +209,7 @@ impl Clip {
             fade_in_ms: 0,
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
+            duck_against: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -230,6 +240,7 @@ impl Clip {
             fade_in_ms: 0,
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
+            duck_against: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -265,6 +276,7 @@ impl Clip {
             fade_in_ms: 0,
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
+            duck_against: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -301,6 +313,7 @@ impl Clip {
             fade_in_ms: 0,
             fade_out_ms: 0,
             volume_keyframes: Vec::new(),
+            duck_against: None,
             source_duration_ms: 0,
             media_id: None,
         }

@@ -32,6 +32,10 @@ pub struct PropertiesState {
     /// Last playhead value the panel saw, so "+ Add at playhead" knows
     /// where to drop a new keyframe.
     pub last_playhead_ms: u64,
+    /// Cached list of clips for the current frame, so dropdowns that
+    /// need project-wide candidates (duck-against) do not have to
+    /// re-borrow the project while state is mutably borrowed.
+    pub last_project_clips: Vec<caprust_core::Clip>,
 }
 
 #[derive(Debug)]
@@ -60,6 +64,8 @@ pub enum PendingEdit {
     TextStyle(String),
     /// Replace the whole volume automation curve on a clip.
     VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
+    /// Set or clear the auto-duck sidechain control clip.
+    DuckAgainst(Option<Uuid>),
 }
 
 pub fn show(
@@ -70,6 +76,7 @@ pub fn show(
     playhead_ms: u64,
 ) {
     state.last_playhead_ms = playhead_ms;
+    state.last_project_clips = project.clips.clone();
     let Some(id) = selected else {
         ui.label(
             egui::RichText::new(tr("props-empty"))
@@ -488,6 +495,74 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             state.pending.push(PendingEdit::VolumeDb(vol));
         }
     });
+
+    ui.add_space(10.0);
+    ui.separator();
+
+    // ---- Auto-ducking ----
+    // Only meaningful on audio-bearing clips. The list of candidates
+    // is every other audio-bearing clip in the project; picking one
+    // makes this clip drop in level whenever that clip's stream plays.
+    ui.label(egui::RichText::new(tr("props-sound-ducking")).strong());
+    ui.add_space(4.0);
+    // Collect candidates: any clip that carries audio and is not this
+    // clip. We do not filter by track — a narration on A2 can duck a
+    // music clip on A1 just as easily.
+    let mut candidates: Vec<(uuid::Uuid, String)> = Vec::new();
+    for c in &state.last_project_clips {
+        if c.id == clip.id {
+            continue;
+        }
+        let carries_audio = match &c.clip_type {
+            caprust_core::ClipType::Audio { .. } | caprust_core::ClipType::Narration { .. } => true,
+            caprust_core::ClipType::Video { .. } => !c.audio_detached,
+            _ => false,
+        };
+        if !carries_audio {
+            continue;
+        }
+        let label = c
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("Clip {}", &c.id.to_string()[..8]));
+        candidates.push((c.id, label));
+    }
+
+    let current_label = clip
+        .duck_against
+        .and_then(|u| {
+            candidates
+                .iter()
+                .find(|(id, _)| *id == u)
+                .map(|(_, l)| l.clone())
+        })
+        .unwrap_or_else(|| tr("props-sound-duck-none"));
+
+    ui.horizontal(|ui| {
+        ui.label(tr("props-sound-duck-against"));
+        egui::ComboBox::from_id_salt("duck_against_combo")
+            .selected_text(current_label)
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(clip.duck_against.is_none(), tr("props-sound-duck-none"))
+                    .clicked()
+                {
+                    state.pending.push(PendingEdit::DuckAgainst(None));
+                }
+                for (id, label) in &candidates {
+                    let selected = clip.duck_against == Some(*id);
+                    if ui.selectable_label(selected, label).clicked() && !selected {
+                        state.pending.push(PendingEdit::DuckAgainst(Some(*id)));
+                    }
+                }
+            });
+    });
+    ui.label(
+        egui::RichText::new(tr("props-sound-duck-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
 
     ui.add_space(10.0);
     ui.separator();
