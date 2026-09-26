@@ -121,6 +121,8 @@ pub struct CapRustApp {
     pub clip_drag: Option<ClipDrag>,
     /// Rubber-band selection in progress, if any.
     pub marquee: Option<MarqueeState>,
+    /// In-progress fade handle drag, if any.
+    pub fade_drag: Option<FadeDrag>,
     pub settings: AppSettings,
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<uuid::Uuid>,
@@ -214,6 +216,30 @@ pub struct CapRustApp {
     /// Playhead value (ms) at the moment playback started.
     pub playback_started_ms: u64,
     pub job_runner: JobRunner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeEdge {
+    In,
+    Out,
+}
+
+/// In-progress fade handle drag. Handles are small circles at the top
+/// corners of any clip that carries audio (Audio and Video). Dragging
+/// horizontally changes fade_in_ms (left handle) or fade_out_ms (right
+/// handle). The change is committed as a SetClipCommand on release, so
+/// undo/redo works normally.
+#[derive(Debug, Clone)]
+pub struct FadeDrag {
+    pub clip_id: uuid::Uuid,
+    pub edge: FadeEdge,
+    pub origin_ms: u64,
+    pub current_ms: u64,
+    pub origin_ptr_x: f32,
+    /// Clip duration, for the upper clamp.
+    pub duration_ms: u64,
+    /// The opposite edge's existing fade duration, for combined-clamp.
+    pub other_fade_ms: u64,
 }
 
 /// Rubber-band selection state. `start` and `current` are in screen
@@ -313,6 +339,7 @@ impl CapRustApp {
             selected_clips: Vec::new(),
             clip_drag: None,
             marquee: None,
+            fade_drag: None,
             settings,
             ffmpeg_status: ffmpeg_status.clone(),
             last_dnd_payload: None,
@@ -2421,6 +2448,209 @@ impl CapRustApp {
                                             egui::StrokeKind::Inside,
                                         );
                                     }
+
+                                    // ---- Fade handles + curve ----
+                                    // Only on clips that carry audio: Audio,
+                                    // Narration, and Video whose audio has
+                                    // not been detached.
+                                    let carries_audio = match &ctype {
+                                        caprust_core::ClipType::Audio { .. }
+                                        | caprust_core::ClipType::Narration { .. } => true,
+                                        caprust_core::ClipType::Video { .. } => self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|cc| cc.id == clip_id)
+                                            .map(|cc| !cc.audio_detached)
+                                            .unwrap_or(false),
+                                        _ => false,
+                                    };
+
+                                    if carries_audio && clip_rect.width() > 24.0 {
+                                        let (fi_ms, fo_ms) = self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|cc| cc.id == clip_id)
+                                            .map(|cc| (cc.fade_in_ms, cc.fade_out_ms))
+                                            .unwrap_or((0, 0));
+                                        // Use live drag values when this clip
+                                        // is being dragged, so the curve
+                                        // follows the pointer without a
+                                        // round-trip through the project.
+                                        let (fi_show, fo_show) = if let Some(fd) = &self.fade_drag {
+                                            if fd.clip_id == clip_id {
+                                                match fd.edge {
+                                                    FadeEdge::In => (fd.current_ms, fo_ms),
+                                                    FadeEdge::Out => (fi_ms, fd.current_ms),
+                                                }
+                                            } else {
+                                                (fi_ms, fo_ms)
+                                            }
+                                        } else {
+                                            (fi_ms, fo_ms)
+                                        };
+                                        let fi_px = (fi_show as f32 / dur_ms.max(1) as f32)
+                                            * clip_rect.width();
+                                        let fo_px = (fo_show as f32 / dur_ms.max(1) as f32)
+                                            * clip_rect.width();
+
+                                        let curve_color = egui::Color32::from_rgba_unmultiplied(
+                                            255, 255, 255, 180,
+                                        );
+                                        let curve_stroke = egui::Stroke::new(2.0_f32, curve_color);
+
+                                        // Fade-in curve: diagonal from
+                                        // top-left down to the top of the
+                                        // waveform at fi_px.
+                                        if fi_px > 0.5 {
+                                            p.line_segment(
+                                                [
+                                                    clip_rect.left_top(),
+                                                    egui::pos2(
+                                                        clip_rect.left() + fi_px,
+                                                        clip_rect.top(),
+                                                    ),
+                                                ],
+                                                curve_stroke,
+                                            );
+                                            // Triangle fill under curve
+                                            p.add(egui::Shape::convex_polygon(
+                                                vec![
+                                                    clip_rect.left_top(),
+                                                    egui::pos2(
+                                                        clip_rect.left() + fi_px,
+                                                        clip_rect.top(),
+                                                    ),
+                                                    clip_rect.left_bottom(),
+                                                ],
+                                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
+                                                egui::Stroke::NONE,
+                                            ));
+                                        }
+                                        // Fade-out curve (mirror).
+                                        if fo_px > 0.5 {
+                                            p.line_segment(
+                                                [
+                                                    egui::pos2(
+                                                        clip_rect.right() - fo_px,
+                                                        clip_rect.top(),
+                                                    ),
+                                                    clip_rect.right_top(),
+                                                ],
+                                                curve_stroke,
+                                            );
+                                            p.add(egui::Shape::convex_polygon(
+                                                vec![
+                                                    egui::pos2(
+                                                        clip_rect.right() - fo_px,
+                                                        clip_rect.top(),
+                                                    ),
+                                                    clip_rect.right_top(),
+                                                    clip_rect.right_bottom(),
+                                                ],
+                                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
+                                                egui::Stroke::NONE,
+                                            ));
+                                        }
+
+                                        // Handles: small filled circles at
+                                        // top corners, offset horizontally
+                                        // by the fade amount.
+                                        let hr = 5.0_f32;
+                                        let h_in_pos = egui::pos2(
+                                            clip_rect.left() + fi_px.max(hr),
+                                            clip_rect.top() + hr * 0.6,
+                                        );
+                                        let h_out_pos = egui::pos2(
+                                            clip_rect.right() - fo_px.max(hr),
+                                            clip_rect.top() + hr * 0.6,
+                                        );
+                                        let hovered_this_clip = pointer_hover
+                                            .map(|pp| clip_rect.contains(pp))
+                                            .unwrap_or(false);
+                                        let in_hover = hovered_this_clip
+                                            && pointer_hover
+                                                .map(|pp| (pp - h_in_pos).length() < hr * 1.8)
+                                                .unwrap_or(false);
+                                        let out_hover = hovered_this_clip
+                                            && pointer_hover
+                                                .map(|pp| (pp - h_out_pos).length() < hr * 1.8)
+                                                .unwrap_or(false);
+                                        let active_in = self
+                                            .fade_drag
+                                            .as_ref()
+                                            .map(|fd| {
+                                                fd.clip_id == clip_id && fd.edge == FadeEdge::In
+                                            })
+                                            .unwrap_or(false);
+                                        let active_out = self
+                                            .fade_drag
+                                            .as_ref()
+                                            .map(|fd| {
+                                                fd.clip_id == clip_id && fd.edge == FadeEdge::Out
+                                            })
+                                            .unwrap_or(false);
+                                        let fill_in = if active_in || in_hover {
+                                            egui::Color32::from_rgb(255, 220, 90)
+                                        } else {
+                                            egui::Color32::from_white_alpha(200)
+                                        };
+                                        let fill_out = if active_out || out_hover {
+                                            egui::Color32::from_rgb(255, 220, 90)
+                                        } else {
+                                            egui::Color32::from_white_alpha(200)
+                                        };
+                                        p.circle_filled(h_in_pos, hr, fill_in);
+                                        p.circle_stroke(
+                                            h_in_pos,
+                                            hr,
+                                            egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                                        );
+                                        p.circle_filled(h_out_pos, hr, fill_out);
+                                        p.circle_stroke(
+                                            h_out_pos,
+                                            hr,
+                                            egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                                        );
+
+                                        // Cursor affordance.
+                                        if in_hover || out_hover {
+                                            ui.ctx().set_cursor_icon(
+                                                egui::CursorIcon::ResizeHorizontal,
+                                            );
+                                        }
+
+                                        // Start a fade drag on press over a
+                                        // handle. Precedence over clip
+                                        // drag-select.
+                                        let track_locked_fh = self
+                                            .project
+                                            .tracks
+                                            .get(idx)
+                                            .map(|t| t.locked)
+                                            .unwrap_or(false);
+                                        if !track_locked_fh
+                                            && !pan_mode
+                                            && pointer_down
+                                            && self.fade_drag.is_none()
+                                            && clip_drag_snapshot.is_none()
+                                        {
+                                            if in_hover {
+                                                pending_actions.push(ClipAction::FadeDragStart(
+                                                    clip_id,
+                                                    FadeEdge::In,
+                                                    fi_ms as f32,
+                                                ));
+                                            } else if out_hover {
+                                                pending_actions.push(ClipAction::FadeDragStart(
+                                                    clip_id,
+                                                    FadeEdge::Out,
+                                                    fo_ms as f32,
+                                                ));
+                                            }
+                                        }
+                                    }
                                     let (label_full, label_short) = {
                                         let full = self
                                             .project
@@ -2847,6 +3077,21 @@ impl CapRustApp {
                                     pending_actions.push(ClipAction::DragEnd(d.clip_id));
                                 }
                             }
+
+                            // Fade handle drag: emit Delta every frame
+                            // while a drag is active, End on release.
+                            if let Some(fd) = &self.fade_drag {
+                                if let Some(pp) = pointer_hover {
+                                    pending_actions.push(ClipAction::FadeDragDelta(
+                                        fd.clip_id,
+                                        pp.x - fd.origin_ptr_x,
+                                        px_per_ms,
+                                    ));
+                                }
+                                if pointer_released {
+                                    pending_actions.push(ClipAction::FadeDragEnd(fd.clip_id));
+                                }
+                            }
                             // Playhead overlay: draw once, after every
                             // lane is allocated, so Full mode can span
                             // the entire stack.
@@ -3271,6 +3516,87 @@ impl CapRustApp {
                                 self.undo_stack.execute(Box::new(cmd), &mut self.project)
                             {
                                 tracing::error!("mute clip failed: {e}");
+                            }
+                        }
+                        ClipAction::FadeDragStart(id, edge, current_ms) => {
+                            let (dur, fi, fo, ptr_x) = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|c| c.id == id)
+                                .map(|c| {
+                                    (
+                                        c.duration_ms,
+                                        c.fade_in_ms,
+                                        c.fade_out_ms,
+                                        self.last_pointer.map(|p| p.x).unwrap_or(0.0),
+                                    )
+                                })
+                                .unwrap_or((0, 0, 0, 0.0));
+                            let other = match edge {
+                                FadeEdge::In => fo,
+                                FadeEdge::Out => fi,
+                            };
+                            self.fade_drag = Some(FadeDrag {
+                                clip_id: id,
+                                edge,
+                                origin_ms: current_ms as u64,
+                                current_ms: current_ms as u64,
+                                origin_ptr_x: ptr_x,
+                                duration_ms: dur,
+                                other_fade_ms: other,
+                            });
+                        }
+                        ClipAction::FadeDragDelta(id, dx, ppm) => {
+                            if ppm > 0.0 {
+                                if let Some(fd) = self.fade_drag.clone() {
+                                    if fd.clip_id == id {
+                                        let delta_ms = (dx / ppm) as i64;
+                                        let cand = fd.origin_ms as i64 + delta_ms;
+                                        // Clamp: fade can't be negative,
+                                        // can't overlap the opposite
+                                        // edge's existing fade, and
+                                        // can't exceed the clip length.
+                                        let cap = fd.duration_ms.saturating_sub(fd.other_fade_ms);
+                                        let new_ms = cand.clamp(0, cap as i64) as u64;
+                                        if let Some(cur) = self.fade_drag.as_mut() {
+                                            cur.current_ms = new_ms;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        ClipAction::FadeDragEnd(id) => {
+                            if let Some(fd) = self.fade_drag.take() {
+                                if fd.clip_id == id && fd.current_ms != fd.origin_ms {
+                                    let new_val = fd.current_ms;
+                                    let cmd = match fd.edge {
+                                        FadeEdge::In => {
+                                            caprust_core::commands::set_clip::SetClipCommand::new(
+                                                id,
+                                            )
+                                            .fade_in_ms(new_val)
+                                        }
+                                        FadeEdge::Out => {
+                                            caprust_core::commands::set_clip::SetClipCommand::new(
+                                                id,
+                                            )
+                                            .fade_out_ms(new_val)
+                                        }
+                                    };
+                                    if let Err(e) =
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                                    {
+                                        tracing::error!("fade commit failed: {e}");
+                                    } else {
+                                        tracing::info!(
+                                            "fade {:?} = {}ms on {}",
+                                            fd.edge,
+                                            new_val,
+                                            id
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -4457,6 +4783,9 @@ enum ClipAction {
     RippleDelete(uuid::Uuid),
     SetSpeed(uuid::Uuid, f32),
     MuteClip(uuid::Uuid),
+    FadeDragStart(uuid::Uuid, FadeEdge, f32),
+    FadeDragDelta(uuid::Uuid, f32, f32),
+    FadeDragEnd(uuid::Uuid),
 }
 
 impl eframe::App for CapRustApp {

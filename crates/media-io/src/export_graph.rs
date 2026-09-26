@@ -72,6 +72,10 @@ pub struct AudioClip {
     pub speed: f32,
     /// Linear gain from clip.volume_db.
     pub gain_db: f32,
+    /// Fade-in duration in seconds. 0 = no fade.
+    pub fade_in_sec: f64,
+    /// Fade-out duration in seconds. 0 = no fade.
+    pub fade_out_sec: f64,
 }
 
 /// A fully-described render request.
@@ -372,11 +376,26 @@ impl RenderPlan {
                 } else {
                     format!(",volume={:.4}dB", c.gain_db)
                 };
+                // afade at the end of the chain so the gain is applied
+                // first (fade ramps the already-gained signal).
+                let fade_in = if c.fade_in_sec > 0.001 {
+                    format!(",afade=t=in:st=0:d={:.6}", c.fade_in_sec)
+                } else {
+                    String::new()
+                };
+                let fade_out = if c.fade_out_sec > 0.001 {
+                    let st = (c.duration_sec - c.fade_out_sec).max(0.0);
+                    format!(",afade=t=out:st={st:.6}:d={:.6}", c.fade_out_sec)
+                } else {
+                    String::new()
+                };
                 fg.push_str(&format!(
-                "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}{gain}[{a_out}];",
+                "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}{gain}{fade_in}{fade_out}[{a_out}];",
                 dur = c.duration_sec,
                 atempo = atempo_chain,
                 gain = gain,
+                fade_in = fade_in,
+                fade_out = fade_out,
             ));
                 a_labels.push(a_out);
             }
@@ -1132,12 +1151,32 @@ pub fn plan_from_project(
         let idx = register_input(&mut inputs, path, 0.0, dur_sec);
         let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
         let start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+
+        // Fades: clamp so the two never overlap. If the sum exceeds the
+        // clip's duration, scale both down proportionally. Skip
+        // inaudibly tiny fades (<1 ms) so the filtergraph stays clean.
+        let mut fi = c.fade_in_ms as f64 / 1000.0;
+        let mut fo = c.fade_out_ms as f64 / 1000.0;
+        if fi + fo > dur_sec && fi + fo > 0.0 {
+            let scale = dur_sec / (fi + fo);
+            fi *= scale;
+            fo *= scale;
+        }
+        if fi < 0.001 {
+            fi = 0.0;
+        }
+        if fo < 0.001 {
+            fo = 0.0;
+        }
+
         audio_clips.push(AudioClip {
             input_index: idx,
             timeline_start_sec: start_sec,
             duration_sec: dur_sec,
             speed: c.speed,
             gain_db: c.volume_db,
+            fade_in_sec: fi,
+            fade_out_sec: fo,
         });
     }
 

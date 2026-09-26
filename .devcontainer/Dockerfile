@@ -40,19 +40,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #    so a static binary from johnvansickle is perfect: single ~80MB
 #    executable, all codecs, no shared lib deps.
 # -----------------------------------------------------------------------------
-RUN ARCH="$(dpkg --print-architecture)" \
-    && case "$ARCH" in \
-         amd64) FF_ARCH=amd64 ;; \
-         arm64) FF_ARCH=arm64 ;; \
-         *) FF_ARCH=amd64 ;; \
-       esac \
-    && curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FF_ARCH}-static.tar.xz" \
-         -o /tmp/ffmpeg.tar.xz \
-    && mkdir -p /tmp/ffmpeg-extract \
-    && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-extract --strip-components=1 \
-    && install -m 0755 /tmp/ffmpeg-extract/ffmpeg  /usr/local/bin/ffmpeg \
-    && install -m 0755 /tmp/ffmpeg-extract/ffprobe /usr/local/bin/ffprobe \
-    && rm -rf /tmp/ffmpeg.tar.xz /tmp/ffmpeg-extract
+# FFmpeg 7.0.x static from BtbN/FFmpeg-Builds (GitHub-hosted, daily
+# rebuilt, stable URL scheme). The former johnvansickle.com source
+# began returning non-xz payloads in late 2026, breaking the build.
+# BtbN puts the binaries under bin/ inside the archive.
+# FFmpeg from the Debian bookworm repository. Provides ffmpeg 5.1.x,
+# which has every filter the project uses (xfade, drawtext, amix,
+# atempo, tmix, noise, acrossfade, etc.).
+#
+# History: the previous source was johnvansickle.com (static builds),
+# but that site began returning non-xz payloads. A BtbN GitHub fallback
+# was tried next and its URL scheme also proved unreliable across
+# release tag rotations. The Debian package is versioned with the base
+# image and never disappears — the right tradeoff for a devcontainer
+# that has to keep rebuilding.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Sanity: fail fast if the download didn't work
 RUN ffmpeg -version | head -1 && ffprobe -version | head -1
