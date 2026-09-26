@@ -40,6 +40,12 @@ parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Face detection (auto-reframe, Phase P2).
+# tract-onnx 0.22 is pure Rust (no libonnxruntime dependency) and has
+# MSRV 1.83+, which matches our devcontainer. 0.23.x requires Rust
+# 1.91 and is not usable here yet.
+tract-onnx = { version = "0.22", default-features = false }
+
 # Audio playback (preview)
 cpal = "0.15"
 ringbuf = "0.4"

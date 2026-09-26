@@ -26,6 +26,9 @@ blake3 = { workspace = true }
 # portable. GPU support can be added later behind a feature flag.
 whisper-rs = { version = "0.14", default-features = false }
 
+# Pure-Rust ONNX runtime for YuNet face detection (Phase P2).
+tract-onnx = { workspace = true }
+
 [dependencies.ffmpeg-next]
 workspace = true
 optional = true
