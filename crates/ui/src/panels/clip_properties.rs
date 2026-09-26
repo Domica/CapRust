@@ -29,6 +29,9 @@ pub struct PropertiesState {
     pub name_buffer: Option<String>,
     /// True while the name field holds focus (used to detect blur).
     pub name_focus: bool,
+    /// Last playhead value the panel saw, so "+ Add at playhead" knows
+    /// where to drop a new keyframe.
+    pub last_playhead_ms: u64,
 }
 
 #[derive(Debug)]
@@ -55,6 +58,8 @@ pub enum PendingEdit {
     Name(String),
     /// Set the drawtext style id on a TextOverlay clip.
     TextStyle(String),
+    /// Replace the whole volume automation curve on a clip.
+    VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
 }
 
 pub fn show(
@@ -62,7 +67,9 @@ pub fn show(
     project: &ProjectState,
     selected: Option<Uuid>,
     state: &mut PropertiesState,
+    playhead_ms: u64,
 ) {
+    state.last_playhead_ms = playhead_ms;
     let Some(id) = selected else {
         ui.label(
             egui::RichText::new(tr("props-empty"))
@@ -481,6 +488,129 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             state.pending.push(PendingEdit::VolumeDb(vol));
         }
     });
+
+    ui.add_space(10.0);
+    ui.separator();
+
+    // ---- Volume automation (keyframes) ----
+    ui.label(egui::RichText::new(tr("props-sound-automation")).strong());
+    ui.add_space(4.0);
+
+    let mut kfs = clip.volume_keyframes.clone();
+    let mut changed = false;
+    let max_kfs = 20usize;
+
+    if kfs.is_empty() {
+        ui.label(
+            egui::RichText::new(tr("props-sound-no-kf"))
+                .italics()
+                .color(egui::Color32::from_gray(150)),
+        );
+        ui.add_space(4.0);
+    } else {
+        // Local table header
+        egui::Grid::new("kf_header")
+            .num_columns(4)
+            .spacing([6.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(tr("props-sound-kf-time"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+                ui.label(
+                    egui::RichText::new(tr("props-sound-kf-gain"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+                ui.label("");
+                ui.label("");
+                ui.end_row();
+            });
+    }
+
+    let clip_dur = clip.duration_ms;
+    let mut remove_idx: Option<usize> = None;
+    egui::ScrollArea::vertical()
+        .id_salt("kf_list")
+        .max_height(180.0)
+        .show(ui, |ui| {
+            egui::Grid::new("kf_rows")
+                .num_columns(4)
+                .spacing([6.0, 4.0])
+                .show(ui, |ui| {
+                    for (i, kf) in kfs.iter_mut().enumerate() {
+                        let mut t = kf.t_ms as f64;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut t)
+                                    .range(0.0..=(clip_dur as f64))
+                                    .speed(10.0)
+                                    .suffix(" ms"),
+                            )
+                            .changed()
+                        {
+                            kf.t_ms = t.max(0.0) as u64;
+                            changed = true;
+                        }
+                        let mut g = kf.gain_db;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut g)
+                                    .range(-40.0..=40.0)
+                                    .speed(0.5)
+                                    .suffix(" dB"),
+                            )
+                            .changed()
+                        {
+                            kf.gain_db = g;
+                            changed = true;
+                        }
+                        if ui.small_button("X").clicked() {
+                            remove_idx = Some(i);
+                        }
+                        ui.label(
+                            egui::RichText::new(format!("#{}", i + 1))
+                                .small()
+                                .color(egui::Color32::from_gray(120)),
+                        );
+                        ui.end_row();
+                    }
+                });
+        });
+
+    if let Some(i) = remove_idx {
+        if i < kfs.len() {
+            kfs.remove(i);
+            changed = true;
+        }
+    }
+
+    ui.add_space(4.0);
+    let can_add = kfs.len() < max_kfs;
+    let add_resp = ui.add_enabled(can_add, egui::Button::new(tr("props-sound-add-kf")));
+    if add_resp.clicked() {
+        // Place at the playhead relative to the clip's start, clamped
+        // inside [0, duration]. Default gain = static volume_db so the
+        // new point does not change the sound until the user edits it.
+        let t = state
+            .last_playhead_ms
+            .saturating_sub(clip.start_time_ms)
+            .min(clip.duration_ms);
+        kfs.push(caprust_core::clip::VolumeKeyframe {
+            t_ms: t,
+            gain_db: clip.volume_db,
+        });
+        changed = true;
+    }
+    if !can_add {
+        add_resp.on_hover_text(tr("props-sound-kf-limit"));
+    }
+
+    if changed {
+        kfs.sort_by_key(|k| k.t_ms);
+        state.pending.push(PendingEdit::VolumeKeyframes(kfs));
+    }
 
     ui.add_space(10.0);
     ui.separator();
