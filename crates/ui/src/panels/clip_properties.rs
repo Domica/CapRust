@@ -70,6 +70,11 @@ pub enum PendingEdit {
     /// Replace the auto-reframe keypoints on the clip. Empty Vec =
     /// clear the pan path and fall back to source fit.
     AutoReframe(Vec<caprust_core::clip::ReframeKeypoint>),
+    /// Start an auto-reframe analysis for the currently-selected
+    /// clip. The dispatcher resolves the clip id from the selection
+    /// and hands it to start_reframe_job. No payload because the
+    /// result arrives asynchronously through reframe_rx.
+    StartReframe,
     /// Enable or disable the speed ramp end. Some(x) = ramp to x.
     SpeedEnd(Option<f32>),
     /// Set the easing curve of the speed ramp.
@@ -404,6 +409,57 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             );
             ui.end_row();
         });
+
+    ui.add_space(10.0);
+    ui.separator();
+
+    // --- Auto-reframe ---
+    ui.label(egui::RichText::new(tr("props-video-auto-reframe")).strong());
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(tr("props-auto-reframe-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.horizontal(|ui| {
+        let can_run = matches!(
+            clip.clip_type,
+            ClipType::Video { .. } | ClipType::Image { .. }
+        );
+        let n = clip.auto_reframe.len();
+        if n == 0 {
+            ui.label(
+                egui::RichText::new(tr("props-auto-reframe-none"))
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+        } else {
+            ui.label(
+                egui::RichText::new(format!("{} ({n})", tr("props-auto-reframe-done")))
+                    .small()
+                    .color(egui::Color32::from_gray(200)),
+            );
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if n > 0
+                && ui
+                    .button(tr("props-auto-reframe-clear"))
+                    .on_hover_text(tr("props-auto-reframe-clear-hint"))
+                    .clicked()
+            {
+                state.pending.push(PendingEdit::AutoReframe(Vec::new()));
+            }
+            ui.add_enabled_ui(can_run, |ui| {
+                if ui
+                    .button(tr("props-auto-reframe-run"))
+                    .on_hover_text(tr("props-auto-reframe-run-hint"))
+                    .clicked()
+                {
+                    state.pending.push(PendingEdit::StartReframe);
+                }
+            });
+        });
+    });
 
     ui.add_space(10.0);
     ui.separator();

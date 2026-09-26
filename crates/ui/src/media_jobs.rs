@@ -461,3 +461,143 @@ fn run_narration_job(
         duration_ms,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Auto-reframe (Phase P2c-3b)
+// ---------------------------------------------------------------------------
+
+/// Request for an auto-reframe analysis job. The job probes the source
+/// to learn its dimensions, extracts a low-rate frame sequence, runs
+/// YuNet on each frame, and computes a keypoint path the render graph
+/// can pan along.
+#[derive(Debug)]
+pub struct ReframeRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: std::path::PathBuf,
+    /// Offset inside the source file where the clip begins.
+    pub t_start_ms: u64,
+    /// Length of the source window to analyse.
+    pub duration_ms: u64,
+    /// Target aspect ratio (width / height). E.g. 9.0/16.0 for a
+    /// vertical short-form output; the crop rectangle fits this.
+    pub target_aspect: f64,
+    /// Path to a YuNet ONNX file on disk.
+    pub model_path: std::path::PathBuf,
+    /// Frames per second to sample. Auto-reframe only needs a rough
+    /// path, so 4 fps is plenty and keeps the job fast.
+    pub sample_fps: f64,
+    /// Downscale the longer side of each sampled frame to at most this
+    /// before running the detector. YuNet runs at 320x320 internally;
+    /// 480 gives it a little more detail than a bare 320 without
+    /// dominating the job.
+    pub max_side: u32,
+}
+
+/// Result of an auto-reframe analysis job.
+#[derive(Debug)]
+pub struct ReframeResult {
+    pub clip_id: uuid::Uuid,
+    pub keypoints: Vec<caprust_core::clip::ReframeKeypoint>,
+    pub frames_analyzed: usize,
+    pub frames_with_face: usize,
+}
+
+/// Spawn a background thread that runs the full auto-reframe pipeline:
+/// probe the source for its native dimensions, extract sampled RGB
+/// frames, run YuNet on each, and compute a keypoint path.
+///
+/// Returns immediately with a receiver. `ffmpeg` and `ffprobe` must be
+/// Some -- caller is responsible for verifying availability.
+pub fn spawn_reframe_job(
+    ffmpeg: std::path::PathBuf,
+    ffprobe: std::path::PathBuf,
+    req: ReframeRequest,
+) -> std::sync::mpsc::Receiver<Result<ReframeResult, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-reframe".into())
+        .spawn(move || {
+            let result = run_reframe_job(&ffmpeg, &ffprobe, &req);
+            let _ = tx.send(result);
+        })
+        .expect("spawn reframe thread");
+
+    rx
+}
+
+fn run_reframe_job(
+    ffmpeg: &std::path::Path,
+    ffprobe: &std::path::Path,
+    req: &ReframeRequest,
+) -> Result<ReframeResult, String> {
+    // 1. Probe the source to learn its native dimensions.
+    let probe = caprust_media_io::ffprobe::probe(ffprobe, &req.source_path)
+        .map_err(|e| format!("probe {}: {e}", req.source_path.display()))?;
+    if !probe.has_video {
+        return Err("source has no video stream".into());
+    }
+    let src_w = probe
+        .width
+        .ok_or_else(|| "probe: missing width".to_string())?;
+    let src_h = probe
+        .height
+        .ok_or_else(|| "probe: missing height".to_string())?;
+    if src_w < 2 || src_h < 2 {
+        return Err(format!("invalid source dimensions {src_w}x{src_h}"));
+    }
+
+    // 2. Extract sampled frames.
+    let frames = caprust_media_io::frame_extract::extract_rgb_frames(
+        ffmpeg,
+        &req.source_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.sample_fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("frame extraction: {e}"))?;
+
+    if frames.is_empty() {
+        return Ok(ReframeResult {
+            clip_id: req.clip_id,
+            keypoints: Vec::new(),
+            frames_analyzed: 0,
+            frames_with_face: 0,
+        });
+    }
+
+    // 3. Load the detector and run it.
+    let detector = caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+        .map_err(|e| format!("load YuNet: {e}"))?;
+    let samples = caprust_media_io::auto_reframe::detect_face_centers(&frames, &detector)
+        .map_err(|e| format!("face detection: {e}"))?;
+
+    let frames_with_face = samples.iter().filter(|(_, c)| c.is_some()).count();
+
+    // 4. Compute the keypoint path. Frame aspect is the source aspect
+    //    (before our downscale, which preserves it).
+    let frame_aspect = src_w as f64 / src_h as f64;
+    let keypoints = caprust_media_io::auto_reframe::compute_keypoints_from_centers(
+        &samples,
+        frame_aspect,
+        req.target_aspect,
+    );
+
+    tracing::info!(
+        "reframe: clip {} -- {} frames, {} with face, {} keypoints",
+        req.clip_id,
+        frames.len(),
+        frames_with_face,
+        keypoints.len()
+    );
+
+    Ok(ReframeResult {
+        clip_id: req.clip_id,
+        keypoints,
+        frames_analyzed: frames.len(),
+        frames_with_face,
+    })
+}
