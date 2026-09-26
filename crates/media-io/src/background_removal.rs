@@ -47,11 +47,20 @@ impl BackgroundRemover {
         }
         let model = tract_onnx::onnx()
             .model_for_path(model_path)
-            .with_context(|| format!("load ONNX model: {}", model_path.display()))?
+            .map_err(|e| {
+                // tract wraps its parse errors in an opaque Display
+                // that hides the real reason (missing op, bad attr,
+                // unsupported type). Log the Debug form so the user
+                // can see what tract actually choked on.
+                anyhow!(
+                    "load ONNX model {}: {e:?}\n  (this usually means tract-onnx 0.22 does not support an operator in the file; try --log-level debug for the full chain)",
+                    model_path.display()
+                )
+            })?
             .into_optimized()
-            .context("optimize ONNX model")?
+            .map_err(|e| anyhow!("optimize ONNX model: {e:?}"))?
             .into_runnable()
-            .context("build runnable plan")?;
+            .map_err(|e| anyhow!("build runnable plan: {e:?}"))?;
         tracing::info!("background_removal: loaded {}", model_path.display());
         Ok(Self { model })
     }
