@@ -223,6 +223,12 @@ pub struct CapRustApp {
     pub playback_started_at: Option<std::time::Instant>,
     /// Playhead value (ms) at the moment playback started.
     pub playback_started_ms: u64,
+    /// Hash of the render-relevant project state at the moment the
+    /// current PreviewRenderer was spawned. When the live project
+    /// hashes differently, the renderer is respawned at the current
+    /// playhead so effect / transition / speed / volume edits are
+    /// visible without a manual seek. See ProjectState::render_hash.
+    pub preview_plan_hash: u64,
     pub job_runner: JobRunner,
 }
 
@@ -392,6 +398,7 @@ impl CapRustApp {
             explicit_seek_ms: None,
             playback_started_at: None,
             playback_started_ms: 0,
+            preview_plan_hash: 0,
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -1661,10 +1668,14 @@ impl CapRustApp {
     /// status. Clears `model_download` on any terminal event.
     fn drain_model_download(&mut self) {
         use caprust_core::models::DownloadEvent;
-        let Some((model_id, rx)) = self.model_download.as_ref() else {
+        // Take the receiver out so we can mutate self freely inside the
+        // loop. Put it back if the stream is still active; drop it on
+        // any terminal event (Done / Failed / Disconnected) so the next
+        // download can start.
+        let Some((model_id, rx)) = self.model_download.take() else {
             return;
         };
-        let model_id = model_id.clone();
+        let mut keep = true;
         loop {
             match rx.try_recv() {
                 Ok(DownloadEvent::Started { total_bytes }) => {
@@ -1698,7 +1709,8 @@ impl CapRustApp {
                         m.progress = 1.0;
                         m.enabled = true;
                     }
-                    self.model_download = None;
+                    self.toast(format!("Model ready: {model_id}"));
+                    keep = false;
                     break;
                 }
                 Ok(DownloadEvent::Failed(msg)) => {
@@ -1708,16 +1720,19 @@ impl CapRustApp {
                         m.progress = 0.0;
                     }
                     self.toast(format!("Model download failed: {msg}"));
-                    self.model_download = None;
+                    keep = false;
                     break;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     tracing::warn!("model download thread vanished");
-                    self.model_download = None;
+                    keep = false;
                     break;
                 }
             }
+        }
+        if keep {
+            self.model_download = Some((model_id, rx));
         }
     }
 
@@ -4121,6 +4136,27 @@ impl CapRustApp {
                         clip_info.is_some(),
                         self.ffmpeg_status.ffmpeg.is_some(),
                     );
+                }
+            }
+
+            // ---- Phase K (K1): auto-respawn on render-relevant change ----
+            // Hash-based detection instead of hooking every
+            // undo_stack.execute site. Undo/redo, paste, load, and any
+            // future command automatically invalidate. Guarded by
+            // `playing && has_frame` so a paused preview does not
+            // thrash and the very first spawn (has_frame == false) is
+            // not double-triggered.
+            //
+            // Limitation: a slider drag respawns once per change, not
+            // seamlessly. Seamless double-buffered swap is Phase K2,
+            // a separate PR if this proves jittery in practice.
+            {
+                let live = self.project.render_hash();
+                if live != self.preview_plan_hash {
+                    self.preview_plan_hash = live;
+                    if self.preview.playing && self.preview_player.has_frame {
+                        self.explicit_seek_ms = Some(self.playhead_ms);
+                    }
                 }
             }
 
