@@ -1290,6 +1290,9 @@ impl CapRustApp {
     /// Pick the SCRFD model if it is on disk, else fall back to YuNet.
     /// Returns (path, is_scrfd). None when neither is present.
     fn resolve_face_model(&mut self) -> Option<(std::path::PathBuf, bool)> {
+        // Pull in any registry entries added since the project was
+        // last saved (e.g. SCRFD in a newer build) before scanning.
+        self.project.models.merge_missing_defaults();
         self.project
             .models
             .scan_local(&self.settings.effective_models_dir());

@@ -225,6 +225,29 @@ impl Default for ModelRegistry {
                     // SCRFD or another fixed-input face detector.
                     "https://huggingface.co/casual02/model-resnet_custom_v3/resolve/main/face_detection_yunet_2022mar.onnx",
                 ),
+                // --- SCRFD-500M (P2c alternative face detector) ---
+                // InsightFace's deployed detector. 640x640 RGB input,
+                // normalised (x - 127.5) / 128.0. 9 outputs: 3 strides
+                // x 3 heads (cls, reg, kps). Verified tract-onnx
+                // compatible; used as the primary auto-reframe backend
+                // when present. Falls back to YuNet if missing.
+                ModelInfo::new(
+                    "scrfd-face",
+                    "SCRFD-500M face detector",
+                    ModelKind::ScrfdDetector,
+                    "multi",
+                    2,
+                    "Fast face detector with 5-point landmarks. Primary auto-reframe backend.",
+                )
+                .with_url(
+                    // yakhyo hosts a direct-download mirror of
+                    // InsightFace's det_500m.onnx (buffalo_s variant
+                    // with 5-point keypoints). No LFS pointer issue,
+                    // no zip. If this mirror disappears, look for
+                    // det_500m.onnx in other InsightFace mirrors; the
+                    // decoder expects the 9-output layout.
+                    "https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/det_500m.onnx",
+                ),
                 // --- Background removal (Phase P3) ---
                 // u2netp, the lightweight variant of U^2-Net. ~4.7 MB,
                 // Apache 2.0. Served from the rembg project releases.
