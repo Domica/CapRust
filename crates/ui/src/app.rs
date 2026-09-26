@@ -237,6 +237,10 @@ pub struct CapRustApp {
     pub export_in_progress: bool,
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
     pub export_progress: f32,
+    /// Wall-clock tracker for the in-flight export. Some while an
+    /// export is running; None otherwise. Powers the ETA and elapsed
+    /// labels under the progress bar.
+    pub export_tracker: Option<caprust_media_io::export_progress::ExportProgressTracker>,
     pub export_finished_path: Option<String>,
     /// Clip currently being streamed in preview (None = no stream).
     pub preview_renderer: Option<PreviewRenderer>,
@@ -423,6 +427,7 @@ impl CapRustApp {
             export_in_progress: false,
             export_rx: None,
             export_progress: 0.0,
+            export_tracker: None,
             export_finished_path: None,
             preview_renderer: None,
             last_frame_instant: None,
@@ -4947,11 +4952,13 @@ impl CapRustApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 let clip_count = self.project.clips.len();
+                let project_dims = self.project.project_dimensions();
                 start_clicked = crate::panels::export_window::show(
                     ui,
                     &mut self.export_state,
                     total_ms,
                     clip_count,
+                    project_dims,
                 );
 
                 // Progress section
@@ -4968,6 +4975,20 @@ impl CapRustApp {
                             .desired_width(ui.available_width())
                             .show_percentage(),
                     );
+                    if let Some(tracker) = &self.export_tracker {
+                        let elapsed_s = tracker.elapsed_secs();
+                        let eta_s = tracker.eta_string(self.export_progress);
+                        let mut line =
+                            format!("{}: {}", tr("exp-elapsed"), format_short_time(elapsed_s));
+                        if let Some(eta) = eta_s {
+                            line.push_str(&format!(" · {}: {eta}", tr("exp-remaining")));
+                        }
+                        ui.label(
+                            egui::RichText::new(line)
+                                .small()
+                                .color(egui::Color32::from_gray(180)),
+                        );
+                    }
                     ctx.request_repaint();
                 }
 
@@ -5414,6 +5435,8 @@ impl CapRustApp {
         self.export_rx = Some(rx);
         self.export_in_progress = true;
         self.export_progress = 0.0;
+        self.export_tracker =
+            Some(caprust_media_io::export_progress::ExportProgressTracker::start());
         self.export_finished_path = None;
     }
 
@@ -5451,6 +5474,7 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.export_in_progress = false;
+                    self.export_tracker = None;
                     self.export_finished_path = Some(output.to_string_lossy().to_string());
                 }
                 ExportEvent::Failed(msg) => {
@@ -5459,6 +5483,7 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.export_in_progress = false;
+                    self.export_tracker = None;
                 }
             }
         }
@@ -5497,6 +5522,22 @@ impl CapRustApp {
                 }
             });
         self.settings_open = open;
+    }
+}
+
+/// Short "3m 12s" / "45s" / "1h 05m" formatter for the export ETA
+/// label. Zero-valued leading units are omitted.
+fn format_short_time(seconds: f32) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if h > 0 {
+        format!("{h}h {m:02}m")
+    } else if m > 0 {
+        format!("{m}m {s:02}s")
+    } else {
+        format!("{s}s")
     }
 }
 
