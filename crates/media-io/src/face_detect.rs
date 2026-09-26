@@ -195,29 +195,26 @@ impl FaceDetector {
     /// Letterbox RGB into a (1, 3, 320, 320) CHW tensor, BGR channel
     /// order, values in 0..255, no normalization.
     fn preprocess(&self, rgb: &[u8], width: u32, height: u32) -> tract_ndarray::Array4<f32> {
-        let (scale, pad_x, pad_y) = letterbox_params(width, height);
-        let new_w = (width as f32 * scale).round() as u32;
-        let new_h = (height as f32 * scale).round() as u32;
-
+        // Direct resize (stretch), not letterbox. The YuNet demos use
+        // cv2.resize to the network input size; the HF 2022mar export
+        // expects that path. Letterboxing (preserve aspect + pad)
+        // makes non-square frames come through distorted, which killed
+        // every detection.
         let mut arr =
             tract_ndarray::Array4::<f32>::zeros((1, 3, INPUT_SIZE as usize, INPUT_SIZE as usize));
 
-        // Bilinear sample from the source into the letterboxed region.
-        // tract doesn't ship a resampler and YuNet was trained on
-        // cv2.resize (bilinear), so nearest-neighbor would degrade
-        // accuracy on small faces. 40 lines of arithmetic is cheaper
-        // than a pull on the image crate's resize machinery.
-        for dy in 0..new_h {
-            for dx in 0..new_w {
-                let sx = (dx as f32 + 0.5) / scale - 0.5;
-                let sy = (dy as f32 + 0.5) / scale - 0.5;
-                let (r, g, b) = bilinear_rgb(rgb, width, height, sx, sy);
-                let ox = (dx + pad_x) as usize;
-                let oy = (dy + pad_y) as usize;
+        let sx = width as f32 / INPUT_SIZE as f32;
+        let sy = height as f32 / INPUT_SIZE as f32;
+
+        for dy in 0..INPUT_SIZE {
+            for dx in 0..INPUT_SIZE {
+                let src_x = (dx as f32 + 0.5) * sx - 0.5;
+                let src_y = (dy as f32 + 0.5) * sy - 0.5;
+                let (r, g, b) = bilinear_rgb(rgb, width, height, src_x, src_y);
                 // BGR: channel 0 = blue, 1 = green, 2 = red.
-                arr[[0, 0, oy, ox]] = b;
-                arr[[0, 1, oy, ox]] = g;
-                arr[[0, 2, oy, ox]] = r;
+                arr[[0, 0, dy as usize, dx as usize]] = b;
+                arr[[0, 1, dy as usize, dx as usize]] = g;
+                arr[[0, 2, dy as usize, dx as usize]] = r;
             }
         }
 

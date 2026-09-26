@@ -17,6 +17,11 @@ pub enum ModelKind {
     /// Face detector for auto-reframe (Phase P2). Single small ONNX
     /// file, no sibling config. Downloaded on demand like the others.
     FaceDetector,
+    /// SCRFD-500M face detector (P2c alternative). 640x640 RGB input,
+    /// distance-format decode. Verified tract-onnx compatible, used as
+    /// the primary auto-reframe detector when present; YuNet stays as
+    /// a fallback.
+    ScrfdDetector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -485,9 +490,12 @@ impl ModelRegistry {
         let filename = match kind {
             // Caption models are Whisper GGML .bin files; everything
             // else on the registry is ONNX.
-            Some(ModelKind::Narration | ModelKind::FaceDetector | ModelKind::BackgroundRemover) => {
-                format!("{id}.onnx")
-            }
+            Some(
+                ModelKind::Narration
+                | ModelKind::FaceDetector
+                | ModelKind::ScrfdDetector
+                | ModelKind::BackgroundRemover,
+            ) => format!("{id}.onnx"),
             _ => format!("{id}.bin"),
         };
         models_dir.join(filename)

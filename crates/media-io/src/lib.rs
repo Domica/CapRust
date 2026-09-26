@@ -12,6 +12,7 @@ pub mod frame_extract;
 pub mod piper;
 pub mod player;
 pub mod preview_render;
+pub mod scrfd;
 pub mod streamer;
 pub mod thumbnail;
 pub mod whisper;

@@ -1287,6 +1287,37 @@ impl CapRustApp {
     /// Kick off an auto-reframe analysis for the given clip. Requires
     /// the YuNet model on disk and ffmpeg + ffprobe. Silently no-ops
     /// with a toast when any prerequisite is missing.
+    /// Pick the SCRFD model if it is on disk, else fall back to YuNet.
+    /// Returns (path, is_scrfd). None when neither is present.
+    fn resolve_face_model(&mut self) -> Option<(std::path::PathBuf, bool)> {
+        self.project
+            .models
+            .scan_local(&self.settings.effective_models_dir());
+        let models_dir = self.settings.effective_models_dir();
+        let all = &self.project.models.models;
+        let resolve =
+            |id: &str| caprust_core::models::ModelRegistry::local_path_static(all, &models_dir, id);
+        let scrfd = all
+            .iter()
+            .find(|m| m.kind == caprust_core::ModelKind::ScrfdDetector);
+        if let Some(m) = scrfd {
+            let p = resolve(&m.id);
+            if p.is_file() {
+                return Some((p, true));
+            }
+        }
+        let yunet = all
+            .iter()
+            .find(|m| m.kind == caprust_core::ModelKind::FaceDetector);
+        if let Some(m) = yunet {
+            let p = resolve(&m.id);
+            if p.is_file() {
+                return Some((p, false));
+            }
+        }
+        None
+    }
+
     fn start_reframe_job(&mut self, clip_id: uuid::Uuid) {
         if self.reframe_rx.is_some() {
             self.toast(tr("toast-reframe-busy"));
@@ -1310,25 +1341,8 @@ impl CapRustApp {
             return;
         }
 
-        // Model: resolve YuNet path from the registry.
-        self.project
-            .models
-            .scan_local(&self.settings.effective_models_dir());
-        let models_dir = self.settings.effective_models_dir();
-        let model_path = self
-            .project
-            .models
-            .models
-            .iter()
-            .find(|m| m.kind == caprust_core::ModelKind::FaceDetector)
-            .map(|m| {
-                caprust_core::models::ModelRegistry::local_path_static(
-                    &self.project.models.models,
-                    &models_dir,
-                    &m.id,
-                )
-            });
-        let Some(model_path) = model_path.filter(|p| p.is_file()) else {
+        // Model: prefer SCRFD, fall back to YuNet.
+        let Some((model_path, model_is_scrfd)) = self.resolve_face_model() else {
             self.toast(tr("toast-reframe-needs-model"));
             return;
         };
@@ -1358,6 +1372,7 @@ impl CapRustApp {
             duration_ms,
             target_aspect,
             model_path,
+            model_is_scrfd,
             sample_fps: 4.0,
             max_side: 480,
         };
@@ -2154,6 +2169,7 @@ impl CapRustApp {
                 Some(format!("{url}.json")),
             ),
             caprust_core::ModelKind::FaceDetector => (format!("{model_id}.onnx"), None),
+            caprust_core::ModelKind::ScrfdDetector => (format!("{model_id}.onnx"), None),
             caprust_core::ModelKind::BackgroundRemover => (format!("{model_id}.onnx"), None),
         };
         let target = dir.join(filename);
@@ -5073,6 +5089,7 @@ impl CapRustApp {
             // Caption / Narration are listed), but the match must stay
             // exhaustive so a future tab addition compiles.
             caprust_core::ModelKind::FaceDetector => tr("mp-face-title"),
+            caprust_core::ModelKind::ScrfdDetector => tr("mp-scrfd-title"),
             caprust_core::ModelKind::BackgroundRemover => tr("mp-bg-title"),
         };
 
@@ -5289,6 +5306,11 @@ impl CapRustApp {
                     // The P2 auto-reframe path picks the model up from
                     // the registry on demand; there is no user-facing
                     // action to trigger here beyond the success toast.
+                }
+                caprust_core::ModelKind::ScrfdDetector => {
+                    // Same as FaceDetector: resolved on demand by
+                    // resolve_face_model when an auto-reframe job
+                    // starts.
                 }
                 caprust_core::ModelKind::BackgroundRemover => {
                     // P3 path resolves the model from the registry on
