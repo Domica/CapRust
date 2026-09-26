@@ -107,6 +107,7 @@ tt-pan = Alat za pomicanje
 tt-magnetic = Magnetska vremenska linija
 tt-snap = Prikači na isječke
 tt-follow = Prati kursor
+tt-trim-follow = Kazaljka prati rub pri obrezivanju
 tt-captions = Generiraj titlove
 tt-captions-all-in-track = Generiraj titlove za sve isječke u traci
 toast-caption-queued = Isječci u redu za transkripciju
