@@ -267,6 +267,20 @@ impl PreviewRenderer {
                     }
                 }
             }
+
+            // Flush the delay queue on EOF. ffmpeg has finished
+            // producing frames, but the queue still holds `av_delay`
+            // worth of frames that were being held back for A/V sync.
+            // Without this drain the tail of the clip never reaches
+            // the UI and playback appears to stall ~650 ms before the
+            // end. This only fires when the main loop exits normally
+            // (EOF); a `break` from a failed `tx.send` leaves the
+            // queue untouched because the UI is already gone.
+            while let Some(f) = delay_queue.pop_front() {
+                if tx.send(f).is_err() {
+                    break;
+                }
+            }
         });
 
         tracing::info!(
