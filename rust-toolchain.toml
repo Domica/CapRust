@@ -1,0 +1,7 @@
+# Pin the Rust toolchain so dev, CI, and devcontainer all resolve to
+# the same compiler. 1.91 is the MSRV for tract-onnx 0.23.x, which we
+# need for the pytorch_half_pixel Resize mode that u2netp (and most
+# PyTorch-exported ONNX models) use.
+[toolchain]
+channel = "1.91.0"
+components = ["rustfmt", "clippy", "rust-analyzer"]
