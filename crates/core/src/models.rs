@@ -206,10 +206,18 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     // media.githubusercontent.com serves the LFS
-                    // binary. The plain raw.* host returns the Git LFS
-                    // pointer text (~130 bytes) which tract cannot
-                    // parse: 'invalid wire type value: 6'.
-                    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+                    // binary (raw.* returns the pointer).
+                    //
+                    // 2022mar, not 2023mar: the 2023 export uses
+                    // symbolic input dims that produce Resize nodes
+                    // with sizes computed from the input shape, and
+                    // tract-onnx 0.23 cannot reconcile the symbolic
+                    // expression ("Clashing resolution for
+                    // expression. 640=640 != 320"). 2022mar has a
+                    // fixed 320x320 input and plain Resize ops, which
+                    // tract handles fine. Accuracy difference is
+                    // negligible for auto-reframe.
+                    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2022mar.onnx",
                 ),
                 // --- Background removal (Phase P3) ---
                 // u2netp, the lightweight variant of U^2-Net. ~4.7 MB,
