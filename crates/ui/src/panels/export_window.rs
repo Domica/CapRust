@@ -69,6 +69,40 @@ pub struct ExportState {
     pub color_range: ColorRange,
 }
 
+impl ExportState {
+    /// Approximate output size in megabytes for a clip of
+    /// `duration_ms`, using `project_dims` for the "Original"
+    /// resolution tier.
+    ///
+    /// VBR estimates a base bitrate per tier at 1080p, scaled by the
+    /// export pixel count. Real size depends heavily on content
+    /// motion, grain and encoder tuning -- this is a ballpark, not a
+    /// guarantee. CBR (with Advanced enabled) uses the user's
+    /// explicit bitrate unchanged.
+    pub fn estimated_size_mb(&self, duration_ms: u64, project_dims: (u32, u32)) -> f32 {
+        let (export_w, export_h) = self.resolution.dimensions(project_dims.0, project_dims.1);
+        let pixels = (export_w as u64).saturating_mul(export_h as u64);
+        let pixels_1080p: u64 = 1920 * 1080;
+        let pixel_factor = pixels as f64 / pixels_1080p as f64;
+
+        let bitrate_kbps: f64 = if self.advanced && self.rate_mode == RateMode::Cbr {
+            self.bitrate_kbps as f64
+        } else {
+            let base_kbps_1080p = match self.quality {
+                QualityTier::Small => 3_000.0,
+                QualityTier::Regular => 8_000.0,
+                QualityTier::Large => 16_000.0,
+            };
+            base_kbps_1080p * pixel_factor
+        };
+
+        let duration_s = duration_ms as f64 / 1000.0;
+        let bits = bitrate_kbps * 1000.0 * duration_s;
+        let bytes = bits / 8.0;
+        (bytes / (1024.0 * 1024.0)) as f32
+    }
+}
+
 impl Default for ExportState {
     fn default() -> Self {
         Self {
@@ -93,7 +127,13 @@ fn default_videos_dir() -> String {
 }
 
 /// Returns true if the user clicked Export.
-pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64, clip_count: usize) -> bool {
+pub fn show(
+    ui: &mut Ui,
+    state: &mut ExportState,
+    duration_ms: u64,
+    clip_count: usize,
+    project_dims: (u32, u32),
+) -> bool {
     let mut clicked_export = false;
 
     // --- Summary ---
@@ -176,6 +216,24 @@ pub fn show(ui: &mut Ui, state: &mut ExportState, duration_ms: u64, clip_count: 
             ui.selectable_value(&mut state.quality, q, q.label());
         }
     });
+
+    // Live size estimate. Updates whenever any of duration,
+    // resolution, quality, or (Advanced) rate mode / bitrate change,
+    // because it is recomputed from state on every frame.
+    let size_mb = state.estimated_size_mb(duration_ms, project_dims);
+    let size_text = if size_mb < 1.0 {
+        format!("~{:.0} KB", size_mb * 1024.0)
+    } else if size_mb < 1024.0 {
+        format!("~{size_mb:.1} MB")
+    } else {
+        format!("~{:.2} GB", size_mb / 1024.0)
+    };
+    ui.add_space(2.0);
+    ui.label(
+        egui::RichText::new(format!("{}: {size_text}", tr("exp-size-estimate")))
+            .small()
+            .color(egui::Color32::from_gray(160)),
+    );
 
     ui.add_space(12.0);
     ui.separator();
