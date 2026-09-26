@@ -69,6 +69,10 @@ pub enum PendingEdit {
     DuckAgainst(Option<Uuid>),
     /// Enable or disable the speed ramp end. Some(x) = ramp to x.
     SpeedEnd(Option<f32>),
+    /// Set the easing curve of the speed ramp.
+    SpeedEase(caprust_core::clip::EaseCurve),
+    /// Set the range of the speed ramp (whole clip / first N / last N).
+    SpeedRange(caprust_core::clip::SpeedRampRange),
 }
 
 pub fn show(
@@ -340,6 +344,28 @@ pub fn show(
         });
 }
 
+fn ease_label(e: caprust_core::clip::EaseCurve) -> String {
+    use caprust_core::clip::EaseCurve;
+    let key = match e {
+        EaseCurve::Linear => "props-ease-linear",
+        EaseCurve::EaseIn => "props-ease-in",
+        EaseCurve::EaseOut => "props-ease-out",
+        EaseCurve::EaseInOut => "props-ease-in-out",
+    };
+    tr(key)
+}
+
+/// Extract the N (ms) from a SpeedRampRange, or the default 2000 for
+/// WholeClip so the radio button switch keeps a sensible last value.
+fn speed_range_n(r: &caprust_core::clip::SpeedRampRange) -> u64 {
+    use caprust_core::clip::SpeedRampRange;
+    match r {
+        SpeedRampRange::FirstN(n) => *n,
+        SpeedRampRange::LastN(n) => *n,
+        SpeedRampRange::WholeClip => 2000,
+    }
+}
+
 fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // --- Main ---
     ui.label(egui::RichText::new(tr("props-video-main")).strong());
@@ -382,7 +408,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // --- Speed ---
     ui.label(egui::RichText::new(tr("props-video-speed")).strong());
     ui.add_space(4.0);
-    egui::Grid::new("clip_speed_grid")
+    egui::Grid::new("clip_speed_base_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
@@ -536,24 +562,184 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             ui.end_row();
         });
 
+    // Ease + range (only meaningful when a ramp is enabled)
+    let ramp_on = clip.speed_end.is_some();
+    ui.add_enabled_ui(ramp_on, |ui| {
+        egui::Grid::new("clip_speed_ease_grid")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                ui.label(tr("props-field-speed-ease"));
+                egui::ComboBox::from_id_salt("speed_ease_combo")
+                    .selected_text(ease_label(clip.speed_ease))
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        for e in [
+                            caprust_core::clip::EaseCurve::Linear,
+                            caprust_core::clip::EaseCurve::EaseIn,
+                            caprust_core::clip::EaseCurve::EaseOut,
+                            caprust_core::clip::EaseCurve::EaseInOut,
+                        ] {
+                            let selected = clip.speed_ease == e;
+                            if ui.selectable_label(selected, ease_label(e)).clicked() && !selected {
+                                state.pending.push(PendingEdit::SpeedEase(e));
+                            }
+                        }
+                    });
+                ui.end_row();
+
+                ui.label(tr("props-field-speed-range"));
+                ui.horizontal(|ui| {
+                    let current_n = speed_range_n(&clip.speed_range);
+                    let is_whole = matches!(
+                        clip.speed_range,
+                        caprust_core::clip::SpeedRampRange::WholeClip
+                    );
+                    let is_first = matches!(
+                        clip.speed_range,
+                        caprust_core::clip::SpeedRampRange::FirstN(_)
+                    );
+                    let is_last = matches!(
+                        clip.speed_range,
+                        caprust_core::clip::SpeedRampRange::LastN(_)
+                    );
+
+                    if ui
+                        .selectable_label(is_whole, tr("props-speed-range-whole"))
+                        .clicked()
+                        && !is_whole
+                    {
+                        state.pending.push(PendingEdit::SpeedRange(
+                            caprust_core::clip::SpeedRampRange::WholeClip,
+                        ));
+                    }
+                    if ui
+                        .selectable_label(is_first, tr("props-speed-range-first"))
+                        .clicked()
+                        && !is_first
+                    {
+                        state.pending.push(PendingEdit::SpeedRange(
+                            caprust_core::clip::SpeedRampRange::FirstN(current_n),
+                        ));
+                    }
+                    if ui
+                        .selectable_label(is_last, tr("props-speed-range-last"))
+                        .clicked()
+                        && !is_last
+                    {
+                        state.pending.push(PendingEdit::SpeedRange(
+                            caprust_core::clip::SpeedRampRange::LastN(current_n),
+                        ));
+                    }
+                });
+                ui.end_row();
+
+                if !matches!(
+                    clip.speed_range,
+                    caprust_core::clip::SpeedRampRange::WholeClip
+                ) {
+                    ui.label(tr("props-field-speed-n"));
+                    let mut n_secs = (speed_range_n(&clip.speed_range) as f32) / 1000.0;
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut n_secs, 0.5..=10.0)
+                                .suffix(" s")
+                                .show_value(true),
+                        )
+                        .changed()
+                    {
+                        let n_ms = (n_secs * 1000.0) as u64;
+                        let new_range = match clip.speed_range {
+                            caprust_core::clip::SpeedRampRange::FirstN(_) => {
+                                caprust_core::clip::SpeedRampRange::FirstN(n_ms)
+                            }
+                            caprust_core::clip::SpeedRampRange::LastN(_) => {
+                                caprust_core::clip::SpeedRampRange::LastN(n_ms)
+                            }
+                            caprust_core::clip::SpeedRampRange::WholeClip => {
+                                caprust_core::clip::SpeedRampRange::WholeClip
+                            }
+                        };
+                        state.pending.push(PendingEdit::SpeedRange(new_range));
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+
     // Presets
     ui.horizontal(|ui| {
         ui.label(tr("props-field-speed-preset"));
-        let presets: &[(&str, f32, Option<f32>)] = &[
-            ("1x", 1.0, None),
-            ("0.5x", 0.5, None),
-            ("2x", 2.0, None),
-            ("4x", 4.0, None),
-            ("Slow-out", 1.0, Some(0.5)),
-            ("Fast-in", 0.5, Some(2.0)),
-            ("Ramp-up", 0.5, Some(2.0)),
-            ("Ramp-down", 2.0, Some(0.5)),
+        use caprust_core::clip::{EaseCurve, SpeedRampRange};
+        type Preset = (&'static str, f32, Option<f32>, EaseCurve, SpeedRampRange);
+        let presets: &[Preset] = &[
+            (
+                "1x",
+                1.0,
+                None,
+                EaseCurve::Linear,
+                SpeedRampRange::WholeClip,
+            ),
+            (
+                "0.5x",
+                0.5,
+                None,
+                EaseCurve::Linear,
+                SpeedRampRange::WholeClip,
+            ),
+            (
+                "2x",
+                2.0,
+                None,
+                EaseCurve::Linear,
+                SpeedRampRange::WholeClip,
+            ),
+            (
+                "4x",
+                4.0,
+                None,
+                EaseCurve::Linear,
+                SpeedRampRange::WholeClip,
+            ),
+            (
+                "Slow-out",
+                1.0,
+                Some(0.5),
+                EaseCurve::EaseOut,
+                SpeedRampRange::LastN(2000),
+            ),
+            (
+                "Fast-in",
+                0.5,
+                Some(1.0),
+                EaseCurve::EaseIn,
+                SpeedRampRange::FirstN(2000),
+            ),
+            (
+                "Ramp-up",
+                0.5,
+                Some(2.0),
+                EaseCurve::EaseIn,
+                SpeedRampRange::WholeClip,
+            ),
+            (
+                "Ramp-down",
+                2.0,
+                Some(0.5),
+                EaseCurve::EaseOut,
+                SpeedRampRange::WholeClip,
+            ),
         ];
-        for (label, start_v, end_v) in presets {
-            let selected = (clip.speed - *start_v).abs() < 0.01 && clip.speed_end == *end_v;
+        for (label, start_v, end_v, e, r) in presets {
+            let selected = (clip.speed - *start_v).abs() < 0.01
+                && clip.speed_end == *end_v
+                && clip.speed_ease == *e
+                && clip.speed_range == *r;
             if ui.selectable_label(selected, *label).clicked() && !selected {
                 state.pending.push(PendingEdit::Speed(*start_v));
                 state.pending.push(PendingEdit::SpeedEnd(*end_v));
+                state.pending.push(PendingEdit::SpeedEase(*e));
+                state.pending.push(PendingEdit::SpeedRange(*r));
             }
         }
     });
