@@ -882,14 +882,14 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
         "sepia" => ",colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131".into(),
         "bw" => ",hue=s=0".into(),
         "glitch" => format!(
-            ",chromashift=cbh={:.1}:crh=-{:.1}",
-            4.0 * amount,
-            4.0 * amount
+            ",chromashift=cbh={cb:.1}:crh=-{cr:.1},format=yuv420p",
+            cb = 4.0 * amount,
+            cr = 4.0 * amount,
         ),
         "rgb_split" => format!(
-            ",chromashift=cbh={:.1}:crh=-{:.1}",
-            6.0 * amount,
-            6.0 * amount
+            ",chromashift=cbh={cb:.1}:crh=-{cr:.1},format=yuv420p",
+            cb = 6.0 * amount,
+            cr = 6.0 * amount,
         ),
         "flash" => format!(
             ",eq=brightness={:.3}:contrast={:.3}",
@@ -899,9 +899,15 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
         "mirror" => ",hflip".into(),
         "kaleido" => ",vflip,hflip".into(),
         "old_film" => ",curves=preset=vintage,noise=alls=15:allf=t".into(),
+        "vintage" => format!(
+            ",curves=preset=vintage,colorbalance=rm={rm:.3}:gm={gm:.3}:bm={bm:.3}",
+            rm = 0.08 * amount,
+            gm = 0.02 * amount,
+            bm = -0.06 * amount,
+        ),
         "vhs" => format!(
-            ",chromashift=cbh=2:crh=-2,noise=alls={:.0}:allf=t",
-            8.0 * amount
+            ",chromashift=cbh=2:crh=-2,noise=alls={s:.0}:allf=t,eq=brightness=0.06:contrast=1.05,format=yuv420p",
+            s = 8.0 * amount,
         ),
         "light_leak" => format!(
             ",colorbalance=rm={:.3}:gm={:.3}",
@@ -1071,16 +1077,25 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
         // Crop is centered (offset -(A/2) from each side), so the visible
         // window does not drift.
         "zoom_pulse" => {
-            let amp = (8.0 * amount).clamp(2.0, 40.0);
-            let freq = (1.0 / amount.max(0.25)).clamp(0.3, 3.0);
-            // iw-2*amp .. iw (zoom 1x..1+2amp/iw). We oscillate the crop
-            // size between (iw-amp) and iw, using sin mapped to [0,1].
-            // Crop x/y stay centered: (iw-ow)/2.
+            // Breathing crop: a fixed inner window (90% of the source)
+            // whose x/y drift on a slow sine/cosine. Reads as a soft
+            // pulse / handheld breathe.
             //
-            // The `crop` filter accepts expressions in `t` and `ow`/`oh`
-            // which refer to the output size. Use `sin(2*PI*t*freq)`.
+            // Why not a true zoom? ffmpeg's `crop` only re-evaluates
+            // x/y per frame; w/h are fixed at startup, so the old
+            // w='iw-A*(1+sin(t))/2' attempt produced a degenerate
+            // crop and froze the preview. `zoompan` would work but its
+            // s= option requires a concrete pixel size, and
+            // build_one_effect runs without dimensions. Until the
+            // fragment API carries w/h, breathing crop is the honest
+            // approximation.
+            //
+            // amp and freq still scale with amount: more amount =
+            // wider drift + slower pulse.
+            let amp = (6.0 * amount).clamp(1.5, 20.0);
+            let freq = (1.0 / amount.max(0.25)).clamp(0.3, 3.0);
             format!(
-                ",crop=w='iw-{amp:.2}*(1+sin(2*PI*t*{freq:.3}))/2':                 h='ih-{amp:.2}*(1+sin(2*PI*t*{freq:.3}))/2':                 x='(iw-ow)/2':y='(ih-oh)/2',                 scale=iw:ih:flags=bicubic"
+                ",crop=w=iw*0.9:h=ih*0.9:x='(iw-ow)/2+{amp:.2}*sin(2*PI*t*{freq:.3})':y='(ih-oh)/2+{amp:.2}*cos(2*PI*t*{freq:.3})',scale=iw*1.111111:ih*1.111111:flags=bicubic"
             )
         }
 

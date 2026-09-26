@@ -344,7 +344,7 @@ const FILTERS: &[Preset] = &[
         label_key: "asset-filter-vintage",
         icon: ph::CLOCK_COUNTER_CLOCKWISE,
         color: [180, 150, 110],
-        coming_soon: true,
+        coming_soon: false,
     },
     Preset {
         id: "vivid",
