@@ -1091,6 +1091,10 @@ impl CapRustApp {
         if ev.snapping_toggled && self.timeline_tools.snapping {
             // nothing to do on toggle; snap only matters during drag
         }
+        if ev.trim_follow_toggled {
+            self.settings.trim_follow = self.timeline_tools.trim_follow;
+            tracing::info!("trim_follow = {}", self.settings.trim_follow);
+        }
         if ev.undo {
             let _ = self.undo_stack.undo(&mut self.project);
         }
@@ -3332,12 +3336,35 @@ impl CapRustApp {
                                             cur.track_index = t;
                                         }
                                     }
+                                    // Trim-follow: while trimming an edge
+                                    // and the toggle is on, park the
+                                    // playhead on the edge so the preview
+                                    // shows the exact frame being set.
+                                    if self.settings.trim_follow && d.trim_edge.is_some() {
+                                        let target = snapped.max(0) as u64;
+                                        if target != self.playhead_ms {
+                                            if self.preview.playing {
+                                                self.explicit_seek_ms = Some(target);
+                                                self.playback_started_at =
+                                                    Some(std::time::Instant::now());
+                                                self.playback_started_ms = target;
+                                            }
+                                            self.playhead_ms = target;
+                                        }
+                                    }
                                 }
                             }
                         }
                         ClipAction::DragEnd(id) => {
                             if let Some(d) = self.clip_drag.take() {
                                 if d.clip_id == id {
+                                    // Trim-follow: with magnetic ON the
+                                    // pack slides the clip back into the
+                                    // gap, so re-anchor the playhead on
+                                    // the FINAL edge after the command
+                                    // below runs.
+                                    let was_trim = d.trim_edge.is_some();
+                                    let follow = self.settings.trim_follow;
                                     if let Some(edge) = d.trim_edge {
                                         let dm = d.current_ms - d.origin_ms as i64;
                                         let (ns, nd) = match edge {
@@ -3364,6 +3391,24 @@ impl CapRustApp {
                                         let _ = self
                                             .undo_stack
                                             .execute(Box::new(cmd), &mut self.project);
+                                        if follow {
+                                            // Re-anchor on the final edge so
+                                            // magnetic slide-backs land on
+                                            // the same frame the user saw
+                                            // while dragging.
+                                            let target = match edge {
+                                                TrimEdge::Left => ns,
+                                                TrimEdge::Right => ns + nd,
+                                            };
+                                            if self.preview.playing {
+                                                self.explicit_seek_ms = Some(target);
+                                                self.playback_started_at =
+                                                    Some(std::time::Instant::now());
+                                                self.playback_started_ms = target;
+                                            }
+                                            self.playhead_ms = target;
+                                        }
+                                        let _ = (was_trim, follow);
                                     } else {
                                         let nm = d.current_ms.max(0) as u64;
                                         let nt = d.track_index;

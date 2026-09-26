@@ -12,6 +12,9 @@ pub struct TimelineToolState {
     pub captions_enabled: bool,
     pub narration_enabled: bool,
     pub follow_playhead: bool,
+    /// When true, trimming a clip edge moves the playhead with the
+    /// edge. Mirrors `AppSettings.trim_follow`.
+    pub trim_follow: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -29,6 +32,7 @@ pub struct TimelineToolEvents {
     /// the model family with the most missing entries.
     pub download_models_clicked: bool,
     pub follow_toggled: bool,
+    pub trim_follow_toggled: bool,
     pub undo: bool,
     pub redo: bool,
     pub zoom_in: bool,
@@ -218,6 +222,18 @@ pub fn show(
         ) {
             state.follow_playhead = !state.follow_playhead;
             ev.follow_toggled = true;
+        }
+
+        // --- Trim-follow playhead ---
+        if icon_toggle(
+            ui,
+            ph::ARROWS_HORIZONTAL,
+            &tr("tt-trim-follow"),
+            state.trim_follow,
+            true,
+        ) {
+            state.trim_follow = !state.trim_follow;
+            ev.trim_follow_toggled = true;
         }
 
         ui.separator();

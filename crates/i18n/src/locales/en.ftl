@@ -107,6 +107,7 @@ tt-pan = Pan tool (drag to scroll)
 tt-magnetic = Magnetic timeline
 tt-snap = Snap to clips
 tt-follow = Follow playhead
+tt-trim-follow = Player follows the resize (trim-follow playhead)
 tt-captions = Generate captions
 tt-captions-all-in-track = Caption all clips in this track
 toast-caption-queued = Clips queued for transcription

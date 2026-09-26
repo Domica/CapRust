@@ -27,6 +27,11 @@ pub struct AppSettings {
     /// startup (throttled to once per 24 h, silent on failure).
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
+    /// When true, dragging a clip's trim edge moves the playhead along
+    /// with the edge (head → new start, tail → new end). Off by
+    /// default; mirrors the "trim follow" toggle in the timeline tray.
+    #[serde(default)]
+    pub trim_follow: bool,
 }
 
 fn default_true() -> bool {
@@ -51,6 +56,7 @@ impl Default for AppSettings {
             master_volume: default_master_volume(),
             muted: false,
             check_for_updates: true,
+            trim_follow: false,
         }
     }
 }
