@@ -1934,6 +1934,7 @@ impl CapRustApp {
                 Some(format!("{url}.json")),
             ),
             caprust_core::ModelKind::FaceDetector => (format!("{model_id}.onnx"), None),
+            caprust_core::ModelKind::BackgroundRemover => (format!("{model_id}.onnx"), None),
         };
         let target = dir.join(filename);
         tracing::info!(
@@ -4843,6 +4844,7 @@ impl CapRustApp {
             // Caption / Narration are listed), but the match must stay
             // exhaustive so a future tab addition compiles.
             caprust_core::ModelKind::FaceDetector => tr("mp-face-title"),
+            caprust_core::ModelKind::BackgroundRemover => tr("mp-bg-title"),
         };
 
         let mut open = true;
@@ -5058,6 +5060,10 @@ impl CapRustApp {
                     // The P2 auto-reframe path picks the model up from
                     // the registry on demand; there is no user-facing
                     // action to trigger here beyond the success toast.
+                }
+                caprust_core::ModelKind::BackgroundRemover => {
+                    // P3 path resolves the model from the registry on
+                    // demand; same as FaceDetector.
                 }
             }
             let _ = model_id; // reserved for future "pin this model" behaviour

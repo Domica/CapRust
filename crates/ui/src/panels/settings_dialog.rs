@@ -265,6 +265,12 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
         clicked = Some(id);
     }
 
+    ui.add_space(12.0);
+    ui.label(egui::RichText::new(tr("set-models-bg")).strong());
+    if let Some(id) = show_model_group(ui, models, ModelKind::BackgroundRemover) {
+        clicked = Some(id);
+    }
+
     clicked
 }
 

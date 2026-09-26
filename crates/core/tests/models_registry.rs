@@ -33,8 +33,25 @@ fn registry_kinds_are_distinct_and_nonempty() {
         ModelKind::Caption,
         ModelKind::Narration,
         ModelKind::FaceDetector,
+        ModelKind::BackgroundRemover,
     ] {
         let n = r.models.iter().filter(|m| m.kind == kind).count();
         assert!(n >= 1, "registry must have at least one entry for {kind:?}");
     }
+}
+
+#[test]
+fn registry_has_background_remover_with_url() {
+    let r = ModelRegistry::default();
+    let bg = r
+        .models
+        .iter()
+        .find(|m| m.kind == ModelKind::BackgroundRemover)
+        .expect("u2netp background remover is registered by default");
+    assert_eq!(bg.id, "u2netp-bg");
+    assert!(
+        !bg.url.is_empty(),
+        "background remover must carry a download URL"
+    );
+    assert!(bg.url.ends_with(".onnx"), "ONNX model expected: {}", bg.url);
 }

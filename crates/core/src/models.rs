@@ -11,6 +11,9 @@ pub mod download;
 pub enum ModelKind {
     Caption,
     Narration,
+    /// Background remover for the P3 feature (u2netp). Single ONNX
+    /// file, no sibling config. Produces a per-frame alpha mask.
+    BackgroundRemover,
     /// Face detector for auto-reframe (Phase P2). Single small ONNX
     /// file, no sibling config. Downloaded on demand like the others.
     FaceDetector,
@@ -203,6 +206,24 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+                ),
+                // --- Background removal (Phase P3) ---
+                // u2netp, the lightweight variant of U^2-Net. ~4.7 MB,
+                // Apache 2.0. Served from the rembg project releases.
+                // Input 320x320 RGB, output 320x320 single-channel
+                // alpha. SHA-256 intentionally empty for now: F1b
+                // treats empty as skip-verify, and rembg does not
+                // publish a stable per-release hash on that URL.
+                ModelInfo::new(
+                    "u2netp-bg",
+                    "u2netp background remover",
+                    ModelKind::BackgroundRemover,
+                    "multi",
+                    5,
+                    "Small segmentation model used to remove video backgrounds.",
+                )
+                .with_url(
+                    "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
                 ),
             ],
         }
@@ -444,7 +465,9 @@ impl ModelRegistry {
         let filename = match kind {
             // Caption models are Whisper GGML .bin files; everything
             // else on the registry is ONNX.
-            Some(ModelKind::Narration | ModelKind::FaceDetector) => format!("{id}.onnx"),
+            Some(ModelKind::Narration | ModelKind::FaceDetector | ModelKind::BackgroundRemover) => {
+                format!("{id}.onnx")
+            }
             _ => format!("{id}.bin"),
         };
         models_dir.join(filename)
