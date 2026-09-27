@@ -3312,6 +3312,13 @@ impl CapRustApp {
                                         egui::Id::new(("clip", clip_id)),
                                         egui::Sense::click(),
                                     );
+                                    // Double-click on a clip → focus its
+                                    // TextOverlay content editor in the
+                                    // Properties panel. For non-text clips
+                                    // the dispatcher clears any stale flag.
+                                    if resp.double_clicked() {
+                                        pending_actions.push(ClipAction::FocusTextContent(clip_id));
+                                    }
                                     // Selection is driven from the drag-start
                                     // path below (see pointer_down block).
                                     // Firing Select here as well would toggle
@@ -3830,6 +3837,15 @@ impl CapRustApp {
                                 self.playback_started_ms = target;
                             }
                             self.playhead_ms = target;
+                        }
+                        ClipAction::FocusTextContent(id) => {
+                            // Select the clip (plain click semantics) and
+                            // ask the Properties panel to focus the content
+                            // editor on the next frame. If the clip is not
+                            // a TextOverlay, the panel clears the request
+                            // on its next render.
+                            self.selected_clips = vec![id];
+                            self.properties.focus_content_for = Some(id);
                         }
                         ClipAction::Select(id) => {
                             let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
@@ -5619,6 +5635,10 @@ enum ClipAction {
     FadeDragStart(uuid::Uuid, FadeEdge, f32),
     FadeDragDelta(uuid::Uuid, f32, f32),
     FadeDragEnd(uuid::Uuid),
+    /// Timeline double-click on a clip. Selects it and asks the
+    /// Properties panel to focus the TextOverlay content editor.
+    /// No-op on non-TextOverlay clips.
+    FocusTextContent(uuid::Uuid),
 }
 
 impl eframe::App for CapRustApp {

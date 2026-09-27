@@ -34,6 +34,11 @@ pub struct PropertiesState {
     pub content_buffer: Option<String>,
     /// True while the content field holds focus (used to detect blur).
     pub content_focus: bool,
+    /// Set by a timeline double-click on a clip; the next render of
+    /// `show` requests keyboard focus on that clip's TextOverlay
+    /// content editor. Cleared the moment it is consumed, or on any
+    /// frame where the shown clip is not the requested TextOverlay.
+    pub focus_content_for: Option<Uuid>,
     /// Last playhead value the panel saw, so "+ Add at playhead" knows
     /// where to drop a new keyframe.
     pub last_playhead_ms: u64,
@@ -129,6 +134,16 @@ pub fn show(
         return;
     };
 
+    // Clear a stale focus request when the shown clip is not the one
+    // the timeline asked us to focus. A TextOverlay clip whose id
+    // matches keeps the request alive until its content editor below
+    // consumes it.
+    if state.focus_content_for != Some(clip.id)
+        || !matches!(clip.clip_type, ClipType::TextOverlay { .. })
+    {
+        state.focus_content_for = None;
+    }
+
     // --- Header ---
     ui.horizontal(|ui| {
         ui.label(
@@ -191,6 +206,10 @@ pub fn show(
                 .desired_rows(2)
                 .desired_width(f32::INFINITY),
         );
+        if state.focus_content_for == Some(clip.id) {
+            resp.request_focus();
+            state.focus_content_for = None;
+        }
         let had_focus = state.content_focus;
         let has_focus = resp.has_focus();
         if has_focus {
