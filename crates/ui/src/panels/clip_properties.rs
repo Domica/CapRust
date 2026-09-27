@@ -30,6 +30,10 @@ pub struct PropertiesState {
     pub name_buffer: Option<String>,
     /// True while the name field holds focus (used to detect blur).
     pub name_focus: bool,
+    /// Text buffer for the TextOverlay content field while it has focus.
+    pub content_buffer: Option<String>,
+    /// True while the content field holds focus (used to detect blur).
+    pub content_focus: bool,
     /// Last playhead value the panel saw, so "+ Add at playhead" knows
     /// where to drop a new keyframe.
     pub last_playhead_ms: u64,
@@ -63,6 +67,9 @@ pub enum PendingEdit {
     Name(String),
     /// Set the drawtext style id on a TextOverlay clip.
     TextStyle(String),
+    /// Replace the text content of a TextOverlay clip. Committed on
+    /// blur, never per keystroke.
+    TextContent(String),
     /// Replace the motion transform on a TextOverlay clip.
     TextMotion(caprust_core::clip::TextMotion),
     /// Set or clear the procedural effect on a TextOverlay clip.
@@ -165,6 +172,41 @@ pub fn show(
         }
     });
     ui.separator();
+
+    // --- TextOverlay content editor ---
+    // Multiline TextEdit that commits on blur (never per keystroke).
+    // The clip's render uses `content` directly, so editing here updates
+    // both preview and export on the next render pass.
+    if let ClipType::TextOverlay { content, .. } = &clip.clip_type {
+        ui.horizontal(|ui| {
+            ui.label(tr("props-text-content"));
+        });
+        let mut buf = state
+            .content_buffer
+            .clone()
+            .unwrap_or_else(|| content.clone());
+        let resp = ui.add(
+            egui::TextEdit::multiline(&mut buf)
+                .id(egui::Id::new(("text_content_edit", clip.id)))
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        );
+        let had_focus = state.content_focus;
+        let has_focus = resp.has_focus();
+        if has_focus {
+            state.content_focus = true;
+            state.content_buffer = Some(buf.clone());
+        }
+        if had_focus && !has_focus && buf != *content {
+            state.pending.push(PendingEdit::TextContent(buf));
+            state.content_focus = false;
+            state.content_buffer = None;
+        } else if !has_focus {
+            state.content_focus = false;
+            state.content_buffer = None;
+        }
+        ui.separator();
+    }
 
     // --- TextOverlay style picker ---
     if let ClipType::TextOverlay { style, .. } = &clip.clip_type {

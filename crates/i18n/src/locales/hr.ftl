@@ -172,6 +172,7 @@ preview-volume = Glasnoća
 props-heading = Svojstva
 props-empty = Odaberi isječak za uređivanje svojstava.
 props-name = Naziv:
+props-text-content = Tekst:
 props-text-style = Stil:
 props-text-motion-header = Kretanje
 props-text-motion-x = X

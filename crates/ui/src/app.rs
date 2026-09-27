@@ -4411,6 +4411,12 @@ impl CapRustApp {
                                             .text_style(v);
                                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
+                                PendingEdit::TextContent(v) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .text_content(v);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
                                 PendingEdit::TextMotion(m) => {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)

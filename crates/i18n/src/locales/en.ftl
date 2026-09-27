@@ -172,6 +172,7 @@ preview-volume = Volume
 props-heading = Properties
 props-empty = Select a clip to edit its properties.
 props-name = Name:
+props-text-content = Text:
 props-text-style = Style:
 props-text-motion-header = Motion
 props-text-motion-x = X
