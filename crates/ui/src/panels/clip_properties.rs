@@ -661,9 +661,21 @@ pub fn show(
         return;
     }
 
+    // Audio and Narration clips have no video geometry. Hide the
+    // Video tab button below, and route a stale `state.tab == Video`
+    // from a previously selected clip into show_sound, so audio clips
+    // never surface video-only controls. Do NOT force state.tab every
+    // frame: the user must still be able to click Efekti.
+    let clip_is_audio = matches!(
+        clip.clip_type,
+        ClipType::Audio { .. } | ClipType::Narration { .. }
+    );
+
     // --- Tabs ---
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut state.tab, PropertiesTab::Video, tr("props-tab-video"));
+        if !clip_is_audio {
+            ui.selectable_value(&mut state.tab, PropertiesTab::Video, tr("props-tab-video"));
+        }
         ui.selectable_value(&mut state.tab, PropertiesTab::Sound, tr("props-tab-sound"));
         ui.selectable_value(
             &mut state.tab,
@@ -676,7 +688,13 @@ pub fn show(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| match state.tab {
-            PropertiesTab::Video => show_video(ui, clip, state),
+            PropertiesTab::Video => {
+                if clip_is_audio {
+                    show_sound(ui, clip, state);
+                } else {
+                    show_video(ui, clip, state);
+                }
+            }
             PropertiesTab::Sound => show_sound(ui, clip, state),
             PropertiesTab::Effects => show_effects(ui, clip, state),
         });
