@@ -124,6 +124,14 @@ pub struct CapRustApp {
     pub playhead_ms: u64,
     pub timeline_zoom: f32,
     pub settings_tab: crate::panels::settings_dialog::SettingsTab,
+    /// First-run FFmpeg prompt state. Opened on startup when no
+    /// ffmpeg/ffprobe is on PATH and not previously dismissed. See
+    /// `show_ffmpeg_prompt_window`.
+    pub ffmpeg_prompt: crate::panels::ffmpeg_prompt::FfmpegPromptState,
+    pub ffmpeg_prompt_open: bool,
+    /// True after the auto-open check has run once this session, so
+    /// the modal is only offered at most once per launch.
+    pub ffmpeg_prompt_checked: bool,
     pub preview: PreviewState,
     pub selected_clips: Vec<uuid::Uuid>,
     pub clip_drag: Option<ClipDrag>,
@@ -402,6 +410,9 @@ impl CapRustApp {
             playhead_ms: 0,
             timeline_zoom: 1.0,
             settings_tab: Default::default(),
+            ffmpeg_prompt: Default::default(),
+            ffmpeg_prompt_open: false,
+            ffmpeg_prompt_checked: false,
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
@@ -5972,6 +5983,76 @@ impl CapRustApp {
         }
     }
 
+    fn show_ffmpeg_prompt_window(&mut self, ctx: &egui::Context) {
+        // Poll the download receiver first; terminal states flip the
+        // phase and re-run detection once the binary is on disk.
+        let terminal = crate::panels::ffmpeg_prompt::poll(&mut self.ffmpeg_prompt);
+        let mut open = self.ffmpeg_prompt_open;
+        egui::Window::new(tr("ffmpeg-prompt-title"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(480.0)
+            .show(ctx, |ui| {
+                let ev = crate::panels::ffmpeg_prompt::show(
+                    ui,
+                    &mut self.ffmpeg_prompt,
+                    &mut self.settings,
+                );
+                if ev.start_download {
+                    // Resolve the target dir: user input, else default.
+                    let dir = if self.ffmpeg_prompt.install_dir.trim().is_empty() {
+                        caprust_core::ffmpeg::managed_dir(&self.settings)
+                    } else {
+                        std::path::PathBuf::from(&self.ffmpeg_prompt.install_dir)
+                    };
+                    self.settings.managed_ffmpeg_dir = Some(dir.to_string_lossy().to_string());
+                    let rx = caprust_core::ffmpeg::spawn_ffmpeg_download(
+                        dir,
+                        caprust_core::ffmpeg::FFMPEG_URL.to_string(),
+                    );
+                    self.ffmpeg_prompt.receiver = Some(rx);
+                    self.ffmpeg_prompt.phase =
+                        crate::panels::ffmpeg_prompt::PromptPhase::Downloading {
+                            done: 0,
+                            total: None,
+                        };
+                }
+                if ev.browse_existing {
+                    if let Some(f) = rfd::FileDialog::new()
+                        .add_filter("ffmpeg", &["exe"])
+                        .pick_file()
+                    {
+                        self.settings.ffmpeg_path = Some(f.to_string_lossy().to_string());
+                        if let Some(parent) = f.parent() {
+                            let probe = parent.join("ffprobe.exe");
+                            if probe.is_file() {
+                                self.settings.ffprobe_path =
+                                    Some(probe.to_string_lossy().to_string());
+                            }
+                        }
+                        self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
+                        self.ffmpeg_prompt_open = false;
+                    }
+                }
+                if ev.close {
+                    if self.ffmpeg_prompt.dont_ask_again {
+                        self.settings.ffmpeg_prompt_dismissed = true;
+                    }
+                    self.ffmpeg_prompt_open = false;
+                }
+            });
+        self.ffmpeg_prompt_open = open;
+        if let Some(crate::panels::ffmpeg_prompt::PromptPhase::Done) = terminal {
+            self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
+            tracing::info!(
+                "ffmpeg: managed binary installed and detected ({} -> {:?})",
+                self.settings.managed_ffmpeg_dir.clone().unwrap_or_default(),
+                self.ffmpeg_status.ffmpeg
+            );
+        }
+    }
+
     fn show_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
         egui::Window::new(tr("set-title"))
@@ -6240,6 +6321,22 @@ impl eframe::App for CapRustApp {
 
         if self.settings_open {
             self.show_settings_window(ctx);
+        }
+
+        // First-run FFmpeg prompt: auto-open once per session when
+        // neither a PATH nor a managed install is present and the
+        // user has not dismissed the dialog before.
+        if !self.ffmpeg_prompt_checked {
+            self.ffmpeg_prompt_checked = true;
+            if !self.ffmpeg_status.is_available() && !self.settings.ffmpeg_prompt_dismissed {
+                self.ffmpeg_prompt.install_dir = caprust_core::ffmpeg::managed_dir(&self.settings)
+                    .to_string_lossy()
+                    .to_string();
+                self.ffmpeg_prompt_open = true;
+            }
+        }
+        if self.ffmpeg_prompt_open {
+            self.show_ffmpeg_prompt_window(ctx);
         }
         if self.export_open {
             self.show_export_window(ctx);
