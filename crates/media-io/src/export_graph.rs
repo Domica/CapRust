@@ -1869,14 +1869,24 @@ pub fn plan_from_project(
                         let seg_start_sec = clip_start_sec + seg.start_ms as f64 / 1000.0;
                         let seg_end_sec = clip_start_sec + seg.end_ms as f64 / 1000.0;
 
-                        if seg.words.is_empty() {
+                        // Fallback to a single drawtext when either the
+                        // word list is empty, or every word carries a
+                        // zero-duration timing. Whisper tiny (and some
+                        // other configs) persist the word list but leave
+                        // all start_ms/end_ms at 0; the progressive-reveal
+                        // path would then stack every word on the same
+                        // frame with the same enable window, producing
+                        // a legible-but-overlapping pile.
+                        let words_have_timing = !seg.words.is_empty()
+                            && seg.words.iter().any(|w| w.start_ms != 0 || w.end_ms != 0);
+                        if !words_have_timing {
                             let seg_dur = (seg_end_sec - seg_start_sec).max(0.05);
                             text_clips.push(TextClip {
                                 content: seg.text.clone(),
                                 font_size: 32.0,
                                 timeline_start_sec: seg_start_sec,
                                 duration_sec: seg_dur,
-                                above: true,
+                                above: false,
                                 z_order: z,
                                 style: "caption".to_string(),
                                 motion: caprust_core::clip::TextMotion::default(),
@@ -1885,20 +1895,38 @@ pub fn plan_from_project(
                         } else {
                             let mut acc = String::new();
                             for (wi, w) in seg.words.iter().enumerate() {
+                                // Skip whisper control tokens ([_BEG_],
+                                // [_EOT_], ...). They carry zero/negative
+                                // duration and would otherwise leave a
+                                // zero-width enable window that stacks on
+                                // the following real word.
+                                let word_text = w.text.trim();
+                                if word_text.starts_with('[') && word_text.ends_with(']') {
+                                    continue;
+                                }
                                 if !acc.is_empty() {
                                     acc.push(' ');
                                 }
-                                acc.push_str(w.text.trim());
+                                acc.push_str(word_text);
                                 let word_start_sec = clip_start_sec + w.start_ms as f64 / 1000.0;
                                 // Each drawtext is on screen until the
                                 // next word starts; the last one stays
                                 // until the segment end. Clamped so a
                                 // stray zero-duration word cannot
                                 // produce an invisible enable window.
-                                let word_end_sec = if wi + 1 < seg.words.len() {
-                                    clip_start_sec + seg.words[wi + 1].start_ms as f64 / 1000.0
-                                } else {
-                                    seg_end_sec
+                                // Next non-control word's start time, so
+                                // the current word's enable window does
+                                // not collapse onto a zero-duration token.
+                                let next_real_start = seg.words[wi + 1..]
+                                    .iter()
+                                    .find(|x| {
+                                        let t = x.text.trim();
+                                        !(t.starts_with('[') && t.ends_with(']'))
+                                    })
+                                    .map(|x| x.start_ms);
+                                let word_end_sec = match next_real_start {
+                                    Some(ms) => clip_start_sec + ms as f64 / 1000.0,
+                                    None => seg_end_sec,
                                 };
                                 let dur = (word_end_sec - word_start_sec).max(0.05);
                                 text_clips.push(TextClip {
@@ -1906,7 +1934,7 @@ pub fn plan_from_project(
                                     font_size: 32.0,
                                     timeline_start_sec: word_start_sec,
                                     duration_sec: dur,
-                                    above: true,
+                                    above: false,
                                     z_order: z,
                                     style: "caption".to_string(),
                                     motion: caprust_core::clip::TextMotion::default(),
@@ -2175,6 +2203,7 @@ mod tests {
         // Both must appear in the plan with the correct shape.
         let mut c = Clip::new_video("placeholder.mp4", 0, 0, 2000);
         c.clip_type = ClipType::Captions {
+            style: Default::default(),
             language: "en".into(),
             model_id: "test".into(),
             segments: vec![
@@ -2247,6 +2276,7 @@ mod tests {
         let mut project = caprust_core::ProjectState::default();
         let mut clip = Clip::new_video("placeholder.mp4", 0, 0, 2000);
         clip.clip_type = ClipType::Captions {
+            style: Default::default(),
             language: "en".into(),
             model_id: "test".into(),
             segments: vec![

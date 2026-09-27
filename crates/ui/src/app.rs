@@ -260,6 +260,13 @@ pub struct CapRustApp {
     /// playhead so effect / transition / speed / volume edits are
     /// visible without a manual seek. See ProjectState::render_hash.
     pub preview_plan_hash: u64,
+    /// Last hash seen during a burst of render-relevant changes. Used
+    /// with `pending_respawn_at` to debounce slider drags so that the
+    /// renderer is not respawned once per frame.
+    pub pending_hash: u64,
+    /// Instant when `pending_hash` last changed. Cleared when the
+    /// debounce window elapses and the renderer is respawned.
+    pub pending_respawn_at: Option<std::time::Instant>,
     pub job_runner: JobRunner,
 }
 
@@ -437,6 +444,8 @@ impl CapRustApp {
             playback_started_at: None,
             playback_started_ms: 0,
             preview_plan_hash: 0,
+            pending_hash: 0,
+            pending_respawn_at: None,
             job_runner: JobRunner::new(
                 ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
                 ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
@@ -4427,6 +4436,12 @@ impl CapRustApp {
                                             .text_style(v);
                                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 }
+                                PendingEdit::CaptionStyle(v) => {
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .caption_style(v);
+                                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                }
                                 PendingEdit::TextContent(v) => {
                                     let cmd =
                                         caprust_core::commands::set_clip::SetClipCommand::new(id)
@@ -4623,12 +4638,29 @@ impl CapRustApp {
             // Limitation: a slider drag respawns once per change, not
             // seamlessly. Seamless double-buffered swap is Phase K2,
             // a separate PR if this proves jittery in practice.
+            //
+            // K1b: debounce the respawn so a DragValue slider does not
+            // spawn ffmpeg once per frame. We track the newest hash and
+            // the instant it last changed; the respawn fires only when
+            // the value has been stable for RESPAWN_DEBOUNCE_MS.
             {
+                const RESPAWN_DEBOUNCE_MS: u128 = 250;
                 let live = self.project.render_hash();
+                if live != self.pending_hash {
+                    self.pending_hash = live;
+                    self.pending_respawn_at = Some(std::time::Instant::now());
+                }
                 if live != self.preview_plan_hash {
-                    self.preview_plan_hash = live;
-                    if self.preview.playing && self.preview_player.has_frame {
-                        self.explicit_seek_ms = Some(self.playhead_ms);
+                    let ready = self
+                        .pending_respawn_at
+                        .map(|t| t.elapsed().as_millis() >= RESPAWN_DEBOUNCE_MS)
+                        .unwrap_or(true);
+                    if ready {
+                        self.preview_plan_hash = live;
+                        self.pending_respawn_at = None;
+                        if self.preview.playing && self.preview_player.has_frame {
+                            self.explicit_seek_ms = Some(self.playhead_ms);
+                        }
                     }
                 }
             }

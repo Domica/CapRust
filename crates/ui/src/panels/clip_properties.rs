@@ -75,6 +75,8 @@ pub enum PendingEdit {
     /// Replace the text content of a TextOverlay clip. Committed on
     /// blur, never per keystroke.
     TextContent(String),
+    /// Replace the visual style of a Captions clip.
+    CaptionStyle(caprust_core::clip::CaptionStyle),
     /// Replace the motion transform on a TextOverlay clip.
     TextMotion(caprust_core::clip::TextMotion),
     /// Set or clear the procedural effect on a TextOverlay clip.
@@ -415,6 +417,7 @@ pub fn show(
         model_id,
         language,
         segments,
+        style: caption_style,
     } = &clip.clip_type
     {
         ui.add_space(4.0);
@@ -453,6 +456,122 @@ pub fn show(
                 .small()
                 .color(egui::Color32::from_gray(140)),
         );
+        // --- Style editor ---
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(tr("props-captions-style-header")).strong());
+        {
+            use caprust_core::clip::{CaptionPosition, CaptionStyle};
+            let mut cs: CaptionStyle = *caption_style;
+            let mut changed = false;
+
+            ui.horizontal(|ui| {
+                ui.label(tr("props-captions-style-font-size"));
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut cs.font_size)
+                            .speed(0.5)
+                            .range(8.0..=200.0)
+                            .fixed_decimals(0),
+                    )
+                    .changed();
+            });
+
+            ui.horizontal(|ui| {
+                ui.label(tr("props-captions-style-position"));
+                let label = match cs.position {
+                    CaptionPosition::Top => tr("props-captions-style-position-top"),
+                    CaptionPosition::Middle => tr("props-captions-style-position-middle"),
+                    CaptionPosition::Bottom => tr("props-captions-style-position-bottom"),
+                };
+                egui::ComboBox::from_id_salt("cap_pos_combo")
+                    .selected_text(label)
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        for (p, key) in [
+                            (CaptionPosition::Top, "props-captions-style-position-top"),
+                            (
+                                CaptionPosition::Middle,
+                                "props-captions-style-position-middle",
+                            ),
+                            (
+                                CaptionPosition::Bottom,
+                                "props-captions-style-position-bottom",
+                            ),
+                        ] {
+                            let sel = cs.position == p;
+                            if ui.selectable_label(sel, tr(key)).clicked() && !sel {
+                                cs.position = p;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label(tr("props-captions-style-color"));
+                let mut c = [
+                    cs.color[0] as f32 / 255.0,
+                    cs.color[1] as f32 / 255.0,
+                    cs.color[2] as f32 / 255.0,
+                ];
+                if ui.color_edit_button_rgb(&mut c).changed() {
+                    cs.color = [
+                        (c[0] * 255.0).round() as u8,
+                        (c[1] * 255.0).round() as u8,
+                        (c[2] * 255.0).round() as u8,
+                    ];
+                    changed = true;
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label(tr("props-captions-style-outline-color"));
+                let mut c = [
+                    cs.outline_color[0] as f32 / 255.0,
+                    cs.outline_color[1] as f32 / 255.0,
+                    cs.outline_color[2] as f32 / 255.0,
+                ];
+                if ui.color_edit_button_rgb(&mut c).changed() {
+                    cs.outline_color = [
+                        (c[0] * 255.0).round() as u8,
+                        (c[1] * 255.0).round() as u8,
+                        (c[2] * 255.0).round() as u8,
+                    ];
+                    changed = true;
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label(tr("props-captions-style-outline-width"));
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut cs.outline_width)
+                            .speed(0.2)
+                            .range(0.0..=10.0)
+                            .fixed_decimals(1),
+                    )
+                    .changed();
+            });
+
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .checkbox(&mut cs.bg_enabled, tr("props-captions-style-bg"))
+                    .changed();
+            });
+            if cs.bg_enabled {
+                ui.horizontal(|ui| {
+                    ui.label(tr("props-captions-style-bg-opacity"));
+                    changed |= ui
+                        .add(egui::Slider::new(&mut cs.bg_opacity, 0.0..=1.0).fixed_decimals(2))
+                        .changed();
+                });
+            }
+
+            if changed {
+                state.pending.push(PendingEdit::CaptionStyle(cs));
+            }
+        }
+
         ui.add_space(4.0);
         ui.separator();
         ui.add_space(4.0);

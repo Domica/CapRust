@@ -37,6 +37,8 @@ pub enum ClipType {
         language: String,
         /// Filled in once the model has run.
         segments: Vec<CaptionSegment>,
+        #[serde(default)]
+        style: CaptionStyle,
     },
     /// Text-to-speech narration.
     Narration {
@@ -44,6 +46,69 @@ pub enum ClipType {
         voice_id: String,
         text: String,
     },
+}
+
+/// Visual style of a Captions clip. Applied to every drawtext the
+/// render path expands from the segments. Defaults match the pre-
+/// feature hardcoded look (yellow text, black outline, bottom of
+/// the frame, size 32).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct CaptionStyle {
+    #[serde(default = "default_caption_font_size")]
+    pub font_size: f32,
+    #[serde(default)]
+    pub position: CaptionPosition,
+    /// RGB in 0..=255.
+    #[serde(default = "default_caption_color")]
+    pub color: [u8; 3],
+    #[serde(default = "default_caption_outline_color")]
+    pub outline_color: [u8; 3],
+    /// 0 = no outline.
+    #[serde(default = "default_caption_outline_width")]
+    pub outline_width: f32,
+    #[serde(default)]
+    pub bg_enabled: bool,
+    #[serde(default = "default_caption_bg_opacity")]
+    pub bg_opacity: f32,
+}
+
+fn default_caption_font_size() -> f32 {
+    32.0
+}
+fn default_caption_color() -> [u8; 3] {
+    [255, 255, 0]
+}
+fn default_caption_outline_color() -> [u8; 3] {
+    [0, 0, 0]
+}
+fn default_caption_outline_width() -> f32 {
+    2.0
+}
+fn default_caption_bg_opacity() -> f32 {
+    0.5
+}
+
+impl Default for CaptionStyle {
+    fn default() -> Self {
+        Self {
+            font_size: default_caption_font_size(),
+            position: CaptionPosition::default(),
+            color: default_caption_color(),
+            outline_color: default_caption_outline_color(),
+            outline_width: default_caption_outline_width(),
+            bg_enabled: false,
+            bg_opacity: default_caption_bg_opacity(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionPosition {
+    Top,
+    Middle,
+    #[default]
+    Bottom,
 }
 
 /// One word inside a caption segment, with its own timing. Used by
@@ -432,6 +497,7 @@ impl Clip {
                 model_id: model_id.to_string(),
                 language: language.to_string(),
                 segments: Vec::new(),
+                style: CaptionStyle::default(),
             },
             speed: 1.0,
             reversed: false,

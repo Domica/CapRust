@@ -23,6 +23,9 @@ pub struct SetClipCommand {
     /// Only meaningful on TextOverlay clips: replaces the text content.
     /// No-op on other clip kinds.
     pub text_content: Option<String>,
+    /// Only meaningful on Captions clips: replaces the visual style.
+    /// No-op on other clip kinds.
+    pub caption_style: Option<crate::clip::CaptionStyle>,
     /// Only meaningful on TextOverlay clips: replaces the motion
     /// transform. No-op on other clip kinds.
     pub text_motion: Option<crate::clip::TextMotion>,
@@ -62,6 +65,7 @@ impl SetClipCommand {
             name: None,
             text_style: None,
             text_content: None,
+            caption_style: None,
             text_motion: None,
             text_effect: None,
             fade_in_ms: None,
@@ -117,6 +121,11 @@ impl SetClipCommand {
     /// Set the TextOverlay drawtext style. No-op on other clip kinds.
     pub fn text_style(mut self, v: impl Into<String>) -> Self {
         self.text_style = Some(v.into());
+        self
+    }
+    /// Replace the Captions visual style. No-op on other kinds.
+    pub fn caption_style(mut self, v: crate::clip::CaptionStyle) -> Self {
+        self.caption_style = Some(v);
         self
     }
     /// Replace the TextOverlay text content. No-op on other kinds.
@@ -218,6 +227,11 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.text_style.clone() {
             if let crate::clip::ClipType::TextOverlay { style, .. } = &mut c.clip_type {
+                *style = v;
+            }
+        }
+        if let Some(v) = self.caption_style {
+            if let crate::clip::ClipType::Captions { style, .. } = &mut c.clip_type {
                 *style = v;
             }
         }
