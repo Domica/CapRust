@@ -10,6 +10,15 @@ jobs:
   build-windows:
     name: Windows nightly .exe
     runs-on: windows-latest
+    env:
+      # whisper-rs-sys builds whisper.cpp from source. GitHub's
+      # Windows runners have AVX-512, and CMake's GGML_NATIVE=ON
+      # (the default) bakes those instructions into the binary.
+      # Older CPUs (Ryzen 5000-series, Intel 10th gen) then die
+      # with STATUS_ILLEGAL_INSTRUCTION (0xc000001d) during
+      # whisper decode. Disabling native makes ggml use runtime
+      # dispatch on a baseline build.
+      CMAKE_ARGS: -DGGML_NATIVE=OFF
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.91.0
@@ -24,6 +33,9 @@ jobs:
   build-linux:
     name: Linux nightly
     runs-on: ubuntu-latest
+    env:
+      # Same reasoning as the Windows job.
+      CMAKE_ARGS: -DGGML_NATIVE=OFF
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux deps

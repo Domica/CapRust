@@ -1,0 +1,13 @@
+# Pin the release target CPU to x86-64-v3 (AVX2 + FMA + BMI). Every
+# CPU from 2015 onward supports this. Without it, cargo on a GitHub
+# Actions runner defaults to the runner's own CPU (Xeon/EPYC with
+# AVX-512), and the resulting binary dies with
+# STATUS_ILLEGAL_INSTRUCTION (0xc000001d) on consumer hardware like
+# the Ryzen 5000 series. x86-64-v3 is a safe baseline that still
+# gets the AVX2 speedup for tract-onnx and whisper.cpp.
+#
+# Applied only to x86_64 release builds: debug builds stay on the
+# default target for maximum compatibility during development, and
+# non-x86 targets are unaffected.
+[target.'cfg(all(target_arch = "x86_64", not(debug_assertions)))']
+rustflags = ["-C", "target-cpu=x86-64-v3"]
