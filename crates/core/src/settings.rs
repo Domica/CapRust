@@ -32,6 +32,15 @@ pub struct AppSettings {
     /// default; mirrors the "trim follow" toggle in the timeline tray.
     #[serde(default)]
     pub trim_follow: bool,
+    /// Where the auto-downloaded FFmpeg lives. None or empty =
+    /// `%APPDATA%/CapRust/ffmpeg` (see `ffmpeg::managed_dir`).
+    #[serde(default)]
+    pub managed_ffmpeg_dir: Option<String>,
+    /// Set when the user clicks "Odustani" in the first-run FFmpeg
+    /// prompt. Suppresses the modal on subsequent launches until the
+    /// user opens Settings → Paths → Download again.
+    #[serde(default)]
+    pub ffmpeg_prompt_dismissed: bool,
 }
 
 fn default_true() -> bool {
@@ -57,6 +66,8 @@ impl Default for AppSettings {
             muted: false,
             check_for_updates: true,
             trim_follow: false,
+            managed_ffmpeg_dir: None,
+            ffmpeg_prompt_dismissed: false,
         }
     }
 }
@@ -92,37 +103,11 @@ impl FfmpegStatus {
     }
 }
 
-/// Try to locate ffmpeg/ffprobe — respects overrides, then PATH.
+/// Try to locate ffmpeg/ffprobe. Priority: user override, PATH, then
+/// the auto-downloaded managed dir (`crate::ffmpeg::managed_dir`).
 pub fn detect_ffmpeg(settings: &AppSettings) -> FfmpegStatus {
     FfmpegStatus {
-        ffmpeg: which_or_override(settings.ffmpeg_path.as_deref(), "ffmpeg"),
-        ffprobe: which_or_override(settings.ffprobe_path.as_deref(), "ffprobe"),
+        ffmpeg: crate::ffmpeg::find_ffmpeg(settings).map(|p| p.to_string_lossy().to_string()),
+        ffprobe: crate::ffmpeg::find_ffprobe(settings).map(|p| p.to_string_lossy().to_string()),
     }
-}
-
-fn which_or_override(override_path: Option<&str>, name: &str) -> Option<String> {
-    if let Some(p) = override_path {
-        if !p.trim().is_empty() && std::path::Path::new(p).exists() {
-            return Some(p.to_string());
-        }
-    }
-    which_in_path(name)
-}
-
-fn which_in_path(name: &str) -> Option<String> {
-    let path_var = std::env::var_os("PATH")?;
-    let exe_names: Vec<String> = if cfg!(windows) {
-        vec![format!("{name}.exe"), name.to_string()]
-    } else {
-        vec![name.to_string()]
-    };
-    for dir in std::env::split_paths(&path_var) {
-        for exe in &exe_names {
-            let candidate = dir.join(exe);
-            if candidate.is_file() {
-                return Some(candidate.to_string_lossy().to_string());
-            }
-        }
-    }
-    None
 }

@@ -2,6 +2,7 @@ pub mod aspect_ratio;
 pub mod cache;
 pub mod clip;
 pub mod commands;
+pub mod ffmpeg;
 pub mod frame_rate;
 pub mod media;
 pub mod models;
