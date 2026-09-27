@@ -5202,34 +5202,97 @@ impl CapRustApp {
                         egui::StrokeKind::Inside,
                     );
 
-                    // Small corner squares as visual handles (scale not
-                    // implemented yet — they hint at future behaviour).
+                    // Corner squares: the bottom-right one is the
+                    // resize handle; the other three are decorative.
                     let corner = 6.0;
+                    let handle_center = box_rect.right_bottom();
                     for pos in [
                         box_rect.left_top(),
                         box_rect.right_top(),
                         box_rect.left_bottom(),
-                        box_rect.right_bottom(),
                     ] {
                         let r = egui::Rect::from_center_size(pos, egui::vec2(corner, corner));
                         ui.painter().rect_filled(r, 0.0, stroke_color);
                     }
+                    let handle_size = 14.0;
+                    let handle_rect = egui::Rect::from_center_size(
+                        handle_center,
+                        egui::vec2(handle_size, handle_size),
+                    );
+                    ui.painter().rect_filled(
+                        egui::Rect::from_center_size(
+                            handle_center,
+                            egui::vec2(corner, corner),
+                        ),
+                        0.0,
+                        stroke_color,
+                    );
 
-                    let resp = ui.interact(
-                        box_rect,
-                        egui::Id::new(("text_overlay_box", id)),
+                    // Body drag: move. Hit-test should exclude the
+                    // handle so a click on the handle does not start a
+                    // move instead.
+                    let body_rect = egui::Rect::from_min_max(
+                        box_rect.min,
+                        egui::pos2(box_rect.max.x - handle_size * 0.5, box_rect.max.y),
+                    );
+                    let body_resp = ui.interact(
+                        body_rect,
+                        egui::Id::new(("text_overlay_body", id)),
                         egui::Sense::click_and_drag(),
                     );
-                    if resp.hovered() || dragging_this {
+                    let handle_resp = ui.interact(
+                        handle_rect,
+                        egui::Id::new(("text_overlay_handle", id)),
+                        egui::Sense::click_and_drag(),
+                    );
+
+                    let over_handle = handle_resp.hovered();
+                    let over_body = body_resp.hovered();
+                    if over_handle || dragging_this
+                        && self
+                            .text_overlay_drag
+                            .as_ref()
+                            .map(|d| d.mode == TextOverlayDragMode::Scale)
+                            .unwrap_or(false)
+                    {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                    } else if over_body || dragging_this {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
                     }
 
-                    if resp.drag_started() {
+                    if handle_resp.drag_started() {
+                        let ptr = handle_resp
+                            .interact_pointer_pos()
+                            .unwrap_or(handle_center);
+                        let anchor_screen = box_rect.center();
+                        let origin_dist =
+                            (ptr - anchor_screen).length().max(1.0);
                         self.text_overlay_drag = Some(TextOverlayDrag {
                             clip_id: id,
-                            start_ptr: resp.interact_pointer_pos().unwrap_or(egui::Pos2::ZERO),
+                            mode: TextOverlayDragMode::Scale,
+                            start_ptr: ptr,
                             origin_x: mx,
                             origin_y: my,
+                            origin_scale: m_scale,
+                            anchor_screen,
+                            origin_dist,
+                            rw,
+                            rh,
+                            sx,
+                            sy,
+                        });
+                    } else if body_resp.drag_started() {
+                        self.text_overlay_drag = Some(TextOverlayDrag {
+                            clip_id: id,
+                            mode: TextOverlayDragMode::Move,
+                            start_ptr: body_resp
+                                .interact_pointer_pos()
+                                .unwrap_or(egui::Pos2::ZERO),
+                            origin_x: mx,
+                            origin_y: my,
+                            origin_scale: m_scale,
+                            anchor_screen: box_rect.center(),
+                            origin_dist: 1.0,
                             rw,
                             rh,
                             sx,
@@ -5240,35 +5303,51 @@ impl CapRustApp {
                     if let Some(drag) = self.text_overlay_drag.as_ref() {
                         if drag.clip_id == id {
                             if let Some(ptr) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                                let dx_screen = ptr.x - drag.start_ptr.x;
-                                let dy_screen = ptr.y - drag.start_ptr.y;
-                                let dx_frame = dx_screen / drag.sx;
-                                let dy_frame = dy_screen / drag.sy;
-                                let new_mx =
-                                    (drag.origin_x + dx_frame / drag.rw).clamp(-1.0, 1.0);
-                                let new_my =
-                                    (drag.origin_y + dy_frame / drag.rh).clamp(-1.0, 1.0);
-
-                                // Keep the live view in sync so the box
-                                // tracks the pointer without waiting for
-                                // the ffmpeg respawn.
-                                if let Some(c) =
-                                    self.project.clips.iter_mut().find(|c| c.id == id)
-                                {
-                                    if let ClipType::TextOverlay { motion, .. } =
-                                        &mut c.clip_type
-                                    {
-                                        motion.x = new_mx;
-                                        motion.y = new_my;
+                                match drag.mode {
+                                    TextOverlayDragMode::Move => {
+                                        let dx_screen = ptr.x - drag.start_ptr.x;
+                                        let dy_screen = ptr.y - drag.start_ptr.y;
+                                        let dx_frame = dx_screen / drag.sx;
+                                        let dy_frame = dy_screen / drag.sy;
+                                        let new_mx = (drag.origin_x + dx_frame / drag.rw)
+                                            .clamp(-1.0, 1.0);
+                                        let new_my = (drag.origin_y + dy_frame / drag.rh)
+                                            .clamp(-1.0, 1.0);
+                                        if let Some(c) =
+                                            self.project.clips.iter_mut().find(|c| c.id == id)
+                                        {
+                                            if let ClipType::TextOverlay { motion, .. } =
+                                                &mut c.clip_type
+                                            {
+                                                motion.x = new_mx;
+                                                motion.y = new_my;
+                                            }
+                                        }
+                                    }
+                                    TextOverlayDragMode::Scale => {
+                                        let dist = (ptr - drag.anchor_screen).length();
+                                        let ratio = dist / drag.origin_dist;
+                                        let new_scale =
+                                            (drag.origin_scale * ratio).clamp(0.3, 3.0);
+                                        if let Some(c) =
+                                            self.project.clips.iter_mut().find(|c| c.id == id)
+                                        {
+                                            if let ClipType::TextOverlay { motion, .. } =
+                                                &mut c.clip_type
+                                            {
+                                                motion.scale = new_scale;
+                                            }
+                                        }
                                     }
                                 }
                             }
 
-                            if resp.drag_stopped() {
+                            let stopped = match drag.mode {
+                                TextOverlayDragMode::Move => body_resp.drag_stopped(),
+                                TextOverlayDragMode::Scale => handle_resp.drag_stopped(),
+                            };
+                            if stopped {
                                 let drag = self.text_overlay_drag.take().unwrap();
-                                // Restore the origin, then commit via
-                                // SetClipCommand so undo jumps back to the
-                                // pre-drag position, not the last frame.
                                 let final_motion = self
                                     .project
                                     .clips
@@ -5278,7 +5357,7 @@ impl CapRustApp {
                                         ClipType::TextOverlay { motion, .. } => Some(*motion),
                                         _ => None,
                                     });
-                                if let Some(mut final_motion) = final_motion {
+                                if let Some(final_motion) = final_motion {
                                     // Restore origin in-place so the
                                     // command's `before` snapshot is the
                                     // pre-drag state.
@@ -5290,10 +5369,7 @@ impl CapRustApp {
                                         {
                                             motion.x = drag.origin_x;
                                             motion.y = drag.origin_y;
-                                            // Preserve the scale that
-                                            // might have changed meanwhile.
-                                            final_motion.scale = motion.scale;
-                                            final_motion.rotation = motion.rotation;
+                                            motion.scale = drag.origin_scale;
                                         }
                                     }
                                     let cmd =
@@ -6212,16 +6288,35 @@ fn setup_phosphor_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// Which operation the active TextOverlay drag is performing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextOverlayDragMode {
+    /// Reposition the text: motion.x/y.
+    Move,
+    /// Resize the text: motion.scale, computed from the pointer
+    /// distance to the box anchor captured at drag start.
+    Scale,
+}
+
 /// State for an in-progress text overlay drag from the preview pane.
 #[derive(Debug, Clone, Copy)]
 pub struct TextOverlayDrag {
     pub clip_id: uuid::Uuid,
+    pub mode: TextOverlayDragMode,
     /// Pointer position when the drag started (screen space).
     pub start_ptr: egui::Pos2,
     /// motion.x/y at drag start, so the live delta is computed from
     /// the origin every frame and never accumulates float drift.
     pub origin_x: f32,
     pub origin_y: f32,
+    /// motion.scale at drag start; only used in Scale mode.
+    pub origin_scale: f32,
+    /// Screen-space anchor (box centre) at drag start; only used in
+    /// Scale mode. Distance ratio pointer/anchor drives the new scale.
+    pub anchor_screen: egui::Pos2,
+    /// Screen-space distance pointer-to-anchor at drag start; guards
+    /// the ratio against a zero denominator.
+    pub origin_dist: f32,
     /// Frame-space pixel size at drag start, so a mid-drag preview
     /// respawn (different rw/rh) does not change the mapping.
     pub rw: f32,
