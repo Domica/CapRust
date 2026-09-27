@@ -5988,6 +5988,7 @@ impl CapRustApp {
         // phase and re-run detection once the binary is on disk.
         let terminal = crate::panels::ffmpeg_prompt::poll(&mut self.ffmpeg_prompt);
         let mut open = self.ffmpeg_prompt_open;
+        let mut user_wants_close = false;
         egui::Window::new(tr("ffmpeg-prompt-title"))
             .open(&mut open)
             .resizable(false)
@@ -5999,6 +6000,10 @@ impl CapRustApp {
                     &mut self.ffmpeg_prompt,
                     &mut self.settings,
                 );
+                // Any close path (button or X) must be applied to the
+                // local `open` AFTER the closure, since `open` is
+                // already borrowed mutably by .open(&mut open).
+                // Using a local flag avoids the double-borrow.
                 if ev.start_download {
                     // Resolve the target dir: user input, else default.
                     let dir = if self.ffmpeg_prompt.install_dir.trim().is_empty() {
@@ -6039,9 +6044,12 @@ impl CapRustApp {
                     if self.ffmpeg_prompt.dont_ask_again {
                         self.settings.ffmpeg_prompt_dismissed = true;
                     }
-                    self.ffmpeg_prompt_open = false;
+                    user_wants_close = true;
                 }
             });
+        if user_wants_close {
+            open = false;
+        }
         self.ffmpeg_prompt_open = open;
         if let Some(crate::panels::ffmpeg_prompt::PromptPhase::Done) = terminal {
             self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
