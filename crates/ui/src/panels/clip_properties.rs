@@ -708,142 +708,124 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // --- Main ---
     ui.label(egui::RichText::new(tr("props-video-main")).strong());
     ui.add_space(4.0);
-    egui::Grid::new("clip_main_grid")
-        .num_columns(2)
-        .spacing([8.0, 6.0])
-        .show(ui, |ui| {
-            ui.label(tr("props-field-rotation"));
-            let mut rot = 0.0_f32;
-            ui.add(
-                egui::DragValue::new(&mut rot)
-                    .range(-180.0..=180.0)
-                    .suffix("°"),
-            );
-            ui.end_row();
-
-            ui.label(tr("props-field-width"));
-            let mut w = 100.0_f32;
-            ui.add(
-                egui::DragValue::new(&mut w)
-                    .range(10.0..=400.0)
-                    .suffix(" %"),
-            );
-            ui.end_row();
-
-            ui.label(tr("props-field-height"));
-            let mut h = 100.0_f32;
-            ui.add(
-                egui::DragValue::new(&mut h)
-                    .range(10.0..=400.0)
-                    .suffix(" %"),
-            );
-            ui.end_row();
-        });
+    // (Rotation / Width / Height fields used to live here. They wrote
+    // into local f32 bindings that were dropped every frame, so they
+    // never affected the render. Real rotation needs a PNG-overlay
+    // refactor (drawtext has no rotate filter); size for TextOverlay
+    // is already controlled by the motion.scale field in the Text
+    // section. Removed to stop showing controls that lie.)
 
     ui.add_space(10.0);
     ui.separator();
 
-    // --- Auto-reframe ---
-    ui.label(egui::RichText::new(tr("props-video-auto-reframe")).strong());
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(tr("props-auto-reframe-hint"))
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
-    ui.horizontal(|ui| {
-        let can_run = matches!(
-            clip.clip_type,
-            ClipType::Video { .. } | ClipType::Image { .. }
+    // Auto-reframe and background removal are video/image features.
+    // Hide the whole block on TextOverlay clips so the panel does not
+    // offer controls that do not apply.
+    let is_text_overlay = matches!(clip.clip_type, ClipType::TextOverlay { .. });
+
+    if !is_text_overlay {
+        // --- Auto-reframe ---
+        ui.label(egui::RichText::new(tr("props-video-auto-reframe")).strong());
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(tr("props-auto-reframe-hint"))
+                .small()
+                .color(egui::Color32::from_gray(150)),
         );
-        let n = clip.auto_reframe.len();
-        if n == 0 {
-            ui.label(
-                egui::RichText::new(tr("props-auto-reframe-none"))
-                    .small()
-                    .color(egui::Color32::from_gray(140)),
+        ui.horizontal(|ui| {
+            let can_run = matches!(
+                clip.clip_type,
+                ClipType::Video { .. } | ClipType::Image { .. }
             );
-        } else {
-            ui.label(
-                egui::RichText::new(format!("{} ({n})", tr("props-auto-reframe-done")))
-                    .small()
-                    .color(egui::Color32::from_gray(200)),
-            );
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if n > 0
-                && ui
-                    .button(tr("props-auto-reframe-clear"))
-                    .on_hover_text(tr("props-auto-reframe-clear-hint"))
-                    .clicked()
-            {
-                state.pending.push(PendingEdit::AutoReframe(Vec::new()));
+            let n = clip.auto_reframe.len();
+            if n == 0 {
+                ui.label(
+                    egui::RichText::new(tr("props-auto-reframe-none"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(format!("{} ({n})", tr("props-auto-reframe-done")))
+                        .small()
+                        .color(egui::Color32::from_gray(200)),
+                );
             }
-            ui.add_enabled_ui(can_run, |ui| {
-                if ui
-                    .button(tr("props-auto-reframe-run"))
-                    .on_hover_text(tr("props-auto-reframe-run-hint"))
-                    .clicked()
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if n > 0
+                    && ui
+                        .button(tr("props-auto-reframe-clear"))
+                        .on_hover_text(tr("props-auto-reframe-clear-hint"))
+                        .clicked()
                 {
-                    state.pending.push(PendingEdit::StartReframe);
+                    state.pending.push(PendingEdit::AutoReframe(Vec::new()));
                 }
+                ui.add_enabled_ui(can_run, |ui| {
+                    if ui
+                        .button(tr("props-auto-reframe-run"))
+                        .on_hover_text(tr("props-auto-reframe-run-hint"))
+                        .clicked()
+                    {
+                        state.pending.push(PendingEdit::StartReframe);
+                    }
+                });
             });
         });
-    });
 
-    ui.add_space(10.0);
-    ui.separator();
+        ui.add_space(10.0);
+        ui.separator();
 
-    // --- Background removal ---
-    ui.label(egui::RichText::new(tr("props-video-bg-removal")).strong());
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(tr("props-bg-removal-hint"))
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
-    ui.horizontal(|ui| {
-        let can_run = matches!(
-            clip.clip_type,
-            ClipType::Video { .. } | ClipType::Image { .. }
+        // --- Background removal ---
+        ui.label(egui::RichText::new(tr("props-video-bg-removal")).strong());
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(tr("props-bg-removal-hint"))
+                .small()
+                .color(egui::Color32::from_gray(150)),
         );
-        let has_mask = clip.bg_removal.is_some();
-        if has_mask {
-            ui.label(
-                egui::RichText::new(tr("props-bg-removal-done"))
-                    .small()
-                    .color(egui::Color32::from_gray(200)),
+        ui.horizontal(|ui| {
+            let can_run = matches!(
+                clip.clip_type,
+                ClipType::Video { .. } | ClipType::Image { .. }
             );
-        } else {
-            ui.label(
-                egui::RichText::new(tr("props-bg-removal-none"))
-                    .small()
-                    .color(egui::Color32::from_gray(140)),
-            );
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if has_mask
-                && ui
-                    .button(tr("props-bg-removal-clear"))
-                    .on_hover_text(tr("props-bg-removal-clear-hint"))
-                    .clicked()
-            {
-                state.pending.push(PendingEdit::ClearBgRemoval);
+            let has_mask = clip.bg_removal.is_some();
+            if has_mask {
+                ui.label(
+                    egui::RichText::new(tr("props-bg-removal-done"))
+                        .small()
+                        .color(egui::Color32::from_gray(200)),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(tr("props-bg-removal-none"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
             }
-            ui.add_enabled_ui(can_run, |ui| {
-                if ui
-                    .button(tr("props-bg-removal-run"))
-                    .on_hover_text(tr("props-bg-removal-run-hint"))
-                    .clicked()
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if has_mask
+                    && ui
+                        .button(tr("props-bg-removal-clear"))
+                        .on_hover_text(tr("props-bg-removal-clear-hint"))
+                        .clicked()
                 {
-                    state.pending.push(PendingEdit::StartBgRemoval);
+                    state.pending.push(PendingEdit::ClearBgRemoval);
                 }
+                ui.add_enabled_ui(can_run, |ui| {
+                    if ui
+                        .button(tr("props-bg-removal-run"))
+                        .on_hover_text(tr("props-bg-removal-run-hint"))
+                        .clicked()
+                    {
+                        state.pending.push(PendingEdit::StartBgRemoval);
+                    }
+                });
             });
         });
-    });
 
-    ui.add_space(10.0);
-    ui.separator();
+        ui.add_space(10.0);
+        ui.separator();
+    } // !is_text_overlay
 
     // --- Speed ---
     ui.label(egui::RichText::new(tr("props-video-speed")).strong());
