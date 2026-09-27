@@ -13,6 +13,7 @@ use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
 use caprust_core::recent::{RecentList, RecentProject};
 use caprust_core::settings::AppSettings;
+use caprust_core::ClipType;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use caprust_media_io::audio_player::AudioPlayer;
 use caprust_media_io::exporter::ExportEvent;
@@ -269,6 +270,11 @@ pub struct CapRustApp {
     /// without a frame arriving, the renderer is killed and the fallback
     /// direct-extract path takes over. None = no one-shot in flight.
     pub paused_renderer_deadline: Option<std::time::Instant>,
+    /// In-flight text overlay drag from the preview pane. Some while
+    /// the pointer is down over a TextOverlay bounding box; dropped on
+    /// release after pushing a single SetClipCommand::text_motion so
+    /// the whole gesture is one undoable step.
+    pub text_overlay_drag: Option<TextOverlayDrag>,
     /// Last hash seen during a burst of render-relevant changes. Used
     /// with `pending_respawn_at` to debounce slider drags so that the
     /// renderer is not respawned once per frame.
@@ -455,6 +461,7 @@ impl CapRustApp {
             preview_plan_hash: 0,
             paused_frame_dirty: false,
             paused_renderer_deadline: None,
+            text_overlay_drag: None,
             pending_hash: 0,
             pending_respawn_at: None,
             job_runner: JobRunner::new(
@@ -5069,6 +5076,9 @@ impl CapRustApp {
             }
 
             // ---- Render frame or placeholder ----
+            // Capture the draw_rect / tex_size so the overlay below can
+            // use them after the texture borrow ends.
+            let mut overlay_ctx: Option<(egui::Rect, egui::Vec2)> = None;
             if let Some(tex) = self.preview_player.texture.as_ref() {
                 let tex_size = tex.size_vec2();
                 let avail_w = rect.width() - 16.0;
@@ -5082,6 +5092,7 @@ impl CapRustApp {
                     egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
+                overlay_ctx = Some((draw_rect, tex_size));
             } else {
                 let msg = if self.ffmpeg_status.ffmpeg.is_none() {
                     "FFmpeg not detected — set it in Settings → Paths"
@@ -5108,6 +5119,194 @@ impl CapRustApp {
                     egui::FontId::proportional(12.0),
                     egui::Color32::from_gray(120),
                 );
+            }
+
+            // ---- TextOverlay bounding box + drag ----
+            // Approximate where the drawtext sits inside the frame using
+            // the same math build_drawtext_body uses for the x/y exprs:
+            //   left = (w - text_w)/2 + mx * w
+            //   top  = h*0.08 + my*h          (above == true)
+            //   top  = h*0.82 + my*h          (above == false)
+            // text_w is a monospace-ish approximation; exact metrics
+            // would require the font file, not worth it here. Only the
+            // single selected clip is handled; multi-select drags stay
+            // timeline-only.
+            if let Some((draw_rect, tex_size)) = overlay_ctx {
+                let active_id = self.selected_clips.first().copied();
+                let info = active_id.and_then(|id| {
+                    self.project.clips.iter().find(|c| c.id == id).and_then(|c| {
+                        match &c.clip_type {
+                            ClipType::TextOverlay {
+                                content,
+                                font_size,
+                                above,
+                                motion,
+                                ..
+                            } => Some((
+                                id,
+                                content.chars().count() as f32,
+                                *font_size,
+                                *above,
+                                motion.x,
+                                motion.y,
+                                motion.scale,
+                            )),
+                            _ => None,
+                        }
+                    })
+                });
+
+                if let Some((id, chars, font_size, above, mx, my, m_scale)) = info {
+                    let rw = tex_size.x.max(1.0);
+                    let rh = tex_size.y.max(1.0);
+                    let sx = draw_rect.width() / rw;
+                    let sy = draw_rect.height() / rh;
+                    let fs = font_size * m_scale.max(0.01);
+
+                    // Approximate text extents in frame pixels.
+                    let text_w = (chars * fs * 0.55).max(8.0);
+                    let text_h = (fs * 1.2).max(8.0);
+
+                    let frame_left = rw * 0.5 + mx * rw - text_w * 0.5;
+                    let frame_top = if above {
+                        rh * 0.08 + my * rh
+                    } else {
+                        rh * 0.82 + my * rh
+                    };
+
+                    let s_left = draw_rect.left() + frame_left * sx;
+                    let s_top = draw_rect.top() + frame_top * sy;
+                    let s_w = text_w * sx;
+                    let s_h = text_h * sy;
+                    let box_rect = egui::Rect::from_min_size(
+                        egui::pos2(s_left, s_top),
+                        egui::vec2(s_w, s_h),
+                    );
+
+                    let dragging_this = self
+                        .text_overlay_drag
+                        .as_ref()
+                        .map(|d| d.clip_id == id)
+                        .unwrap_or(false);
+
+                    // Accent-coloured outline; brighter while dragging.
+                    let stroke_color = if dragging_this {
+                        egui::Color32::from_rgb(120, 220, 255)
+                    } else {
+                        egui::Color32::from_rgb(0, 170, 220)
+                    };
+                    ui.painter().rect_stroke(
+                        box_rect,
+                        2.0,
+                        egui::Stroke::new(1.5_f32, stroke_color),
+                        egui::StrokeKind::Inside,
+                    );
+
+                    // Small corner squares as visual handles (scale not
+                    // implemented yet — they hint at future behaviour).
+                    let corner = 6.0;
+                    for pos in [
+                        box_rect.left_top(),
+                        box_rect.right_top(),
+                        box_rect.left_bottom(),
+                        box_rect.right_bottom(),
+                    ] {
+                        let r = egui::Rect::from_center_size(pos, egui::vec2(corner, corner));
+                        ui.painter().rect_filled(r, 0.0, stroke_color);
+                    }
+
+                    let resp = ui.interact(
+                        box_rect,
+                        egui::Id::new(("text_overlay_box", id)),
+                        egui::Sense::click_and_drag(),
+                    );
+                    if resp.hovered() || dragging_this {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                    }
+
+                    if resp.drag_started() {
+                        self.text_overlay_drag = Some(TextOverlayDrag {
+                            clip_id: id,
+                            start_ptr: resp.interact_pointer_pos().unwrap_or(egui::Pos2::ZERO),
+                            origin_x: mx,
+                            origin_y: my,
+                            rw,
+                            rh,
+                            sx,
+                            sy,
+                        });
+                    }
+
+                    if let Some(drag) = self.text_overlay_drag.as_ref() {
+                        if drag.clip_id == id {
+                            if let Some(ptr) = ui.ctx().input(|i| i.pointer.interact_pos()) {
+                                let dx_screen = ptr.x - drag.start_ptr.x;
+                                let dy_screen = ptr.y - drag.start_ptr.y;
+                                let dx_frame = dx_screen / drag.sx;
+                                let dy_frame = dy_screen / drag.sy;
+                                let new_mx =
+                                    (drag.origin_x + dx_frame / drag.rw).clamp(-1.0, 1.0);
+                                let new_my =
+                                    (drag.origin_y + dy_frame / drag.rh).clamp(-1.0, 1.0);
+
+                                // Keep the live view in sync so the box
+                                // tracks the pointer without waiting for
+                                // the ffmpeg respawn.
+                                if let Some(c) =
+                                    self.project.clips.iter_mut().find(|c| c.id == id)
+                                {
+                                    if let ClipType::TextOverlay { motion, .. } =
+                                        &mut c.clip_type
+                                    {
+                                        motion.x = new_mx;
+                                        motion.y = new_my;
+                                    }
+                                }
+                            }
+
+                            if resp.drag_stopped() {
+                                let drag = self.text_overlay_drag.take().unwrap();
+                                // Restore the origin, then commit via
+                                // SetClipCommand so undo jumps back to the
+                                // pre-drag position, not the last frame.
+                                let final_motion = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == id)
+                                    .and_then(|c| match &c.clip_type {
+                                        ClipType::TextOverlay { motion, .. } => Some(*motion),
+                                        _ => None,
+                                    });
+                                if let Some(mut final_motion) = final_motion {
+                                    // Restore origin in-place so the
+                                    // command's `before` snapshot is the
+                                    // pre-drag state.
+                                    if let Some(c) =
+                                        self.project.clips.iter_mut().find(|c| c.id == id)
+                                    {
+                                        if let ClipType::TextOverlay { motion, .. } =
+                                            &mut c.clip_type
+                                        {
+                                            motion.x = drag.origin_x;
+                                            motion.y = drag.origin_y;
+                                            // Preserve the scale that
+                                            // might have changed meanwhile.
+                                            final_motion.scale = motion.scale;
+                                            final_motion.rotation = motion.rotation;
+                                        }
+                                    }
+                                    let cmd =
+                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                            .text_motion(final_motion);
+                                    let _ = self
+                                        .undo_stack
+                                        .execute(Box::new(cmd), &mut self.project);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             ui.add_space(6.0);
@@ -6011,4 +6210,23 @@ fn setup_phosphor_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
+}
+
+/// State for an in-progress text overlay drag from the preview pane.
+#[derive(Debug, Clone, Copy)]
+pub struct TextOverlayDrag {
+    pub clip_id: uuid::Uuid,
+    /// Pointer position when the drag started (screen space).
+    pub start_ptr: egui::Pos2,
+    /// motion.x/y at drag start, so the live delta is computed from
+    /// the origin every frame and never accumulates float drift.
+    pub origin_x: f32,
+    pub origin_y: f32,
+    /// Frame-space pixel size at drag start, so a mid-drag preview
+    /// respawn (different rw/rh) does not change the mapping.
+    pub rw: f32,
+    pub rh: f32,
+    /// Scale factors from frame-space to screen-space at drag start.
+    pub sx: f32,
+    pub sy: f32,
 }
