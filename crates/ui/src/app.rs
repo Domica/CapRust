@@ -260,6 +260,15 @@ pub struct CapRustApp {
     /// playhead so effect / transition / speed / volume edits are
     /// visible without a manual seek. See ProjectState::render_hash.
     pub preview_plan_hash: u64,
+    /// Set when the render hash changed while the preview was paused.
+    /// The paused branch consumes it: it runs a one-shot full-plan
+    /// render at the current playhead so the user immediately sees
+    /// their edit instead of the last decoded frame (K1c).
+    pub paused_frame_dirty: bool,
+    /// Deadline for the paused one-shot renderer. When now() passes it
+    /// without a frame arriving, the renderer is killed and the fallback
+    /// direct-extract path takes over. None = no one-shot in flight.
+    pub paused_renderer_deadline: Option<std::time::Instant>,
     /// Last hash seen during a burst of render-relevant changes. Used
     /// with `pending_respawn_at` to debounce slider drags so that the
     /// renderer is not respawned once per frame.
@@ -444,6 +453,8 @@ impl CapRustApp {
             playback_started_at: None,
             playback_started_ms: 0,
             preview_plan_hash: 0,
+            paused_frame_dirty: false,
+            paused_renderer_deadline: None,
             pending_hash: 0,
             pending_respawn_at: None,
             job_runner: JobRunner::new(
@@ -4660,6 +4671,11 @@ impl CapRustApp {
                         self.pending_respawn_at = None;
                         if self.preview.playing && self.preview_player.has_frame {
                             self.explicit_seek_ms = Some(self.playhead_ms);
+                        } else if !self.preview.playing {
+                            // K1c: paused preview. Mark dirty so the paused
+                            // branch re-renders exactly one frame through
+                            // the full filtergraph.
+                            self.paused_frame_dirty = true;
                         }
                     }
                 }
@@ -4909,27 +4925,146 @@ impl CapRustApp {
 
                 ctx.request_repaint();
             } else {
-                // Paused: kill any renderer, do a seek-based single-frame decode
-                if let Some(mut r) = self.preview_renderer.take() {
-                    r.kill();
-                }
+                // Paused: stop audio/streaming, keep a one-shot renderer
+                // alive across frames so the UI thread never blocks.
                 self.preview_player.stop_stream();
-                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
-                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
-                {
-                    let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
-                    self.preview_player.request(
-                        std::path::Path::new(&ffmpeg),
-                        std::path::Path::new(&path),
-                        clip_id,
-                        source_ms,
-                        tw,
-                        th,
-                    );
+                self.preview_player.cancel_pending();
+
+                // K1c: fire a new one-shot when the render hash changed.
+                // The renderer is left running until it produces its first
+                // frame (or the deadline expires). That makes filtered
+                // edits (text content, caption style, motion, effects,
+                // transitions) visible without pressing play.
+                if std::mem::take(&mut self.paused_frame_dirty) {
+                    if let Some(mut r) = self.preview_renderer.take() {
+                        r.kill();
+                    }
+                    self.paused_renderer_deadline = None;
+                    if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
+                        let (pw, ph) = self.project.project_dimensions();
+                        let max_side = match self.preview.quality {
+                            crate::panels::preview_window::PreviewQuality::Quarter => 320,
+                            crate::panels::preview_window::PreviewQuality::Half => 480,
+                            crate::panels::preview_window::PreviewQuality::Full => 640,
+                        };
+                        let (rw, rh) =
+                            caprust_media_io::player::preview_size(pw, ph, max_side);
+                        let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+                            self.project.frame_rate.num as i64,
+                            self.project.frame_rate.den as i64,
+                        );
+                        let fps_f = fps_num as f64 / fps_den.max(1) as f64;
+                        let models_dir = self.settings.effective_models_dir();
+                        match caprust_media_io::export_graph::plan_from_project(
+                            &self.project,
+                            rw,
+                            rh,
+                            fps_num,
+                            fps_den,
+                            23,
+                            "veryfast",
+                            &models_dir,
+                        ) {
+                            Ok(plan) => match PreviewRenderer::spawn(
+                                std::path::Path::new(&ffmpeg),
+                                &plan,
+                                playhead,
+                                rw,
+                                rh,
+                                fps_f,
+                            ) {
+                                Ok(r) => {
+                                    tracing::info!(
+                                        "preview: paused one-shot render from {}ms",
+                                        playhead
+                                    );
+                                    self.preview_renderer = Some(r);
+                                    self.paused_renderer_deadline = Some(
+                                        std::time::Instant::now()
+                                            + std::time::Duration::from_secs(8),
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!("preview: paused spawn failed: {e}");
+                                }
+                            },
+                            Err(e) => {
+                                tracing::warn!("preview: paused plan failed: {e}");
+                            }
+                        }
+                    }
                 }
-                self.preview_player.poll(ctx);
-                if self.preview_player.pending.is_some() {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+
+                // Poll the paused one-shot, if one is in flight.
+                let mut got_frame = false;
+                if let Some(r) = self.preview_renderer.as_ref() {
+                    if let Some(buf) = r.try_next() {
+                        let w = r.width as usize;
+                        let h = r.height as usize;
+                        let expected = w * h * 4;
+                        if buf.len() >= expected {
+                            let img = egui::ColorImage::from_rgba_unmultiplied(
+                                [w, h],
+                                &buf[..expected],
+                            );
+                            let handle = ctx.load_texture(
+                                "preview-timeline",
+                                img,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.preview_player.texture = Some(handle);
+                            self.preview_player.has_frame = true;
+                            got_frame = true;
+                        }
+                    }
+                }
+                if got_frame {
+                    if let Some(mut r) = self.preview_renderer.take() {
+                        r.kill();
+                    }
+                    self.paused_renderer_deadline = None;
+                    tracing::info!("preview: paused one-shot delivered frame");
+                } else if self.preview_renderer.is_some() {
+                    let expired = self
+                        .paused_renderer_deadline
+                        .map(|t| std::time::Instant::now() >= t)
+                        .unwrap_or(false);
+                    if expired {
+                        tracing::warn!("preview: paused one-shot timed out");
+                        if let Some(mut r) = self.preview_renderer.take() {
+                            r.kill();
+                        }
+                        self.paused_renderer_deadline = None;
+                    } else {
+                        ctx.request_repaint_after(std::time::Duration::from_millis(30));
+                    }
+                }
+
+                // Fallback: no frame ever uploaded (first open, or after
+                // a failed one-shot). Direct source extract without
+                // filtergraph.
+                if self.preview_renderer.is_none()
+                    && !got_frame
+                    && self.preview_player.texture.is_none()
+                {
+                    if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                        (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+                    {
+                        let source_ms =
+                            ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
+                        self.preview_player.request(
+                            std::path::Path::new(&ffmpeg),
+                            std::path::Path::new(&path),
+                            clip_id,
+                            source_ms,
+                            tw,
+                            th,
+                        );
+                        self.preview_player.poll(ctx);
+                        if self.preview_player.pending.is_some() {
+                            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                        }
+                    }
                 }
             }
 

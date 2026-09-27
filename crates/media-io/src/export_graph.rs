@@ -80,6 +80,10 @@ pub struct TextClip {
     pub motion: caprust_core::clip::TextMotion,
     /// Procedural effect (Blink / Pulse / ColorCycle). None = static.
     pub effect: Option<caprust_core::clip::TextEffect>,
+    /// When Some, this drawtext came from a Captions clip and its
+    /// appearance is driven by the user-editable CaptionStyle instead
+    /// of the preset `style` string. TextOverlay clips leave this None.
+    pub caption_style: Option<caprust_core::clip::CaptionStyle>,
 }
 
 /// Effect option suffix for a drawtext body. Blink = hard on/off via
@@ -87,6 +91,74 @@ pub struct TextClip {
 /// using ffmpeg's text-expansion (`%{eif:EXPR:x:2}`) to rotate the RGB
 /// components. Backslash-colon inside the expansion survives the
 /// filter parser and lets the expansion see the inner colon.
+/// Build a Captions drawtext body using the user-editable CaptionStyle.
+/// Position maps to the same layout the legacy "caption" preset used,
+/// so bottom stays the default and existing projects look unchanged.
+fn build_caption_drawtext_body(
+    t: &TextClip,
+    escaped: &str,
+    cs: &caprust_core::clip::CaptionStyle,
+) -> String {
+    use caprust_core::clip::CaptionPosition;
+    let y_base: String = match cs.position {
+        CaptionPosition::Top => "h*0.08".to_string(),
+        CaptionPosition::Middle => "(h-text_h)/2".to_string(),
+        CaptionPosition::Bottom => "h*0.82".to_string(),
+    };
+    let mx = t.motion.x;
+    let my = t.motion.y;
+    let x_expr = if mx.abs() < 1e-4 {
+        "(w-text_w)/2".to_string()
+    } else {
+        format!("(w-text_w)/2+({mx:.4})*w")
+    };
+    let y_expr = if my.abs() < 1e-4 {
+        y_base
+    } else {
+        format!("{y_base}+({my:.4})*h")
+    };
+    let fs = ((cs.font_size as f64) * (t.motion.scale as f64))
+        .round()
+        .max(1.0) as i32;
+    let color = format!(
+        "0x{:02X}{:02X}{:02X}",
+        cs.color[0], cs.color[1], cs.color[2]
+    );
+    let outline = if cs.outline_width > 0.5 {
+        format!(
+            ":borderw={}:bordercolor=0x{:02X}{:02X}{:02X}",
+            cs.outline_width.round() as i32,
+            cs.outline_color[0],
+            cs.outline_color[1],
+            cs.outline_color[2]
+        )
+    } else {
+        String::new()
+    };
+    let bg = if cs.bg_enabled {
+        format!(
+            ":box=1:boxcolor=black@{:.2}:boxborderw=8",
+            cs.bg_opacity.clamp(0.0, 1.0)
+        )
+    } else {
+        String::new()
+    };
+    let effect_opts = build_text_effect_opts(t.effect.as_ref());
+    format!(
+        "drawtext=text='{escaped}':fontcolor={color}:fontsize={fs}:x={x_expr}:y={y_expr}{outline}{bg}{effect_opts}:enable='between(t,{start:.6},{end:.6})'",
+        escaped = escaped,
+        color = color,
+        fs = fs,
+        x_expr = x_expr,
+        y_expr = y_expr,
+        outline = outline,
+        bg = bg,
+        effect_opts = effect_opts,
+        start = t.timeline_start_sec,
+        end = t.timeline_start_sec + t.duration_sec,
+    )
+}
+
 fn build_text_effect_opts(effect: Option<&caprust_core::clip::TextEffect>) -> String {
     use caprust_core::clip::TextEffectKind;
     let Some(e) = effect else {
@@ -490,50 +562,63 @@ impl RenderPlan {
                 .replace('\\', "\\\\")
                 .replace(':', "\\:")
                 .replace('\'', "\\'");
-            let y_base = if t.above { "h*0.08" } else { "h*0.82" };
-            let mx = t.motion.x;
-            let my = t.motion.y;
-            let x_expr = if mx.abs() < 1e-4 {
-                "(w-text_w)/2".to_string()
+            // Captions path: user-editable CaptionStyle wins over the
+            // preset string. TextOverlay path: classic preset layout.
+            if let Some(cs) = t.caption_style.as_ref() {
+                let body = build_caption_drawtext_body(t, &escaped, cs);
+                fg.push_str(&format!(
+                    "[{v_prev}]{body}[v_txt{t_i}];",
+                    v_prev = v_prev,
+                    body = body,
+                    t_i = t_i,
+                ));
             } else {
-                format!("(w-text_w)/2+({mx:.4})*w")
-            };
-            let y = if my.abs() < 1e-4 {
-                y_base.to_string()
-            } else {
-                format!("{y_base}+({my:.4})*h")
-            };
-            let fs = ((t.font_size as f64) * (t.motion.scale as f64))
-                .round()
-                .max(1.0) as i32;
-            let effect_opts = build_text_effect_opts(t.effect.as_ref());
-            // Style parameters. Any combination not matched falls back to
-            // plain white text.
-            let style_opts: String = match t.style.as_str() {
-                "bold" => ":borderw=2:bordercolor=black".into(),
-                "subtitle" => ":box=1:boxcolor=black@0.5:boxborderw=8".into(),
-                "lower" => ":box=1:boxcolor=black@0.7:boxborderw=6".into(),
-                "quote" => ":italics=1:shadowcolor=black@0.6:shadowx=3:shadowy=3".into(),
-                "caption" => ":fontcolor=yellow:borderw=2:bordercolor=black".into(),
-                "glow" => {
-                    ":shadowcolor=cyan@0.8:shadowx=4:shadowy=4:borderw=1:bordercolor=white".into()
-                }
-                "handwrite" => ":font='Comic Sans MS'".into(),
-                _ => String::new(),
-            };
-            fg.push_str(&format!(
-            "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x={x_expr}:y={y}{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
-            v_prev = v_prev,
-            escaped = escaped,
-            fs = fs,
-            x_expr = x_expr,
-            y = y,
-            style_opts = style_opts,
-            effect_opts = effect_opts,
-            start = t.timeline_start_sec,
-            end = t.timeline_start_sec + t.duration_sec,
-            t_i = t_i,
-        ));
+                let y_base = if t.above { "h*0.08" } else { "h*0.82" };
+                let mx = t.motion.x;
+                let my = t.motion.y;
+                let x_expr = if mx.abs() < 1e-4 {
+                    "(w-text_w)/2".to_string()
+                } else {
+                    format!("(w-text_w)/2+({mx:.4})*w")
+                };
+                let y = if my.abs() < 1e-4 {
+                    y_base.to_string()
+                } else {
+                    format!("{y_base}+({my:.4})*h")
+                };
+                let fs = ((t.font_size as f64) * (t.motion.scale as f64))
+                    .round()
+                    .max(1.0) as i32;
+                let effect_opts = build_text_effect_opts(t.effect.as_ref());
+                // Style parameters. Any combination not matched falls
+                // back to plain white text.
+                let style_opts: String = match t.style.as_str() {
+                    "bold" => ":borderw=2:bordercolor=black".into(),
+                    "subtitle" => ":box=1:boxcolor=black@0.5:boxborderw=8".into(),
+                    "lower" => ":box=1:boxcolor=black@0.7:boxborderw=6".into(),
+                    "quote" => ":italics=1:shadowcolor=black@0.6:shadowx=3:shadowy=3".into(),
+                    "caption" => ":fontcolor=yellow:borderw=2:bordercolor=black".into(),
+                    "glow" => {
+                        ":shadowcolor=cyan@0.8:shadowx=4:shadowy=4:borderw=1:bordercolor=white"
+                            .into()
+                    }
+                    "handwrite" => ":font='Comic Sans MS'".into(),
+                    _ => String::new(),
+                };
+                fg.push_str(&format!(
+                "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x={x_expr}:y={y}{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
+                v_prev = v_prev,
+                escaped = escaped,
+                fs = fs,
+                x_expr = x_expr,
+                y = y,
+                style_opts = style_opts,
+                effect_opts = effect_opts,
+                start = t.timeline_start_sec,
+                end = t.timeline_start_sec + t.duration_sec,
+                t_i = t_i,
+            ));
+            }
             v_prev = v_next;
         }
         let v_final = v_prev;
@@ -1839,9 +1924,14 @@ pub fn plan_from_project(
                         style: style.clone(),
                         motion: *motion,
                         effect: *effect,
+                        caption_style: None,
                     });
                 }
-                ClipType::Captions { segments, .. } => {
+                ClipType::Captions {
+                    segments,
+                    style: caption_style,
+                    ..
+                } => {
                     // Each caption segment becomes its own drawtext with an
                     // enable window. Coordinates are relative to the clip's
                     // start: whisper reports absolute source times, the clip
@@ -1891,6 +1981,7 @@ pub fn plan_from_project(
                                 style: "caption".to_string(),
                                 motion: caprust_core::clip::TextMotion::default(),
                                 effect: None,
+                                caption_style: Some(*caption_style),
                             });
                         } else {
                             let mut acc = String::new();
@@ -1939,6 +2030,7 @@ pub fn plan_from_project(
                                     style: "caption".to_string(),
                                     motion: caprust_core::clip::TextMotion::default(),
                                     effect: None,
+                                    caption_style: Some(*caption_style),
                                 });
                             }
                         }
@@ -2636,6 +2728,7 @@ mod text_motion_render_tests {
             style: "default".into(),
             motion: TextMotion::default(),
             effect: None,
+            caption_style: None,
         }
     }
 
