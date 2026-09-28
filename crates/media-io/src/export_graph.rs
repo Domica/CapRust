@@ -643,7 +643,7 @@ impl RenderPlan {
     /// Extracted from `build_filtergraph` so the PCM cache can render
     /// audio alone without pulling video inputs into the filtergraph.
     fn build_audio_chain(&self, fg: &mut String) -> Option<String> {
-        if !(self.has_audio && !self.audio_clips.is_empty()) {
+        if !self.has_audio || self.audio_clips.is_empty() {
             return None;
         }
         let mut a_labels: Vec<String> = Vec::with_capacity(self.audio_clips.len());

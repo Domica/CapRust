@@ -1,5 +1,6 @@
 pub mod audio_mix;
 pub mod audio_player;
+pub mod audio_render;
 pub mod auto_reframe;
 pub mod background_removal;
 pub mod export;
