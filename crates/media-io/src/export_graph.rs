@@ -2262,9 +2262,30 @@ pub fn plan_from_project(
             continue;
         }
         let dur_sec = c.duration_ms as f64 / 1000.0;
-        let idx = register_input(&mut inputs, path, 0.0, dur_sec);
+        let clip_start = c.start_time_ms as f64 / 1000.0;
+        let clip_end = clip_start + dur_sec;
+
+        // Same seek arithmetic as the video arm. Without this, the
+        // audio chain would emit an `adelay=<full timeline ms>` and
+        // force amix to buffer tens of seconds of silence for every
+        // clip -- gigabytes of RAM on a 3-minute project.
+        if do_input_seek && clip_end <= seek_sec {
+            continue;
+        }
+        let (input_ss_sec, visible_dur, new_start) = if do_input_seek {
+            if clip_start >= seek_sec {
+                (0.0, dur_sec, clip_start - seek_sec)
+            } else {
+                let offset = (seek_sec - clip_start) * c.speed as f64;
+                let visible = clip_end - seek_sec;
+                (offset, visible, 0.0)
+            }
+        } else {
+            (0.0, dur_sec, clip_start)
+        };
+        let idx = register_input(&mut inputs, path, input_ss_sec, visible_dur);
         let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
-        let start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+        let start_sec = (new_start - shift_sec).max(0.0);
 
         // Fades: clamp so the two never overlap. If the sum exceeds the
         // clip's duration, scale both down proportionally. Skip
@@ -2335,7 +2356,6 @@ pub fn plan_from_project(
         audio_clips,
         skipped,
         text_clips,
-        total_duration_sec,
         width: width.max(2) & !1,
         height: height.max(2) & !1,
         fps_num,
@@ -2345,6 +2365,11 @@ pub fn plan_from_project(
         has_audio,
         seek_ms,
         seek_optimized: do_input_seek,
+        total_duration_sec: if do_input_seek {
+            (total_duration_sec - seek_sec).max(0.0)
+        } else {
+            total_duration_sec
+        },
     })
 }
 
