@@ -486,3 +486,10 @@ menu-view-layout-wide-timeline = Široka vremenska traka
 menu-view-layout-timeline-focus = Fokus na traku
 menu-view-layout-preview-focus = Fokus na pregled
 menu-view-layout-reset = Vrati na zadano
+
+clip-ctx-translate-captions = Prevedi titlove…
+translate-toast-started = Prevodim titlove…
+translate-toast-busy = Prijevod je već u tijeku.
+translate-toast-empty = Nema segmenata za prijevod.
+translate-toast-done = Prijevod dodan:
+translate-toast-failed = Prijevod nije uspio:

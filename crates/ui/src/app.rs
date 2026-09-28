@@ -169,6 +169,15 @@ pub struct CapRustApp {
     /// click is ignored until the job finishes.
     pub caption_rx:
         Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::CaptionResult, String>>>,
+    /// Receiver for an in-flight captions translation. Only one at a
+    /// time. Cleared on Done or Failed.
+    pub translate_rx: Option<std::sync::mpsc::Receiver<caprust_core::translate::TranslateEvent>>,
+    /// The source clip id that translate_rx is working on. Needed at
+    /// Done time to build the TranslateCaptionsCommand.
+    pub translate_source_clip: Option<uuid::Uuid>,
+    /// Last progress value emitted by translate_rx (done, total).
+    /// Used to throttle the toast so we do not spam once per segment.
+    pub translate_last_progress: Option<(usize, usize)>,
     /// Wall-clock time the current caption job started, for the elapsed
     /// seconds indicator.
     pub caption_job_started: Option<std::time::Instant>,
@@ -442,6 +451,9 @@ impl CapRustApp {
             model_prompt: None,
             model_prompt_tab: caprust_core::ModelKind::Caption,
             model_download: None,
+            translate_rx: None,
+            translate_source_clip: None,
+            translate_last_progress: None,
             caption_rx: None,
             caption_job_started: None,
             narration_rx: None,
@@ -2150,6 +2162,123 @@ impl CapRustApp {
 
     /// Poll the active model download. Updates ModelInfo progress and
     /// status. Clears `model_download` on any terminal event.
+    /// Kick off a MyMemory translation of the given Captions clip's
+    /// segments. Runs on a background thread; the receiver is polled
+    /// by `drain_translate_job` on every frame.
+    fn start_translate_job(&mut self, clip_id: uuid::Uuid) {
+        if self.translate_rx.is_some() {
+            self.toast(tr("translate-toast-busy"));
+            return;
+        }
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let caprust_core::ClipType::Captions { segments, .. } = &clip.clip_type else {
+            tracing::warn!("translate: clip {clip_id} is not a Captions clip");
+            return;
+        };
+        if segments.is_empty() {
+            self.toast(tr("translate-toast-empty"));
+            return;
+        }
+        let texts: Vec<String> = segments.iter().map(|s| s.text.clone()).collect();
+        let req = caprust_core::translate::TranslateRequest {
+            texts,
+            source: self.settings.translate_source_lang.clone(),
+            target: self.settings.translate_target_lang.clone(),
+            email: self.settings.translate_email.clone(),
+        };
+        tracing::info!(
+            "translate: starting {} segment(s) {} -> {}",
+            req.texts.len(),
+            req.source,
+            req.target
+        );
+        self.translate_rx = Some(caprust_core::translate::spawn_translate(req));
+        self.translate_source_clip = Some(clip_id);
+        self.translate_last_progress = None;
+        self.toast(tr("translate-toast-started"));
+    }
+
+    /// Poll the in-flight translation. Emits a "starting" toast once,
+    /// then a done/failed toast. On success, applies
+    /// `TranslateCaptionsCommand` so the new captions clip is
+    /// undoable.
+    fn drain_translate_job(&mut self) {
+        use caprust_core::translate::TranslateEvent;
+        let Some(rx) = self.translate_rx.as_ref() else {
+            return;
+        };
+        let mut terminal: Option<TranslateEvent> = None;
+        loop {
+            match rx.try_recv() {
+                Ok(TranslateEvent::Progress { done, total }) => {
+                    // Throttle: only note the latest; no per-segment toast.
+                    self.translate_last_progress = Some((done, total));
+                }
+                Ok(ev @ TranslateEvent::Done { .. }) => {
+                    terminal = Some(ev);
+                    break;
+                }
+                Ok(ev @ TranslateEvent::Failed(_)) => {
+                    terminal = Some(ev);
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.translate_rx = None;
+                    self.translate_source_clip = None;
+                    self.translate_last_progress = None;
+                    return;
+                }
+            }
+        }
+        let Some(ev) = terminal else {
+            return;
+        };
+        self.translate_rx = None;
+        self.translate_last_progress = None;
+        let Some(source_id) = self.translate_source_clip.take() else {
+            return;
+        };
+        match ev {
+            TranslateEvent::Done {
+                translations,
+                skipped,
+            } => {
+                let target = self.settings.translate_target_lang.clone();
+                let cmd = caprust_core::commands::translate_captions::TranslateCaptionsCommand::new(
+                    source_id,
+                    &target,
+                    translations,
+                );
+                match self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                    Ok(()) => {
+                        if skipped.is_empty() {
+                            self.toast(format!("{} {target}", tr("translate-toast-done")));
+                        } else {
+                            self.toast(format!(
+                                "{} ({} skipped)",
+                                tr("translate-toast-done"),
+                                skipped.len()
+                            ));
+                        }
+                        tracing::info!("translate: added {target} captions for clip {source_id}");
+                    }
+                    Err(e) => {
+                        tracing::error!("translate: command failed: {e}");
+                        self.toast(format!("{} {e}", tr("translate-toast-failed")));
+                    }
+                }
+            }
+            TranslateEvent::Failed(msg) => {
+                tracing::error!("translate: failed: {msg}");
+                self.toast(format!("{} {msg}", tr("translate-toast-failed")));
+            }
+            TranslateEvent::Progress { .. } => {}
+        }
+    }
+
     fn drain_model_download(&mut self) {
         use caprust_core::models::DownloadEvent;
         // Take the receiver out so we can mutate self freely inside the
@@ -3530,6 +3659,27 @@ impl CapRustApp {
                                     pending_actions.push(ClipAction::GenerateCaptions(clip_id));
                                     ui.close_menu();
                                 }
+                                // Translate captions only makes sense on a
+                                // clip that already has segments.
+                                let has_captions = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == clip_id)
+                                    .map(|c| {
+                                        matches!(
+                                            &c.clip_type,
+                                            caprust_core::ClipType::Captions { segments, .. }
+                                                if !segments.is_empty()
+                                        )
+                                    })
+                                    .unwrap_or(false);
+                                if has_captions
+                                    && ui.button(tr("clip-ctx-translate-captions")).clicked()
+                                {
+                                    pending_actions.push(ClipAction::TranslateCaptions(clip_id));
+                                    ui.close_menu();
+                                }
                                 // Separate audio only applies to clips that
                                 // actually have an embedded audio track and
                                 // have not already been detached.
@@ -4045,6 +4195,9 @@ impl CapRustApp {
                 }
                 ClipAction::GenerateCaptions(id) => {
                     self.start_caption_job(Some(id));
+                }
+                ClipAction::TranslateCaptions(id) => {
+                    self.start_translate_job(id);
                 }
                 ClipAction::SeparateAudio(id) => {
                     let cmd = caprust_core::commands::separate_audio::SeparateAudioCommand::new(id);
@@ -6120,6 +6273,10 @@ enum ClipAction {
     /// Properties panel to focus the TextOverlay content editor.
     /// No-op on non-TextOverlay clips.
     FocusTextContent(uuid::Uuid),
+    /// Translate a Captions clip's segments into the target language
+    /// configured in Settings, on a new Captions track. Only valid on
+    /// Captions clips.
+    TranslateCaptions(uuid::Uuid),
 }
 
 impl eframe::App for CapRustApp {
@@ -6140,6 +6297,7 @@ impl eframe::App for CapRustApp {
         // Drain background jobs (ffprobe results, thumbnails ready).
         self.drain_update_check();
         self.drain_model_download();
+        self.drain_translate_job();
         self.drain_caption_job();
         self.drain_narration_job();
         self.drain_reframe_job();

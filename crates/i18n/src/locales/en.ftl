@@ -486,3 +486,10 @@ menu-view-layout-wide-timeline = Wide timeline
 menu-view-layout-timeline-focus = Timeline focus
 menu-view-layout-preview-focus = Preview focus
 menu-view-layout-reset = Reset to default
+
+clip-ctx-translate-captions = Translate captions…
+translate-toast-started = Translating captions…
+translate-toast-busy = A translation is already in progress.
+translate-toast-empty = No segments to translate.
+translate-toast-done = Translation added:
+translate-toast-failed = Translation failed:
