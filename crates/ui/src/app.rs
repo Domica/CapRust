@@ -386,8 +386,18 @@ pub struct MarqueeState {
 #[derive(Debug, Clone)]
 pub struct ClipDrag {
     pub clip_id: uuid::Uuid,
+    /// Every clip in the multi-select group this drag belongs to,
+    /// together with its original (start_ms, track_index). Populated
+    /// at DragStart when the dragged clip is part of a multi-select.
+    /// Empty for a single-clip drag.
+    pub group: Vec<(uuid::Uuid, u64, usize)>,
     pub origin_ms: u64,
     pub current_ms: i64,
+    /// Track the drag started on. `track_index` is updated every
+    /// frame to the track under the pointer; this one stays fixed so
+    /// the release handler can compute the track delta for the
+    /// whole group.
+    pub origin_track: usize,
     pub track_index: usize,
     pub clip_duration_ms: u64,
     /// Where the pointer was when drag began (egui space).
@@ -3146,13 +3156,32 @@ impl CapRustApp {
                                     }
                                 })
                                 .map(|c| {
-                                    let is_dragged = clip_drag_snapshot
+                                    let (is_dragged, in_group, group_orig_ms) = clip_drag_snapshot
                                         .as_ref()
-                                        .map(|d| d.clip_id == c.id)
-                                        .unwrap_or(false);
-                                    let (s, d) = if is_dragged {
-                                        let d = clip_drag_snapshot.as_ref().unwrap();
-                                        (d.current_ms.max(0) as u64, c.duration_ms)
+                                        .map(|d| {
+                                            let dragged = d.clip_id == c.id;
+                                            let orig = d
+                                                .group
+                                                .iter()
+                                                .find(|(id, _, _)| *id == c.id)
+                                                .map(|(_, ms, _)| *ms);
+                                            (dragged, orig.is_some(), orig)
+                                        })
+                                        .unwrap_or((false, false, None));
+                                    let (s, d) = if let Some(drag) = clip_drag_snapshot.as_ref() {
+                                        if is_dragged {
+                                            (drag.current_ms.max(0) as u64, c.duration_ms)
+                                        } else if in_group {
+                                            // Shift by the same delta as
+                                            // the dragged clip so the whole
+                                            // selection follows the cursor
+                                            // visually.
+                                            let delta = drag.current_ms - drag.origin_ms as i64;
+                                            let orig = group_orig_ms.unwrap_or(c.start_time_ms);
+                                            ((orig as i64 + delta).max(0) as u64, c.duration_ms)
+                                        } else {
+                                            (c.start_time_ms, c.duration_ms)
+                                        }
                                     } else {
                                         (c.start_time_ms, c.duration_ms)
                                     };
@@ -3580,7 +3609,7 @@ impl CapRustApp {
                             let resp = ui.interact(
                                 clip_rect,
                                 egui::Id::new(("clip", clip_id)),
-                                egui::Sense::click(),
+                                egui::Sense::click_and_drag(),
                             );
                             // Double-click on a clip → focus its
                             // TextOverlay content editor in the
@@ -3589,6 +3618,16 @@ impl CapRustApp {
                             if resp.double_clicked() {
                                 pending_actions.push(ClipAction::FocusTextContent(clip_id));
                             }
+                            // Selection and drag are driven by egui's
+                            // interaction result, not by geometric
+                            // rect containment. rect_contains_pointer
+                            // is true for EVERY widget under the
+                            // pointer, so on overlapping clips (e.g.
+                            // Overlay over V1 at the same x) the last
+                            // one in the loop always won the drag and
+                            // the click selected the wrong clip.
+                            // egui arbitrates z-order for these
+                            // callbacks so only the topmost fires.
                             // Selection is driven from the drag-start
                             // path below (see pointer_down block).
                             // Firing Select here as well would toggle
@@ -3625,33 +3664,37 @@ impl CapRustApp {
                             if hovered_edge.is_some() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                             }
-                            let track_locked = self
-                                .project
-                                .tracks
-                                .get(idx)
-                                .map(|t| t.locked)
-                                .unwrap_or(false);
-                            if !track_locked
-                                && !pan_mode
-                                && pointer_on_clip
-                                && pointer_down
-                                && clip_drag_snapshot.is_none()
-                            {
-                                // Ctrl held → let the modifier logic
-                                // in the Select handler decide
-                                // (toggle). Plain click on an
-                                // already-selected clip is a no-op
-                                // so the whole multi-selection can
-                                // be dragged without collapsing to
-                                // one clip.
-                                let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                                let already = self.selected_clips.contains(&clip_id);
-                                if ctrl || !already {
-                                    pending_actions.push(ClipAction::Select(clip_id));
-                                }
-                                pending_actions.push(ClipAction::DragStart(clip_id, idx, start_ms));
-                                if let Some(e) = hovered_edge {
-                                    pending_actions.push(ClipAction::SetTrimEdge(clip_id, Some(e)));
+                            // Selection and drag are driven by
+                            // egui's interaction result, not by
+                            // geometric rect containment.
+                            // rect_contains_pointer is true for
+                            // EVERY widget under the pointer, so on
+                            // overlapping clips (Overlay over V1 at
+                            // the same x) the last one in the loop
+                            // always won the drag and the click
+                            // selected the wrong clip. egui
+                            // arbitrates z-order for these
+                            // callbacks so only the topmost fires.
+                            if resp.clicked() {
+                                pending_actions.push(ClipAction::Select(clip_id));
+                            }
+                            if resp.drag_started() {
+                                let track_locked_here = self
+                                    .project
+                                    .tracks
+                                    .get(idx)
+                                    .map(|t| t.locked)
+                                    .unwrap_or(false);
+                                if !track_locked_here && !pan_mode {
+                                    if !self.selected_clips.contains(&clip_id) {
+                                        pending_actions.push(ClipAction::Select(clip_id));
+                                    }
+                                    pending_actions
+                                        .push(ClipAction::DragStart(clip_id, idx, start_ms));
+                                    if let Some(e) = hovered_edge {
+                                        pending_actions
+                                            .push(ClipAction::SetTrimEdge(clip_id, Some(e)));
+                                    }
                                 }
                             }
 
@@ -4142,10 +4185,30 @@ impl CapRustApp {
                         .map(|c| (c.duration_ms, c.source_duration_ms))
                         .unwrap_or((3000, 0));
                     let ptr = self.last_pointer.unwrap_or_else(|| egui::pos2(0.0, 0.0));
+                    // If the dragged clip is part of a multi-select,
+                    // snapshot the whole group's original positions
+                    // so DragEnd can move all of them together.
+                    let group: Vec<(uuid::Uuid, u64, usize)> =
+                        if self.selected_clips.contains(&id) && self.selected_clips.len() > 1 {
+                            self.selected_clips
+                                .iter()
+                                .filter_map(|cid| {
+                                    self.project
+                                        .clips
+                                        .iter()
+                                        .find(|c| c.id == *cid)
+                                        .map(|c| (*cid, c.start_time_ms, c.track_index))
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
                     self.clip_drag = Some(ClipDrag {
                         clip_id: id,
+                        group,
                         origin_ms: o,
                         current_ms: o as i64,
+                        origin_track: ti,
                         track_index: ti,
                         clip_duration_ms: dur,
                         origin_ptr: ptr,
@@ -4243,15 +4306,49 @@ impl CapRustApp {
                             } else {
                                 let nm = d.current_ms.max(0) as u64;
                                 let nt = d.track_index;
-                                if nm != d.origin_ms
-                                    || self
-                                        .project
-                                        .clips
+                                let time_changed = nm != d.origin_ms;
+                                let track_changed = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == id)
+                                    .map(|c| c.track_index)
+                                    != Some(nt);
+
+                                if d.group.len() > 1 && (time_changed || track_changed) {
+                                    // Multi-select drag: one command
+                                    // moves every member by the same
+                                    // delta. Undo restores the whole
+                                    // batch in one step.
+                                    let delta_ms = nm as i64 - d.origin_ms as i64;
+                                    let delta_track = nt as i64 - d.origin_track as i64;
+                                    let max_track = self.project.tracks.len().saturating_sub(1);
+                                    let moves: Vec<caprust_core::commands::move_many::ClipMove> = d
+                                        .group
                                         .iter()
-                                        .find(|c| c.id == id)
-                                        .map(|c| c.track_index)
-                                        != Some(nt)
-                                {
+                                        .map(|(cid, orig_ms, orig_track)| {
+                                            let new_ms = (*orig_ms as i64 + delta_ms).max(0) as u64;
+                                            let new_track = ((*orig_track as i64 + delta_track)
+                                                .max(0)
+                                                as usize)
+                                                .min(max_track);
+                                            caprust_core::commands::move_many::ClipMove {
+                                                clip_id: *cid,
+                                                from_ms: *orig_ms,
+                                                to_ms: new_ms,
+                                                from_track: *orig_track,
+                                                to_track: new_track,
+                                            }
+                                        })
+                                        .collect();
+                                    let cmd =
+                                        caprust_core::commands::move_many::MoveManyCommand::new(
+                                            moves,
+                                        );
+                                    let _ =
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                } else if time_changed || track_changed {
+                                    // Single-clip fallback.
                                     let cmd = MoveClipCommand {
                                         clip_id: id,
                                         from_ms: d.origin_ms,
