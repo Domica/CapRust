@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
+[![Version](https://img.shields.io/badge/version-0.3.0--alpha.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
@@ -29,12 +30,12 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Preview = Export filtergraph | Yes — same RenderPlan, no surprises |
 | AI captions + narration | Yes — local Whisper + Piper |
 | Progressive-reveal captions | Yes — whisper token timestamps |
-| Auto-reframe (follow largest face) | Yes — YuNet + tract-onnx |
+| Auto-reframe (follow largest face) | Yes — SCRFD primary, YuNet fallback |
 | Background removal | Yes — u2netp, per-clip mask cache |
 | Speed ramps with easing | Yes — 0.1x-10x, ease + range |
 | Auto-ducking | Yes — sidechaincompress |
 | Update checker | Yes — GitHub Releases, opt-out |
-| Hardware encoding | Planned — NVENC / AMF / QSV |
+| Hardware encoding | Yes (NVENC + AMF, probed at runtime) |
 | Zero-config install | Yes — portable .exe |
 
 ---
@@ -56,6 +57,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - Import **video** (MP4, MOV, AVI, MKV, WebM), **audio** (MP3, WAV, M4A, FLAC), **images** (PNG, JPG, WebP)
 - Auto **thumbnails** via ffmpeg extraction + per-project cache
 - **Background probe** — duration, resolution, FPS
+- **Missing-media relink** on load. Dialog lists every missing file, folder picker matches by basename, whole batch runs as one undoable `RelinkManyCommand`. Media bin shows a red badge, timeline clips without a source get a red diagonal hatch.
 - **Media bin** with sort (added / name / type), filter (all / video / audio / image), preview size (S / M / L)
 
 ### Effects, Filters and Transitions
@@ -93,6 +95,8 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - Quality selector: 1/4, 1/2, 1:1
 - Frame-accurate playhead
 - Wall-clock playback timing — immune to UI frame rate
+- **Seek-optimized rendering** - the plan shifts every input to its `-ss`/`-t` for the current playhead. A seek into a 3-minute project renders in ~200-500 ms instead of 5-10 s.
+- **Paused seek** re-renders a one-shot frame at the new playhead.
 - **Auto-respawn on edit** — hash-based invalidation catches every mutation
 
 ### Updates
@@ -107,7 +111,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Caption burn-in** — drawtext with style presets
 - Resolution: 4K, QHD, 1080p, 720p, 21:9, Original, 1.5x, 2x
 - Frame rate: 24, 30, 60, or Original (exact fraction, preserves 29.97)
-- Codec: H.264 (H.265 / AV1 planned)
+- Codec: H.264 / H.265 / AV1 on CPU (libx264 / libx265 / libsvtav1) or hardware (NVENC / AMF). The dialog probes the running ffmpeg build and only offers encoders that open on this machine.
 - Quality: Small / Regular / Large (CRF 26 / 20 / 16)
 - Advanced: VBR / CBR + bitrate, Color range
 - Real-time progress bar, Reveal in folder
@@ -139,7 +143,7 @@ Or grab it from [Actions — Nightly Build](https://github.com/Domica/CapRust/ac
 
 Prerequisites:
 
-- Rust 1.88+ (rustup install stable)
+- Rust 1.91+ (pinned via `rust-toolchain.toml`)
 - **FFmpeg 5.1+** binary in PATH (tested on 5.1.x and 7.x)
 - **Windows:** Visual Studio Build Tools (C++ workload)
 - **Linux:** libgtk-3-dev libxcb-shape0-dev libxkbcommon-dev libasound2-dev
@@ -263,6 +267,41 @@ CapRust is:
 - **Local AI** — Whisper, Piper, YuNet, u2netp run on your machine
 - **Open** — MIT, no telemetry
 - **Modern** — Rust 2021, egui, fluent, tract-onnx
+
+---
+
+## Version History
+
+Full details in [CHANGELOG.md](CHANGELOG.md).
+
+### 0.3.0-alpha.1 - 2026-09-28
+
+- **Hardware-accelerated export** - NVENC H.264 / HEVC and AMF wired into the export dialog. 5-15x faster on the RTX 2060 reference machine.
+- **Pre-rendered audio PCM cache** - background ffmpeg renders the project audio to a stable file in `%TEMP%`. Fixes the 17-clip cumulative attenuation bug (opening clip was ~1/2^17 of the last).
+- **Seek-optimized preview** - plan rewrites inputs to `-ss`/`-t` for the current playhead. Seek into a 3-minute project went from 5-10 s to ~200-500 ms.
+- **Missing-media relink on load** - dialog with folder picker, batch `RelinkManyCommand`, media bin badge, timeline hatch.
+- Video output carries correct mp4 tags (`hvc1`, `av01`).
+
+### 0.2.0-alpha.1 - 2026-09-29
+
+- **Dockable panel layout** (egui_dock 0.16) with four presets in View -> Layout, persisted across sessions.
+- **Captions translation** via MyMemory - right-click a Captions clip, get a new track in the target language.
+- Preview skips missing sources instead of dying.
+- Speed slider debounced 250 ms; no per-frame respawn.
+- eframe built without AccessKit (egui_dock mid-frame panic workaround).
+
+### 0.1.0-alpha.1 - 2026-09-27
+
+First public alpha.
+
+- Timeline: magnetic, snap, ripple, multi-select, marquee, trim-follow
+- Preview: filtergraph-based, auto-respawn on edits
+- Export: video + audio + xfade sync + caption burn-in, ETA and size estimate
+- Captions: Whisper transcription, progressive reveal, per-clip style
+- AI: Piper narration, YuNet auto-reframe, u2netp background removal
+- Effects: 16 presets, 16 filters, 12 transitions, 8 text styles
+- Audio: fades, volume keyframes, auto-ducking, speed ramps
+- English + Croatian via Fluent
 
 ---
 
