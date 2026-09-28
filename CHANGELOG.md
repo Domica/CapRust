@@ -2,6 +2,77 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.4.0-alpha.1] — 2026-09-28
+
+Fourth public alpha. Editor interaction pass: media bin multi-select,
+group drag on the timeline, and the caption pipeline.
+
+### Added
+- **Media bin multi-select.** Ctrl+click toggles membership, plain
+  click replaces. Selected cards get a thicker accent border. The X
+  button on a card that belongs to a multi-item selection removes
+  every selected item at once, with Ctrl+Z restoring the clips that
+  referenced them.
+- **Long-press drag from the media bin.** Holding the primary button
+  on a card for 500 ms starts a drag; a shorter click only selects.
+  The card preview badge follows the cursor and shows how many items
+  are being dragged ("1 clip" / "N clips").
+- **Batch drag to the timeline.** Dropping a multi-selection chains
+  the items left-to-right at the target drop position, using each
+  item's duration. The inserted clips come back selected, so a
+  follow-up move or delete acts on the whole batch.
+- **Group move on the timeline.** Ctrl+click or marquee selects
+  multiple clips; dragging one of them moves the entire group by the
+  same time and track delta in a single undoable step. Previously a
+  multi-select drag moved only the clip under the pointer.
+
+### Fixed
+- **Captions and text overlays rendered at the wrong time after a
+  seek.** Video and audio already shifted their timeline_start_sec
+  by seek_sec and skipped clips before the seek. Captions and text
+  overlays did not, so a seek into the middle of a long project left
+  their enable windows on the original timeline. Same seek
+  arithmetic now applies to both arms.
+- **Apostrophes in caption text broke the preview.** Both `\'` and
+  the shell-style `'\''` escape fail on the BtbN / gyan ffmpeg
+  builds; ffmpeg's filter option parser does not implement
+  close-reopen semantics. The first leaks the rest of the option
+  list as a new filter name (the classic 'No such filter: <number>'
+  error), the second terminates the text value early and renders
+  fragments of the filtergraph on the frame. Fix: substitute ASCII
+  apostrophe and double quote with U+2019 / U+201C at render time;
+  these are not filtergraph special chars and never need escaping.
+- **Media bin X button was unclickable on hover.** The button was
+  only drawn when the card was hovered, but the enclosing
+  dnd_drag_source claimed the pointer the moment it entered the
+  card. egui's hover arbitration then reported the card as
+  not-hovered as soon as the pointer reached the X, so the button
+  vanished mid-click. Rewrote visibility and hit test against the
+  raw pointer position.
+- **Every plain click in the media bin started a drag.** egui's
+  dnd_drag_source uses the whole available UI rect as its interact
+  area, so inside a scrollable grid every click anywhere in the
+  panel started a drag on the last-registered card. Replaced with
+  per-card `allocate_exact_size` + manual `DragAndDrop::set_payload`.
+
+### Changed
+- `last_dnd_payload`, `pending_drop` and the timeline drop handler
+  now carry `Vec<Uuid>` instead of a single `Uuid`.
+- `MediaBinState` gained `selected_media: Vec<Uuid>`.
+- New core module `commands::move_many` with `MoveManyCommand`.
+
+### Known issues
+- No installer yet; download the nightly ZIP and extract it.
+- FFmpeg is not bundled. First run offers to download a BtbN build
+  or to point at an existing install.
+- Windows only.
+- A batch drop emits one `RippleInsertCommand` per item; undo takes
+  N presses. A follow-up will collapse them into one command.
+- Text overlay rotation is stored in the model but neither rendered
+  nor exposed in the UI.
+- Preview A/V sync has a residual 100-300 ms lead/lag on some
+  hardware. Tunable via `CAPRUST_AV_DELAY_MS`.
+
 ## [0.3.0-alpha.1] — 2026-09-28
 
 Third public alpha. Audio pipeline rewritten, seek made usable, and
