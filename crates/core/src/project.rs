@@ -266,6 +266,59 @@ mod tests {
     }
 
     #[test]
+    fn encoder_round_trips_through_index() {
+        use crate::project::VideoEncoder;
+        for v in [
+            VideoEncoder::H264Cpu,
+            VideoEncoder::H265Cpu,
+            VideoEncoder::Av1Cpu,
+            VideoEncoder::H264Nvenc,
+            VideoEncoder::H265Nvenc,
+            VideoEncoder::Av1Nvenc,
+            VideoEncoder::H264Amf,
+            VideoEncoder::H265Amf,
+            VideoEncoder::Av1Amf,
+        ] {
+            assert_eq!(VideoEncoder::from_index(v.to_index()), v);
+        }
+    }
+
+    #[test]
+    fn encoder_from_index_defaults_to_h264_cpu() {
+        use crate::project::VideoEncoder;
+        assert_eq!(VideoEncoder::from_index(99), VideoEncoder::H264Cpu);
+    }
+
+    #[test]
+    fn encoder_is_hardware_flags_correct() {
+        use crate::project::VideoEncoder;
+        assert!(!VideoEncoder::H264Cpu.is_hardware());
+        assert!(!VideoEncoder::Av1Cpu.is_hardware());
+        assert!(VideoEncoder::H264Nvenc.is_hardware());
+        assert!(VideoEncoder::H265Amf.is_hardware());
+    }
+
+    #[test]
+    fn encoder_ffmpeg_ids_are_distinct() {
+        use crate::project::VideoEncoder;
+        let ids: std::collections::HashSet<&str> = [
+            VideoEncoder::H264Cpu,
+            VideoEncoder::H265Cpu,
+            VideoEncoder::Av1Cpu,
+            VideoEncoder::H264Nvenc,
+            VideoEncoder::H265Nvenc,
+            VideoEncoder::Av1Nvenc,
+            VideoEncoder::H264Amf,
+            VideoEncoder::H265Amf,
+            VideoEncoder::Av1Amf,
+        ]
+        .iter()
+        .map(|v| v.ffmpeg_id())
+        .collect();
+        assert_eq!(ids.len(), 9);
+    }
+
+    #[test]
     fn audio_render_hash_stable_for_identical_projects() {
         let a = ProjectState::default();
         let b = ProjectState::default();
@@ -324,6 +377,130 @@ mod tests {
     }
 }
 
+/// Video encoder choice for export.
+///
+/// `codec_index` (0=H264, 1=Hevc, 2=Av1) is the legacy on-disk field;
+/// it now maps to the CPU variants so existing projects load
+/// unchanged. New values 3..=8 select hardware encoders.
+///
+/// Detection is runtime-only: a variant that names an unavailable
+/// encoder must not be offered in the UI. See `probe` for the
+/// check and `from_index`/`to_index` for the serde bridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoEncoder {
+    H264Cpu,
+    H265Cpu,
+    Av1Cpu,
+    H264Nvenc,
+    H265Nvenc,
+    Av1Nvenc,
+    H264Amf,
+    H265Amf,
+    Av1Amf,
+}
+
+impl VideoEncoder {
+    pub fn from_index(i: usize) -> Self {
+        match i {
+            1 => Self::H265Cpu,
+            2 => Self::Av1Cpu,
+            3 => Self::H264Nvenc,
+            4 => Self::H265Nvenc,
+            5 => Self::Av1Nvenc,
+            6 => Self::H264Amf,
+            7 => Self::H265Amf,
+            8 => Self::Av1Amf,
+            _ => Self::H264Cpu,
+        }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            Self::H264Cpu => 0,
+            Self::H265Cpu => 1,
+            Self::Av1Cpu => 2,
+            Self::H264Nvenc => 3,
+            Self::H265Nvenc => 4,
+            Self::Av1Nvenc => 5,
+            Self::H264Amf => 6,
+            Self::H265Amf => 7,
+            Self::Av1Amf => 8,
+        }
+    }
+
+    /// FTL key for the export dropdown. Callers pass this through
+    /// `tr(...)`.
+    pub fn ftl_key(self) -> &'static str {
+        match self {
+            Self::H264Cpu => "exp-codec-h264-cpu",
+            Self::H265Cpu => "exp-codec-h265-cpu",
+            Self::Av1Cpu => "exp-codec-av1-cpu",
+            Self::H264Nvenc => "exp-codec-h264-nvenc",
+            Self::H265Nvenc => "exp-codec-h265-nvenc",
+            Self::Av1Nvenc => "exp-codec-av1-nvenc",
+            Self::H264Amf => "exp-codec-h264-amf",
+            Self::H265Amf => "exp-codec-h265-amf",
+            Self::Av1Amf => "exp-codec-av1-amf",
+        }
+    }
+
+    pub fn is_hardware(self) -> bool {
+        !matches!(self, Self::H264Cpu | Self::H265Cpu | Self::Av1Cpu)
+    }
+
+    /// ffmpeg `-c:v` value.
+    pub fn ffmpeg_id(self) -> &'static str {
+        match self {
+            Self::H264Cpu => "libx264",
+            Self::H265Cpu => "libx265",
+            Self::Av1Cpu => "libsvtav1",
+            Self::H264Nvenc => "h264_nvenc",
+            Self::H265Nvenc => "hevc_nvenc",
+            Self::Av1Nvenc => "av1_nvenc",
+            Self::H264Amf => "h264_amf",
+            Self::H265Amf => "hevc_amf",
+            Self::Av1Amf => "av1_amf",
+        }
+    }
+
+    /// Quick runtime probe. Returns true if a 1-frame test encode at
+    /// 320x240 succeeds. Slow on first call (~150 ms) but cheap
+    /// enough to run once per export dialog open. Returns false on
+    /// any error so the UI simply omits the codec.
+    pub fn probe(self, ffmpeg: &std::path::Path) -> bool {
+        use std::process::{Command, Stdio};
+        let mut cmd = Command::new(ffmpeg);
+        cmd.args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=320x240:rate=24",
+            "-c:v",
+            self.ffmpeg_id(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+        // Encoder-specific args so the probe exercises the same
+        // parameter shape the real export will use.
+        match self {
+            Self::H264Nvenc | Self::H265Nvenc | Self::Av1Nvenc => {
+                cmd.args(["-rc", "vbr", "-cq", "23", "-b:v", "0"]);
+            }
+            Self::H264Amf | Self::H265Amf | Self::Av1Amf => {
+                cmd.args(["-quality", "balanced", "-rc", "cqp"]);
+            }
+            _ => {}
+        }
+        cmd.args(["-f", "null", "-"]);
+        cmd.status().map(|s| s.success()).unwrap_or(false)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportSettings {
     pub resolution_index: usize,
@@ -334,6 +511,19 @@ pub struct ExportSettings {
     pub advanced: bool,
     pub rate_mode_index: usize,
     pub bitrate_kbps: u32,
+}
+
+impl ExportSettings {
+    /// Current encoder derived from the on-disk `codec_index`.
+    pub fn encoder(&self) -> VideoEncoder {
+        VideoEncoder::from_index(self.codec_index)
+    }
+
+    /// Set the encoder, keeping `codec_index` in sync so the field
+    /// still round-trips through serde unchanged.
+    pub fn set_encoder(&mut self, e: VideoEncoder) {
+        self.codec_index = e.to_index();
+    }
 }
 
 impl Default for ExportSettings {
