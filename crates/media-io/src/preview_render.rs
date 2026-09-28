@@ -75,6 +75,9 @@ pub struct PreviewRenderer {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
+    /// Mirrors RenderPlan::seek_optimized. When true, the child's
+    /// audio PCM output starts at the seek point, not t=0.
+    pub seek_optimized: bool,
     pub started_at_ms: u64,
     /// Path to the s16le PCM file written by ffmpeg (None if no audio track).
     pub pcm_path: Option<PathBuf>,
@@ -116,6 +119,12 @@ impl PreviewRenderer {
                 args.push("1".into());
                 args.push("-framerate".into());
                 args.push(format!("{fps:.6}"));
+            } else if inp.source_start_sec > 0.0001 {
+                // Seek optimization (2a): ffmpeg jumps to the offset
+                // at demuxer level, skipping decode of everything
+                // before it. Turns a 5-second seek into ~200 ms.
+                args.push("-ss".into());
+                args.push(format!("{:.6}", inp.source_start_sec));
             }
             args.push("-i".into());
             args.push(inp.path.to_string_lossy().to_string());
@@ -130,7 +139,11 @@ impl PreviewRenderer {
         // and AudioPlayer::play_pcm_file(path, start_from) seeks the reader
         // by byte offset instead. This keeps the ffmpeg arg list simple
         // (one -ss, one output) and avoids duplicating -ss per output.
-        if start_ms > 0 {
+        // Only fall back to output-side -ss when seek optimization
+        // was disabled (transitions present). Otherwise the -ss is
+        // already on each input above and ffmpeg output is seek-
+        // relative from frame zero.
+        if !plan.seek_optimized && start_ms > 0 {
             args.push("-ss".into());
             args.push(format!("{:.6}", start_ms as f64 / 1000.0));
         }
@@ -294,6 +307,7 @@ impl PreviewRenderer {
             pcm_path,
             width: w,
             height: h,
+            seek_optimized: plan.seek_optimized,
             fps,
             started_at_ms: start_ms,
         })

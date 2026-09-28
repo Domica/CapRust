@@ -4993,9 +4993,19 @@ impl CapRustApp {
                                         .active_path
                                         .clone()
                                         .or_else(|| renderer.pcm_path.clone());
+                                    // Cache PCM starts at t=0; offset is
+                                    // the playhead. Preview PCM inherits
+                                    // the plan's input-side -ss when
+                                    // seek_optimized is set, so its file
+                                    // already starts at the seek point.
+                                    let pcm_offset = if using_cache || !renderer.seek_optimized {
+                                        start_from
+                                    } else {
+                                        0
+                                    };
                                     self.audio_player = match pcm_path.as_ref() {
                                         Some(path) => {
-                                            match AudioPlayer::play_pcm_file(path, start_from) {
+                                            match AudioPlayer::play_pcm_file(path, pcm_offset) {
                                                 Ok(p) => {
                                                     // Apply user's persisted
                                                     // volume / mute settings
