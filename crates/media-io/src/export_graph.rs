@@ -239,6 +239,10 @@ pub struct RenderPlan {
     pub crf: u8,
     pub preset: String,
     pub has_audio: bool,
+    /// Clips the planner had to skip because their source file was
+    /// missing. Callers may show a warning toast; the plan is still
+    /// valid for the remaining clips.
+    pub skipped: PlanSkipped,
 }
 
 impl RenderPlan {
@@ -1780,6 +1784,27 @@ fn resolve_bg_removal_path(
 // plan_from_project has one argument per render dimension the caller
 // knows about. Bundling them into a struct would just move the same
 // fields behind one more layer. The signature is stable; leave it.
+/// Count of clips skipped by `plan_from_project` because their source
+/// file was missing on disk. The caller can surface a warning to the
+/// user; the render continues with the remaining clips.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PlanSkipped {
+    pub missing_source: usize,
+}
+
+/// Extract the on-disk source path from a clip, if it has one. Video,
+/// Image, and Audio all carry a `path`; Text, Captions, and Narration
+/// do not reference an input file.
+fn clip_source_path(ct: &caprust_core::ClipType) -> Option<&str> {
+    use caprust_core::ClipType;
+    match ct {
+        ClipType::Video { path, .. }
+        | ClipType::Image { path, .. }
+        | ClipType::Audio { path, .. } => Some(path.as_str()),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn plan_from_project(
     project: &caprust_core::ProjectState,
@@ -1796,6 +1821,7 @@ pub fn plan_from_project(
     let mut inputs: Vec<InputSpec> = Vec::new();
     let mut video_clips: Vec<VideoClip> = Vec::new();
     let mut audio_clips: Vec<AudioClip> = Vec::new();
+    let mut skipped = PlanSkipped::default();
     // Clips downstream of an xfade appear earlier in the render than
     // their original timeline position; shift their audio and their
     // burned-in captions to match so the mix and the on-screen text
@@ -1865,6 +1891,17 @@ pub fn plan_from_project(
         clips.sort_by_key(|c| c.start_time_ms);
 
         for c in clips {
+            if let Some(path) = clip_source_path(&c.clip_type) {
+                if !std::path::Path::new(path).is_file() {
+                    tracing::warn!(
+                        "plan_from_project: skipping clip {} (source missing: {})",
+                        c.id,
+                        path
+                    );
+                    skipped.missing_source += 1;
+                    continue;
+                }
+            }
             match &c.clip_type {
                 ClipType::Video { path, .. } => {
                     let dur_sec = c.duration_ms as f64 / 1000.0;
@@ -2124,6 +2161,15 @@ pub fn plan_from_project(
             );
             continue;
         }
+        if !std::path::Path::new(path).is_file() {
+            tracing::warn!(
+                "plan_from_project: skipping audio clip {} (source missing: {})",
+                c.id,
+                path
+            );
+            skipped.missing_source += 1;
+            continue;
+        }
         let dur_sec = c.duration_ms as f64 / 1000.0;
         let idx = register_input(&mut inputs, path, 0.0, dur_sec);
         let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
@@ -2196,6 +2242,7 @@ pub fn plan_from_project(
         inputs,
         video_clips,
         audio_clips,
+        skipped,
         text_clips,
         total_duration_sec,
         width: width.max(2) & !1,
@@ -2356,6 +2403,8 @@ mod tests {
             fps_num: 30,
             fps_den: 1,
             has_audio: false,
+
+            skipped: PlanSkipped::default(),
             crf: 23,
             preset: "veryfast".to_string(),
         };
@@ -2510,6 +2559,8 @@ mod tests {
             fps_num: 30,
             fps_den: 1,
             has_audio: false,
+
+            skipped: PlanSkipped::default(),
             crf: 23,
             preset: "veryfast".to_string(),
         }
@@ -2705,6 +2756,8 @@ mod tests {
             crf: 23,
             preset: "veryfast".into(),
             has_audio: false,
+
+            skipped: PlanSkipped::default(),
         };
         let (fg, _, _) = plan.build_filtergraph().unwrap();
         assert!(fg.contains("scale=1920:1080"));
