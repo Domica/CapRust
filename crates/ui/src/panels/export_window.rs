@@ -5,26 +5,6 @@ use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Codec {
-    H264,
-    Hevc,
-    Av1,
-}
-
-impl Codec {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::H264 => "H.264 (AVC)",
-            Self::Hevc => "H.265 (HEVC)",
-            Self::Av1 => "AV1",
-        }
-    }
-    pub fn all() -> [Self; 3] {
-        [Self::H264, Self::Hevc, Self::Av1]
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QualityTier {
     Small,
     Regular,
@@ -61,7 +41,7 @@ pub struct ExportState {
     pub destination: String,
     pub resolution: ExportResolution,
     pub frame_rate: ExportFrameRate,
-    pub codec: Codec,
+    pub codec: caprust_core::project::VideoEncoder,
     pub quality: QualityTier,
     pub advanced: bool,
     pub rate_mode: RateMode,
@@ -109,7 +89,7 @@ impl Default for ExportState {
             destination: default_videos_dir(),
             resolution: ExportResolution::FullHd,
             frame_rate: ExportFrameRate::Original,
-            codec: Codec::H264,
+            codec: caprust_core::project::VideoEncoder::H264Cpu,
             quality: QualityTier::Regular,
             advanced: false,
             rate_mode: RateMode::Vbr,
@@ -130,6 +110,7 @@ fn default_videos_dir() -> String {
 pub fn show(
     ui: &mut Ui,
     state: &mut ExportState,
+    available_encoders: &[caprust_core::project::VideoEncoder],
     duration_ms: u64,
     clip_count: usize,
     project_dims: (u32, u32),
@@ -196,11 +177,11 @@ pub fn show(
     ui.horizontal(|ui| {
         ui.label(tr("exp-codec"));
         egui::ComboBox::from_id_salt("exp_codec")
-            .selected_text(state.codec.label())
+            .selected_text(tr(state.codec.ftl_key()))
             .width(240.0)
             .show_ui(ui, |ui| {
-                for c in Codec::all() {
-                    ui.selectable_value(&mut state.codec, c, c.label());
+                for &enc in available_encoders {
+                    ui.selectable_value(&mut state.codec, enc, tr(enc.ftl_key()));
                 }
             });
     });

@@ -519,3 +519,13 @@ relink-dialog-more = more
 toast-relinked = Relinked
 relink-dialog-none-matched = No matching file in that folder.
 media-missing-badge = Missing
+
+exp-codec-h264-cpu = H.264 (CPU)
+exp-codec-h264-nvenc = H.264 (NVENC)
+exp-codec-h264-amf = H.264 (AMF)
+exp-codec-h265-cpu = H.265 (CPU)
+exp-codec-h265-nvenc = H.265 (NVENC)
+exp-codec-h265-amf = H.265 (AMF)
+exp-codec-av1-cpu = AV1 (CPU)
+exp-codec-av1-nvenc = AV1 (NVENC)
+exp-codec-av1-amf = AV1 (AMF)

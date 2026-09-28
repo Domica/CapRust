@@ -150,6 +150,8 @@ pub struct CapRustApp {
     pub settings_open: bool,
     pub export_open: bool,
     pub export_state: ExportState,
+    /// Hardware encoders confirmed to work at runtime.
+    pub available_encoders: Option<Vec<caprust_core::project::VideoEncoder>>,
     pub media_bin: MediaBinState,
     pub preview_size: PreviewSize,
     pub timeline_tools: TimelineToolState,
@@ -459,6 +461,7 @@ impl CapRustApp {
             settings_open: false,
             export_open: false,
             export_state: ExportState::default(),
+            available_encoders: None,
             media_bin: MediaBinState::default(),
             preview_size: PreviewSize::Medium,
             timeline_tools: TimelineToolState::default(),
@@ -5669,9 +5672,37 @@ impl CapRustApp {
             .show(ctx, |ui| {
                 let clip_count = self.project.clips.len();
                 let project_dims = self.project.project_dimensions();
+                if self.available_encoders.is_none() {
+                    use caprust_core::project::VideoEncoder;
+                    let mut available = vec![
+                        VideoEncoder::H264Cpu,
+                        VideoEncoder::H265Cpu,
+                        VideoEncoder::Av1Cpu,
+                    ];
+                    if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
+                        let path = std::path::Path::new(&ffmpeg);
+                        for enc in [
+                            VideoEncoder::H264Nvenc,
+                            VideoEncoder::H265Nvenc,
+                            VideoEncoder::Av1Nvenc,
+                            VideoEncoder::H264Amf,
+                            VideoEncoder::H265Amf,
+                            VideoEncoder::Av1Amf,
+                        ] {
+                            if enc.probe(path) {
+                                available.push(enc);
+                            }
+                        }
+                    }
+                    tracing::info!("export: probed encoders available: {available:?}");
+                    self.available_encoders = Some(available);
+                }
+                let available = self.available_encoders.clone().unwrap_or_default();
+
                 start_clicked = crate::panels::export_window::show(
                     ui,
                     &mut self.export_state,
+                    &available,
                     total_ms,
                     clip_count,
                     project_dims,
@@ -6112,6 +6143,8 @@ impl CapRustApp {
             crate::panels::export_window::QualityTier::Large => 16,
         };
 
+        let encoder = self.export_state.codec;
+        tracing::info!("export: using encoder {encoder:?}");
         let models_dir = self.settings.effective_models_dir();
         let plan = match caprust_media_io::export_graph::plan_from_project(
             &self.project,
@@ -6123,7 +6156,7 @@ impl CapRustApp {
             "veryfast",
             &models_dir,
             0,
-            caprust_core::project::VideoEncoder::H264Cpu,
+            encoder,
         ) {
             Ok(p) => {
                 self.report_skipped(p.skipped.missing_source);
