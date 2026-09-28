@@ -132,6 +132,10 @@ pub struct CapRustApp {
     /// True after the auto-open check has run once this session, so
     /// the modal is only offered at most once per launch.
     pub ffmpeg_prompt_checked: bool,
+    /// Missing-media relink dialog. Opened by `check_missing_media_on_load`
+    /// when the media library references files that are not on disk.
+    pub relink_dialog: crate::panels::relink_dialog::RelinkDialogState,
+    pub relink_dialog_open: bool,
     /// Dock tree that owns every editor panel. Replaces the fixed
     /// SidePanel / CentralPanel layout. See `crate::dock`.
     pub dock_state: egui_dock::DockState<crate::dock::Tab>,
@@ -429,6 +433,8 @@ impl CapRustApp {
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
+            relink_dialog: Default::default(),
+            relink_dialog_open: false,
             dock_state: settings
                 .dock_layout
                 .as_ref()
@@ -572,6 +578,9 @@ impl CapRustApp {
                 self.cleanup_phantom_captions();
                 // Auto-regenerate thumbnails for older projects or after cache clear.
                 self.regen_missing_thumbnails();
+                // Scan for missing source files. If any are found, open
+                // the relink dialog on the next update() frame.
+                self.check_missing_media_on_load();
             }
             Err(e) => tracing::error!("Load failed: {e}"),
         }
@@ -6086,6 +6095,118 @@ impl CapRustApp {
         }
     }
 
+    // ---------------------------------------------------------------
+    // Missing-media relink
+    // ---------------------------------------------------------------
+
+    /// Called at the end of every successful `load_project_from`.
+    /// Synchronous scan of the media library; opens the dialog when
+    /// any file is missing. No-op on clean projects.
+    fn check_missing_media_on_load(&mut self) {
+        let missing = caprust_core::commands::relink_many::find_missing_media_items(&self.project);
+        if missing.is_empty() {
+            return;
+        }
+        tracing::info!("relink: {} media file(s) missing on load", missing.len());
+        self.relink_dialog = crate::panels::relink_dialog::RelinkDialogState {
+            missing,
+            ..Default::default()
+        };
+        self.relink_dialog_open = true;
+    }
+
+    fn show_relink_dialog_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.relink_dialog_open;
+        let mut user_wants_close = false;
+        let mut locate_requested = false;
+        egui::Window::new(tr("relink-dialog-title"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(480.0)
+            .show(ctx, |ui| {
+                let ev = crate::panels::relink_dialog::show(ui, &mut self.relink_dialog);
+                if ev.locate_folder {
+                    locate_requested = true;
+                }
+                if ev.close {
+                    user_wants_close = true;
+                }
+            });
+        // Same borrow-trap pattern as the ffmpeg prompt: apply the
+        // close decision AFTER the closure returns.
+        if user_wants_close {
+            open = false;
+        }
+        self.relink_dialog_open = open;
+
+        if locate_requested {
+            self.run_relink_folder_pick();
+        }
+    }
+
+    /// rfd folder picker -> scan -> RelinkManyCommand. Runs on the UI
+    /// thread; scan is depth-capped and typically completes in a few
+    /// hundred milliseconds. If it turns out slow on network drives,
+    /// move to a background thread in a follow-up commit.
+    fn run_relink_folder_pick(&mut self) {
+        let Some(dir) = rfd::FileDialog::new()
+            .set_title(tr("relink-dialog-locate"))
+            .pick_folder()
+        else {
+            return;
+        };
+
+        self.relink_dialog.tried_folder = true;
+
+        let matches = caprust_core::commands::relink_many::scan_folder_for_missing(
+            &dir,
+            &self.relink_dialog.missing,
+        );
+
+        if matches.is_empty() {
+            tracing::info!(
+                "relink: folder {} matched 0 of {} missing",
+                dir.display(),
+                self.relink_dialog.missing.len()
+            );
+            self.relink_dialog.phase =
+                crate::panels::relink_dialog::RelinkPhase::Failed(tr("relink-dialog-none-matched"));
+            return;
+        }
+
+        let n = matches.len();
+        let mappings: Vec<_> = matches
+            .into_iter()
+            .map(|m| caprust_core::commands::relink_many::RelinkMapping {
+                media_id: m.media_id,
+                old_path: m.old_path,
+                new_path: m.new_path,
+            })
+            .collect();
+
+        let cmd = caprust_core::commands::relink_many::RelinkManyCommand::new(mappings);
+        match self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+            Ok(()) => {
+                tracing::info!("relink: applied {n} mapping(s)");
+                self.toast(format!("{} · {}", tr("toast-relinked"), n));
+                let still =
+                    caprust_core::commands::relink_many::find_missing_media_items(&self.project);
+                let still_n = still.len();
+                self.relink_dialog.missing = still;
+                self.relink_dialog.phase = crate::panels::relink_dialog::RelinkPhase::Done {
+                    matched: n,
+                    still_missing: still_n,
+                };
+            }
+            Err(e) => {
+                tracing::error!("relink: command failed: {e}");
+                self.relink_dialog.phase =
+                    crate::panels::relink_dialog::RelinkPhase::Failed(e.to_string());
+            }
+        }
+    }
+
     fn show_ffmpeg_prompt_window(&mut self, ctx: &egui::Context) {
         // Poll the download receiver first; terminal states flip the
         // phase and re-run detection once the binary is on disk.
@@ -6453,6 +6574,9 @@ impl eframe::App for CapRustApp {
         }
         if self.ffmpeg_prompt_open {
             self.show_ffmpeg_prompt_window(ctx);
+        }
+        if self.relink_dialog_open {
+            self.show_relink_dialog_window(ctx);
         }
         if self.export_open {
             self.show_export_window(ctx);
