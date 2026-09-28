@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
-[![Version](https://img.shields.io/badge/version-0.3.0--alpha.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0--alpha.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
@@ -48,7 +48,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Multi-track** — V1/V2, A1/A2, Text, pinned Overlay, Captions
 - **Drag and drop** from media library
 - **Cross-track drag**, trim handles, split at playhead
-- **Multi-select** — Ctrl+click, marquee rubber-band
+- **Multi-select** — Ctrl+click, marquee rubber-band. Drag one selected clip to move the entire group in one undoable step.
 - **Follow playhead** during playback, **trim-follow** option
 - **Pan tool** for horizontal navigation
 - **Per-track chips** — mute, hide, lock, pin (all render-affecting)
@@ -57,6 +57,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - Import **video** (MP4, MOV, AVI, MKV, WebM), **audio** (MP3, WAV, M4A, FLAC), **images** (PNG, JPG, WebP)
 - Auto **thumbnails** via ffmpeg extraction + per-project cache
 - **Background probe** — duration, resolution, FPS
+- **Multi-select** in the bin: Ctrl+click toggles, plain click replaces. Drag a multi-selection onto the timeline to insert every item in sequence.
 - **Missing-media relink** on load. Dialog lists every missing file, folder picker matches by basename, whole batch runs as one undoable `RelinkManyCommand`. Media bin shows a red badge, timeline clips without a source get a red diagonal hatch.
 - **Media bin** with sort (added / name / type), filter (all / video / audio / image), preview size (S / M / L)
 
@@ -271,6 +272,17 @@ CapRust is:
 ---
 
 ## Version History
+
+Full details in [CHANGELOG.md](CHANGELOG.md).
+
+### 0.4.0-alpha.1 - 2026-09-28
+
+- **Media bin multi-select** - Ctrl+click toggles, accent border on selected cards, batch X removes the whole selection.
+- **Long-press drag** - hold 500 ms to start a drag; short click selects. Drag badge shows how many items are in flight.
+- **Batch drag to timeline** - the whole selection lands in sequence at the drop position.
+- **Group move on the timeline** - dragging one of a multi-selection moves the entire group in one undoable step.
+- Captions and text overlays now seek-shift correctly, and apostrophes no longer break the filtergraph.
+
 
 Full details in [CHANGELOG.md](CHANGELOG.md).
 
