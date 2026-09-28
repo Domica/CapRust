@@ -493,3 +493,11 @@ translate-toast-busy = A translation is already in progress.
 translate-toast-empty = No segments to translate.
 translate-toast-done = Translation added:
 translate-toast-failed = Translation failed:
+
+set-tab-translation = Translation
+set-translation-hint = Used when you translate captions from the timeline context menu.
+set-translation-source = Source
+set-translation-target = Target
+set-translation-email = Contact email
+set-translation-email-hint = Optional. Raises the daily MyMemory quota from ~5k to ~50k words per day.
+set-translation-provider-note = Provider: MyMemory, no API key required. Translations are less polished than DeepL.

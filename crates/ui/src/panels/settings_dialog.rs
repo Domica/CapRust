@@ -15,6 +15,7 @@ pub enum SettingsTab {
     Language,
     Paths,
     Audio,
+    Translation,
 }
 
 pub struct SettingsEvents {
@@ -47,6 +48,7 @@ pub fn show(
         ui.selectable_value(tab, SettingsTab::Language, tr("set-tab-language"));
         ui.selectable_value(tab, SettingsTab::Paths, tr("set-tab-paths"));
         ui.selectable_value(tab, SettingsTab::Audio, tr("set-tab-audio"));
+        ui.selectable_value(tab, SettingsTab::Translation, tr("set-tab-translation"));
     });
     ui.separator();
 
@@ -63,6 +65,7 @@ pub fn show(
             SettingsTab::Language => show_language(ui, &mut settings.language),
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
             SettingsTab::Audio => show_audio(ui, settings),
+            SettingsTab::Translation => show_translation(ui, settings),
         });
 
     ui.separator();
@@ -585,6 +588,90 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
     ui.add_space(8.0);
     ui.label(
         egui::RichText::new(tr("set-audio-preview-only"))
+            .small()
+            .italics()
+            .color(egui::Color32::from_gray(130)),
+    );
+}
+
+/// Supported languages for the translation feature. Source allows
+/// "auto" so MyMemory can pick; target must be concrete.
+const TRANSLATE_SOURCE_LANGS: &[&str] = &["auto", "en", "hr", "de", "fr", "es", "it"];
+const TRANSLATE_TARGET_LANGS: &[&str] = &["en", "hr", "de", "fr", "es", "it"];
+
+fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
+    ui.label(egui::RichText::new(tr("set-tab-translation")).strong());
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(tr("set-translation-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(10.0);
+
+    ui.horizontal(|ui| {
+        ui.label(tr("set-translation-source"));
+        egui::ComboBox::from_id_salt("translate_source")
+            .selected_text(&settings.translate_source_lang)
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                for code in TRANSLATE_SOURCE_LANGS {
+                    ui.selectable_value(
+                        &mut settings.translate_source_lang,
+                        (*code).to_string(),
+                        *code,
+                    );
+                }
+            });
+    });
+
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label(tr("set-translation-target"));
+        egui::ComboBox::from_id_salt("translate_target")
+            .selected_text(&settings.translate_target_lang)
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                for code in TRANSLATE_TARGET_LANGS {
+                    ui.selectable_value(
+                        &mut settings.translate_target_lang,
+                        (*code).to_string(),
+                        *code,
+                    );
+                }
+            });
+    });
+
+    ui.add_space(12.0);
+    ui.label(egui::RichText::new(tr("set-translation-email")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-translation-email-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(4.0);
+    let mut email = settings.translate_email.clone().unwrap_or_default();
+    if ui
+        .add(
+            egui::TextEdit::singleline(&mut email)
+                .desired_width(280.0)
+                .hint_text("(optional)"),
+        )
+        .changed()
+    {
+        settings.translate_email = if email.trim().is_empty() {
+            None
+        } else {
+            Some(email.clone())
+        };
+    }
+
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new(tr("set-translation-provider-note"))
             .small()
             .italics()
             .color(egui::Color32::from_gray(130)),

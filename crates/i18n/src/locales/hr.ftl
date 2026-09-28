@@ -493,3 +493,11 @@ translate-toast-busy = Prijevod je već u tijeku.
 translate-toast-empty = Nema segmenata za prijevod.
 translate-toast-done = Prijevod dodan:
 translate-toast-failed = Prijevod nije uspio:
+
+set-tab-translation = Prijevod
+set-translation-hint = Koristi se kod prijevoda titlova iz kontekstnog izbornika na timelineu.
+set-translation-source = Izvor
+set-translation-target = Odredište
+set-translation-email = Kontakt email
+set-translation-email-hint = Neobavezno. Povećava dnevnu MyMemory kvotu s ~5k na ~50k riječi.
+set-translation-provider-note = Provider: MyMemory, ne treba API ključ. Prijevodi su slabiji od DeepL-a.
