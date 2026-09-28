@@ -2,6 +2,82 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.3.0-alpha.1] — 2026-09-28
+
+Third public alpha. Audio pipeline rewritten, seek made usable, and
+hardware encoders wired in.
+
+### Added
+- **Hardware-accelerated export** (NVENC, AMF). The export dialog
+  probes the running ffmpeg build on first open and offers only the
+  encoders that actually open on this machine. CPU H.264/H.265/AV1
+  remain always available. HEVC and AV1 output carry the correct
+  mp4 tags (hvc1, av01). Measured 5-15x faster on an RTX 2060.
+- **Pre-rendered audio PCM cache.** A background ffmpeg process
+  renders the whole project's audio mix to a stable PCM file in
+  %TEMP%. The play path prefers this cache over the preview's own
+  PCM output, so audio survives a preview respawn instead of
+  restarting on every edit and seek.
+- **Seek optimization in the preview renderer.** `plan_from_project`
+  now takes the current playhead and rewrites each input to
+  `-ss`/`-t` so ffmpeg demuxer-seeks instead of decoding from t=0.
+  A seek into the second half of a 3-minute project goes from 5-10 s
+  to ~200-500 ms. Projects with transitions fall back to the old
+  output-side seek.
+- **Missing-media relink flow.** On project load, if any media file
+  is gone, a dialog lists the missing items, offers a folder picker,
+  and matches files by basename (case-insensitive, depth-capped
+  scan). The whole batch runs as one undoable `RelinkManyCommand`.
+- Media bin shows a red "Missing" badge on cards whose source file
+  is gone.
+- Timeline clips without a source file are drawn with a red
+  diagonal hatch so a broken clip cannot hide under its normal
+  fill colour.
+- Paused seek now spawns a one-shot preview render at the new
+  playhead. Previously a timeline click while paused moved the
+  playhead but left the old frame on screen and no renderer alive.
+
+### Fixed
+- **Final audio mix was attenuating clips cumulatively.** A chain
+  of N sequential `amix` filters with the default `normalize=1`
+  divided the signal by 2 at each stage, so the first clip on a
+  17-clip project played at roughly 1/2^17 of the last. Replaced
+  with a single `amix` across all inputs at `normalize=0`. The
+  opening clip is now at full level and a lone m4a no longer plays
+  ~10x louder than video-embedded audio.
+- Video frame rate and playback stayed silent on a seek past the
+  first clip. PTS was not reset before the filtergraph's trim, so
+  the trim saw an empty window and selected zero frames. Reset
+  before trim in both video and audio chains.
+- `RenderPlan::total_duration_sec` was zero when a seek was applied
+  because it had already been derived from the seek-shifted clips;
+  subtracting again collapsed the base black / silence bed to 0 s.
+- The 650 ms A/V delay compensation is now skipped on
+  seek-optimized plans. The fixed value pushed video behind audio
+  whenever the audio was cache-fed and the video was already
+  seeked.
+
+### Changed
+- `Cargo.lock` regenerated; workspace version bumped to
+  0.3.0-alpha.1.
+- `ExportSettings.codec_index` values 3..=8 now select NVENC and
+  AMF variants. 0/1/2 keep their old meaning. Existing projects
+  load unchanged.
+
+### Known issues
+- No installer yet; download the nightly ZIP and extract it.
+- FFmpeg is not bundled. First run offers to download a BtbN build
+  (~110 MB) or to point at an existing install. NVENC and AMF
+  require a build that was compiled with `--enable-nvenc` /
+  `--enable-amf`; the BtbN and gyan.dev builds both satisfy that.
+- Windows only.
+- Text overlay rotation is stored in the model but neither rendered
+  nor exposed in the UI.
+- MyMemory translation quality is below DeepL.
+- Preview A/V sync has a residual 100-300 ms lead/lag on some
+  hardware. Tunable via `CAPRUST_AV_DELAY_MS`; a UI slider is
+  planned.
+
 ## [0.2.0-alpha.1] — 2026-09-29
 
 Second public alpha. Feature additions since 0.1.0-alpha.1.
