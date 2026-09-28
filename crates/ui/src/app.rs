@@ -196,6 +196,10 @@ pub struct CapRustApp {
     /// Transient notifications shown top-right. Expired entries are
     /// pruned each frame; the user can dismiss early with the ✕ button.
     pub toasts: Vec<Toast>,
+    /// Last count of clips the render planner skipped because their
+    /// source file was missing. Debounces the toast so the same value
+    /// does not spam every frame the hash changes.
+    pub last_skipped_missing: usize,
     /// In-flight background jobs (caption, narration, export). Rendered
     /// by show_jobs_bar above the timeline while any are live.
     pub jobs: Vec<BackgroundJob>,
@@ -439,6 +443,7 @@ impl CapRustApp {
             narration_input: Default::default(),
             update_available: None,
             toasts: Vec::new(),
+            last_skipped_missing: 0,
             jobs: Vec::new(),
             next_job_id: 1,
             caption_job_id: None,
@@ -2371,6 +2376,24 @@ impl CapRustApp {
                     ctx.request_repaint();
                 });
             });
+    }
+
+    /// Report a count of clips skipped by the render planner. Only
+    /// toasts when the count changes to a nonzero value, so we do not
+    /// spam on every frame while the project sits in a bad state.
+    fn report_skipped(&mut self, count: usize) {
+        if count == self.last_skipped_missing {
+            return;
+        }
+        self.last_skipped_missing = count;
+        if count == 0 {
+            return;
+        }
+        let msg = format!(
+            "{count} clip{} skipped — source file missing",
+            if count == 1 { "" } else { "s" }
+        );
+        self.toast(msg);
     }
 
     /// Push a transient notification. Auto-dismisses after 4s.
@@ -4745,6 +4768,7 @@ impl CapRustApp {
                             &models_dir,
                         ) {
                             Ok(plan) => {
+                                self.report_skipped(plan.skipped.missing_source);
                                 match PreviewRenderer::spawn(
                                     std::path::Path::new(&ffmpeg),
                                     &plan,
@@ -4983,14 +5007,16 @@ impl CapRustApp {
                             "veryfast",
                             &models_dir,
                         ) {
-                            Ok(plan) => match PreviewRenderer::spawn(
-                                std::path::Path::new(&ffmpeg),
-                                &plan,
-                                playhead,
-                                rw,
-                                rh,
-                                fps_f,
-                            ) {
+                            Ok(plan) => {
+                                self.report_skipped(plan.skipped.missing_source);
+                                match PreviewRenderer::spawn(
+                                    std::path::Path::new(&ffmpeg),
+                                    &plan,
+                                    playhead,
+                                    rw,
+                                    rh,
+                                    fps_f,
+                                ) {
                                 Ok(r) => {
                                     tracing::info!(
                                         "preview: paused one-shot render from {}ms",
@@ -5005,7 +5031,8 @@ impl CapRustApp {
                                 Err(e) => {
                                     tracing::warn!("preview: paused spawn failed: {e}");
                                 }
-                            },
+                                }
+                            }
                             Err(e) => {
                                 tracing::warn!("preview: paused plan failed: {e}");
                             }
@@ -5901,7 +5928,10 @@ impl CapRustApp {
             "veryfast",
             &models_dir,
         ) {
-            Ok(p) => p,
+            Ok(p) => {
+                self.report_skipped(p.skipped.missing_source);
+                p
+            }
             Err(e) => {
                 tracing::error!("export plan failed: {e}");
                 return;
