@@ -4961,6 +4961,7 @@ impl CapRustApp {
                         23,
                         "veryfast",
                         &models_dir,
+                        start_from,
                     ) {
                         Ok(plan) => {
                             self.report_skipped(plan.skipped.missing_source);
@@ -5197,6 +5198,7 @@ impl CapRustApp {
                         23,
                         "veryfast",
                         &models_dir,
+                        playhead,
                     ) {
                         Ok(plan) => {
                             self.report_skipped(plan.skipped.missing_source);
@@ -6095,6 +6097,7 @@ impl CapRustApp {
             crf,
             "veryfast",
             &models_dir,
+            0,
         ) {
             Ok(p) => {
                 self.report_skipped(p.skipped.missing_source);
@@ -6217,6 +6220,7 @@ impl CapRustApp {
             23,
             "veryfast",
             &models_dir,
+            0,
         ) {
             Ok(p) => p,
             Err(e) => {

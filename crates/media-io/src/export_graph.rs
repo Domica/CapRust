@@ -243,6 +243,16 @@ pub struct RenderPlan {
     /// missing. Callers may show a warning toast; the plan is still
     /// valid for the remaining clips.
     pub skipped: PlanSkipped,
+    /// Timeline position (ms) that this plan's output starts from.
+    /// 0 for export and for the audio PCM cache render; the actual
+    /// playhead for preview seek-respawns.
+    pub seek_ms: u64,
+    /// True when the planner rewrote per-input `-ss` / `-t` and
+    /// shifted every clip's `timeline_start_sec` to a
+    /// seek-relative frame. Callers (preview) can then skip the
+    /// output-side `-ss`. False means the caller must fall back to
+    /// output-side `-ss`.
+    pub seek_optimized: bool,
 }
 
 impl RenderPlan {
@@ -1841,6 +1851,7 @@ pub fn plan_from_project(
     crf: u8,
     preset: &str,
     models_dir: &std::path::Path,
+    seek_ms: u64,
 ) -> Result<RenderPlan> {
     use caprust_core::{ClipType, TrackKind};
 
@@ -1853,6 +1864,30 @@ pub fn plan_from_project(
     // burned-in captions to match so the mix and the on-screen text
     // stay in sync with the shortened video.
     let xfade_audio_shifts = compute_xfade_audio_shifts(project);
+
+    // ---- Seek optimization (preview only) ----
+    // When the caller starts playback at a non-zero playhead,
+    // rewrite every input to `-ss <offset>` so ffmpeg's demuxer
+    // seeks instead of decoding from t=0. Clips fully before the
+    // seek are dropped; clips that straddle it shrink and shift.
+    //
+    // Disabled when the project has any transition, because xfade
+    // runs assume chain adjacency that per-clip seek would break.
+    // Those projects fall back to the caller-side output `-ss`.
+    let seek_sec = seek_ms as f64 / 1000.0;
+    let has_any_transition = project
+        .clips
+        .iter()
+        .any(|c| c.transition_in.is_some() || c.transition_out.is_some());
+    let do_input_seek = seek_ms > 0 && !has_any_transition;
+    if do_input_seek {
+        tracing::info!("plan_from_project: seek-optimized plan for {}ms", seek_ms);
+    } else if seek_ms > 0 {
+        tracing::info!(
+            "plan_from_project: seek {}ms with transitions -- falling back to output-side -ss",
+            seek_ms
+        );
+    }
 
     let mut text_clips: Vec<TextClip> = Vec::new();
 
@@ -1931,11 +1966,27 @@ pub fn plan_from_project(
             match &c.clip_type {
                 ClipType::Video { path, .. } => {
                     let dur_sec = c.duration_ms as f64 / 1000.0;
-                    let idx = register_input(&mut inputs, path, 0.0, dur_sec);
+                    let clip_start = c.start_time_ms as f64 / 1000.0;
+                    let clip_end = clip_start + dur_sec;
+                    if do_input_seek && clip_end <= seek_sec {
+                        continue;
+                    }
+                    let (input_ss_sec, visible_dur, new_start) = if do_input_seek {
+                        if clip_start >= seek_sec {
+                            (0.0, dur_sec, clip_start - seek_sec)
+                        } else {
+                            let offset = (seek_sec - clip_start) * c.speed as f64;
+                            let visible = clip_end - seek_sec;
+                            (offset, visible, 0.0)
+                        }
+                    } else {
+                        (0.0, dur_sec, clip_start)
+                    };
+                    let idx = register_input(&mut inputs, path, input_ss_sec, visible_dur);
                     video_clips.push(VideoClip {
                         input_index: idx,
-                        timeline_start_sec: c.start_time_ms as f64 / 1000.0,
-                        duration_sec: dur_sec,
+                        timeline_start_sec: new_start,
+                        duration_sec: visible_dur,
                         speed: c.speed,
                         speed_end: c.speed_end,
                         speed_ease: c.speed_ease,
@@ -1951,11 +2002,25 @@ pub fn plan_from_project(
                 }
                 ClipType::Image { path, .. } => {
                     let dur_sec = c.duration_ms as f64 / 1000.0;
-                    let idx = register_input(&mut inputs, path, 0.0, dur_sec);
+                    let clip_start = c.start_time_ms as f64 / 1000.0;
+                    let clip_end = clip_start + dur_sec;
+                    if do_input_seek && clip_end <= seek_sec {
+                        continue;
+                    }
+                    let (visible_dur, new_start) = if do_input_seek {
+                        if clip_start >= seek_sec {
+                            (dur_sec, clip_start - seek_sec)
+                        } else {
+                            (clip_end - seek_sec, 0.0)
+                        }
+                    } else {
+                        (dur_sec, clip_start)
+                    };
+                    let idx = register_input(&mut inputs, path, 0.0, visible_dur);
                     video_clips.push(VideoClip {
                         input_index: idx,
-                        timeline_start_sec: c.start_time_ms as f64 / 1000.0,
-                        duration_sec: dur_sec,
+                        timeline_start_sec: new_start,
+                        duration_sec: visible_dur,
                         speed: c.speed,
                         speed_end: c.speed_end,
                         speed_ease: c.speed_ease,
@@ -2278,6 +2343,8 @@ pub fn plan_from_project(
         crf,
         preset: preset.to_string(),
         has_audio,
+        seek_ms,
+        seek_optimized: do_input_seek,
     })
 }
 
@@ -2433,6 +2500,8 @@ mod tests {
             skipped: PlanSkipped::default(),
             crf: 23,
             preset: "veryfast".to_string(),
+            seek_ms: 0,
+            seek_optimized: false,
         };
         // Overwrite the video clip's type via the plan-construction
         // path: rather than reimplement plan_from_project here, we
@@ -2504,6 +2573,7 @@ mod tests {
             23,
             "veryfast",
             std::path::Path::new("."),
+            0,
         )
         .expect("plan built");
 
@@ -2589,6 +2659,8 @@ mod tests {
             skipped: PlanSkipped::default(),
             crf: 23,
             preset: "veryfast".to_string(),
+            seek_ms: 0,
+            seek_optimized: false,
         }
     }
 
@@ -2784,6 +2856,8 @@ mod tests {
             has_audio: false,
 
             skipped: PlanSkipped::default(),
+            seek_ms: 0,
+            seek_optimized: false,
         };
         let (fg, _, _) = plan.build_filtergraph().unwrap();
         assert!(fg.contains("scale=1920:1080"));
