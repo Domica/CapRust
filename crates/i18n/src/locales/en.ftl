@@ -518,3 +518,4 @@ relink-dialog-failed = Relink failed
 relink-dialog-more = more
 toast-relinked = Relinked
 relink-dialog-none-matched = No matching file in that folder.
+media-missing-badge = Missing

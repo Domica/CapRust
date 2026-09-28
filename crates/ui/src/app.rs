@@ -3172,6 +3172,38 @@ impl CapRustApp {
                                 egui::StrokeKind::Inside,
                             );
 
+                            // Missing-source hatch: diagonal red lines over the clip
+                            // fill so a broken clip is visible even when its
+                            // clip-type color would otherwise look normal.
+                            let path_missing = match &ctype {
+                                caprust_core::ClipType::Video { path, .. }
+                                | caprust_core::ClipType::Audio { path, .. }
+                                | caprust_core::ClipType::Image { path, .. } => {
+                                    !std::path::Path::new(path).exists()
+                                }
+                                _ => false,
+                            };
+                            if path_missing {
+                                let hp = p.with_clip_rect(clip_rect);
+                                let stroke = egui::Stroke::new(
+                                    1.5_f32,
+                                    egui::Color32::from_rgba_unmultiplied(220, 60, 60, 130),
+                                );
+                                let h = clip_rect.height();
+                                let step = 10.0_f32;
+                                let mut x = clip_rect.left() - h;
+                                while x < clip_rect.right() {
+                                    hp.line_segment(
+                                        [
+                                            egui::pos2(x, clip_rect.bottom()),
+                                            egui::pos2(x + h, clip_rect.top()),
+                                        ],
+                                        stroke,
+                                    );
+                                    x += step;
+                                }
+                            }
+
                             // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
                             let thumb_tex = self
                                 .project

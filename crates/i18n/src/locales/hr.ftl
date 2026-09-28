@@ -518,3 +518,4 @@ relink-dialog-failed = Ponovno povezivanje nije uspjelo
 relink-dialog-more = vise
 toast-relinked = Ponovno povezano
 relink-dialog-none-matched = U toj mapi nema odgovarajucih datoteka.
+media-missing-badge = Nedostaje

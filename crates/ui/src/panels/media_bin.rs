@@ -555,6 +555,32 @@ fn draw_card(
             );
         }
 
+        // Missing badge: red tag bottom-left when the source file
+        // is not on disk. Same shape as the duration badge, different
+        // corner so both can coexist.
+        if !std::path::Path::new(&item.path).exists() {
+            let label = tr("media-missing-badge");
+            let font = FontId::monospace(9.0);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(label.to_string(), font, Color32::WHITE);
+            let pad = 3.0;
+            let bg_rect = Rect::from_min_size(
+                Pos2::new(
+                    thumb_rect.left() + 4.0,
+                    thumb_rect.bottom() - galley.size().y - 6.0,
+                ),
+                Vec2::new(galley.size().x + 2.0 * pad, galley.size().y + 4.0),
+            );
+            ui.painter()
+                .rect_filled(bg_rect, 3.0, Color32::from_rgb(180, 40, 40));
+            ui.painter().galley(
+                Pos2::new(bg_rect.left() + pad, bg_rect.top() + 2.0),
+                galley,
+                Color32::WHITE,
+            );
+        }
+
         // Filename line
         let name_pos = Pos2::new(thumb_rect.left(), thumb_rect.bottom() + 3.0);
         let max_chars = (card_w / 6.5) as usize;
