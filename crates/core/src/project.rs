@@ -135,6 +135,59 @@ impl ProjectState {
 
         h.finish()
     }
+
+    /// Hash every field that affects the audio mix. Subset of
+    /// `render_hash` minus video-only fields. Used by the pre-rendered
+    /// audio PCM cache to invalidate without forcing a video respawn.
+    ///
+    /// Included: clip timing, clip_type Debug (source path),
+    /// speed/reverse, volume_db, source_duration_ms, audio_detached,
+    /// fades, transitions, duck_against, speed ramp params,
+    /// volume_keyframes, track kind + muted.
+    ///
+    /// Excluded (video-only): flip_h/flip_v, effects, auto_reframe,
+    /// bg_removal, text/caption styling, visible, pinned, locked,
+    /// name, media_id.
+    pub fn audio_render_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+
+        self.clips.len().hash(&mut h);
+        for c in &self.clips {
+            c.id.hash(&mut h);
+            c.track_index.hash(&mut h);
+            c.start_time_ms.hash(&mut h);
+            c.duration_ms.hash(&mut h);
+            format!("{:?}", c.clip_type).hash(&mut h);
+            c.speed.to_bits().hash(&mut h);
+            c.reversed.hash(&mut h);
+            c.volume_db.to_bits().hash(&mut h);
+            c.source_duration_ms.hash(&mut h);
+            c.audio_detached.hash(&mut h);
+            c.fade_in_ms.hash(&mut h);
+            c.fade_out_ms.hash(&mut h);
+            c.transition_in.hash(&mut h);
+            c.transition_out.hash(&mut h);
+            c.duck_against.hash(&mut h);
+            c.speed_end.map(|s| s.to_bits()).hash(&mut h);
+            format!("{:?}", c.speed_ease).hash(&mut h);
+            format!("{:?}", c.speed_range).hash(&mut h);
+            c.volume_keyframes.len().hash(&mut h);
+            for k in &c.volume_keyframes {
+                k.t_ms.hash(&mut h);
+                k.gain_db.to_bits().hash(&mut h);
+            }
+        }
+
+        self.tracks.len().hash(&mut h);
+        for t in &self.tracks {
+            t.kind.hash(&mut h);
+            t.muted.hash(&mut h);
+        }
+
+        h.finish()
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +263,64 @@ mod tests {
         }
         let h2 = p.render_hash();
         assert_eq!(h1, h2, "rename must not force a preview respawn");
+    }
+
+    #[test]
+    fn audio_render_hash_stable_for_identical_projects() {
+        let a = ProjectState::default();
+        let b = ProjectState::default();
+        assert_eq!(a.audio_render_hash(), b.audio_render_hash());
+    }
+
+    #[test]
+    fn audio_render_hash_changes_on_volume_edit() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let h1 = p.audio_render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.volume_db = -6.0;
+        }
+        let h2 = p.audio_render_hash();
+        assert_ne!(h1, h2, "volume change must invalidate the audio hash");
+    }
+
+    #[test]
+    fn audio_render_hash_ignores_video_effect() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        clip.effects.push(EffectInstance {
+            effect_id: "blur".into(),
+            amount: 1.0,
+            enabled: true,
+        });
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let h1 = p.audio_render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.effects[0].amount = 5.0;
+        }
+        let h2 = p.audio_render_hash();
+        assert_eq!(h1, h2, "video effect must not invalidate the audio hash");
+    }
+
+    #[test]
+    fn audio_render_hash_ignores_flip() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let h1 = p.audio_render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.flip_h = true;
+            c.flip_v = true;
+        }
+        let h2 = p.audio_render_hash();
+        assert_eq!(h1, h2, "flip must not invalidate the audio hash");
     }
 }
 
