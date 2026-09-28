@@ -628,259 +628,280 @@ impl RenderPlan {
         let v_final = v_prev;
 
         // -------- AUDIO (unchanged) --------
-        let a_final = if self.has_audio && !self.audio_clips.is_empty() {
-            let mut a_labels: Vec<String> = Vec::with_capacity(self.audio_clips.len());
-            for (i, c) in self.audio_clips.iter().enumerate() {
-                let in_label = format!("[{}:a]", c.input_index);
-                let a_out = format!("a{i}_trim");
-                // Speed chain. If a ramp applies, split the source into
-                // N segments that match the video setpts windows and
-                // atempo each one, then concat. Otherwise use a single
-                // atempo for the static speed. The segmented path makes
-                // audio and video consume identical source windows per
-                // segment, so they cannot drift inside a ramp.
-                let ramped = c
-                    .speed_end
-                    .filter(|s_end| (s_end - c.speed).abs() > 0.001)
-                    .and_then(|s_end| {
-                        compute_speed_ramp_segments(
-                            c.speed,
-                            s_end,
-                            c.speed_ease,
-                            c.speed_range,
-                            c.duration_sec,
-                        )
-                    });
-
-                let (ramp_preamble, pre_gain_label) = match ramped {
-                    Some(segs) => {
-                        let pre = format!("a{i}_pre");
-                        let frag = build_speed_ramp_atempo_segments(
-                            &in_label,
-                            &pre,
-                            &segs,
-                            &format!("a{i}r"),
-                        );
-                        (frag, format!("[{pre}]"))
-                    }
-                    None => {
-                        let atempo = atempo_chain(c.speed);
-                        (
-                            format!(
-                                "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}[a{i}_pre];",
-                                dur = c.duration_sec,
-                                atempo = atempo,
-                                i = i,
-                            ),
-                            format!("[a{i}_pre]"),
-                        )
-                    }
-                };
-                // Volume: an automation curve overrides the static
-                // gain_db. Piecewise-linear in dB between sorted
-                // keyframes, held flat before the first and after the
-                // last. ffmpeg's volume filter evaluates the expression
-                // per frame with eval=frame.
-                let gain = if !c.volume_keyframes.is_empty() {
-                    let kfs = &c.volume_keyframes;
-                    let expr = if kfs.len() == 1 {
-                        format!("{:.4}", kfs[0].gain_db)
-                    } else {
-                        let mut e = format!("{:.4}", kfs.last().unwrap().gain_db);
-                        for i in (0..kfs.len() - 1).rev() {
-                            let a = &kfs[i];
-                            let b = &kfs[i + 1];
-                            let ta = a.t_ms as f64 / 1000.0;
-                            let tb = b.t_ms as f64 / 1000.0;
-                            let dt = (tb - ta).max(0.0001);
-                            let seg = format!(
-                                "{:.4}+({:.4})*(t-{:.4})/{:.4}",
-                                a.gain_db,
-                                b.gain_db - a.gain_db,
-                                ta,
-                                dt
-                            );
-                            e = format!(
-                                "if(lt(t\\,{ta:.4})\\,{ga:.4}\\,if(lt(t\\,{tb:.4})\\,{seg}\\,{e}))",
-                                ta = ta,
-                                ga = a.gain_db,
-                                tb = tb,
-                                seg = seg,
-                                e = e,
-                            );
-                        }
-                        e
-                    };
-                    format!(",volume={expr}dB:eval=frame")
-                } else if c.gain_db.abs() < 0.001 {
-                    String::new()
-                } else {
-                    format!(",volume={:.4}dB", c.gain_db)
-                };
-                // afade at the end of the chain so the gain is applied
-                // first (fade ramps the already-gained signal).
-                let fade_in = if c.fade_in_sec > 0.001 {
-                    format!(",afade=t=in:st=0:d={:.6}", c.fade_in_sec)
-                } else {
-                    String::new()
-                };
-                let fade_out = if c.fade_out_sec > 0.001 {
-                    let st = (c.duration_sec - c.fade_out_sec).max(0.0);
-                    format!(",afade=t=out:st={st:.6}:d={:.6}", c.fade_out_sec)
-                } else {
-                    String::new()
-                };
-                fg.push_str(&ramp_preamble);
-                // Post-chain: gain, fades. If all are empty, pass
-                // through with `anull` so the chain is always valid.
-                let tail = format!("{gain}{fade_in}{fade_out}");
-                let tail_clean = tail.trim_start_matches(',');
-                let tail_chain = if tail_clean.is_empty() {
-                    "anull"
-                } else {
-                    tail_clean
-                };
-                fg.push_str(&format!("{pre_gain_label}{tail_chain}[{a_out}];"));
-                a_labels.push(a_out);
-            }
-
-            fg.push_str(&format!(
-                "anullsrc=channel_layout=stereo:sample_rate=48000:d={dur:.6}[a_base];",
-                dur = self.total_duration_sec,
-            ));
-
-            // ---- Delay every clip to its timeline position ----
-            for (i, c) in self.audio_clips.iter().enumerate() {
-                let delay_ms = (c.timeline_start_sec * 1000.0).round() as i64;
-                fg.push_str(&format!(
-                    "[{clip}]adelay={delay}|{delay}[a_delayed{i}];",
-                    clip = a_labels[i],
-                    delay = delay_ms,
-                    i = i,
-                ));
-            }
-
-            // ---- Auto-ducking (sidechaincompress) ----
-            // Resolve duck_against UUIDs to indices inside audio_clips,
-            // dropping self-references. A control clip is any clip that
-            // is the target of at least one duck. Its delayed stream is
-            // mixed into a single control bus, which is then asplit for
-            // each consumer.
-            let id_to_idx: std::collections::HashMap<uuid::Uuid, usize> = self
-                .audio_clips
-                .iter()
-                .enumerate()
-                .map(|(i, c)| (c.clip_id, i))
-                .collect();
-
-            // (ducked_idx -> ctrl_idx)
-            let duck_map: std::collections::HashMap<usize, usize> = self
-                .audio_clips
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| {
-                    c.duck_against
-                        .and_then(|u| id_to_idx.get(&u).copied())
-                        .filter(|&x| x != i)
-                        .map(|x| (i, x))
-                })
-                .collect();
-
-            let mut mixed_labels: Vec<String> = (0..self.audio_clips.len())
-                .map(|i| format!("a_delayed{i}"))
-                .collect();
-
-            if !duck_map.is_empty() {
-                // Control bus inputs: all distinct ctrl_idx values.
-                let mut ctrl_indices: Vec<usize> = duck_map.values().copied().collect();
-                ctrl_indices.sort_unstable();
-                ctrl_indices.dedup();
-
-                let ctrl_bus = "a_ctrl_in";
-                if ctrl_indices.len() == 1 {
-                    // Single control: alias via anull (pass-through).
-                    fg.push_str(&format!(
-                        "[a_delayed{idx}]anull[{bus}];",
-                        idx = ctrl_indices[0],
-                        bus = ctrl_bus,
-                    ));
-                } else {
-                    // Single amix over every control input. The
-                    // previous sequential 2-input chain kept the
-                    // default normalize=1, which attenuates the first
-                    // input by 1/2^N and the last by 1/2. normalize=0
-                    // keeps every contribution at its original level.
-                    let mut ctrl_inputs = String::new();
-                    for &idx in &ctrl_indices {
-                        ctrl_inputs.push_str(&format!("[a_delayed{idx}]"));
-                    }
-                    let n_ctrl = ctrl_indices.len();
-                    fg.push_str(&format!(
-                        "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[{}];",
-                        ctrl_inputs, n_ctrl, ctrl_bus,
-                    ));
-                }
-
-                // asplit the control bus once per consumer.
-                let n_consumers = duck_map.len();
-                if n_consumers == 1 {
-                    let (ducked_idx, _) = duck_map.iter().next().map(|(a, b)| (*a, *b)).unwrap();
-                    let out = format!("a_ducked{ducked_idx}");
-                    fg.push_str(&format!(
-                        "[{ctrl_bus}][a_delayed{ducked_idx}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
-                    ));
-                    mixed_labels[ducked_idx] = out;
-                } else {
-                    // Split into N copies.
-                    let mut split = format!("[{ctrl_bus}]asplit={n_consumers}");
-                    for k in 0..n_consumers {
-                        split.push_str(&format!("[a_ctrl_k{k}]"));
-                    }
-                    split.push(';');
-                    fg.push_str(&split);
-
-                    for (k, (ducked_idx, _)) in duck_map.iter().enumerate() {
-                        let out = format!("a_ducked{ducked_idx}");
-                        fg.push_str(&format!(
-                            "[a_delayed{ducked_idx}][a_ctrl_k{k}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
-                        ));
-                        mixed_labels[*ducked_idx] = out;
-                    }
-                }
-            }
-
-            // ---- Final mix ----
-            // One amix with every input (base + all clips), normalize=0.
-            // The previous sequential 2-input chain with the default
-            // normalize=1 attenuated the first clip by 1/2^N and the
-            // last by 1/2. On a 17-clip project that made the opening
-            // clip effectively silent while the closing clip played at
-            // -6 dB -- audible as a slow fade-in across the whole
-            // timeline. A single amix also drops CPU: one mixer
-            // instead of N, no per-stage buffering.
-            let mut final_inputs = String::from("[a_base]");
-            for lbl in &mixed_labels {
-                final_inputs.push_str(&format!("[{lbl}]"));
-            }
-            let n_final = self.audio_clips.len() + 1;
-            fg.push_str(&format!(
-                "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[a_mix_joined];",
-                final_inputs, n_final,
-            ));
-            fg.push_str(&format!(
-                "[a_mix_joined]atrim=duration={dur:.6},asetpts=PTS-STARTPTS[a_final]",
-                dur = self.total_duration_sec,
-            ));
-            Some(String::from("a_final"))
-        } else {
-            None
-        };
+        let a_final = self.build_audio_chain(&mut fg);
 
         if fg.ends_with(';') {
             fg.pop();
         }
 
         Ok((fg, v_final, a_final))
+    }
+
+    /// Append the audio pipeline to `fg`, returning the output label
+    /// (`a_final`) or `None` when there is no audio to mix.
+    ///
+    /// Extracted from `build_filtergraph` so the PCM cache can render
+    /// audio alone without pulling video inputs into the filtergraph.
+    fn build_audio_chain(&self, fg: &mut String) -> Option<String> {
+        if !(self.has_audio && !self.audio_clips.is_empty()) {
+            return None;
+        }
+        let mut a_labels: Vec<String> = Vec::with_capacity(self.audio_clips.len());
+        for (i, c) in self.audio_clips.iter().enumerate() {
+            let in_label = format!("[{}:a]", c.input_index);
+            let a_out = format!("a{i}_trim");
+            // Speed chain. If a ramp applies, split the source into
+            // N segments that match the video setpts windows and
+            // atempo each one, then concat. Otherwise use a single
+            // atempo for the static speed. The segmented path makes
+            // audio and video consume identical source windows per
+            // segment, so they cannot drift inside a ramp.
+            let ramped = c
+                .speed_end
+                .filter(|s_end| (s_end - c.speed).abs() > 0.001)
+                .and_then(|s_end| {
+                    compute_speed_ramp_segments(
+                        c.speed,
+                        s_end,
+                        c.speed_ease,
+                        c.speed_range,
+                        c.duration_sec,
+                    )
+                });
+
+            let (ramp_preamble, pre_gain_label) = match ramped {
+                Some(segs) => {
+                    let pre = format!("a{i}_pre");
+                    let frag =
+                        build_speed_ramp_atempo_segments(&in_label, &pre, &segs, &format!("a{i}r"));
+                    (frag, format!("[{pre}]"))
+                }
+                None => {
+                    let atempo = atempo_chain(c.speed);
+                    (
+                        format!(
+                            "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}[a{i}_pre];",
+                            dur = c.duration_sec,
+                            atempo = atempo,
+                            i = i,
+                        ),
+                        format!("[a{i}_pre]"),
+                    )
+                }
+            };
+            // Volume: an automation curve overrides the static
+            // gain_db. Piecewise-linear in dB between sorted
+            // keyframes, held flat before the first and after the
+            // last. ffmpeg's volume filter evaluates the expression
+            // per frame with eval=frame.
+            let gain = if !c.volume_keyframes.is_empty() {
+                let kfs = &c.volume_keyframes;
+                let expr = if kfs.len() == 1 {
+                    format!("{:.4}", kfs[0].gain_db)
+                } else {
+                    let mut e = format!("{:.4}", kfs.last().unwrap().gain_db);
+                    for i in (0..kfs.len() - 1).rev() {
+                        let a = &kfs[i];
+                        let b = &kfs[i + 1];
+                        let ta = a.t_ms as f64 / 1000.0;
+                        let tb = b.t_ms as f64 / 1000.0;
+                        let dt = (tb - ta).max(0.0001);
+                        let seg = format!(
+                            "{:.4}+({:.4})*(t-{:.4})/{:.4}",
+                            a.gain_db,
+                            b.gain_db - a.gain_db,
+                            ta,
+                            dt
+                        );
+                        e = format!(
+                            "if(lt(t\\,{ta:.4})\\,{ga:.4}\\,if(lt(t\\,{tb:.4})\\,{seg}\\,{e}))",
+                            ta = ta,
+                            ga = a.gain_db,
+                            tb = tb,
+                            seg = seg,
+                            e = e,
+                        );
+                    }
+                    e
+                };
+                format!(",volume={expr}dB:eval=frame")
+            } else if c.gain_db.abs() < 0.001 {
+                String::new()
+            } else {
+                format!(",volume={:.4}dB", c.gain_db)
+            };
+            // afade at the end of the chain so the gain is applied
+            // first (fade ramps the already-gained signal).
+            let fade_in = if c.fade_in_sec > 0.001 {
+                format!(",afade=t=in:st=0:d={:.6}", c.fade_in_sec)
+            } else {
+                String::new()
+            };
+            let fade_out = if c.fade_out_sec > 0.001 {
+                let st = (c.duration_sec - c.fade_out_sec).max(0.0);
+                format!(",afade=t=out:st={st:.6}:d={:.6}", c.fade_out_sec)
+            } else {
+                String::new()
+            };
+            fg.push_str(&ramp_preamble);
+            // Post-chain: gain, fades. If all are empty, pass
+            // through with `anull` so the chain is always valid.
+            let tail = format!("{gain}{fade_in}{fade_out}");
+            let tail_clean = tail.trim_start_matches(',');
+            let tail_chain = if tail_clean.is_empty() {
+                "anull"
+            } else {
+                tail_clean
+            };
+            fg.push_str(&format!("{pre_gain_label}{tail_chain}[{a_out}];"));
+            a_labels.push(a_out);
+        }
+
+        fg.push_str(&format!(
+            "anullsrc=channel_layout=stereo:sample_rate=48000:d={dur:.6}[a_base];",
+            dur = self.total_duration_sec,
+        ));
+
+        // ---- Delay every clip to its timeline position ----
+        for (i, c) in self.audio_clips.iter().enumerate() {
+            let delay_ms = (c.timeline_start_sec * 1000.0).round() as i64;
+            fg.push_str(&format!(
+                "[{clip}]adelay={delay}|{delay}[a_delayed{i}];",
+                clip = a_labels[i],
+                delay = delay_ms,
+                i = i,
+            ));
+        }
+
+        // ---- Auto-ducking (sidechaincompress) ----
+        // Resolve duck_against UUIDs to indices inside audio_clips,
+        // dropping self-references. A control clip is any clip that
+        // is the target of at least one duck. Its delayed stream is
+        // mixed into a single control bus, which is then asplit for
+        // each consumer.
+        let id_to_idx: std::collections::HashMap<uuid::Uuid, usize> = self
+            .audio_clips
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.clip_id, i))
+            .collect();
+
+        // (ducked_idx -> ctrl_idx)
+        let duck_map: std::collections::HashMap<usize, usize> = self
+            .audio_clips
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                c.duck_against
+                    .and_then(|u| id_to_idx.get(&u).copied())
+                    .filter(|&x| x != i)
+                    .map(|x| (i, x))
+            })
+            .collect();
+
+        let mut mixed_labels: Vec<String> = (0..self.audio_clips.len())
+            .map(|i| format!("a_delayed{i}"))
+            .collect();
+
+        if !duck_map.is_empty() {
+            // Control bus inputs: all distinct ctrl_idx values.
+            let mut ctrl_indices: Vec<usize> = duck_map.values().copied().collect();
+            ctrl_indices.sort_unstable();
+            ctrl_indices.dedup();
+
+            let ctrl_bus = "a_ctrl_in";
+            if ctrl_indices.len() == 1 {
+                // Single control: alias via anull (pass-through).
+                fg.push_str(&format!(
+                    "[a_delayed{idx}]anull[{bus}];",
+                    idx = ctrl_indices[0],
+                    bus = ctrl_bus,
+                ));
+            } else {
+                // Single amix over every control input. The
+                // previous sequential 2-input chain kept the
+                // default normalize=1, which attenuates the first
+                // input by 1/2^N and the last by 1/2. normalize=0
+                // keeps every contribution at its original level.
+                let mut ctrl_inputs = String::new();
+                for &idx in &ctrl_indices {
+                    ctrl_inputs.push_str(&format!("[a_delayed{idx}]"));
+                }
+                let n_ctrl = ctrl_indices.len();
+                fg.push_str(&format!(
+                    "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[{}];",
+                    ctrl_inputs, n_ctrl, ctrl_bus,
+                ));
+            }
+
+            // asplit the control bus once per consumer.
+            let n_consumers = duck_map.len();
+            if n_consumers == 1 {
+                let (ducked_idx, _) = duck_map.iter().next().map(|(a, b)| (*a, *b)).unwrap();
+                let out = format!("a_ducked{ducked_idx}");
+                fg.push_str(&format!(
+                    "[{ctrl_bus}][a_delayed{ducked_idx}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
+                ));
+                mixed_labels[ducked_idx] = out;
+            } else {
+                // Split into N copies.
+                let mut split = format!("[{ctrl_bus}]asplit={n_consumers}");
+                for k in 0..n_consumers {
+                    split.push_str(&format!("[a_ctrl_k{k}]"));
+                }
+                split.push(';');
+                fg.push_str(&split);
+
+                for (k, (ducked_idx, _)) in duck_map.iter().enumerate() {
+                    let out = format!("a_ducked{ducked_idx}");
+                    fg.push_str(&format!(
+                        "[a_delayed{ducked_idx}][a_ctrl_k{k}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
+                    ));
+                    mixed_labels[*ducked_idx] = out;
+                }
+            }
+        }
+
+        // ---- Final mix ----
+        // One amix with every input (base + all clips), normalize=0.
+        // The previous sequential 2-input chain with the default
+        // normalize=1 attenuated the first clip by 1/2^N and the
+        // last by 1/2. On a 17-clip project that made the opening
+        // clip effectively silent while the closing clip played at
+        // -6 dB -- audible as a slow fade-in across the whole
+        // timeline. A single amix also drops CPU: one mixer
+        // instead of N, no per-stage buffering.
+        let mut final_inputs = String::from("[a_base]");
+        for lbl in &mixed_labels {
+            final_inputs.push_str(&format!("[{lbl}]"));
+        }
+        let n_final = self.audio_clips.len() + 1;
+        fg.push_str(&format!(
+            "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[a_mix_joined];",
+            final_inputs, n_final,
+        ));
+        fg.push_str(&format!(
+            "[a_mix_joined]atrim=duration={dur:.6},asetpts=PTS-STARTPTS[a_final]",
+            dur = self.total_duration_sec,
+        ));
+        Some(String::from("a_final"))
+    }
+
+    /// Build only the audio pipeline. No video inputs are referenced,
+    /// so the caller must not `-map` a video stream. The single output
+    /// label is `[a_final]`.
+    ///
+    /// Returns `Ok(None)` when the plan has no audio to mix.
+    pub fn build_audio_only_filtergraph(&self) -> Result<Option<String>> {
+        let mut fg = String::new();
+        let a = self.build_audio_chain(&mut fg);
+        if a.is_none() {
+            return Ok(None);
+        }
+        if fg.ends_with(';') {
+            fg.pop();
+        }
+        Ok(Some(fg))
     }
 
     /// Full ffmpeg argument list.
