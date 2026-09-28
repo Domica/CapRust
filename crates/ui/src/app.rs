@@ -64,6 +64,38 @@ pub struct Toast {
     pub duration: std::time::Duration,
 }
 
+pub struct AudioPendingRender {
+    /// Hash the pending render was spawned for.
+    pub hash: u64,
+    /// Destination path (`<hash>.pcm`). The job writes to `.part`
+    /// and renames on success.
+    pub path: std::path::PathBuf,
+    pub job: caprust_media_io::audio_render::AudioRenderJob,
+}
+
+/// State for the pre-rendered audio PCM cache.
+///
+/// `active_*` describe the currently playable file (may be an older
+/// hash while a newer render is in flight). `pending` is the render
+/// for a newer hash; when it finishes, it replaces `active_*`.
+#[derive(Default)]
+pub struct AudioCacheState {
+    /// Hash of the project state the active file was rendered
+    /// against. 0 means "no active file yet".
+    pub active_hash: u64,
+    /// Playable PCM file path, or `None` when no render has succeeded.
+    pub active_path: Option<std::path::PathBuf>,
+    /// In-flight render for a newer hash.
+    pub pending: Option<AudioPendingRender>,
+    /// Set when `audio_render_hash()` diverges from `active_hash`.
+    /// Cleared when the debounce window elapses and a render fires.
+    pub debounce_at: Option<std::time::Instant>,
+    /// Hash of a render that failed. Prevents the poll loop from
+    /// retrying the same state every 500 ms. Cleared when the hash
+    /// changes (user edit) so a fixed render can be tried again.
+    pub last_failed_hash: u64,
+}
+
 impl Toast {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
@@ -220,6 +252,9 @@ pub struct CapRustApp {
     /// by show_jobs_bar above the timeline while any are live.
     pub jobs: Vec<BackgroundJob>,
     pub next_job_id: u64,
+    /// Pre-rendered audio PCM cache. Lives in %TEMP%, invalidated
+    /// by ProjectState::audio_render_hash. See audio_render.rs.
+    pub audio_cache: AudioCacheState,
     /// Active job id per pipeline. Some while the corresponding job
     /// runs; None otherwise. Used to update/finish the matching
     /// BackgroundJob without a lookup by kind.
@@ -474,6 +509,7 @@ impl CapRustApp {
             last_skipped_missing: 0,
             jobs: Vec::new(),
             next_job_id: 1,
+            audio_cache: AudioCacheState::default(),
             caption_job_id: None,
             clip_clipboard: None,
             track_rename: None,
@@ -578,6 +614,14 @@ impl CapRustApp {
                 self.cleanup_phantom_captions();
                 // Auto-regenerate thumbnails for older projects or after cache clear.
                 self.regen_missing_thumbnails();
+                // Reset audio cache and start the initial render.
+                // Must run after every project mutation above so the
+                // hash matches the final state.
+                self.audio_cache = AudioCacheState::default();
+                if self.ffmpeg_status.ffmpeg.is_some() {
+                    let h = self.project.audio_render_hash();
+                    self.spawn_audio_cache_render(h);
+                }
                 // Scan for missing source files. If any are found, open
                 // the relink dialog on the next update() frame.
                 self.check_missing_media_on_load();
@@ -4939,7 +4983,16 @@ impl CapRustApp {
                                     // optional: if there's no track, or no
                                     // device, or the file can't be opened,
                                     // video keeps playing silently.
-                                    self.audio_player = match renderer.pcm_path.as_ref() {
+                                    // Prefer the pre-rendered audio cache when it is
+                                    // ready; fall back to the preview's own PCM file
+                                    // during the first few seconds after project load.
+                                    let using_cache = self.audio_cache.active_path.is_some();
+                                    let pcm_path = self
+                                        .audio_cache
+                                        .active_path
+                                        .clone()
+                                        .or_else(|| renderer.pcm_path.clone());
+                                    self.audio_player = match pcm_path.as_ref() {
                                         Some(path) => {
                                             match AudioPlayer::play_pcm_file(path, start_from) {
                                                 Ok(p) => {
@@ -4951,10 +5004,11 @@ impl CapRustApp {
                                                     p.set_volume(self.settings.master_volume);
                                                     p.set_muted(self.settings.muted);
                                                     tracing::info!(
-                                                        "preview: audio started from {}ms (vol={:.2} muted={})",
+                                                        "preview: audio started from {}ms (vol={:.2} muted={}) [{}]",
                                                         start_from,
                                                         self.settings.master_volume,
                                                         self.settings.muted,
+                                                        if using_cache { "cache" } else { "preview-pcm" },
                                                     );
                                                     Some(p)
                                                 }
@@ -6131,6 +6185,121 @@ impl CapRustApp {
     // Missing-media relink
     // ---------------------------------------------------------------
 
+    // ---------------------------------------------------------------
+    // Audio PCM cache
+    // ---------------------------------------------------------------
+
+    /// Kill any pending render, then start a fresh one for `hash`.
+    /// The render is asynchronous; `poll_audio_cache` promotes it to
+    /// active when it completes.
+    fn spawn_audio_cache_render(&mut self, hash: u64) {
+        self.audio_cache.pending = None;
+
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            tracing::warn!("audio cache: no ffmpeg, skipping render");
+            return;
+        };
+
+        let (pw, ph) = self.project.project_dimensions();
+        let (rw, rh) = caprust_media_io::player::preview_size(pw, ph, 320);
+        let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+            self.project.frame_rate.num as i64,
+            self.project.frame_rate.den as i64,
+        );
+        let models_dir = self.settings.effective_models_dir();
+
+        let plan = match caprust_media_io::export_graph::plan_from_project(
+            &self.project,
+            rw,
+            rh,
+            fps_num,
+            fps_den,
+            23,
+            "veryfast",
+            &models_dir,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("audio cache: plan failed: {e}");
+                return;
+            }
+        };
+
+        let path = caprust_media_io::audio_render::cache_path(hash);
+        match caprust_media_io::audio_render::spawn_audio_render(
+            std::path::Path::new(&ffmpeg),
+            &plan,
+            path.clone(),
+        ) {
+            Ok(job) => {
+                tracing::info!("audio cache: spawned render for hash {hash:016x}");
+                self.audio_cache.pending = Some(AudioPendingRender { hash, path, job });
+            }
+            Err(e) => {
+                tracing::warn!("audio cache: spawn failed: {e}");
+            }
+        }
+    }
+
+    /// Called once per frame from `update()`. Polls the pending job
+    /// and, on completion, promotes it to active. Also watches the
+    /// project's `audio_render_hash` and schedules a re-render when
+    /// it diverges from the active file, debounced 500 ms.
+    fn poll_audio_cache(&mut self) {
+        const DEBOUNCE_MS: u128 = 500;
+
+        let mut pending_terminal: Option<(u64, std::path::PathBuf, bool)> = None;
+        if let Some(pending) = self.audio_cache.pending.as_mut() {
+            if let Some(ev) = pending.job.poll() {
+                match ev {
+                    caprust_media_io::audio_render::AudioRenderEvent::Done { target, .. } => {
+                        pending_terminal = Some((pending.hash, target, true));
+                    }
+                    caprust_media_io::audio_render::AudioRenderEvent::Failed(msg) => {
+                        tracing::warn!("audio cache: render failed: {msg}");
+                        pending_terminal = Some((pending.hash, pending.path.clone(), false));
+                    }
+                    caprust_media_io::audio_render::AudioRenderEvent::Started { .. } => {}
+                }
+            }
+        }
+        if let Some((hash, path, ok)) = pending_terminal {
+            self.audio_cache.pending = None;
+            if ok {
+                tracing::info!("audio cache: ready hash {hash:016x} at {}", path.display());
+                self.audio_cache.active_hash = hash;
+                self.audio_cache.active_path = Some(path);
+                self.audio_cache.last_failed_hash = 0;
+            } else {
+                // Record so we do not retry the same hash in a loop.
+                // A subsequent project edit changes the hash, which
+                // clears the mark implicitly.
+                self.audio_cache.last_failed_hash = hash;
+            }
+        }
+
+        let live = self.project.audio_render_hash();
+        if live != self.audio_cache.active_hash
+            && live != self.audio_cache.last_failed_hash
+            && self.audio_cache.pending.is_none()
+        {
+            if self.audio_cache.debounce_at.is_none() {
+                self.audio_cache.debounce_at = Some(std::time::Instant::now());
+            }
+            let ready = self
+                .audio_cache
+                .debounce_at
+                .map(|t| t.elapsed().as_millis() >= DEBOUNCE_MS)
+                .unwrap_or(false);
+            if ready {
+                self.audio_cache.debounce_at = None;
+                self.spawn_audio_cache_render(live);
+            }
+        } else {
+            self.audio_cache.debounce_at = None;
+        }
+    }
+
     /// Called at the end of every successful `load_project_from`.
     /// Synchronous scan of the media library; opens the dialog when
     /// any file is missing. No-op on clean projects.
@@ -6455,6 +6624,7 @@ impl eframe::App for CapRustApp {
         self.drain_narration_job();
         self.drain_reframe_job();
         self.drain_bg_removal_job();
+        self.poll_audio_cache();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 
         // Load any newly-ready thumbnails into the timeline texture cache.

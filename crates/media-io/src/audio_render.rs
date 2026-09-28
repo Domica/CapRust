@@ -20,12 +20,27 @@ use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// Sample rate requested from ffmpeg. Must match `AudioPlayer::play_pcm_file`.
 pub const AUDIO_SAMPLE_RATE: u32 = 48_000;
 /// Channels requested from ffmpeg. Must match `AudioPlayer::play_pcm_file`.
 pub const AUDIO_CHANNELS: u16 = 2;
+
+/// Path for the cached PCM file for a given `audio_render_hash`.
+/// Lives in `%TEMP%` and embeds the process id + hash so multiple
+/// hashes never collide and a stray file does not fool a later run.
+///
+/// TODO(alpha): old cache files are not deleted when a new hash
+/// replaces them. OS-level temp cleanup handles it eventually; a
+/// follow-up commit should delete them on project close or when a
+/// new render completes.
+pub fn cache_path(hash: u64) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "caprust-audio-cache-{}-{:016x}.pcm",
+        std::process::id(),
+        hash
+    ))
+}
 
 /// Progress and completion events emitted by `spawn_audio_render`.
 #[derive(Debug)]
@@ -53,7 +68,6 @@ pub struct AudioRenderJob {
     /// `<target>.part` while running; renamed to `<target>` on success.
     part_path: PathBuf,
     target_path: PathBuf,
-    events: Receiver<AudioRenderEvent>,
     /// The stderr forwarder. Joined on drop so we do not leak threads.
     stderr_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -64,22 +78,6 @@ impl AudioRenderJob {
     /// to `target_path`), or `Some(Failed)` on any error. Returns
     /// `None` while the child is still running.
     pub fn poll(&mut self) -> Option<AudioRenderEvent> {
-        // Drain any queued events first. `Started` is skipped; the
-        // terminal events are what callers care about.
-        loop {
-            match self.events.try_recv() {
-                Ok(AudioRenderEvent::Started { .. }) => continue,
-                Ok(ev) => return Some(ev),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    return Some(AudioRenderEvent::Failed(
-                        "render channel disconnected".into(),
-                    ));
-                }
-            }
-        }
-
-        // No queued events -- check the child.
         match self.child.try_wait() {
             Ok(None) => None,
             Ok(Some(status)) => {
@@ -212,38 +210,12 @@ pub fn spawn_audio_render(
         })
     });
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    let _ = tx.send(AudioRenderEvent::Started {
-        target: target.clone(),
-    });
-    drop(tx);
-
     Ok(AudioRenderJob {
         child,
         part_path,
         target_path: target,
-        events: rx,
         stderr_thread,
     })
-}
-
-/// Drain a `Receiver<AudioRenderEvent>`. Returns `(terminal, still_alive)`.
-/// `terminal` is the `Done` / `Failed` event when one arrived during this
-/// call; `still_alive` is false once the sender is gone.
-pub fn drain(rx: &Receiver<AudioRenderEvent>) -> (Option<AudioRenderEvent>, bool) {
-    let mut terminal = None;
-    loop {
-        match rx.try_recv() {
-            Ok(ev @ AudioRenderEvent::Done { .. }) | Ok(ev @ AudioRenderEvent::Failed(_)) => {
-                terminal = Some(ev);
-                break;
-            }
-            Ok(AudioRenderEvent::Started { .. }) => {}
-            Err(TryRecvError::Empty) => return (terminal, true),
-            Err(TryRecvError::Disconnected) => return (terminal, false),
-        }
-    }
-    (terminal, false)
 }
 
 #[cfg(test)]
@@ -255,28 +227,5 @@ mod tests {
         // AudioPlayer::play_pcm_file hard-codes 48 kHz stereo s16le.
         assert_eq!(AUDIO_SAMPLE_RATE, 48_000);
         assert_eq!(AUDIO_CHANNELS, 2);
-    }
-
-    #[test]
-    fn drain_returns_terminal_on_failed() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(AudioRenderEvent::Started {
-            target: PathBuf::from("/tmp/x.pcm"),
-        })
-        .unwrap();
-        tx.send(AudioRenderEvent::Failed("boom".into())).unwrap();
-        drop(tx);
-
-        let (term, alive) = drain(&rx);
-        assert!(matches!(term, Some(AudioRenderEvent::Failed(_))));
-        assert!(!alive, "sender is gone, drain must report not-alive");
-    }
-
-    #[test]
-    fn drain_empty_channel_is_alive() {
-        let (_tx, rx) = std::sync::mpsc::channel();
-        let (term, alive) = drain(&rx);
-        assert!(term.is_none());
-        assert!(alive, "no terminal event, channel still alive");
     }
 }
