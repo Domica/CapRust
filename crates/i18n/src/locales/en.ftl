@@ -529,3 +529,6 @@ exp-codec-h265-amf = H.265 (AMF)
 exp-codec-av1-cpu = AV1 (CPU)
 exp-codec-av1-nvenc = AV1 (NVENC)
 exp-codec-av1-amf = AV1 (AMF)
+
+media-drag-one = 1 clip
+media-drag-many = clips

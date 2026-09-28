@@ -246,6 +246,10 @@ pub struct MediaBinState {
     pub filter: MediaFilter,
     pub preview: PreviewSize,
     pub thumb_cache: ThumbnailCache,
+    /// Media items highlighted for a batch action. Ctrl+click toggles
+    /// membership; plain click replaces. Cleared after a drag drop or
+    /// a batch removal.
+    pub selected_media: Vec<Uuid>,
 }
 
 impl Default for MediaBinState {
@@ -256,6 +260,7 @@ impl Default for MediaBinState {
             filter: MediaFilter::All,
             preview: PreviewSize::Medium,
             thumb_cache: ThumbnailCache::default(),
+            selected_media: Vec::new(),
         }
     }
 }
@@ -404,7 +409,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // number of columns that fit; at least 1
     let cols = (((avail + h_gap) / (card_w + h_gap)).floor() as usize).max(1);
 
-    let mut dragging: Option<Uuid> = None;
+    let dragging: Option<Uuid> = None;
     let mut remove_requested: Vec<Uuid> = Vec::new();
 
     egui::ScrollArea::vertical()
@@ -416,6 +421,8 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             for row in sorted.chunks(cols) {
                 ui.horizontal(|ui| {
                     for item in row {
+                        let is_selected = state.selected_media.contains(&item.id);
+                        let selected_ids = state.selected_media.clone();
                         let (resp, should_remove) = draw_card(
                             ui,
                             item,
@@ -423,17 +430,89 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                             thumb_h,
                             &mut state.thumb_cache,
                             project_path_opt,
+                            is_selected,
+                            &selected_ids,
                         );
-                        if should_remove {
-                            remove_requested.push(item.id);
+                        // Selection: plain click replaces, Ctrl+click
+                        // toggles. Ignore clicks that were actually the
+                        // start of a long-press drag: check if primary
+                        // is still held.
+                        if resp.clicked() {
+                            let ctrl = ui.ctx().input(|i| i.modifiers.ctrl || i.modifiers.command);
+                            if ctrl {
+                                if let Some(pos) =
+                                    state.selected_media.iter().position(|id| *id == item.id)
+                                {
+                                    state.selected_media.remove(pos);
+                                } else {
+                                    state.selected_media.push(item.id);
+                                }
+                            } else {
+                                state.selected_media = vec![item.id];
+                            }
                         }
-                        if resp.drag_started() {
-                            dragging = Some(item.id);
+                        if should_remove {
+                            // If the clicked X belongs to a multi-item
+                            // selection, remove every selected item in
+                            // one shot. Otherwise just the clicked one.
+                            if state.selected_media.len() > 1
+                                && state.selected_media.contains(&item.id)
+                            {
+                                for id in state.selected_media.drain(..) {
+                                    remove_requested.push(id);
+                                }
+                            } else {
+                                remove_requested.push(item.id);
+                                state.selected_media.retain(|x| *x != item.id);
+                            }
                         }
                     }
                 });
             }
         });
+
+    // Drag preview badge: shows how many items are being dragged,
+    // following the cursor. egui's DnD does not auto-render a
+    // preview for typed payloads, so draw one here.
+    if let Some(payload) = egui::DragAndDrop::payload::<Vec<uuid::Uuid>>(ui.ctx()) {
+        let n = payload.len();
+        if n > 0 {
+            if let Some(p) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                let text = if n == 1 {
+                    tr("media-drag-one").to_string()
+                } else {
+                    format!("{} {}", n, tr("media-drag-many"))
+                };
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new("media_drag_badge"),
+                ));
+                let font = egui::FontId::proportional(11.0);
+                let galley = painter.layout_no_wrap(text, font, egui::Color32::WHITE);
+                let pad = 6.0;
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(p.x + 12.0, p.y + 12.0),
+                    egui::vec2(galley.size().x + pad * 2.0, galley.size().y + pad),
+                );
+                painter.rect_filled(
+                    rect,
+                    4.0,
+                    egui::Color32::from_rgba_unmultiplied(30, 30, 40, 220),
+                );
+                painter.rect_stroke(
+                    rect,
+                    4.0,
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
+                    egui::StrokeKind::Inside,
+                );
+                painter.galley(
+                    egui::pos2(rect.left() + pad, rect.top() + pad / 2.0),
+                    galley,
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+    }
 
     MediaBinOutput {
         dragging,
@@ -458,6 +537,11 @@ fn kind_rank(k: MediaKind) -> u8 {
 // Card
 // ---------------------------------------------------------------------------
 
+// Eight args is over clippy's default; each one is a distinct
+// render-time input (target, layout, caches, selection) and bundling
+// them into a context struct would just add a layer of indirection
+// for a single call site.
+#[allow(clippy::too_many_arguments)]
 fn draw_card(
     ui: &mut Ui,
     item: &MediaItem,
@@ -465,199 +549,225 @@ fn draw_card(
     thumb_h: f32,
     cache: &mut ThumbnailCache,
     project_path: Option<&str>,
+    is_selected: bool,
+    selected_ids: &[uuid::Uuid],
 ) -> (egui::Response, bool) {
-    let id = egui::Id::new(item.id);
-    let payload = item.id;
     let mut remove_requested = false;
 
-    let inner = ui.dnd_drag_source(id, payload, |ui| {
-        // Reserve card rect (thumbnail + filename line)
-        let line_h = 14.0;
-        let total = Vec2::new(card_w, thumb_h + 4.0 + line_h);
-        let (rect, resp) = ui.allocate_exact_size(total, Sense::click_and_drag());
+    // Card rect (thumbnail + filename line).
+    let line_h = 14.0;
+    let total = Vec2::new(card_w, thumb_h + 4.0 + line_h);
+    let (rect, resp) = ui.allocate_exact_size(total, Sense::click_and_drag());
 
-        // Thumbnail rect
-        let thumb_rect = Rect::from_min_size(rect.min, Vec2::new(card_w, thumb_h));
+    // Long-press gate for drag: a short click selects, holding the
+    // button down for >= 500 ms starts a drag. The timer starts when
+    // the pointer first goes down on the card; the payload is set
+    // (and kept alive) every frame while primary stays down.
+    {
+        let press_id = egui::Id::new(("media_press", item.id));
+        let now = ui.input(|i| i.time);
+        let primary_down = ui.input(|i| i.pointer.primary_down());
+        let down_on_card = resp.is_pointer_button_down_on();
 
-        // Try real thumbnail first; fall back to placeholder.
-        let texture = cache.texture_for(ui.ctx(), project_path, item);
-
-        if let Some(tex) = texture {
-            let tex_size = tex.size_vec2();
-            let scale = (thumb_rect.width() / tex_size.x).max(thumb_rect.height() / tex_size.y);
-            let draw_size = tex_size * scale;
-            let frac_x = (thumb_rect.width() / draw_size.x).min(1.0);
-            let frac_y = (thumb_rect.height() / draw_size.y).min(1.0);
-            let uv_min = Pos2::new((1.0 - frac_x) / 2.0, (1.0 - frac_y) / 2.0);
-            let uv_max = Pos2::new(1.0 - uv_min.x, 1.0 - uv_min.y);
-            ui.painter().image(
-                tex.id(),
-                thumb_rect,
-                Rect::from_min_max(uv_min, uv_max),
-                Color32::WHITE,
-            );
-        } else {
-            // Placeholder: hashed color + icon
-            let base = cache.color_for(item);
-            ui.painter().rect_filled(thumb_rect, 4.0, base);
-
-            let dark = Color32::from_black_alpha(40);
-            let grad_rect = Rect::from_min_max(
-                Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
-                thumb_rect.max,
-            );
-            ui.painter().rect_filled(grad_rect, 4.0, dark);
-
-            let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
-            ui.painter().text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                item.kind.icon(),
-                FontId::proportional(icon_size),
-                Color32::from_white_alpha(230),
-            );
+        if down_on_card {
+            let started: Option<f64> = ui.ctx().memory(|m| m.data.get_temp(press_id));
+            if started.is_none() {
+                ui.ctx().memory_mut(|m| m.data.insert_temp(press_id, now));
+            }
         }
 
-        // Border
-        let border = if resp.hovered() {
-            Color32::from_white_alpha(120)
-        } else {
-            Color32::from_gray(60)
-        };
-        ui.painter().rect_stroke(
-            thumb_rect,
-            4.0,
-            Stroke::new(1.0_f32, border),
-            egui::StrokeKind::Inside,
-        );
+        let press_start: Option<f64> = ui.ctx().memory(|m| m.data.get_temp(press_id));
+        let held_sec = press_start.map(|t| now - t).unwrap_or(0.0);
 
-        // Duration badge (bottom-right) if known
-        if item.duration_ms > 0 {
-            let label = format_ms(item.duration_ms);
-            let text_pos = thumb_rect.right_bottom() - Vec2::new(4.0, 3.0);
-            let font = FontId::monospace(10.0);
-            let galley = ui
-                .painter()
-                .layout_no_wrap(label.clone(), font.clone(), Color32::WHITE);
-            let bg_rect = Rect::from_min_size(
-                Pos2::new(
-                    text_pos.x - galley.size().x - 6.0,
-                    text_pos.y - galley.size().y - 3.0,
-                ),
-                Vec2::new(galley.size().x + 6.0, galley.size().y + 4.0),
-            );
-            ui.painter()
-                .rect_filled(bg_rect, 3.0, Color32::from_black_alpha(150));
-            ui.painter().galley(
-                Pos2::new(bg_rect.left() + 3.0, bg_rect.top() + 2.0),
-                galley,
-                Color32::WHITE,
-            );
-        }
-
-        // Missing badge: red tag bottom-left when the source file
-        // is not on disk. Same shape as the duration badge, different
-        // corner so both can coexist.
-        if !std::path::Path::new(&item.path).exists() {
-            let label = tr("media-missing-badge");
-            let font = FontId::monospace(9.0);
-            let galley = ui
-                .painter()
-                .layout_no_wrap(label.to_string(), font, Color32::WHITE);
-            let pad = 3.0;
-            let bg_rect = Rect::from_min_size(
-                Pos2::new(
-                    thumb_rect.left() + 4.0,
-                    thumb_rect.bottom() - galley.size().y - 6.0,
-                ),
-                Vec2::new(galley.size().x + 2.0 * pad, galley.size().y + 4.0),
-            );
-            ui.painter()
-                .rect_filled(bg_rect, 3.0, Color32::from_rgb(180, 40, 40));
-            ui.painter().galley(
-                Pos2::new(bg_rect.left() + pad, bg_rect.top() + 2.0),
-                galley,
-                Color32::WHITE,
-            );
-        }
-
-        // Filename line
-        let name_pos = Pos2::new(thumb_rect.left(), thumb_rect.bottom() + 3.0);
-        let max_chars = (card_w / 6.5) as usize;
-        let name = truncate(&item.name, max_chars.max(6));
-        ui.painter().text(
-            name_pos,
-            egui::Align2::LEFT_TOP,
-            name,
-            FontId::proportional(11.0),
-            Color32::from_gray(210),
-        );
-
-        // X button (top-right of thumbnail). egui's hover
-        // arbitration does NOT work here: the enclosing
-        // dnd_drag_source claims the pointer the moment it enters
-        // the card, so a nested interact's hovered() goes false as
-        // soon as the pointer reaches the X and the button vanishes
-        // mid-click. Use the raw pointer position for visibility and
-        // the raw primary-click edge for the action; the interact
-        // stays registered so the click does not fall through to
-        // the drag source.
-        {
-            let btn = 18.0;
-            let x_rect = Rect::from_min_size(
-                Pos2::new(thumb_rect.right() - btn - 3.0, thumb_rect.top() + 3.0),
-                Vec2::splat(btn),
-            );
-            let x_resp = ui.interact(x_rect, egui::Id::new(("rm_media", item.id)), Sense::click());
-            let hover_pos = ui.ctx().input(|i| i.pointer.hover_pos());
-            let over_x = hover_pos.map_or(false, |p| x_rect.contains(p));
-            let over_card = hover_pos.map_or(false, |p| thumb_rect.contains(p));
-            let show = over_card || over_x;
-            if show {
-                let bg = if over_x {
-                    Color32::from_rgb(200, 60, 60)
+        if primary_down && held_sec >= 0.5 {
+            let cur: Option<Vec<uuid::Uuid>> =
+                egui::DragAndDrop::payload::<Vec<uuid::Uuid>>(ui.ctx()).map(|a| (*a).clone());
+            if cur.is_none() {
+                let group = if is_selected && !selected_ids.is_empty() {
+                    selected_ids.to_vec()
                 } else {
-                    Color32::from_black_alpha(140)
+                    vec![item.id]
                 };
-                ui.painter().rect_filled(x_rect, 3.0, bg);
-                ui.painter().text(
-                    x_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    ph::X,
-                    FontId::proportional(12.0),
-                    Color32::WHITE,
-                );
+                egui::DragAndDrop::set_payload(ui.ctx(), group);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
-            // Primary click this frame AND pointer currently over X.
-            // Using raw input so the drag source cannot swallow it.
-            let primary_clicked = ui.ctx().input(|i| i.pointer.primary_clicked());
-            if over_x && primary_clicked {
-                remove_requested = true;
-            }
-            // Keep the interact call so egui knows the rect is
-            // occupied (otherwise a click on X starts a drag on the
-            // card underneath).
-            let _ = x_resp;
         }
 
-        // Right-click menu
-        resp.context_menu(|ui| {
-            if ui.button(tr("media-remove-one")).clicked() {
-                remove_requested = true;
-                ui.close_menu();
-            }
-        });
+        if !primary_down {
+            ui.ctx().memory_mut(|m| m.data.remove::<f64>(press_id));
+        }
+    }
 
-        resp.on_hover_text(format!(
-            "{}\n{} · {} ms\n{}",
-            item.path,
-            item.kind.label(),
-            item.duration_ms,
-            human_size(item.size_bytes),
-        ))
+    // Thumbnail rect
+    let thumb_rect = Rect::from_min_size(rect.min, Vec2::new(card_w, thumb_h));
+
+    // Real thumbnail or placeholder.
+    let texture = cache.texture_for(ui.ctx(), project_path, item);
+    if let Some(tex) = texture {
+        let tex_size = tex.size_vec2();
+        let scale = (thumb_rect.width() / tex_size.x).max(thumb_rect.height() / tex_size.y);
+        let draw_size = tex_size * scale;
+        let frac_x = (thumb_rect.width() / draw_size.x).min(1.0);
+        let frac_y = (thumb_rect.height() / draw_size.y).min(1.0);
+        let uv_min = Pos2::new((1.0 - frac_x) / 2.0, (1.0 - frac_y) / 2.0);
+        let uv_max = Pos2::new(1.0 - uv_min.x, 1.0 - uv_min.y);
+        ui.painter().image(
+            tex.id(),
+            thumb_rect,
+            Rect::from_min_max(uv_min, uv_max),
+            Color32::WHITE,
+        );
+    } else {
+        let base = cache.color_for(item);
+        ui.painter().rect_filled(thumb_rect, 4.0, base);
+
+        let dark = Color32::from_black_alpha(40);
+        let grad_rect = Rect::from_min_max(
+            Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
+            thumb_rect.max,
+        );
+        ui.painter().rect_filled(grad_rect, 4.0, dark);
+
+        let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
+        ui.painter().text(
+            thumb_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            item.kind.icon(),
+            FontId::proportional(icon_size),
+            Color32::from_white_alpha(230),
+        );
+    }
+
+    // Border: selected cards get a thicker accent border.
+    let border = if is_selected {
+        ui.visuals().selection.bg_fill
+    } else if resp.hovered() {
+        Color32::from_white_alpha(120)
+    } else {
+        Color32::from_gray(60)
+    };
+    let border_w = if is_selected { 2.0_f32 } else { 1.0_f32 };
+    ui.painter().rect_stroke(
+        thumb_rect,
+        4.0,
+        Stroke::new(border_w, border),
+        egui::StrokeKind::Inside,
+    );
+
+    // Duration badge (bottom-right).
+    if item.duration_ms > 0 {
+        let label = format_ms(item.duration_ms);
+        let text_pos = thumb_rect.right_bottom() - Vec2::new(4.0, 3.0);
+        let font = FontId::monospace(10.0);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(label.clone(), font.clone(), Color32::WHITE);
+        let bg_rect = Rect::from_min_size(
+            Pos2::new(
+                text_pos.x - galley.size().x - 6.0,
+                text_pos.y - galley.size().y - 3.0,
+            ),
+            Vec2::new(galley.size().x + 6.0, galley.size().y + 4.0),
+        );
+        ui.painter()
+            .rect_filled(bg_rect, 3.0, Color32::from_black_alpha(150));
+        ui.painter().galley(
+            Pos2::new(bg_rect.left() + 3.0, bg_rect.top() + 2.0),
+            galley,
+            Color32::WHITE,
+        );
+    }
+
+    // Missing badge (bottom-left).
+    if !std::path::Path::new(&item.path).exists() {
+        let label = tr("media-missing-badge");
+        let font = FontId::monospace(9.0);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(label.to_string(), font, Color32::WHITE);
+        let pad = 3.0;
+        let bg_rect = Rect::from_min_size(
+            Pos2::new(
+                thumb_rect.left() + 4.0,
+                thumb_rect.bottom() - galley.size().y - 6.0,
+            ),
+            Vec2::new(galley.size().x + 2.0 * pad, galley.size().y + 4.0),
+        );
+        ui.painter()
+            .rect_filled(bg_rect, 3.0, Color32::from_rgb(180, 40, 40));
+        ui.painter().galley(
+            Pos2::new(bg_rect.left() + pad, bg_rect.top() + 2.0),
+            galley,
+            Color32::WHITE,
+        );
+    }
+
+    // Filename line.
+    let name_pos = Pos2::new(thumb_rect.left(), thumb_rect.bottom() + 3.0);
+    let max_chars = (card_w / 6.5) as usize;
+    let name = truncate(&item.name, max_chars.max(6));
+    ui.painter().text(
+        name_pos,
+        egui::Align2::LEFT_TOP,
+        name,
+        FontId::proportional(11.0),
+        Color32::from_gray(210),
+    );
+
+    // X button (top-right of thumbnail). Uses the raw pointer
+    // position for visibility and the raw primary-click edge for the
+    // action, because the outer click_and_drag response claims the
+    // pointer as soon as it enters the card.
+    {
+        let btn = 18.0;
+        let x_rect = Rect::from_min_size(
+            Pos2::new(thumb_rect.right() - btn - 3.0, thumb_rect.top() + 3.0),
+            Vec2::splat(btn),
+        );
+        let x_resp = ui.interact(x_rect, egui::Id::new(("rm_media", item.id)), Sense::click());
+        let hover_pos = ui.ctx().input(|i| i.pointer.hover_pos());
+        let over_x = hover_pos.is_some_and(|p| x_rect.contains(p));
+        let over_card = hover_pos.is_some_and(|p| thumb_rect.contains(p));
+        let show = over_card || over_x;
+        if show {
+            let bg = if over_x {
+                Color32::from_rgb(200, 60, 60)
+            } else {
+                Color32::from_black_alpha(140)
+            };
+            ui.painter().rect_filled(x_rect, 3.0, bg);
+            ui.painter().text(
+                x_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                ph::X,
+                FontId::proportional(12.0),
+                Color32::WHITE,
+            );
+        }
+        let primary_clicked = ui.ctx().input(|i| i.pointer.primary_clicked());
+        if over_x && primary_clicked {
+            remove_requested = true;
+        }
+        let _ = x_resp;
+    }
+
+    // Right-click menu.
+    resp.context_menu(|ui| {
+        if ui.button(tr("media-remove-one")).clicked() {
+            remove_requested = true;
+            ui.close_menu();
+        }
     });
 
-    (inner.inner, remove_requested)
+    let resp = resp.on_hover_text(format!(
+        "{}\n{} - {} ms\n{}",
+        item.path,
+        item.kind.label(),
+        item.duration_ms,
+        human_size(item.size_bytes),
+    ));
+
+    (resp, remove_requested)
 }
 
 fn truncate(s: &str, n: usize) -> String {

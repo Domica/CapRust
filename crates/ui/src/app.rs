@@ -182,7 +182,7 @@ pub struct CapRustApp {
     pub fade_drag: Option<FadeDrag>,
     pub settings: AppSettings,
     pub ffmpeg_status: caprust_core::FfmpegStatus,
-    pub last_dnd_payload: Option<uuid::Uuid>,
+    pub last_dnd_payload: Option<Vec<uuid::Uuid>>,
     pub recent: RecentList,
     pub last_pointer: Option<egui::Pos2>,
     /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
@@ -2906,18 +2906,18 @@ impl CapRustApp {
         let mut pending_duplicate_track: Option<usize> = None;
         let mut pending_rename_track: Option<usize> = None;
         let mut pending_actions: Vec<ClipAction> = Vec::new();
-        let mut pending_drop: Option<(uuid::Uuid, usize, u64)> = None;
+        let mut pending_drop: Option<(Vec<uuid::Uuid>, usize, u64)> = None;
 
         // DnD
-        let dnd_active = egui::DragAndDrop::payload::<uuid::Uuid>(ctx).map(|a| *a);
-        if let Some(id) = dnd_active {
-            self.last_dnd_payload = Some(id);
+        let dnd_active = egui::DragAndDrop::payload::<Vec<uuid::Uuid>>(ctx).map(|a| (*a).clone());
+        if let Some(ref ids) = dnd_active {
+            self.last_dnd_payload = Some(ids.clone());
         }
         let pointer_hover = ctx.input(|i| i.pointer.hover_pos());
         let pointer_released = ctx.input(|i| i.pointer.any_released());
         let pointer_down = ctx.input(|i| i.pointer.primary_down());
         let dnd_drop = if pointer_released {
-            self.last_dnd_payload
+            self.last_dnd_payload.clone()
         } else {
             None
         };
@@ -3871,8 +3871,8 @@ impl CapRustApp {
                                 egui::StrokeKind::Inside,
                             );
                         }
-                        if let (Some(id), Some(pp)) = (dnd_drop, pointer_hover) {
-                            if lane_rect.contains(pp) {
+                        if let (Some(ids), Some(pp)) = (&dnd_drop, pointer_hover) {
+                            if lane_rect.contains(pp) && !ids.is_empty() {
                                 let rel = (pp.x - lane_rect.left() + scroll_x).max(0.0);
                                 let raw_ms = (rel / px_per_ms) as u64;
 
@@ -3886,13 +3886,13 @@ impl CapRustApp {
                                     .media
                                     .items
                                     .iter()
-                                    .find(|m| m.id == id)
+                                    .find(|m| ids.first() == Some(&m.id))
                                     .map(|m| m.duration_ms)
                                     .unwrap_or(0);
                                 let snapped_ms = self
                                     .snap_ms(uuid::Uuid::nil(), idx, raw_ms as i64, dur, px_per_ms)
                                     .max(0) as u64;
-                                pending_drop = Some((id, idx, snapped_ms));
+                                pending_drop = Some((ids.clone(), idx, snapped_ms));
 
                                 // Drop ghost: green edges when
                                 // snapped to a neighbour, neutral
@@ -4546,31 +4546,38 @@ impl CapRustApp {
             }
         }
 
-        if let Some((mid, ti, t)) = pending_drop {
-            let media = self
-                .project
-                .media
-                .items
-                .iter()
-                .find(|m| m.id == mid)
-                .cloned();
-            if let Some(item) = media {
-                use caprust_core::{Clip, MediaKind};
+        if let Some((mids, ti, t)) = pending_drop {
+            use caprust_core::{Clip, MediaKind};
+            let mut cursor_ms = t;
+            let mut added: Vec<uuid::Uuid> = Vec::new();
+            for mid in mids {
+                let item = self
+                    .project
+                    .media
+                    .items
+                    .iter()
+                    .find(|m| m.id == mid)
+                    .cloned();
+                let Some(item) = item else { continue };
                 let dur = if item.duration_ms > 0 {
                     item.duration_ms
                 } else {
                     3000
                 };
                 let mut clip = match item.kind {
-                    MediaKind::Video => Clip::new_video(&item.path, ti, t, dur),
-                    MediaKind::Audio => Clip::new_audio(&item.path, ti, t, dur),
-                    MediaKind::Image => Clip::new_image(&item.path, ti, t, dur),
+                    MediaKind::Video => Clip::new_video(&item.path, ti, cursor_ms, dur),
+                    MediaKind::Audio => Clip::new_audio(&item.path, ti, cursor_ms, dur),
+                    MediaKind::Image => Clip::new_image(&item.path, ti, cursor_ms, dur),
                 };
                 clip.media_id = Some(item.id);
                 let nid = clip.id;
                 let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
                 let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                self.selected_clips = vec![nid];
+                added.push(nid);
+                cursor_ms = cursor_ms.saturating_add(dur);
+            }
+            if !added.is_empty() {
+                self.selected_clips = added;
             }
             self.last_dnd_payload = None;
         }
