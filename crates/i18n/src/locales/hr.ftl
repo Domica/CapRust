@@ -501,3 +501,19 @@ set-translation-target = Odredište
 set-translation-email = Kontakt email
 set-translation-email-hint = Neobavezno. Povećava dnevnu MyMemory kvotu s ~5k na ~50k riječi.
 set-translation-provider-note = Provider: MyMemory, ne treba API ključ. Prijevodi su slabiji od DeepL-a.
+
+
+relink-dialog-title = Nedostaju medijske datoteke
+relink-dialog-body = Neke medijske datoteke koje ovaj projekt koristi nisu na disku. Odaberi mapu u koju su premjestene i CapRust ce ih povezati po imenu datoteke.
+relink-dialog-count-label = Nedostaje
+relink-dialog-locate = Odaberi mapu...
+relink-dialog-locate-hint = Odaberi mapu koja sadrzi datoteke koje nedostaju. Usporedba imena ne razlikuje velika i mala slova.
+relink-dialog-skip = Preskoci
+relink-dialog-skip-hint = Nastavi bez ponovnog povezivanja. Klipovi bez izvora ostat ce neispravni.
+relink-dialog-retry = Pokusaj drugu mapu...
+relink-dialog-close = Zatvori
+relink-dialog-done = Ponovno povezano
+relink-dialog-still-missing = Jos nedostaje
+relink-dialog-failed = Ponovno povezivanje nije uspjelo
+relink-dialog-more = vise
+toast-relinked = Ponovno povezano

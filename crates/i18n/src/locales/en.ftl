@@ -501,3 +501,19 @@ set-translation-target = Target
 set-translation-email = Contact email
 set-translation-email-hint = Optional. Raises the daily MyMemory quota from ~5k to ~50k words per day.
 set-translation-provider-note = Provider: MyMemory, no API key required. Translations are less polished than DeepL.
+
+
+relink-dialog-title = Missing media
+relink-dialog-body = Some media files used by this project are not on disk. Locate the folder where they moved and CapRust will match them by filename.
+relink-dialog-count-label = Missing
+relink-dialog-locate = Locate folder...
+relink-dialog-locate-hint = Pick the folder containing the missing files. Matching is case-insensitive by filename.
+relink-dialog-skip = Skip
+relink-dialog-skip-hint = Continue without relinking. Missing clips stay broken.
+relink-dialog-retry = Try another folder...
+relink-dialog-close = Close
+relink-dialog-done = Relinked
+relink-dialog-still-missing = Still missing
+relink-dialog-failed = Relink failed
+relink-dialog-more = more
+toast-relinked = Relinked

@@ -176,6 +176,80 @@ fn clip_references(clip: &Clip, item: &MediaItem) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Folder scan
+// ---------------------------------------------------------------------------
+
+/// A single matched file from a folder scan.
+#[derive(Debug, Clone)]
+pub struct FolderMatch {
+    pub media_id: Uuid,
+    pub old_path: String,
+    pub new_path: String,
+}
+
+/// How many directory levels below `dir` the walker descends. Level 0
+/// is `dir` itself. Four keeps a scan fast on deep trees while still
+/// finding typical "media/<year>/<event>/file.mp4" layouts.
+pub const SCAN_MAX_DEPTH: usize = 4;
+
+/// Walk `dir` recursively (depth-capped) and match every file against
+/// the basenames in `missing`. Case-insensitive. First match per media
+/// id wins; duplicates of the same basename later in the tree are
+/// ignored.
+pub fn scan_folder_for_missing(dir: &std::path::Path, missing: &[MissingRef]) -> Vec<FolderMatch> {
+    use std::collections::{HashMap, HashSet};
+
+    // basename_lower -> (media_id, old_path)
+    let by_name: HashMap<String, (&Uuid, &String)> = missing
+        .iter()
+        .map(|m| (m.name.to_lowercase(), (&m.media_id, &m.old_path)))
+        .collect();
+
+    let mut out: Vec<FolderMatch> = Vec::new();
+    let mut found: HashSet<Uuid> = HashSet::new();
+
+    fn walk(
+        dir: &std::path::Path,
+        depth: usize,
+        max_depth: usize,
+        by_name: &HashMap<String, (&Uuid, &String)>,
+        out: &mut Vec<FolderMatch>,
+        found: &mut HashSet<Uuid>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_dir() {
+                walk(&path, depth + 1, max_depth, by_name, out, found);
+            } else if ft.is_file() {
+                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let key = name.to_lowercase();
+                if let Some((media_id, old_path)) = by_name.get(&key) {
+                    if found.insert(**media_id) {
+                        out.push(FolderMatch {
+                            media_id: **media_id,
+                            old_path: (*old_path).clone(),
+                            new_path: path.to_string_lossy().to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    walk(dir, 0, SCAN_MAX_DEPTH, &by_name, &mut out, &mut found);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,5 +406,75 @@ mod tests {
         assert_eq!(refs.len(), 1, "only the missing item should be reported");
         assert_eq!(refs[0].media_id, missing.id);
         assert_eq!(refs[0].clip_count, 2);
+    }
+
+    #[test]
+    fn scan_folder_matches_basename_case_insensitive() {
+        let tmp = std::env::temp_dir().join(format!("caprust-scan-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("Photo.MP4");
+        std::fs::write(&file, b"x").unwrap();
+
+        let missing = vec![MissingRef {
+            media_id: Uuid::new_v4(),
+            name: "photo.mp4".into(),
+            old_path: "C:/nowhere/photo.mp4".into(),
+            clip_count: 1,
+        }];
+        let matches = scan_folder_for_missing(&tmp, &missing);
+        assert_eq!(matches.len(), 1, "case-insensitive basename match");
+        assert_eq!(matches[0].new_path, file.to_string_lossy().to_string());
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn scan_folder_respects_depth_cap() {
+        let tmp = std::env::temp_dir().join(format!("caprust-scan-depth-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        // depth 3 -- inside cap
+        let shallow = tmp.join("a").join("b").join("target.mp4");
+        // depth 6 -- beyond cap
+        let deep = tmp
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e")
+            .join("deep.mp4");
+        std::fs::create_dir_all(shallow.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
+        std::fs::write(&shallow, b"x").unwrap();
+        std::fs::write(&deep, b"x").unwrap();
+
+        let missing = vec![
+            MissingRef {
+                media_id: Uuid::new_v4(),
+                name: "target.mp4".into(),
+                old_path: "x".into(),
+                clip_count: 0,
+            },
+            MissingRef {
+                media_id: Uuid::new_v4(),
+                name: "deep.mp4".into(),
+                old_path: "y".into(),
+                clip_count: 0,
+            },
+        ];
+        let matches = scan_folder_for_missing(&tmp, &missing);
+        let names: Vec<String> = matches
+            .iter()
+            .map(|m| {
+                std::path::Path::new(&m.new_path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        assert!(names.contains(&"target.mp4".to_string()), "shallow found");
+        assert!(!names.contains(&"deep.mp4".to_string()), "deep skipped");
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
