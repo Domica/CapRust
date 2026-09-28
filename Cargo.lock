@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "caprust-ui",
  "eframe",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-i18n"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fluent",
  "fluent-bundle",
@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-media-io"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "caprust-core",
  "caprust-i18n",
