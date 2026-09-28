@@ -47,6 +47,24 @@ pub struct AppSettings {
     /// enum reordering.
     #[serde(default)]
     pub docked_panels: Vec<String>,
+    /// Serialized egui_dock layout tree (`DockState<crate::dock::Tab>`).
+    /// Stored as JSON so the core crate does not depend on egui_dock.
+    /// None or an unparseable value falls back to
+    /// `dock::default_dock_state()`.
+    #[serde(default)]
+    pub dock_layout: Option<String>,
+    /// Captions translation source language. "auto" lets MyMemory
+    /// guess; otherwise a two-letter code.
+    #[serde(default = "default_translate_source")]
+    pub translate_source_lang: String,
+    /// Captions translation target language. Defaults to "hr".
+    #[serde(default = "default_translate_target")]
+    pub translate_target_lang: String,
+    /// Optional contact email for MyMemory. The anonymous quota is
+    /// ~5k words/day; with a valid address it is ~50k words/day.
+    /// Never sent anywhere else.
+    #[serde(default)]
+    pub translate_email: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -55,6 +73,14 @@ fn default_true() -> bool {
 
 fn default_master_volume() -> f32 {
     1.0
+}
+
+fn default_translate_source() -> String {
+    "auto".to_string()
+}
+
+fn default_translate_target() -> String {
+    "hr".to_string()
 }
 
 impl Default for AppSettings {
@@ -75,6 +101,10 @@ impl Default for AppSettings {
             managed_ffmpeg_dir: None,
             ffmpeg_prompt_dismissed: false,
             docked_panels: Vec::new(),
+            dock_layout: None,
+            translate_source_lang: default_translate_source(),
+            translate_target_lang: default_translate_target(),
+            translate_email: None,
         }
     }
 }
