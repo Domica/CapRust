@@ -27,3 +27,6 @@ Thumbs.db
 *.caprust
 cache/
 DIRECTIVES.md
+
+# Local backlog (see §24 spirit)
+TODO.md
