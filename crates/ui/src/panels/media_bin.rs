@@ -593,30 +593,51 @@ fn draw_card(
             Color32::from_gray(210),
         );
 
-        // X button (top-right of thumbnail) — visible on hover
-        if resp.hovered() {
+        // X button (top-right of thumbnail). egui's hover
+        // arbitration does NOT work here: the enclosing
+        // dnd_drag_source claims the pointer the moment it enters
+        // the card, so a nested interact's hovered() goes false as
+        // soon as the pointer reaches the X and the button vanishes
+        // mid-click. Use the raw pointer position for visibility and
+        // the raw primary-click edge for the action; the interact
+        // stays registered so the click does not fall through to
+        // the drag source.
+        {
             let btn = 18.0;
             let x_rect = Rect::from_min_size(
                 Pos2::new(thumb_rect.right() - btn - 3.0, thumb_rect.top() + 3.0),
                 Vec2::splat(btn),
             );
             let x_resp = ui.interact(x_rect, egui::Id::new(("rm_media", item.id)), Sense::click());
-            let bg = if x_resp.hovered() {
-                Color32::from_rgb(200, 60, 60)
-            } else {
-                Color32::from_black_alpha(140)
-            };
-            ui.painter().rect_filled(x_rect, 3.0, bg);
-            ui.painter().text(
-                x_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                ph::X,
-                FontId::proportional(12.0),
-                Color32::WHITE,
-            );
-            if x_resp.clicked() {
+            let hover_pos = ui.ctx().input(|i| i.pointer.hover_pos());
+            let over_x = hover_pos.map_or(false, |p| x_rect.contains(p));
+            let over_card = hover_pos.map_or(false, |p| thumb_rect.contains(p));
+            let show = over_card || over_x;
+            if show {
+                let bg = if over_x {
+                    Color32::from_rgb(200, 60, 60)
+                } else {
+                    Color32::from_black_alpha(140)
+                };
+                ui.painter().rect_filled(x_rect, 3.0, bg);
+                ui.painter().text(
+                    x_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    ph::X,
+                    FontId::proportional(12.0),
+                    Color32::WHITE,
+                );
+            }
+            // Primary click this frame AND pointer currently over X.
+            // Using raw input so the drag source cannot swallow it.
+            let primary_clicked = ui.ctx().input(|i| i.pointer.primary_clicked());
+            if over_x && primary_clicked {
                 remove_requested = true;
             }
+            // Keep the interact call so egui knows the rect is
+            // occupied (otherwise a click on X starts a drag on the
+            // card underneath).
+            let _ = x_resp;
         }
 
         // Right-click menu

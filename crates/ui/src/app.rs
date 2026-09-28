@@ -4809,11 +4809,31 @@ impl CapRustApp {
             }
         }
 
-        // Remove requested items from library (files on disk are kept).
+        // Remove requested items from library. Any clip that
+        // references the media item via media_id is deleted through
+        // DeleteClipCommand first, so Ctrl+Z restores both the clips
+        // and (in the same step, thanks to the batch) the media
+        // entry. Files on disk are kept.
         for id in out.media.remove_requested {
+            let clip_ids: Vec<uuid::Uuid> = self
+                .project
+                .clips
+                .iter()
+                .filter(|c| c.media_id == Some(id))
+                .map(|c| c.id)
+                .collect();
+            let rip = self.timeline_tools.magnetic;
+            for cid in &clip_ids {
+                let cmd = DeleteClipCommand::new(*cid, rip);
+                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                self.selected_clips.retain(|x| x != cid);
+            }
             self.project.media.remove(id);
             self.clip_textures.remove(&id);
-            tracing::info!("media removed from library: {id}");
+            tracing::info!(
+                "media removed: {id} ({} clip(s) dropped from timeline)",
+                clip_ids.len()
+            );
         }
 
         // Preset clicked (transitions/effects/filters/text).
