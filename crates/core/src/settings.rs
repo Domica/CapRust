@@ -41,6 +41,12 @@ pub struct AppSettings {
     /// user opens Settings → Paths → Download again.
     #[serde(default)]
     pub ffmpeg_prompt_dismissed: bool,
+    /// Asset browser tabs that are open as their own floating window,
+    /// in addition to the main tab strip. Stored as `AssetTab::id()`
+    /// strings ("text", "effects", ...) so the list survives future
+    /// enum reordering.
+    #[serde(default)]
+    pub docked_panels: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -68,6 +74,7 @@ impl Default for AppSettings {
             trim_follow: false,
             managed_ffmpeg_dir: None,
             ffmpeg_prompt_dismissed: false,
+            docked_panels: Vec::new(),
         }
     }
 }
