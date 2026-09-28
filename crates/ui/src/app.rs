@@ -2613,1711 +2613,1597 @@ impl CapRustApp {
             .min_height(180.0)
             .max_height(screen_h * 0.8)
             .show(ctx, |ui| {
-                ui.set_min_height(180.0);
-                self.project.models.tick_downloads(1.0 / 60.0);
-                self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
+                self.render_timeline_panel(ui);
+            });
+    }
+    /// Timeline panel body. Migrated out of the TopBottomPanel
+    /// closure so the dock viewer can render it inside a Tab::Timeline
+    /// zone. `ctx` stays a `&Context` (shadowing the cloned owned
+    /// value) so the extracted body compiles unchanged.
+    pub(crate) fn render_timeline_panel(&mut self, ui: &mut egui::Ui) {
+        let ctx_owned = ui.ctx().clone();
+        let ctx: &egui::Context = &ctx_owned;
+        ui.set_min_height(180.0);
+        self.project.models.tick_downloads(1.0 / 60.0);
+        self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
 
-                // Toolbar
-                let can_undo = self.undo_stack.can_undo();
-                let can_redo = self.undo_stack.can_redo();
-                let mut tools = self.timeline_tools;
+        // Toolbar
+        let can_undo = self.undo_stack.can_undo();
+        let can_redo = self.undo_stack.can_redo();
+        let mut tools = self.timeline_tools;
 
-                // Compute model availability once per frame so the
-                // download icon can tint itself and explain its state
-                // in a tooltip.
-                let models_dir = self.settings.effective_models_dir();
-                let _ = models_dir; // reserved for a future filesystem scan inside this frame
-                let captions_total = self
-                    .project
-                    .models
-                    .models
-                    .iter()
-                    .filter(|m| m.kind == caprust_core::ModelKind::Caption)
-                    .count();
-                let narration_total = self
-                    .project
-                    .models
-                    .models
-                    .iter()
-                    .filter(|m| m.kind == caprust_core::ModelKind::Narration)
-                    .count();
-                let captions_ready = self.project.models.ready_captions().len();
-                let narration_ready = self.project.models.ready_narration().len();
-                let availability = crate::timeline::toolbar::ModelAvailability::Status {
-                    captions_ready,
-                    narration_ready,
-                    captions_total,
-                    narration_total,
-                };
+        // Compute model availability once per frame so the
+        // download icon can tint itself and explain its state
+        // in a tooltip.
+        let models_dir = self.settings.effective_models_dir();
+        let _ = models_dir; // reserved for a future filesystem scan inside this frame
+        let captions_total = self
+            .project
+            .models
+            .models
+            .iter()
+            .filter(|m| m.kind == caprust_core::ModelKind::Caption)
+            .count();
+        let narration_total = self
+            .project
+            .models
+            .models
+            .iter()
+            .filter(|m| m.kind == caprust_core::ModelKind::Narration)
+            .count();
+        let captions_ready = self.project.models.ready_captions().len();
+        let narration_ready = self.project.models.ready_narration().len();
+        let availability = crate::timeline::toolbar::ModelAvailability::Status {
+            captions_ready,
+            narration_ready,
+            captions_total,
+            narration_total,
+        };
 
-                let ev = crate::timeline::toolbar::show(
-                    ui,
-                    &mut tools,
-                    can_undo,
-                    can_redo,
-                    self.playhead_ms,
-                    availability,
-                );
-                self.timeline_tools = tools;
-                self.handle_timeline_events(ev);
-                ui.separator();
+        let ev = crate::timeline::toolbar::show(
+            ui,
+            &mut tools,
+            can_undo,
+            can_redo,
+            self.playhead_ms,
+            availability,
+        );
+        self.timeline_tools = tools;
+        self.handle_timeline_events(ev);
+        ui.separator();
 
-                let header_w = crate::timeline::track_header::HEADER_WIDTH;
-                let ruler_h = crate::timeline::ruler::RULER_HEIGHT;
-                let full_h = ui.available_height().max(150.0);
+        let header_w = crate::timeline::track_header::HEADER_WIDTH;
+        let ruler_h = crate::timeline::ruler::RULER_HEIGHT;
+        let full_h = ui.available_height().max(150.0);
 
-                let order = caprust_core::track::display_order(&self.project.tracks);
-                let mut updated_tracks = self.project.tracks.clone();
-                let mut header_changed = false;
-                let mut pending_delete_track: Option<usize> = None;
-                // (clip_id, screen rect) for marquee hit test on release.
-                let mut all_clip_rects: Vec<(uuid::Uuid, egui::Rect)> = Vec::new();
-                let mut all_lane_rects: Vec<egui::Rect> = Vec::new();
-                let mut pending_duplicate_track: Option<usize> = None;
-                let mut pending_rename_track: Option<usize> = None;
-                let mut pending_actions: Vec<ClipAction> = Vec::new();
-                let mut pending_drop: Option<(uuid::Uuid, usize, u64)> = None;
+        let order = caprust_core::track::display_order(&self.project.tracks);
+        let mut updated_tracks = self.project.tracks.clone();
+        let mut header_changed = false;
+        let mut pending_delete_track: Option<usize> = None;
+        // (clip_id, screen rect) for marquee hit test on release.
+        let mut all_clip_rects: Vec<(uuid::Uuid, egui::Rect)> = Vec::new();
+        let mut all_lane_rects: Vec<egui::Rect> = Vec::new();
+        let mut pending_duplicate_track: Option<usize> = None;
+        let mut pending_rename_track: Option<usize> = None;
+        let mut pending_actions: Vec<ClipAction> = Vec::new();
+        let mut pending_drop: Option<(uuid::Uuid, usize, u64)> = None;
 
-                // DnD
-                let dnd_active = egui::DragAndDrop::payload::<uuid::Uuid>(ctx).map(|a| *a);
-                if let Some(id) = dnd_active {
-                    self.last_dnd_payload = Some(id);
-                }
-                let pointer_hover = ctx.input(|i| i.pointer.hover_pos());
-                let pointer_released = ctx.input(|i| i.pointer.any_released());
-                let pointer_down = ctx.input(|i| i.pointer.primary_down());
-                let dnd_drop = if pointer_released {
-                    self.last_dnd_payload
-                } else {
-                    None
-                };
-                let clip_drag_snapshot = self.clip_drag.clone();
-                let pan_mode = self.timeline_tools.pan_mode;
+        // DnD
+        let dnd_active = egui::DragAndDrop::payload::<uuid::Uuid>(ctx).map(|a| *a);
+        if let Some(id) = dnd_active {
+            self.last_dnd_payload = Some(id);
+        }
+        let pointer_hover = ctx.input(|i| i.pointer.hover_pos());
+        let pointer_released = ctx.input(|i| i.pointer.any_released());
+        let pointer_down = ctx.input(|i| i.pointer.primary_down());
+        let dnd_drop = if pointer_released {
+            self.last_dnd_payload
+        } else {
+            None
+        };
+        let clip_drag_snapshot = self.clip_drag.clone();
+        let pan_mode = self.timeline_tools.pan_mode;
 
-                // Time/px
-                let total_ms = self.total_duration_ms();
-                let content_ms = (total_ms + 20_000).max(30_000);
-                let viewport_w = (ui.available_width() - header_w).max(120.0);
-                let px_per_ms = (viewport_w * 0.9 * self.timeline_zoom) / content_ms as f32;
-                let px_per_ms = px_per_ms.max(0.002);
-                let content_width = (content_ms as f32 * px_per_ms).max(viewport_w);
-                let max_scroll = (content_width - viewport_w).max(0.0);
-                self.timeline_scroll_x = self.timeline_scroll_x.clamp(0.0, max_scroll);
+        // Time/px
+        let total_ms = self.total_duration_ms();
+        let content_ms = (total_ms + 20_000).max(30_000);
+        let viewport_w = (ui.available_width() - header_w).max(120.0);
+        let px_per_ms = (viewport_w * 0.9 * self.timeline_zoom) / content_ms as f32;
+        let px_per_ms = px_per_ms.max(0.002);
+        let content_width = (content_ms as f32 * px_per_ms).max(viewport_w);
+        let max_scroll = (content_width - viewport_w).max(0.0);
+        self.timeline_scroll_x = self.timeline_scroll_x.clamp(0.0, max_scroll);
 
-                // Follow playhead: nudge scroll so playhead stays centered
-                let follow = self.timeline_tools.follow_playhead;
-                let playing = self.preview.playing;
-                if follow && playing {
-                    let ph_px = self.playhead_ms as f32 * px_per_ms;
-                    let target = ph_px - viewport_w * 0.5;
-                    self.timeline_scroll_x = target.clamp(0.0, max_scroll);
-                    ctx.request_repaint();
-                }
-                let scroll_x = self.timeline_scroll_x;
+        // Follow playhead: nudge scroll so playhead stays centered
+        let follow = self.timeline_tools.follow_playhead;
+        let playing = self.preview.playing;
+        if follow && playing {
+            let ph_px = self.playhead_ms as f32 * px_per_ms;
+            let target = ph_px - viewport_w * 0.5;
+            self.timeline_scroll_x = target.clamp(0.0, max_scroll);
+            ctx.request_repaint();
+        }
+        let scroll_x = self.timeline_scroll_x;
 
-                // Pan mode: left-drag inside the timeline scrolls horizontally.
-                if pan_mode {
-                    let drag_delta = ctx.input(|i| i.pointer.delta());
-                    if ctx.input(|i| i.pointer.primary_down()) && drag_delta.x != 0.0 {
-                        self.timeline_scroll_x =
-                            (self.timeline_scroll_x - drag_delta.x).clamp(0.0, max_scroll);
-                        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-                    }
-                }
+        // Pan mode: left-drag inside the timeline scrolls horizontally.
+        if pan_mode {
+            let drag_delta = ctx.input(|i| i.pointer.delta());
+            if ctx.input(|i| i.pointer.primary_down()) && drag_delta.x != 0.0 {
+                self.timeline_scroll_x =
+                    (self.timeline_scroll_x - drag_delta.x).clamp(0.0, max_scroll);
+                ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+        }
 
-                let theme_snapshot = self.theme.clone();
-                ui.horizontal_top(|ui| {
-                    // LEFT: headers
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(header_w, full_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(header_w);
-                            ui.set_min_height(full_h);
-                            ui.allocate_space(egui::vec2(header_w, ruler_h));
-                            for &idx in &order {
-                                let mut track = updated_tracks[idx].clone();
-                                let row_h = track.height;
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(header_w, row_h),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ui.set_width(header_w);
-                                        // Force the child UI to occupy the
-                                        // full row height. allocate_ui_with_layout
-                                        // shrinks the reserved space to the
-                                        // child's actual content (two header
-                                        // rows, ~36px) rather than the
-                                        // requested row_h. The lanes on the
-                                        // right use allocate_exact_size, which
-                                        // does honor row_h. That mismatch
-                                        // accumulated ~14px per track and left
-                                        // the header column ~1 track short of
-                                        // the lane column after 4-5 tracks.
-                                        ui.set_min_height(row_h);
-                                        let hev = crate::timeline::track_header::show(
-                                            ui,
-                                            &mut track,
-                                            idx,
-                                            &theme_snapshot,
-                                            row_h,
-                                        );
-                                        if hev.changed {
-                                            header_changed = true;
-                                        }
-                                        if hev.delete_requested {
-                                            pending_delete_track = Some(idx);
-                                        }
-                                        if hev.duplicate_requested {
-                                            pending_duplicate_track = Some(idx);
-                                        }
-                                        if hev.rename_requested {
-                                            pending_rename_track = Some(idx);
-                                        }
-                                    },
+        let theme_snapshot = self.theme.clone();
+        ui.horizontal_top(|ui| {
+            // LEFT: headers
+            ui.allocate_ui_with_layout(
+                egui::vec2(header_w, full_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(header_w);
+                    ui.set_min_height(full_h);
+                    ui.allocate_space(egui::vec2(header_w, ruler_h));
+                    for &idx in &order {
+                        let mut track = updated_tracks[idx].clone();
+                        let row_h = track.height;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(header_w, row_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(header_w);
+                                // Force the child UI to occupy the
+                                // full row height. allocate_ui_with_layout
+                                // shrinks the reserved space to the
+                                // child's actual content (two header
+                                // rows, ~36px) rather than the
+                                // requested row_h. The lanes on the
+                                // right use allocate_exact_size, which
+                                // does honor row_h. That mismatch
+                                // accumulated ~14px per track and left
+                                // the header column ~1 track short of
+                                // the lane column after 4-5 tracks.
+                                ui.set_min_height(row_h);
+                                let hev = crate::timeline::track_header::show(
+                                    ui,
+                                    &mut track,
+                                    idx,
+                                    &theme_snapshot,
+                                    row_h,
                                 );
-                                updated_tracks[idx] = track;
-                            }
-                        },
+                                if hev.changed {
+                                    header_changed = true;
+                                }
+                                if hev.delete_requested {
+                                    pending_delete_track = Some(idx);
+                                }
+                                if hev.duplicate_requested {
+                                    pending_duplicate_track = Some(idx);
+                                }
+                                if hev.rename_requested {
+                                    pending_rename_track = Some(idx);
+                                }
+                            },
+                        );
+                        updated_tracks[idx] = track;
+                    }
+                },
+            );
+
+            // RIGHT: ruler + lanes with manual scroll
+            ui.allocate_ui_with_layout(
+                egui::vec2(viewport_w, full_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_width(viewport_w);
+                    ui.set_min_height(full_h);
+
+                    // Ruler
+                    let (ruler_rect, _) = ui
+                        .allocate_exact_size(egui::vec2(viewport_w, ruler_h), egui::Sense::click());
+                    let rp = ui.painter_at(ruler_rect);
+                    rp.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(28));
+                    rp.line_segment(
+                        [
+                            egui::Pos2::new(ruler_rect.left(), ruler_rect.bottom() - 0.5),
+                            egui::Pos2::new(ruler_rect.right(), ruler_rect.bottom() - 0.5),
+                        ],
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
                     );
-
-                    // RIGHT: ruler + lanes with manual scroll
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(viewport_w, full_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_width(viewport_w);
-                            ui.set_min_height(full_h);
-
-                            // Ruler
-                            let (ruler_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(viewport_w, ruler_h),
-                                egui::Sense::click(),
-                            );
-                            let rp = ui.painter_at(ruler_rect);
-                            rp.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(28));
+                    let interval_ms: u64 = {
+                        let cands: &[u64] = &[
+                            100, 250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000, 60_000,
+                            120_000, 300_000, 600_000,
+                        ];
+                        let mut c = *cands.last().unwrap();
+                        for &x in cands {
+                            if (x as f32) * px_per_ms >= 70.0 {
+                                c = x;
+                                break;
+                            }
+                        }
+                        c
+                    };
+                    let first_tick = ((scroll_x / px_per_ms) as u64 / interval_ms) * interval_ms;
+                    let last_tick = ((scroll_x + viewport_w) / px_per_ms) as u64;
+                    let mut t = first_tick;
+                    while t <= last_tick + interval_ms {
+                        let x = ruler_rect.left() + (t as f32) * px_per_ms - scroll_x;
+                        if x > ruler_rect.right() + 5.0 {
+                            break;
+                        }
+                        if x >= ruler_rect.left() - 5.0 {
+                            let th = if t.is_multiple_of(interval_ms * 5) {
+                                10.0
+                            } else if t.is_multiple_of(interval_ms * 2) {
+                                7.0
+                            } else {
+                                5.0
+                            };
                             rp.line_segment(
                                 [
-                                    egui::Pos2::new(ruler_rect.left(), ruler_rect.bottom() - 0.5),
-                                    egui::Pos2::new(ruler_rect.right(), ruler_rect.bottom() - 0.5),
+                                    egui::Pos2::new(x, ruler_rect.bottom() - th),
+                                    egui::Pos2::new(x, ruler_rect.bottom()),
                                 ],
-                                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
+                                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(90)),
                             );
-                            let interval_ms: u64 = {
-                                let cands: &[u64] = &[
-                                    100, 250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000,
-                                    60_000, 120_000, 300_000, 600_000,
-                                ];
-                                let mut c = *cands.last().unwrap();
-                                for &x in cands {
-                                    if (x as f32) * px_per_ms >= 70.0 {
-                                        c = x;
-                                        break;
+                            if th >= 10.0 {
+                                let s = t / 1000;
+                                let mm = (s % 3600) / 60;
+                                let ss = s % 60;
+                                rp.text(
+                                    egui::Pos2::new(x + 3.0, ruler_rect.top() + 2.0),
+                                    egui::Align2::LEFT_TOP,
+                                    format!("{mm:02}:{ss:02}"),
+                                    egui::FontId::proportional(10.0),
+                                    egui::Color32::from_gray(170),
+                                );
+                            }
+                        }
+                        t += interval_ms;
+                    }
+                    let ph_x = ruler_rect.left() + self.playhead_ms as f32 * px_per_ms - scroll_x;
+                    let ph_visible = ph_x >= ruler_rect.left() && ph_x <= ruler_rect.right();
+                    // Playhead line is drawn after the lane loop:
+                    // Full mode needs the bottom of the last lane,
+                    // which is only known once every row has been
+                    // allocated. Compact mode will use ruler_rect
+                    // alone, but we defer both for a single code
+                    // path.
+                    if ui.input(|i| i.pointer.primary_clicked()) {
+                        if let Some(p) = ui.ctx().pointer_interact_pos() {
+                            if ruler_rect.contains(p) {
+                                let ms = ((p.x - ruler_rect.left() + scroll_x) / px_per_ms).max(0.0)
+                                    as u64;
+                                pending_actions.push(ClipAction::SetPlayhead(ms));
+                            }
+                        }
+                    }
+
+                    // Lanes
+                    let mut top_y_opt: Option<f32> = None;
+                    let mut rows_actual: Vec<(usize, f32)> = Vec::new();
+                    // Tracked so the playhead overlay can span
+                    // the entire stack in Full mode.
+                    let mut lane_stack_bottom: Option<f32> = None;
+                    for &idx in &order {
+                        let track = &updated_tracks[idx];
+                        let row_h = track.height;
+                        let (lane_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(viewport_w, row_h),
+                            egui::Sense::hover(),
+                        );
+                        if top_y_opt.is_none() {
+                            top_y_opt = Some(lane_rect.top());
+                        }
+                        lane_stack_bottom = Some(lane_rect.bottom());
+                        rows_actual.push((idx, row_h));
+                        all_lane_rects.push(lane_rect);
+
+                        let p = ui.painter_at(lane_rect);
+                        let bg = theme_snapshot.track_lane_bg(track.kind, track.visible);
+                        p.rect_filled(lane_rect, 0.0, bg);
+                        if track.pinned {
+                            p.line_segment(
+                                [
+                                    egui::Pos2::new(lane_rect.left(), lane_rect.top() + 2.0),
+                                    egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 2.0),
+                                ],
+                                egui::Stroke::new(3.0_f32, egui::Color32::from_rgb(80, 200, 120)),
+                            );
+                        }
+                        p.line_segment(
+                            [
+                                egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 0.5),
+                                egui::Pos2::new(lane_rect.right(), lane_rect.bottom() - 0.5),
+                            ],
+                            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
+                        );
+
+                        let clips_here: Vec<(uuid::Uuid, u64, u64, caprust_core::ClipType, bool)> =
+                            self.project
+                                .clips
+                                .iter()
+                                .filter(|c| {
+                                    let dt = clip_drag_snapshot
+                                        .as_ref()
+                                        .filter(|d| d.clip_id == c.id)
+                                        .map(|d| d.track_index);
+                                    match dt {
+                                        Some(tt) => tt == idx,
+                                        None => c.track_index == idx,
                                     }
-                                }
-                                c
-                            };
-                            let first_tick =
-                                ((scroll_x / px_per_ms) as u64 / interval_ms) * interval_ms;
-                            let last_tick = ((scroll_x + viewport_w) / px_per_ms) as u64;
-                            let mut t = first_tick;
-                            while t <= last_tick + interval_ms {
-                                let x = ruler_rect.left() + (t as f32) * px_per_ms - scroll_x;
-                                if x > ruler_rect.right() + 5.0 {
-                                    break;
-                                }
-                                if x >= ruler_rect.left() - 5.0 {
-                                    let th = if t.is_multiple_of(interval_ms * 5) {
-                                        10.0
-                                    } else if t.is_multiple_of(interval_ms * 2) {
-                                        7.0
+                                })
+                                .map(|c| {
+                                    let is_dragged = clip_drag_snapshot
+                                        .as_ref()
+                                        .map(|d| d.clip_id == c.id)
+                                        .unwrap_or(false);
+                                    let (s, d) = if is_dragged {
+                                        let d = clip_drag_snapshot.as_ref().unwrap();
+                                        (d.current_ms.max(0) as u64, c.duration_ms)
                                     } else {
-                                        5.0
+                                        (c.start_time_ms, c.duration_ms)
                                     };
-                                    rp.line_segment(
-                                        [
-                                            egui::Pos2::new(x, ruler_rect.bottom() - th),
-                                            egui::Pos2::new(x, ruler_rect.bottom()),
-                                        ],
-                                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(90)),
-                                    );
-                                    if th >= 10.0 {
-                                        let s = t / 1000;
-                                        let mm = (s % 3600) / 60;
-                                        let ss = s % 60;
-                                        rp.text(
-                                            egui::Pos2::new(x + 3.0, ruler_rect.top() + 2.0),
-                                            egui::Align2::LEFT_TOP,
-                                            format!("{mm:02}:{ss:02}"),
-                                            egui::FontId::proportional(10.0),
-                                            egui::Color32::from_gray(170),
-                                        );
-                                    }
-                                }
-                                t += interval_ms;
-                            }
-                            let ph_x =
-                                ruler_rect.left() + self.playhead_ms as f32 * px_per_ms - scroll_x;
-                            let ph_visible =
-                                ph_x >= ruler_rect.left() && ph_x <= ruler_rect.right();
-                            // Playhead line is drawn after the lane loop:
-                            // Full mode needs the bottom of the last lane,
-                            // which is only known once every row has been
-                            // allocated. Compact mode will use ruler_rect
-                            // alone, but we defer both for a single code
-                            // path.
-                            if ui.input(|i| i.pointer.primary_clicked()) {
-                                if let Some(p) = ui.ctx().pointer_interact_pos() {
-                                    if ruler_rect.contains(p) {
-                                        let ms = ((p.x - ruler_rect.left() + scroll_x) / px_per_ms)
-                                            .max(0.0)
-                                            as u64;
-                                        pending_actions.push(ClipAction::SetPlayhead(ms));
-                                    }
-                                }
+                                    (c.id, s, d, c.clip_type.clone(), is_dragged)
+                                })
+                                .collect();
+
+                        for (clip_id, start_ms, dur_ms, ctype, is_dragged) in clips_here {
+                            let x0 = lane_rect.left() - scroll_x + start_ms as f32 * px_per_ms;
+                            let x1 = lane_rect.left() - scroll_x
+                                + (start_ms + dur_ms) as f32 * px_per_ms;
+                            if x1 < lane_rect.left() - 30.0 || x0 > lane_rect.right() + 30.0 {
+                                continue;
                             }
 
-                            // Lanes
-                            let mut top_y_opt: Option<f32> = None;
-                            let mut rows_actual: Vec<(usize, f32)> = Vec::new();
-                            // Tracked so the playhead overlay can span
-                            // the entire stack in Full mode.
-                            let mut lane_stack_bottom: Option<f32> = None;
-                            for &idx in &order {
-                                let track = &updated_tracks[idx];
-                                let row_h = track.height;
-                                let (lane_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(viewport_w, row_h),
-                                    egui::Sense::hover(),
-                                );
-                                if top_y_opt.is_none() {
-                                    top_y_opt = Some(lane_rect.top());
-                                }
-                                lane_stack_bottom = Some(lane_rect.bottom());
-                                rows_actual.push((idx, row_h));
-                                all_lane_rects.push(lane_rect);
+                            let full_rect = egui::Rect::from_min_max(
+                                egui::pos2(x0, lane_rect.top() + 3.0),
+                                egui::pos2(x1.max(x0 + 8.0), lane_rect.bottom() - 3.0),
+                            );
+                            let clip_rect = full_rect.intersect(lane_rect);
+                            if clip_rect.width() < 2.0 {
+                                continue;
+                            }
+                            all_clip_rects.push((clip_id, clip_rect));
 
-                                let p = ui.painter_at(lane_rect);
-                                let bg = theme_snapshot.track_lane_bg(track.kind, track.visible);
-                                p.rect_filled(lane_rect, 0.0, bg);
-                                if track.pinned {
-                                    p.line_segment(
-                                        [
-                                            egui::Pos2::new(
-                                                lane_rect.left(),
-                                                lane_rect.top() + 2.0,
-                                            ),
-                                            egui::Pos2::new(
-                                                lane_rect.left(),
-                                                lane_rect.bottom() - 2.0,
-                                            ),
-                                        ],
-                                        egui::Stroke::new(
-                                            3.0_f32,
-                                            egui::Color32::from_rgb(80, 200, 120),
-                                        ),
+                            let color = match &ctype {
+                                caprust_core::ClipType::Video { .. } => {
+                                    egui::Color32::from_rgb(60, 110, 180)
+                                }
+                                caprust_core::ClipType::Audio { .. } => {
+                                    egui::Color32::from_rgb(90, 60, 140)
+                                }
+                                caprust_core::ClipType::Image { .. } => {
+                                    egui::Color32::from_rgb(60, 140, 110)
+                                }
+                                caprust_core::ClipType::TextOverlay { .. } => {
+                                    egui::Color32::from_rgb(180, 130, 60)
+                                }
+                                caprust_core::ClipType::Captions { .. } => {
+                                    egui::Color32::from_rgb(180, 80, 120)
+                                }
+                                caprust_core::ClipType::Narration { .. } => {
+                                    egui::Color32::from_rgb(120, 100, 200)
+                                }
+                            };
+                            let c = if is_dragged {
+                                color.gamma_multiply(1.3)
+                            } else {
+                                color
+                            };
+                            p.rect_filled(clip_rect, 4.0, c);
+
+                            // Border: pastel tint of the track
+                            // colour, distinct from the clip's own
+                            // fill so adjacent clips stay readable
+                            // when they butt up against each other.
+                            let border_kind = self
+                                .project
+                                .tracks
+                                .get(idx)
+                                .map(|t| t.kind)
+                                .unwrap_or(caprust_core::TrackKind::Video);
+                            let border_color = theme_snapshot.clip_border_color(border_kind);
+                            p.rect_stroke(
+                                clip_rect,
+                                4.0,
+                                egui::Stroke::new(1.5_f32, border_color),
+                                egui::StrokeKind::Inside,
+                            );
+
+                            // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
+                            let thumb_tex = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|cc| cc.id == clip_id)
+                                .and_then(|cc| cc.media_id)
+                                .and_then(|mid| self.clip_textures.get(&mid).cloned());
+
+                            if let Some(tex) = thumb_tex {
+                                let tex_size = tex.size_vec2();
+                                let aspect = tex_size.x / tex_size.y.max(1.0);
+                                let tile_h = clip_rect.height();
+                                let tile_w = (tile_h * aspect).max(8.0);
+                                let mut x = clip_rect.left();
+                                let right = clip_rect.right();
+                                let mut guard = 0;
+                                while x < right - 1.0 && guard < 200 {
+                                    let w = (right - x).min(tile_w);
+                                    let tile_rect = egui::Rect::from_min_size(
+                                        egui::pos2(x, clip_rect.top()),
+                                        egui::vec2(w, tile_h),
                                     );
-                                }
-                                p.line_segment(
-                                    [
-                                        egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 0.5),
-                                        egui::Pos2::new(
-                                            lane_rect.right(),
-                                            lane_rect.bottom() - 0.5,
+                                    let frac = (w / tile_w).min(1.0);
+                                    p.image(
+                                        tex.id(),
+                                        tile_rect,
+                                        egui::Rect::from_min_max(
+                                            egui::pos2(0.0, 0.0),
+                                            egui::pos2(frac, 1.0),
                                         ),
-                                    ],
-                                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
+                                        egui::Color32::from_white_alpha(220),
+                                    );
+                                    x += tile_w;
+                                    guard += 1;
+                                }
+                                // Dim overlay so clip-type color stays readable.
+                                p.rect_filled(clip_rect, 4.0, c.gamma_multiply(0.35));
+                            }
+                            if self.selected_clips.contains(&clip_id) || is_dragged {
+                                p.rect_stroke(
+                                    clip_rect,
+                                    4.0,
+                                    egui::Stroke::new(2.0_f32, egui::Color32::WHITE),
+                                    egui::StrokeKind::Inside,
                                 );
+                            }
 
-                                let clips_here: Vec<(
-                                    uuid::Uuid,
-                                    u64,
-                                    u64,
-                                    caprust_core::ClipType,
-                                    bool,
-                                )> = self
+                            // ---- Fade handles + curve ----
+                            // Only on clips that carry audio: Audio,
+                            // Narration, and Video whose audio has
+                            // not been detached.
+                            let carries_audio = match &ctype {
+                                caprust_core::ClipType::Audio { .. }
+                                | caprust_core::ClipType::Narration { .. } => true,
+                                caprust_core::ClipType::Video { .. } => self
                                     .project
                                     .clips
                                     .iter()
-                                    .filter(|c| {
-                                        let dt = clip_drag_snapshot
-                                            .as_ref()
-                                            .filter(|d| d.clip_id == c.id)
-                                            .map(|d| d.track_index);
-                                        match dt {
-                                            Some(tt) => tt == idx,
-                                            None => c.track_index == idx,
+                                    .find(|cc| cc.id == clip_id)
+                                    .map(|cc| !cc.audio_detached)
+                                    .unwrap_or(false),
+                                _ => false,
+                            };
+
+                            if carries_audio && clip_rect.width() > 24.0 {
+                                let (fi_ms, fo_ms) = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|cc| cc.id == clip_id)
+                                    .map(|cc| (cc.fade_in_ms, cc.fade_out_ms))
+                                    .unwrap_or((0, 0));
+                                // Use live drag values when this clip
+                                // is being dragged, so the curve
+                                // follows the pointer without a
+                                // round-trip through the project.
+                                let (fi_show, fo_show) = if let Some(fd) = &self.fade_drag {
+                                    if fd.clip_id == clip_id {
+                                        match fd.edge {
+                                            FadeEdge::In => (fd.current_ms, fo_ms),
+                                            FadeEdge::Out => (fi_ms, fd.current_ms),
                                         }
-                                    })
-                                    .map(|c| {
-                                        let is_dragged = clip_drag_snapshot
-                                            .as_ref()
-                                            .map(|d| d.clip_id == c.id)
-                                            .unwrap_or(false);
-                                        let (s, d) = if is_dragged {
-                                            let d = clip_drag_snapshot.as_ref().unwrap();
-                                            (d.current_ms.max(0) as u64, c.duration_ms)
-                                        } else {
-                                            (c.start_time_ms, c.duration_ms)
-                                        };
-                                        (c.id, s, d, c.clip_type.clone(), is_dragged)
-                                    })
-                                    .collect();
-
-                                for (clip_id, start_ms, dur_ms, ctype, is_dragged) in clips_here {
-                                    let x0 =
-                                        lane_rect.left() - scroll_x + start_ms as f32 * px_per_ms;
-                                    let x1 = lane_rect.left() - scroll_x
-                                        + (start_ms + dur_ms) as f32 * px_per_ms;
-                                    if x1 < lane_rect.left() - 30.0 || x0 > lane_rect.right() + 30.0
-                                    {
-                                        continue;
+                                    } else {
+                                        (fi_ms, fo_ms)
                                     }
+                                } else {
+                                    (fi_ms, fo_ms)
+                                };
+                                let fi_px =
+                                    (fi_show as f32 / dur_ms.max(1) as f32) * clip_rect.width();
+                                let fo_px =
+                                    (fo_show as f32 / dur_ms.max(1) as f32) * clip_rect.width();
 
-                                    let full_rect = egui::Rect::from_min_max(
-                                        egui::pos2(x0, lane_rect.top() + 3.0),
-                                        egui::pos2(x1.max(x0 + 8.0), lane_rect.bottom() - 3.0),
+                                let curve_color =
+                                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180);
+                                let curve_stroke = egui::Stroke::new(2.0_f32, curve_color);
+
+                                // Fade-in curve: diagonal from
+                                // top-left down to the top of the
+                                // waveform at fi_px.
+                                if fi_px > 0.5 {
+                                    p.line_segment(
+                                        [
+                                            clip_rect.left_top(),
+                                            egui::pos2(clip_rect.left() + fi_px, clip_rect.top()),
+                                        ],
+                                        curve_stroke,
                                     );
-                                    let clip_rect = full_rect.intersect(lane_rect);
-                                    if clip_rect.width() < 2.0 {
-                                        continue;
-                                    }
-                                    all_clip_rects.push((clip_id, clip_rect));
+                                    // Triangle fill under curve
+                                    p.add(egui::Shape::convex_polygon(
+                                        vec![
+                                            clip_rect.left_top(),
+                                            egui::pos2(clip_rect.left() + fi_px, clip_rect.top()),
+                                            clip_rect.left_bottom(),
+                                        ],
+                                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
+                                        egui::Stroke::NONE,
+                                    ));
+                                }
+                                // Fade-out curve (mirror).
+                                if fo_px > 0.5 {
+                                    p.line_segment(
+                                        [
+                                            egui::pos2(clip_rect.right() - fo_px, clip_rect.top()),
+                                            clip_rect.right_top(),
+                                        ],
+                                        curve_stroke,
+                                    );
+                                    p.add(egui::Shape::convex_polygon(
+                                        vec![
+                                            egui::pos2(clip_rect.right() - fo_px, clip_rect.top()),
+                                            clip_rect.right_top(),
+                                            clip_rect.right_bottom(),
+                                        ],
+                                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
+                                        egui::Stroke::NONE,
+                                    ));
+                                }
 
-                                    let color = match &ctype {
-                                        caprust_core::ClipType::Video { .. } => {
-                                            egui::Color32::from_rgb(60, 110, 180)
-                                        }
-                                        caprust_core::ClipType::Audio { .. } => {
-                                            egui::Color32::from_rgb(90, 60, 140)
-                                        }
-                                        caprust_core::ClipType::Image { .. } => {
-                                            egui::Color32::from_rgb(60, 140, 110)
-                                        }
-                                        caprust_core::ClipType::TextOverlay { .. } => {
-                                            egui::Color32::from_rgb(180, 130, 60)
+                                // Handles: small filled circles at
+                                // top corners, offset horizontally
+                                // by the fade amount.
+                                let hr = 5.0_f32;
+                                let h_in_pos = egui::pos2(
+                                    clip_rect.left() + fi_px.max(hr),
+                                    clip_rect.top() + hr * 0.6,
+                                );
+                                let h_out_pos = egui::pos2(
+                                    clip_rect.right() - fo_px.max(hr),
+                                    clip_rect.top() + hr * 0.6,
+                                );
+                                let hovered_this_clip = pointer_hover
+                                    .map(|pp| clip_rect.contains(pp))
+                                    .unwrap_or(false);
+                                let in_hover = hovered_this_clip
+                                    && pointer_hover
+                                        .map(|pp| (pp - h_in_pos).length() < hr * 1.8)
+                                        .unwrap_or(false);
+                                let out_hover = hovered_this_clip
+                                    && pointer_hover
+                                        .map(|pp| (pp - h_out_pos).length() < hr * 1.8)
+                                        .unwrap_or(false);
+                                let active_in = self
+                                    .fade_drag
+                                    .as_ref()
+                                    .map(|fd| fd.clip_id == clip_id && fd.edge == FadeEdge::In)
+                                    .unwrap_or(false);
+                                let active_out = self
+                                    .fade_drag
+                                    .as_ref()
+                                    .map(|fd| fd.clip_id == clip_id && fd.edge == FadeEdge::Out)
+                                    .unwrap_or(false);
+                                let fill_in = if active_in || in_hover {
+                                    egui::Color32::from_rgb(255, 220, 90)
+                                } else {
+                                    egui::Color32::from_white_alpha(200)
+                                };
+                                let fill_out = if active_out || out_hover {
+                                    egui::Color32::from_rgb(255, 220, 90)
+                                } else {
+                                    egui::Color32::from_white_alpha(200)
+                                };
+                                p.circle_filled(h_in_pos, hr, fill_in);
+                                p.circle_stroke(
+                                    h_in_pos,
+                                    hr,
+                                    egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                                );
+                                p.circle_filled(h_out_pos, hr, fill_out);
+                                p.circle_stroke(
+                                    h_out_pos,
+                                    hr,
+                                    egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                                );
+
+                                // Cursor affordance.
+                                if in_hover || out_hover {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                                }
+
+                                // Start a fade drag on press over a
+                                // handle. Precedence over clip
+                                // drag-select.
+                                let track_locked_fh = self
+                                    .project
+                                    .tracks
+                                    .get(idx)
+                                    .map(|t| t.locked)
+                                    .unwrap_or(false);
+                                if !track_locked_fh
+                                    && !pan_mode
+                                    && pointer_down
+                                    && self.fade_drag.is_none()
+                                    && clip_drag_snapshot.is_none()
+                                {
+                                    if in_hover {
+                                        pending_actions.push(ClipAction::FadeDragStart(
+                                            clip_id,
+                                            FadeEdge::In,
+                                            fi_ms as f32,
+                                        ));
+                                    } else if out_hover {
+                                        pending_actions.push(ClipAction::FadeDragStart(
+                                            clip_id,
+                                            FadeEdge::Out,
+                                            fo_ms as f32,
+                                        ));
+                                    }
+                                }
+                            }
+                            let (label_full, label_short) = {
+                                let full = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|cc| cc.id == clip_id)
+                                    .and_then(|cc| cc.name.clone())
+                                    .unwrap_or_else(|| match &ctype {
+                                        caprust_core::ClipType::TextOverlay { content, .. } => {
+                                            content.clone()
                                         }
                                         caprust_core::ClipType::Captions { .. } => {
-                                            egui::Color32::from_rgb(180, 80, 120)
+                                            format!("{} Captions", ph::CHAT_TEXT)
                                         }
                                         caprust_core::ClipType::Narration { .. } => {
-                                            egui::Color32::from_rgb(120, 100, 200)
+                                            format!("{} Narration", ph::MICROPHONE)
                                         }
-                                    };
-                                    let c = if is_dragged {
-                                        color.gamma_multiply(1.3)
+                                        caprust_core::ClipType::Video { path, .. }
+                                        | caprust_core::ClipType::Audio { path, .. }
+                                        | caprust_core::ClipType::Image { path, .. } => {
+                                            std::path::Path::new(path)
+                                                .file_name()
+                                                .map(|s| s.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| "clip".into())
+                                        }
+                                    });
+                                // Truncate to 12 chars + ellipsis. Count
+                                // in chars so emoji-heavy names don't
+                                // overflow the visual budget.
+                                let short = if full.chars().count() > 12 {
+                                    let mut s: String = full.chars().take(12).collect();
+                                    s.push('…');
+                                    s
+                                } else {
+                                    full.clone()
+                                };
+                                (full, short)
+                            };
+                            p.text(
+                                clip_rect.left_top() + egui::vec2(6.0, 4.0),
+                                egui::Align2::LEFT_TOP,
+                                &label_short,
+                                egui::FontId::proportional(11.0),
+                                egui::Color32::WHITE,
+                            );
+                            // Hover tooltip with full name — only when
+                            // the name was truncated. Uses the pointer
+                            // position (ui.rect_contains_pointer)
+                            // rather than a Response, since the clip
+                            // painter has no interactive Response here.
+                            if label_full != label_short
+                                && pointer_hover
+                                    .map(|pp| clip_rect.contains(pp))
+                                    .unwrap_or(false)
+                                && self.clip_drag.is_none()
+                            {
+                                egui::show_tooltip_at_pointer(
+                                    ui.ctx(),
+                                    ui.layer_id(),
+                                    egui::Id::new(("clip_name_tip", clip_id)),
+                                    |ui| {
+                                        ui.label(&label_full);
+                                    },
+                                );
+                            }
+
+                            // Effect/transition badge (top-right of clip)
+                            if let Some(fx_clip) =
+                                self.project.clips.iter().find(|c| c.id == clip_id)
+                            {
+                                let has_fx = !fx_clip.effects.is_empty();
+                                let has_tr = fx_clip.transition_in.is_some()
+                                    || fx_clip.transition_out.is_some();
+                                if has_fx || has_tr {
+                                    let badge = if has_fx && has_tr {
+                                        "✨⇄"
+                                    } else if has_fx {
+                                        "✨"
                                     } else {
-                                        color
+                                        "⇄"
                                     };
-                                    p.rect_filled(clip_rect, 4.0, c);
-
-                                    // Border: pastel tint of the track
-                                    // colour, distinct from the clip's own
-                                    // fill so adjacent clips stay readable
-                                    // when they butt up against each other.
-                                    let border_kind = self
-                                        .project
-                                        .tracks
-                                        .get(idx)
-                                        .map(|t| t.kind)
-                                        .unwrap_or(caprust_core::TrackKind::Video);
-                                    let border_color =
-                                        theme_snapshot.clip_border_color(border_kind);
-                                    p.rect_stroke(
-                                        clip_rect,
-                                        4.0,
-                                        egui::Stroke::new(1.5_f32, border_color),
-                                        egui::StrokeKind::Inside,
+                                    p.text(
+                                        clip_rect.right_top() + egui::vec2(-6.0, 4.0),
+                                        egui::Align2::RIGHT_TOP,
+                                        badge,
+                                        egui::FontId::proportional(11.0),
+                                        egui::Color32::from_rgb(255, 240, 130),
                                     );
+                                }
+                            }
 
-                                    // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
-                                    let thumb_tex = self
+                            let resp = ui.interact(
+                                clip_rect,
+                                egui::Id::new(("clip", clip_id)),
+                                egui::Sense::click(),
+                            );
+                            // Double-click on a clip → focus its
+                            // TextOverlay content editor in the
+                            // Properties panel. For non-text clips
+                            // the dispatcher clears any stale flag.
+                            if resp.double_clicked() {
+                                pending_actions.push(ClipAction::FocusTextContent(clip_id));
+                            }
+                            // Selection is driven from the drag-start
+                            // path below (see pointer_down block).
+                            // Firing Select here as well would toggle
+                            // twice on a Ctrl+click (once on press,
+                            // once on release), cancelling out.
+
+                            let pointer_on_clip = ui.rect_contains_pointer(clip_rect);
+                            const TRIM_ZONE: f32 = 8.0;
+                            let hovered_edge: Option<TrimEdge> = if pointer_on_clip
+                                && clip_rect.width() > TRIM_ZONE * 3.0
+                            {
+                                if let Some(pp) = pointer_hover {
+                                    let lz = egui::Rect::from_min_size(
+                                        clip_rect.min,
+                                        egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                    );
+                                    let rz = egui::Rect::from_min_size(
+                                        egui::pos2(clip_rect.max.x - TRIM_ZONE, clip_rect.min.y),
+                                        egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                    );
+                                    if lz.contains(pp) {
+                                        Some(TrimEdge::Left)
+                                    } else if rz.contains(pp) {
+                                        Some(TrimEdge::Right)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            if hovered_edge.is_some() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                            }
+                            let track_locked = self
+                                .project
+                                .tracks
+                                .get(idx)
+                                .map(|t| t.locked)
+                                .unwrap_or(false);
+                            if !track_locked
+                                && !pan_mode
+                                && pointer_on_clip
+                                && pointer_down
+                                && clip_drag_snapshot.is_none()
+                            {
+                                // Ctrl held → let the modifier logic
+                                // in the Select handler decide
+                                // (toggle). Plain click on an
+                                // already-selected clip is a no-op
+                                // so the whole multi-selection can
+                                // be dragged without collapsing to
+                                // one clip.
+                                let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                                let already = self.selected_clips.contains(&clip_id);
+                                if ctrl || !already {
+                                    pending_actions.push(ClipAction::Select(clip_id));
+                                }
+                                pending_actions.push(ClipAction::DragStart(clip_id, idx, start_ms));
+                                if let Some(e) = hovered_edge {
+                                    pending_actions.push(ClipAction::SetTrimEdge(clip_id, Some(e)));
+                                }
+                            }
+
+                            resp.context_menu(|ui| {
+                                // --- Copy / Paste / Duplicate ---
+                                let copy_lbl = if self.settings.enable_shortcuts {
+                                    format!("{}  (Ctrl+C)", tr("clip-ctx-copy"))
+                                } else {
+                                    tr("clip-ctx-copy")
+                                };
+                                if ui.button(copy_lbl).clicked() {
+                                    pending_actions.push(ClipAction::Copy(clip_id));
+                                    ui.close_menu();
+                                }
+                                let paste_lbl = if self.settings.enable_shortcuts {
+                                    format!("{}  (Ctrl+V)", tr("clip-ctx-paste"))
+                                } else {
+                                    tr("clip-ctx-paste")
+                                };
+                                if ui
+                                    .add_enabled(
+                                        self.clip_clipboard.is_some(),
+                                        egui::Button::new(paste_lbl),
+                                    )
+                                    .clicked()
+                                {
+                                    pending_actions.push(ClipAction::Paste);
+                                    ui.close_menu();
+                                }
+                                let dup_lbl = if self.settings.enable_shortcuts {
+                                    format!("{}  (Ctrl+D)", tr("clip-ctx-duplicate"))
+                                } else {
+                                    tr("clip-ctx-duplicate")
+                                };
+                                if ui.button(dup_lbl).clicked() {
+                                    pending_actions.push(ClipAction::Duplicate(clip_id));
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+
+                                // --- Delete (hard) ---
+                                let del = if self.settings.enable_shortcuts {
+                                    format!("{}  (Del)", tr("clip-ctx-delete"))
+                                } else {
+                                    tr("clip-ctx-delete")
+                                };
+                                if ui.button(del).clicked() {
+                                    pending_actions.push(ClipAction::Delete(clip_id));
+                                    ui.close_menu();
+                                }
+                                // --- Ripple delete ---
+                                let rip_lbl = tr("clip-ctx-ripple-delete");
+                                if ui.button(rip_lbl).clicked() {
+                                    pending_actions.push(ClipAction::RippleDelete(clip_id));
+                                    ui.close_menu();
+                                }
+                                // --- Split at playhead ---
+                                let spl = if self.settings.enable_shortcuts {
+                                    format!("{}  (S)", tr("clip-ctx-split"))
+                                } else {
+                                    tr("clip-ctx-split")
+                                };
+                                if ui.button(spl).clicked() {
+                                    pending_actions
+                                        .push(ClipAction::Split(clip_id, self.playhead_ms));
+                                    ui.close_menu();
+                                }
+                                // --- Speed submenu ---
+                                ui.menu_button(tr("clip-ctx-speed"), |ui| {
+                                    for v in [0.25_f32, 0.5, 1.0, 1.5, 2.0, 4.0] {
+                                        let label = format!("{v:.2}x");
+                                        if ui.button(label).clicked() {
+                                            pending_actions.push(ClipAction::SetSpeed(clip_id, v));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                                // --- Mute clip ---
+                                let muted = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == clip_id)
+                                    .map(|c| c.volume_db <= -59.0)
+                                    .unwrap_or(false);
+                                let mute_lbl = if muted {
+                                    tr("clip-ctx-unmute")
+                                } else {
+                                    tr("clip-ctx-mute")
+                                };
+                                if ui.button(mute_lbl).clicked() {
+                                    pending_actions.push(ClipAction::MuteClip(clip_id));
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button(tr("clip-ctx-generate-captions")).clicked() {
+                                    pending_actions.push(ClipAction::GenerateCaptions(clip_id));
+                                    ui.close_menu();
+                                }
+                                // Separate audio only applies to clips that
+                                // actually have an embedded audio track and
+                                // have not already been detached.
+                                let can_detach = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == clip_id)
+                                    .map(|c| {
+                                        matches!(c.clip_type, caprust_core::ClipType::Video { .. })
+                                            && !c.audio_detached
+                                    })
+                                    .unwrap_or(false);
+                                if can_detach && ui.button(tr("clip-ctx-separate-audio")).clicked()
+                                {
+                                    pending_actions.push(ClipAction::SeparateAudio(clip_id));
+                                    ui.close_menu();
+                                }
+                                if self.settings.enable_shortcuts {
+                                    ui.separator();
+                                    if ui
+                                        .button(format!("{}  (R)", tr("clip-ctx-reverse")))
+                                        .clicked()
+                                    {
+                                        pending_actions.push(ClipAction::ToggleReverse(clip_id));
+                                        ui.close_menu();
+                                    }
+                                    if ui
+                                        .button(format!("{}  (H)", tr("clip-ctx-mirror-h")))
+                                        .clicked()
+                                    {
+                                        pending_actions.push(ClipAction::ToggleFlipH(clip_id));
+                                        ui.close_menu();
+                                    }
+                                    if ui
+                                        .button(format!("{}  (V)", tr("clip-ctx-mirror-v")))
+                                        .clicked()
+                                    {
+                                        pending_actions.push(ClipAction::ToggleFlipV(clip_id));
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        }
+
+                        let hovering = pointer_hover
+                            .map(|pp| lane_rect.contains(pp))
+                            .unwrap_or(false);
+                        if dnd_active.is_some() && hovering {
+                            p.rect_stroke(
+                                lane_rect.shrink(2.0),
+                                4.0,
+                                egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(90, 160, 240)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        if let (Some(id), Some(pp)) = (dnd_drop, pointer_hover) {
+                            if lane_rect.contains(pp) {
+                                let rel = (pp.x - lane_rect.left() + scroll_x).max(0.0);
+                                let raw_ms = (rel / px_per_ms) as u64;
+
+                                // Snap the drop position against
+                                // neighbouring clip edges and the
+                                // playhead (same rules as clip
+                                // drag). Durations come from the
+                                // media item being dropped.
+                                let dur = self
+                                    .project
+                                    .media
+                                    .items
+                                    .iter()
+                                    .find(|m| m.id == id)
+                                    .map(|m| m.duration_ms)
+                                    .unwrap_or(0);
+                                let snapped_ms = self
+                                    .snap_ms(uuid::Uuid::nil(), idx, raw_ms as i64, dur, px_per_ms)
+                                    .max(0) as u64;
+                                pending_drop = Some((id, idx, snapped_ms));
+
+                                // Drop ghost: green edges when
+                                // snapped to a neighbour, neutral
+                                // blue otherwise. Disappears once
+                                // the clip lands; the real clip
+                                // renders in the standard style.
+                                let ghost_x =
+                                    lane_rect.left() + (snapped_ms as f32 * px_per_ms) - scroll_x;
+                                let ghost_w = (dur as f32 * px_per_ms).max(4.0);
+                                let ghost_rect = egui::Rect::from_min_size(
+                                    egui::Pos2::new(ghost_x, lane_rect.top() + 3.0),
+                                    egui::vec2(ghost_w, (lane_rect.height() - 6.0).max(4.0)),
+                                );
+                                let is_snapped = snapped_ms != raw_ms;
+                                let edge_color = if is_snapped {
+                                    egui::Color32::from_rgb(120, 220, 120)
+                                } else {
+                                    egui::Color32::from_rgb(120, 180, 240)
+                                };
+                                p.rect_filled(
+                                    ghost_rect,
+                                    4.0,
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        edge_color.r(),
+                                        edge_color.g(),
+                                        edge_color.b(),
+                                        55,
+                                    ),
+                                );
+                                p.rect_stroke(
+                                    ghost_rect,
+                                    4.0,
+                                    egui::Stroke::new(1.0_f32, edge_color),
+                                    egui::StrokeKind::Outside,
+                                );
+                                // Emphasised left / right edges
+                                p.line_segment(
+                                    [ghost_rect.left_top(), ghost_rect.left_bottom()],
+                                    egui::Stroke::new(3.0_f32, edge_color),
+                                );
+                                p.line_segment(
+                                    [ghost_rect.right_top(), ghost_rect.right_bottom()],
+                                    egui::Stroke::new(3.0_f32, edge_color),
+                                );
+                            }
+                        }
+                    }
+
+                    if let Some(d) = &clip_drag_snapshot {
+                        if let Some(pp) = pointer_hover {
+                            pending_actions.push(ClipAction::DragDelta(
+                                d.clip_id,
+                                pp.x - d.origin_ptr.x,
+                                px_per_ms,
+                            ));
+                        }
+                        if pointer_released {
+                            pending_actions.push(ClipAction::DragEnd(d.clip_id));
+                        }
+                    }
+
+                    // Fade handle drag: emit Delta every frame
+                    // while a drag is active, End on release.
+                    if let Some(fd) = &self.fade_drag {
+                        if let Some(pp) = pointer_hover {
+                            pending_actions.push(ClipAction::FadeDragDelta(
+                                fd.clip_id,
+                                pp.x - fd.origin_ptr_x,
+                                px_per_ms,
+                            ));
+                        }
+                        if pointer_released {
+                            pending_actions.push(ClipAction::FadeDragEnd(fd.clip_id));
+                        }
+                    }
+                    // Playhead overlay: draw once, after every
+                    // lane is allocated, so Full mode can span
+                    // the entire stack.
+                    if ph_visible {
+                        let lane_bottom = lane_stack_bottom.unwrap_or(ruler_rect.bottom());
+                        let line_bottom = match theme_snapshot.playhead_size {
+                            crate::theme::PlayheadSize::Compact => ruler_rect.bottom(),
+                            crate::theme::PlayheadSize::Full => lane_bottom,
+                        };
+                        // Use the UI's own painter. painter_at
+                        // with a zero-width rect (ph_x..=ph_x)
+                        // produces a degenerate clip rect and
+                        // silently draws nothing — the original
+                        // invisible-playhead bug. The UI's clip
+                        // already covers the timeline area.
+                        let op = ui.painter();
+                        op.line_segment(
+                            [
+                                egui::Pos2::new(ph_x, ruler_rect.top()),
+                                egui::Pos2::new(ph_x, line_bottom),
+                            ],
+                            egui::Stroke::new(2.0_f32, theme_snapshot.playhead_color()),
+                        );
+                        // Grab handle: small filled triangle at
+                        // the top so the user can see where to
+                        // click to seek.
+                        let tri = vec![
+                            egui::Pos2::new(ph_x - 5.0, ruler_rect.top()),
+                            egui::Pos2::new(ph_x + 5.0, ruler_rect.top()),
+                            egui::Pos2::new(ph_x, ruler_rect.top() + 6.0),
+                        ];
+                        op.add(egui::Shape::convex_polygon(
+                            tri,
+                            theme_snapshot.playhead_color(),
+                            egui::Stroke::NONE,
+                        ));
+                    }
+
+                    // ---- Marquee (rubber-band) selection ----
+                    {
+                        let pointer_pos = ui.ctx().pointer_interact_pos();
+                        let pressed = ui.input(|i| i.pointer.primary_pressed());
+                        let released = ui.input(|i| i.pointer.any_released());
+                        let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                        let shift = ui.input(|i| i.modifiers.shift);
+
+                        // Start: press inside a lane but not on a clip.
+                        if pressed && self.marquee.is_none() && !pan_mode {
+                            if let Some(pp) = pointer_pos {
+                                let on_lane = all_lane_rects.iter().any(|r| r.contains(pp));
+                                let on_clip = all_clip_rects.iter().any(|(_, r)| r.contains(pp));
+                                if on_lane && !on_clip {
+                                    self.marquee = Some(MarqueeState {
+                                        start: pp,
+                                        current: pp,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Update in-progress.
+                        if let (Some(m), Some(pp)) = (self.marquee.as_mut(), pointer_pos) {
+                            m.current = pp;
+                        }
+
+                        // Cancel on Esc.
+                        if esc {
+                            self.marquee = None;
+                        }
+
+                        // Finalize on release.
+                        if released {
+                            if let Some(m) = self.marquee.take() {
+                                let rect = egui::Rect::from_two_pos(m.start, m.current);
+                                // Shift = additive; no modifier
+                                // replaces the selection.
+                                if !shift {
+                                    self.selected_clips.clear();
+                                }
+                                for (id, cr) in &all_clip_rects {
+                                    if rect.intersects(*cr) && !self.selected_clips.contains(id) {
+                                        self.selected_clips.push(*id);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Render the marquee while active.
+                        if let Some(m) = self.marquee {
+                            let rect = egui::Rect::from_two_pos(m.start, m.current);
+                            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                                egui::Order::Foreground,
+                                egui::Id::new("marquee_overlay"),
+                            ));
+                            painter.rect_filled(
+                                rect,
+                                2.0,
+                                egui::Color32::from_rgba_unmultiplied(90, 160, 240, 40),
+                            );
+                            painter.rect_stroke(
+                                rect,
+                                2.0,
+                                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(120, 180, 240)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+
+                    if let Some(t) = top_y_opt {
+                        self.timeline_row_layout = (t, rows_actual);
+                    }
+                },
+            );
+        });
+
+        let sd = ctx.input(|i| i.raw_scroll_delta);
+        if sd.y.abs() > 0.0 || sd.x.abs() > 0.0 {
+            let d = if sd.x.abs() > sd.y.abs() { sd.x } else { sd.y };
+            self.timeline_scroll_x = (self.timeline_scroll_x - d).clamp(0.0, max_scroll);
+        }
+
+        if header_changed {
+            self.project.tracks = updated_tracks;
+        }
+        if let Some(idx) = pending_delete_track {
+            if idx < self.project.tracks.len() {
+                self.project.tracks.remove(idx);
+                self.project.clips.retain(|c| c.track_index != idx);
+                for c in self.project.clips.iter_mut() {
+                    if c.track_index > idx {
+                        c.track_index -= 1;
+                    }
+                }
+            }
+        }
+        if let Some(idx) = pending_duplicate_track {
+            let cmd = caprust_core::commands::duplicate_track::DuplicateTrackCommand::new(idx);
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::error!("duplicate track failed: {e}");
+            } else {
+                tracing::info!("duplicate track {idx}");
+            }
+        }
+        if let Some(idx) = pending_rename_track {
+            let name = self
+                .project
+                .tracks
+                .get(idx)
+                .map(|t| t.name.clone())
+                .unwrap_or_default();
+            self.track_rename = Some((idx, name));
+        }
+
+        for a in pending_actions {
+            match a {
+                ClipAction::SetPlayhead(ms) => {
+                    let target = ms.min(total_ms.max(1));
+                    if self.preview.playing && (target as i64 - self.playhead_ms as i64).abs() > 500
+                    {
+                        self.explicit_seek_ms = Some(target);
+                        // Re-anchor wall clock so playhead stays
+                        // in sync with the new position.
+                        self.playback_started_at = Some(std::time::Instant::now());
+                        self.playback_started_ms = target;
+                    }
+                    self.playhead_ms = target;
+                }
+                ClipAction::FocusTextContent(id) => {
+                    // Select the clip (plain click semantics) and
+                    // ask the Properties panel to focus the content
+                    // editor on the next frame. If the clip is not
+                    // a TextOverlay, the panel clears the request
+                    // on its next render.
+                    self.selected_clips = vec![id];
+                    self.properties.focus_content_for = Some(id);
+                }
+                ClipAction::Select(id) => {
+                    let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                    if ctrl {
+                        // Ctrl+click toggles membership.
+                        if self.selected_clips.contains(&id) {
+                            self.selected_clips.retain(|&x| x != id);
+                        } else {
+                            self.selected_clips.push(id);
+                        }
+                    } else if !self.selected_clips.contains(&id) {
+                        // Plain click on an unselected clip
+                        // replaces the selection.
+                        self.selected_clips = vec![id];
+                    }
+                    // Plain click on an already-selected clip
+                    // keeps the multi-selection so the whole
+                    // group can be dragged together.
+                }
+                ClipAction::SetTrimEdge(id, edge) => {
+                    if let Some(d) = &mut self.clip_drag {
+                        if d.clip_id == id {
+                            d.trim_edge = edge;
+                        }
+                    }
+                }
+                ClipAction::DragStart(id, ti, o) => {
+                    let (dur, sdr) = self
+                        .project
+                        .clips
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| (c.duration_ms, c.source_duration_ms))
+                        .unwrap_or((3000, 0));
+                    let ptr = self.last_pointer.unwrap_or_else(|| egui::pos2(0.0, 0.0));
+                    self.clip_drag = Some(ClipDrag {
+                        clip_id: id,
+                        origin_ms: o,
+                        current_ms: o as i64,
+                        track_index: ti,
+                        clip_duration_ms: dur,
+                        origin_ptr: ptr,
+                        last_ptr: ptr,
+                        trim_edge: None,
+                        source_duration_ms: sdr,
+                        origin_duration_ms: dur,
+                    });
+                }
+                ClipAction::DragDelta(id, dx, ppm) => {
+                    if let Some(d) = self.clip_drag.clone() {
+                        if d.clip_id == id && ppm > 0.0 {
+                            let cand = d.origin_ms as i64 + (dx / ppm) as i64;
+                            let snapped = self.snap_ms(
+                                id,
+                                d.track_index,
+                                cand.max(0),
+                                d.clip_duration_ms,
+                                ppm,
+                            );
+                            let new_track = self.track_for_y(d.track_index);
+                            if let Some(cur) = &mut self.clip_drag {
+                                cur.current_ms = snapped;
+                                if let Some(t) = new_track {
+                                    cur.track_index = t;
+                                }
+                            }
+                            // Trim-follow: while trimming an edge
+                            // and the toggle is on, park the
+                            // playhead on the edge so the preview
+                            // shows the exact frame being set.
+                            if self.settings.trim_follow && d.trim_edge.is_some() {
+                                let target = snapped.max(0) as u64;
+                                if target != self.playhead_ms {
+                                    if self.preview.playing {
+                                        self.explicit_seek_ms = Some(target);
+                                        self.playback_started_at = Some(std::time::Instant::now());
+                                        self.playback_started_ms = target;
+                                    }
+                                    self.playhead_ms = target;
+                                }
+                            }
+                        }
+                    }
+                }
+                ClipAction::DragEnd(id) => {
+                    if let Some(d) = self.clip_drag.take() {
+                        if d.clip_id == id {
+                            // Trim-follow: with magnetic ON the
+                            // pack slides the clip back into the
+                            // gap, so re-anchor the playhead on
+                            // the FINAL edge after the command
+                            // below runs.
+                            let was_trim = d.trim_edge.is_some();
+                            let follow = self.settings.trim_follow;
+                            if let Some(edge) = d.trim_edge {
+                                let dm = d.current_ms - d.origin_ms as i64;
+                                let (ns, nd) = match edge {
+                                    TrimEdge::Left => (
+                                        (d.origin_ms as i64 + dm).max(0) as u64,
+                                        (d.origin_duration_ms as i64 - dm).max(100) as u64,
+                                    ),
+                                    TrimEdge::Right => {
+                                        let mut nd =
+                                            (d.origin_duration_ms as i64 + dm).max(100) as u64;
+                                        if d.source_duration_ms > 0 {
+                                            nd = nd.min(d.source_duration_ms);
+                                        }
+                                        (d.origin_ms, nd)
+                                    }
+                                };
+                                let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                    .start_time_ms(ns)
+                                    .duration_ms(nd);
+                                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                if follow {
+                                    // Re-anchor on the final edge so
+                                    // magnetic slide-backs land on
+                                    // the same frame the user saw
+                                    // while dragging.
+                                    let target = match edge {
+                                        TrimEdge::Left => ns,
+                                        TrimEdge::Right => ns + nd,
+                                    };
+                                    if self.preview.playing {
+                                        self.explicit_seek_ms = Some(target);
+                                        self.playback_started_at = Some(std::time::Instant::now());
+                                        self.playback_started_ms = target;
+                                    }
+                                    self.playhead_ms = target;
+                                }
+                                let _ = (was_trim, follow);
+                            } else {
+                                let nm = d.current_ms.max(0) as u64;
+                                let nt = d.track_index;
+                                if nm != d.origin_ms
+                                    || self
                                         .project
                                         .clips
                                         .iter()
-                                        .find(|cc| cc.id == clip_id)
-                                        .and_then(|cc| cc.media_id)
-                                        .and_then(|mid| self.clip_textures.get(&mid).cloned());
-
-                                    if let Some(tex) = thumb_tex {
-                                        let tex_size = tex.size_vec2();
-                                        let aspect = tex_size.x / tex_size.y.max(1.0);
-                                        let tile_h = clip_rect.height();
-                                        let tile_w = (tile_h * aspect).max(8.0);
-                                        let mut x = clip_rect.left();
-                                        let right = clip_rect.right();
-                                        let mut guard = 0;
-                                        while x < right - 1.0 && guard < 200 {
-                                            let w = (right - x).min(tile_w);
-                                            let tile_rect = egui::Rect::from_min_size(
-                                                egui::pos2(x, clip_rect.top()),
-                                                egui::vec2(w, tile_h),
-                                            );
-                                            let frac = (w / tile_w).min(1.0);
-                                            p.image(
-                                                tex.id(),
-                                                tile_rect,
-                                                egui::Rect::from_min_max(
-                                                    egui::pos2(0.0, 0.0),
-                                                    egui::pos2(frac, 1.0),
-                                                ),
-                                                egui::Color32::from_white_alpha(220),
-                                            );
-                                            x += tile_w;
-                                            guard += 1;
-                                        }
-                                        // Dim overlay so clip-type color stays readable.
-                                        p.rect_filled(clip_rect, 4.0, c.gamma_multiply(0.35));
-                                    }
-                                    if self.selected_clips.contains(&clip_id) || is_dragged {
-                                        p.rect_stroke(
-                                            clip_rect,
-                                            4.0,
-                                            egui::Stroke::new(2.0_f32, egui::Color32::WHITE),
-                                            egui::StrokeKind::Inside,
-                                        );
-                                    }
-
-                                    // ---- Fade handles + curve ----
-                                    // Only on clips that carry audio: Audio,
-                                    // Narration, and Video whose audio has
-                                    // not been detached.
-                                    let carries_audio = match &ctype {
-                                        caprust_core::ClipType::Audio { .. }
-                                        | caprust_core::ClipType::Narration { .. } => true,
-                                        caprust_core::ClipType::Video { .. } => self
-                                            .project
-                                            .clips
-                                            .iter()
-                                            .find(|cc| cc.id == clip_id)
-                                            .map(|cc| !cc.audio_detached)
-                                            .unwrap_or(false),
-                                        _ => false,
+                                        .find(|c| c.id == id)
+                                        .map(|c| c.track_index)
+                                        != Some(nt)
+                                {
+                                    let cmd = MoveClipCommand {
+                                        clip_id: id,
+                                        from_ms: d.origin_ms,
+                                        to_ms: nm,
                                     };
-
-                                    if carries_audio && clip_rect.width() > 24.0 {
-                                        let (fi_ms, fo_ms) = self
-                                            .project
-                                            .clips
-                                            .iter()
-                                            .find(|cc| cc.id == clip_id)
-                                            .map(|cc| (cc.fade_in_ms, cc.fade_out_ms))
-                                            .unwrap_or((0, 0));
-                                        // Use live drag values when this clip
-                                        // is being dragged, so the curve
-                                        // follows the pointer without a
-                                        // round-trip through the project.
-                                        let (fi_show, fo_show) = if let Some(fd) = &self.fade_drag {
-                                            if fd.clip_id == clip_id {
-                                                match fd.edge {
-                                                    FadeEdge::In => (fd.current_ms, fo_ms),
-                                                    FadeEdge::Out => (fi_ms, fd.current_ms),
-                                                }
-                                            } else {
-                                                (fi_ms, fo_ms)
-                                            }
-                                        } else {
-                                            (fi_ms, fo_ms)
-                                        };
-                                        let fi_px = (fi_show as f32 / dur_ms.max(1) as f32)
-                                            * clip_rect.width();
-                                        let fo_px = (fo_show as f32 / dur_ms.max(1) as f32)
-                                            * clip_rect.width();
-
-                                        let curve_color = egui::Color32::from_rgba_unmultiplied(
-                                            255, 255, 255, 180,
-                                        );
-                                        let curve_stroke = egui::Stroke::new(2.0_f32, curve_color);
-
-                                        // Fade-in curve: diagonal from
-                                        // top-left down to the top of the
-                                        // waveform at fi_px.
-                                        if fi_px > 0.5 {
-                                            p.line_segment(
-                                                [
-                                                    clip_rect.left_top(),
-                                                    egui::pos2(
-                                                        clip_rect.left() + fi_px,
-                                                        clip_rect.top(),
-                                                    ),
-                                                ],
-                                                curve_stroke,
-                                            );
-                                            // Triangle fill under curve
-                                            p.add(egui::Shape::convex_polygon(
-                                                vec![
-                                                    clip_rect.left_top(),
-                                                    egui::pos2(
-                                                        clip_rect.left() + fi_px,
-                                                        clip_rect.top(),
-                                                    ),
-                                                    clip_rect.left_bottom(),
-                                                ],
-                                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
-                                                egui::Stroke::NONE,
-                                            ));
-                                        }
-                                        // Fade-out curve (mirror).
-                                        if fo_px > 0.5 {
-                                            p.line_segment(
-                                                [
-                                                    egui::pos2(
-                                                        clip_rect.right() - fo_px,
-                                                        clip_rect.top(),
-                                                    ),
-                                                    clip_rect.right_top(),
-                                                ],
-                                                curve_stroke,
-                                            );
-                                            p.add(egui::Shape::convex_polygon(
-                                                vec![
-                                                    egui::pos2(
-                                                        clip_rect.right() - fo_px,
-                                                        clip_rect.top(),
-                                                    ),
-                                                    clip_rect.right_top(),
-                                                    clip_rect.right_bottom(),
-                                                ],
-                                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
-                                                egui::Stroke::NONE,
-                                            ));
-                                        }
-
-                                        // Handles: small filled circles at
-                                        // top corners, offset horizontally
-                                        // by the fade amount.
-                                        let hr = 5.0_f32;
-                                        let h_in_pos = egui::pos2(
-                                            clip_rect.left() + fi_px.max(hr),
-                                            clip_rect.top() + hr * 0.6,
-                                        );
-                                        let h_out_pos = egui::pos2(
-                                            clip_rect.right() - fo_px.max(hr),
-                                            clip_rect.top() + hr * 0.6,
-                                        );
-                                        let hovered_this_clip = pointer_hover
-                                            .map(|pp| clip_rect.contains(pp))
-                                            .unwrap_or(false);
-                                        let in_hover = hovered_this_clip
-                                            && pointer_hover
-                                                .map(|pp| (pp - h_in_pos).length() < hr * 1.8)
-                                                .unwrap_or(false);
-                                        let out_hover = hovered_this_clip
-                                            && pointer_hover
-                                                .map(|pp| (pp - h_out_pos).length() < hr * 1.8)
-                                                .unwrap_or(false);
-                                        let active_in = self
-                                            .fade_drag
-                                            .as_ref()
-                                            .map(|fd| {
-                                                fd.clip_id == clip_id && fd.edge == FadeEdge::In
-                                            })
-                                            .unwrap_or(false);
-                                        let active_out = self
-                                            .fade_drag
-                                            .as_ref()
-                                            .map(|fd| {
-                                                fd.clip_id == clip_id && fd.edge == FadeEdge::Out
-                                            })
-                                            .unwrap_or(false);
-                                        let fill_in = if active_in || in_hover {
-                                            egui::Color32::from_rgb(255, 220, 90)
-                                        } else {
-                                            egui::Color32::from_white_alpha(200)
-                                        };
-                                        let fill_out = if active_out || out_hover {
-                                            egui::Color32::from_rgb(255, 220, 90)
-                                        } else {
-                                            egui::Color32::from_white_alpha(200)
-                                        };
-                                        p.circle_filled(h_in_pos, hr, fill_in);
-                                        p.circle_stroke(
-                                            h_in_pos,
-                                            hr,
-                                            egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
-                                        );
-                                        p.circle_filled(h_out_pos, hr, fill_out);
-                                        p.circle_stroke(
-                                            h_out_pos,
-                                            hr,
-                                            egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
-                                        );
-
-                                        // Cursor affordance.
-                                        if in_hover || out_hover {
-                                            ui.ctx().set_cursor_icon(
-                                                egui::CursorIcon::ResizeHorizontal,
-                                            );
-                                        }
-
-                                        // Start a fade drag on press over a
-                                        // handle. Precedence over clip
-                                        // drag-select.
-                                        let track_locked_fh = self
-                                            .project
-                                            .tracks
-                                            .get(idx)
-                                            .map(|t| t.locked)
-                                            .unwrap_or(false);
-                                        if !track_locked_fh
-                                            && !pan_mode
-                                            && pointer_down
-                                            && self.fade_drag.is_none()
-                                            && clip_drag_snapshot.is_none()
-                                        {
-                                            if in_hover {
-                                                pending_actions.push(ClipAction::FadeDragStart(
-                                                    clip_id,
-                                                    FadeEdge::In,
-                                                    fi_ms as f32,
-                                                ));
-                                            } else if out_hover {
-                                                pending_actions.push(ClipAction::FadeDragStart(
-                                                    clip_id,
-                                                    FadeEdge::Out,
-                                                    fo_ms as f32,
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    let (label_full, label_short) = {
-                                        let full = self
-                                            .project
-                                            .clips
-                                            .iter()
-                                            .find(|cc| cc.id == clip_id)
-                                            .and_then(|cc| cc.name.clone())
-                                            .unwrap_or_else(|| match &ctype {
-                                                caprust_core::ClipType::TextOverlay {
-                                                    content,
-                                                    ..
-                                                } => content.clone(),
-                                                caprust_core::ClipType::Captions { .. } => {
-                                                    format!("{} Captions", ph::CHAT_TEXT)
-                                                }
-                                                caprust_core::ClipType::Narration { .. } => {
-                                                    format!("{} Narration", ph::MICROPHONE)
-                                                }
-                                                caprust_core::ClipType::Video { path, .. }
-                                                | caprust_core::ClipType::Audio { path, .. }
-                                                | caprust_core::ClipType::Image { path, .. } => {
-                                                    std::path::Path::new(path)
-                                                        .file_name()
-                                                        .map(|s| s.to_string_lossy().to_string())
-                                                        .unwrap_or_else(|| "clip".into())
-                                                }
-                                            });
-                                        // Truncate to 12 chars + ellipsis. Count
-                                        // in chars so emoji-heavy names don't
-                                        // overflow the visual budget.
-                                        let short = if full.chars().count() > 12 {
-                                            let mut s: String = full.chars().take(12).collect();
-                                            s.push('…');
-                                            s
-                                        } else {
-                                            full.clone()
-                                        };
-                                        (full, short)
-                                    };
-                                    p.text(
-                                        clip_rect.left_top() + egui::vec2(6.0, 4.0),
-                                        egui::Align2::LEFT_TOP,
-                                        &label_short,
-                                        egui::FontId::proportional(11.0),
-                                        egui::Color32::WHITE,
-                                    );
-                                    // Hover tooltip with full name — only when
-                                    // the name was truncated. Uses the pointer
-                                    // position (ui.rect_contains_pointer)
-                                    // rather than a Response, since the clip
-                                    // painter has no interactive Response here.
-                                    if label_full != label_short
-                                        && pointer_hover
-                                            .map(|pp| clip_rect.contains(pp))
-                                            .unwrap_or(false)
-                                        && self.clip_drag.is_none()
+                                    let _ =
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                    if let Some(c) =
+                                        self.project.clips.iter_mut().find(|c| c.id == id)
                                     {
-                                        egui::show_tooltip_at_pointer(
-                                            ui.ctx(),
-                                            ui.layer_id(),
-                                            egui::Id::new(("clip_name_tip", clip_id)),
-                                            |ui| {
-                                                ui.label(&label_full);
-                                            },
-                                        );
-                                    }
-
-                                    // Effect/transition badge (top-right of clip)
-                                    if let Some(fx_clip) =
-                                        self.project.clips.iter().find(|c| c.id == clip_id)
-                                    {
-                                        let has_fx = !fx_clip.effects.is_empty();
-                                        let has_tr = fx_clip.transition_in.is_some()
-                                            || fx_clip.transition_out.is_some();
-                                        if has_fx || has_tr {
-                                            let badge = if has_fx && has_tr {
-                                                "✨⇄"
-                                            } else if has_fx {
-                                                "✨"
-                                            } else {
-                                                "⇄"
-                                            };
-                                            p.text(
-                                                clip_rect.right_top() + egui::vec2(-6.0, 4.0),
-                                                egui::Align2::RIGHT_TOP,
-                                                badge,
-                                                egui::FontId::proportional(11.0),
-                                                egui::Color32::from_rgb(255, 240, 130),
-                                            );
-                                        }
-                                    }
-
-                                    let resp = ui.interact(
-                                        clip_rect,
-                                        egui::Id::new(("clip", clip_id)),
-                                        egui::Sense::click(),
-                                    );
-                                    // Double-click on a clip → focus its
-                                    // TextOverlay content editor in the
-                                    // Properties panel. For non-text clips
-                                    // the dispatcher clears any stale flag.
-                                    if resp.double_clicked() {
-                                        pending_actions.push(ClipAction::FocusTextContent(clip_id));
-                                    }
-                                    // Selection is driven from the drag-start
-                                    // path below (see pointer_down block).
-                                    // Firing Select here as well would toggle
-                                    // twice on a Ctrl+click (once on press,
-                                    // once on release), cancelling out.
-
-                                    let pointer_on_clip = ui.rect_contains_pointer(clip_rect);
-                                    const TRIM_ZONE: f32 = 8.0;
-                                    let hovered_edge: Option<TrimEdge> =
-                                        if pointer_on_clip && clip_rect.width() > TRIM_ZONE * 3.0 {
-                                            if let Some(pp) = pointer_hover {
-                                                let lz = egui::Rect::from_min_size(
-                                                    clip_rect.min,
-                                                    egui::vec2(TRIM_ZONE, clip_rect.height()),
-                                                );
-                                                let rz = egui::Rect::from_min_size(
-                                                    egui::pos2(
-                                                        clip_rect.max.x - TRIM_ZONE,
-                                                        clip_rect.min.y,
-                                                    ),
-                                                    egui::vec2(TRIM_ZONE, clip_rect.height()),
-                                                );
-                                                if lz.contains(pp) {
-                                                    Some(TrimEdge::Left)
-                                                } else if rz.contains(pp) {
-                                                    Some(TrimEdge::Right)
-                                                } else {
-                                                    None
-                                                }
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        };
-                                    if hovered_edge.is_some() {
-                                        ui.ctx()
-                                            .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                                    }
-                                    let track_locked = self
-                                        .project
-                                        .tracks
-                                        .get(idx)
-                                        .map(|t| t.locked)
-                                        .unwrap_or(false);
-                                    if !track_locked
-                                        && !pan_mode
-                                        && pointer_on_clip
-                                        && pointer_down
-                                        && clip_drag_snapshot.is_none()
-                                    {
-                                        // Ctrl held → let the modifier logic
-                                        // in the Select handler decide
-                                        // (toggle). Plain click on an
-                                        // already-selected clip is a no-op
-                                        // so the whole multi-selection can
-                                        // be dragged without collapsing to
-                                        // one clip.
-                                        let ctrl =
-                                            ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                                        let already = self.selected_clips.contains(&clip_id);
-                                        if ctrl || !already {
-                                            pending_actions.push(ClipAction::Select(clip_id));
-                                        }
-                                        pending_actions
-                                            .push(ClipAction::DragStart(clip_id, idx, start_ms));
-                                        if let Some(e) = hovered_edge {
-                                            pending_actions
-                                                .push(ClipAction::SetTrimEdge(clip_id, Some(e)));
-                                        }
-                                    }
-
-                                    resp.context_menu(|ui| {
-                                        // --- Copy / Paste / Duplicate ---
-                                        let copy_lbl = if self.settings.enable_shortcuts {
-                                            format!("{}  (Ctrl+C)", tr("clip-ctx-copy"))
-                                        } else {
-                                            tr("clip-ctx-copy")
-                                        };
-                                        if ui.button(copy_lbl).clicked() {
-                                            pending_actions.push(ClipAction::Copy(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        let paste_lbl = if self.settings.enable_shortcuts {
-                                            format!("{}  (Ctrl+V)", tr("clip-ctx-paste"))
-                                        } else {
-                                            tr("clip-ctx-paste")
-                                        };
-                                        if ui
-                                            .add_enabled(
-                                                self.clip_clipboard.is_some(),
-                                                egui::Button::new(paste_lbl),
-                                            )
-                                            .clicked()
-                                        {
-                                            pending_actions.push(ClipAction::Paste);
-                                            ui.close_menu();
-                                        }
-                                        let dup_lbl = if self.settings.enable_shortcuts {
-                                            format!("{}  (Ctrl+D)", tr("clip-ctx-duplicate"))
-                                        } else {
-                                            tr("clip-ctx-duplicate")
-                                        };
-                                        if ui.button(dup_lbl).clicked() {
-                                            pending_actions.push(ClipAction::Duplicate(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        ui.separator();
-
-                                        // --- Delete (hard) ---
-                                        let del = if self.settings.enable_shortcuts {
-                                            format!("{}  (Del)", tr("clip-ctx-delete"))
-                                        } else {
-                                            tr("clip-ctx-delete")
-                                        };
-                                        if ui.button(del).clicked() {
-                                            pending_actions.push(ClipAction::Delete(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        // --- Ripple delete ---
-                                        let rip_lbl = tr("clip-ctx-ripple-delete");
-                                        if ui.button(rip_lbl).clicked() {
-                                            pending_actions.push(ClipAction::RippleDelete(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        // --- Split at playhead ---
-                                        let spl = if self.settings.enable_shortcuts {
-                                            format!("{}  (S)", tr("clip-ctx-split"))
-                                        } else {
-                                            tr("clip-ctx-split")
-                                        };
-                                        if ui.button(spl).clicked() {
-                                            pending_actions
-                                                .push(ClipAction::Split(clip_id, self.playhead_ms));
-                                            ui.close_menu();
-                                        }
-                                        // --- Speed submenu ---
-                                        ui.menu_button(tr("clip-ctx-speed"), |ui| {
-                                            for v in [0.25_f32, 0.5, 1.0, 1.5, 2.0, 4.0] {
-                                                let label = format!("{v:.2}x");
-                                                if ui.button(label).clicked() {
-                                                    pending_actions
-                                                        .push(ClipAction::SetSpeed(clip_id, v));
-                                                    ui.close_menu();
-                                                }
-                                            }
-                                        });
-                                        // --- Mute clip ---
-                                        let muted = self
-                                            .project
-                                            .clips
-                                            .iter()
-                                            .find(|c| c.id == clip_id)
-                                            .map(|c| c.volume_db <= -59.0)
-                                            .unwrap_or(false);
-                                        let mute_lbl = if muted {
-                                            tr("clip-ctx-unmute")
-                                        } else {
-                                            tr("clip-ctx-mute")
-                                        };
-                                        if ui.button(mute_lbl).clicked() {
-                                            pending_actions.push(ClipAction::MuteClip(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        ui.separator();
-                                        if ui.button(tr("clip-ctx-generate-captions")).clicked() {
-                                            pending_actions
-                                                .push(ClipAction::GenerateCaptions(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        // Separate audio only applies to clips that
-                                        // actually have an embedded audio track and
-                                        // have not already been detached.
-                                        let can_detach = self
-                                            .project
-                                            .clips
-                                            .iter()
-                                            .find(|c| c.id == clip_id)
-                                            .map(|c| {
-                                                matches!(
-                                                    c.clip_type,
-                                                    caprust_core::ClipType::Video { .. }
-                                                ) && !c.audio_detached
-                                            })
-                                            .unwrap_or(false);
-                                        if can_detach
-                                            && ui.button(tr("clip-ctx-separate-audio")).clicked()
-                                        {
-                                            pending_actions
-                                                .push(ClipAction::SeparateAudio(clip_id));
-                                            ui.close_menu();
-                                        }
-                                        if self.settings.enable_shortcuts {
-                                            ui.separator();
-                                            if ui
-                                                .button(format!("{}  (R)", tr("clip-ctx-reverse")))
-                                                .clicked()
-                                            {
-                                                pending_actions
-                                                    .push(ClipAction::ToggleReverse(clip_id));
-                                                ui.close_menu();
-                                            }
-                                            if ui
-                                                .button(format!("{}  (H)", tr("clip-ctx-mirror-h")))
-                                                .clicked()
-                                            {
-                                                pending_actions
-                                                    .push(ClipAction::ToggleFlipH(clip_id));
-                                                ui.close_menu();
-                                            }
-                                            if ui
-                                                .button(format!("{}  (V)", tr("clip-ctx-mirror-v")))
-                                                .clicked()
-                                            {
-                                                pending_actions
-                                                    .push(ClipAction::ToggleFlipV(clip_id));
-                                                ui.close_menu();
-                                            }
-                                        }
-                                    });
-                                }
-
-                                let hovering = pointer_hover
-                                    .map(|pp| lane_rect.contains(pp))
-                                    .unwrap_or(false);
-                                if dnd_active.is_some() && hovering {
-                                    p.rect_stroke(
-                                        lane_rect.shrink(2.0),
-                                        4.0,
-                                        egui::Stroke::new(
-                                            2.0_f32,
-                                            egui::Color32::from_rgb(90, 160, 240),
-                                        ),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                                if let (Some(id), Some(pp)) = (dnd_drop, pointer_hover) {
-                                    if lane_rect.contains(pp) {
-                                        let rel = (pp.x - lane_rect.left() + scroll_x).max(0.0);
-                                        let raw_ms = (rel / px_per_ms) as u64;
-
-                                        // Snap the drop position against
-                                        // neighbouring clip edges and the
-                                        // playhead (same rules as clip
-                                        // drag). Durations come from the
-                                        // media item being dropped.
-                                        let dur = self
-                                            .project
-                                            .media
-                                            .items
-                                            .iter()
-                                            .find(|m| m.id == id)
-                                            .map(|m| m.duration_ms)
-                                            .unwrap_or(0);
-                                        let snapped_ms = self
-                                            .snap_ms(
-                                                uuid::Uuid::nil(),
-                                                idx,
-                                                raw_ms as i64,
-                                                dur,
-                                                px_per_ms,
-                                            )
-                                            .max(0)
-                                            as u64;
-                                        pending_drop = Some((id, idx, snapped_ms));
-
-                                        // Drop ghost: green edges when
-                                        // snapped to a neighbour, neutral
-                                        // blue otherwise. Disappears once
-                                        // the clip lands; the real clip
-                                        // renders in the standard style.
-                                        let ghost_x = lane_rect.left()
-                                            + (snapped_ms as f32 * px_per_ms)
-                                            - scroll_x;
-                                        let ghost_w = (dur as f32 * px_per_ms).max(4.0);
-                                        let ghost_rect = egui::Rect::from_min_size(
-                                            egui::Pos2::new(ghost_x, lane_rect.top() + 3.0),
-                                            egui::vec2(
-                                                ghost_w,
-                                                (lane_rect.height() - 6.0).max(4.0),
-                                            ),
-                                        );
-                                        let is_snapped = snapped_ms != raw_ms;
-                                        let edge_color = if is_snapped {
-                                            egui::Color32::from_rgb(120, 220, 120)
-                                        } else {
-                                            egui::Color32::from_rgb(120, 180, 240)
-                                        };
-                                        p.rect_filled(
-                                            ghost_rect,
-                                            4.0,
-                                            egui::Color32::from_rgba_unmultiplied(
-                                                edge_color.r(),
-                                                edge_color.g(),
-                                                edge_color.b(),
-                                                55,
-                                            ),
-                                        );
-                                        p.rect_stroke(
-                                            ghost_rect,
-                                            4.0,
-                                            egui::Stroke::new(1.0_f32, edge_color),
-                                            egui::StrokeKind::Outside,
-                                        );
-                                        // Emphasised left / right edges
-                                        p.line_segment(
-                                            [ghost_rect.left_top(), ghost_rect.left_bottom()],
-                                            egui::Stroke::new(3.0_f32, edge_color),
-                                        );
-                                        p.line_segment(
-                                            [ghost_rect.right_top(), ghost_rect.right_bottom()],
-                                            egui::Stroke::new(3.0_f32, edge_color),
-                                        );
+                                        c.track_index = nt;
                                     }
                                 }
-                            }
-
-                            if let Some(d) = &clip_drag_snapshot {
-                                if let Some(pp) = pointer_hover {
-                                    pending_actions.push(ClipAction::DragDelta(
-                                        d.clip_id,
-                                        pp.x - d.origin_ptr.x,
-                                        px_per_ms,
-                                    ));
-                                }
-                                if pointer_released {
-                                    pending_actions.push(ClipAction::DragEnd(d.clip_id));
-                                }
-                            }
-
-                            // Fade handle drag: emit Delta every frame
-                            // while a drag is active, End on release.
-                            if let Some(fd) = &self.fade_drag {
-                                if let Some(pp) = pointer_hover {
-                                    pending_actions.push(ClipAction::FadeDragDelta(
-                                        fd.clip_id,
-                                        pp.x - fd.origin_ptr_x,
-                                        px_per_ms,
-                                    ));
-                                }
-                                if pointer_released {
-                                    pending_actions.push(ClipAction::FadeDragEnd(fd.clip_id));
-                                }
-                            }
-                            // Playhead overlay: draw once, after every
-                            // lane is allocated, so Full mode can span
-                            // the entire stack.
-                            if ph_visible {
-                                let lane_bottom = lane_stack_bottom.unwrap_or(ruler_rect.bottom());
-                                let line_bottom = match theme_snapshot.playhead_size {
-                                    crate::theme::PlayheadSize::Compact => ruler_rect.bottom(),
-                                    crate::theme::PlayheadSize::Full => lane_bottom,
-                                };
-                                // Use the UI's own painter. painter_at
-                                // with a zero-width rect (ph_x..=ph_x)
-                                // produces a degenerate clip rect and
-                                // silently draws nothing — the original
-                                // invisible-playhead bug. The UI's clip
-                                // already covers the timeline area.
-                                let op = ui.painter();
-                                op.line_segment(
-                                    [
-                                        egui::Pos2::new(ph_x, ruler_rect.top()),
-                                        egui::Pos2::new(ph_x, line_bottom),
-                                    ],
-                                    egui::Stroke::new(2.0_f32, theme_snapshot.playhead_color()),
-                                );
-                                // Grab handle: small filled triangle at
-                                // the top so the user can see where to
-                                // click to seek.
-                                let tri = vec![
-                                    egui::Pos2::new(ph_x - 5.0, ruler_rect.top()),
-                                    egui::Pos2::new(ph_x + 5.0, ruler_rect.top()),
-                                    egui::Pos2::new(ph_x, ruler_rect.top() + 6.0),
-                                ];
-                                op.add(egui::Shape::convex_polygon(
-                                    tri,
-                                    theme_snapshot.playhead_color(),
-                                    egui::Stroke::NONE,
-                                ));
-                            }
-
-                            // ---- Marquee (rubber-band) selection ----
-                            {
-                                let pointer_pos = ui.ctx().pointer_interact_pos();
-                                let pressed = ui.input(|i| i.pointer.primary_pressed());
-                                let released = ui.input(|i| i.pointer.any_released());
-                                let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                                let shift = ui.input(|i| i.modifiers.shift);
-
-                                // Start: press inside a lane but not on a clip.
-                                if pressed && self.marquee.is_none() && !pan_mode {
-                                    if let Some(pp) = pointer_pos {
-                                        let on_lane = all_lane_rects.iter().any(|r| r.contains(pp));
-                                        let on_clip =
-                                            all_clip_rects.iter().any(|(_, r)| r.contains(pp));
-                                        if on_lane && !on_clip {
-                                            self.marquee = Some(MarqueeState {
-                                                start: pp,
-                                                current: pp,
-                                            });
-                                        }
-                                    }
-                                }
-
-                                // Update in-progress.
-                                if let (Some(m), Some(pp)) = (self.marquee.as_mut(), pointer_pos) {
-                                    m.current = pp;
-                                }
-
-                                // Cancel on Esc.
-                                if esc {
-                                    self.marquee = None;
-                                }
-
-                                // Finalize on release.
-                                if released {
-                                    if let Some(m) = self.marquee.take() {
-                                        let rect = egui::Rect::from_two_pos(m.start, m.current);
-                                        // Shift = additive; no modifier
-                                        // replaces the selection.
-                                        if !shift {
-                                            self.selected_clips.clear();
-                                        }
-                                        for (id, cr) in &all_clip_rects {
-                                            if rect.intersects(*cr)
-                                                && !self.selected_clips.contains(id)
-                                            {
-                                                self.selected_clips.push(*id);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Render the marquee while active.
-                                if let Some(m) = self.marquee {
-                                    let rect = egui::Rect::from_two_pos(m.start, m.current);
-                                    let painter = ui.ctx().layer_painter(egui::LayerId::new(
-                                        egui::Order::Foreground,
-                                        egui::Id::new("marquee_overlay"),
-                                    ));
-                                    painter.rect_filled(
-                                        rect,
-                                        2.0,
-                                        egui::Color32::from_rgba_unmultiplied(90, 160, 240, 40),
-                                    );
-                                    painter.rect_stroke(
-                                        rect,
-                                        2.0,
-                                        egui::Stroke::new(
-                                            1.5_f32,
-                                            egui::Color32::from_rgb(120, 180, 240),
-                                        ),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                            }
-
-                            if let Some(t) = top_y_opt {
-                                self.timeline_row_layout = (t, rows_actual);
-                            }
-                        },
-                    );
-                });
-
-                let sd = ctx.input(|i| i.raw_scroll_delta);
-                if sd.y.abs() > 0.0 || sd.x.abs() > 0.0 {
-                    let d = if sd.x.abs() > sd.y.abs() { sd.x } else { sd.y };
-                    self.timeline_scroll_x = (self.timeline_scroll_x - d).clamp(0.0, max_scroll);
-                }
-
-                if header_changed {
-                    self.project.tracks = updated_tracks;
-                }
-                if let Some(idx) = pending_delete_track {
-                    if idx < self.project.tracks.len() {
-                        self.project.tracks.remove(idx);
-                        self.project.clips.retain(|c| c.track_index != idx);
-                        for c in self.project.clips.iter_mut() {
-                            if c.track_index > idx {
-                                c.track_index -= 1;
                             }
                         }
                     }
                 }
-                if let Some(idx) = pending_duplicate_track {
-                    let cmd =
-                        caprust_core::commands::duplicate_track::DuplicateTrackCommand::new(idx);
+                ClipAction::Delete(id) => {
+                    let rip = self.timeline_tools.magnetic;
+                    let cmd = DeleteClipCommand::new(id, rip);
+                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                    self.selected_clips.retain(|&x| x != id);
+                }
+                ClipAction::Split(id, at) => {
+                    let cmd = SplitClipCommand::new(id, at);
+                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                }
+                ClipAction::ToggleReverse(id) => {
+                    if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
+                        c.reversed = !c.reversed;
+                    }
+                }
+                ClipAction::ToggleFlipH(id) => {
+                    if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
+                        c.flip_h = !c.flip_h;
+                    }
+                }
+                ClipAction::ToggleFlipV(id) => {
+                    if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
+                        c.flip_v = !c.flip_v;
+                    }
+                }
+                ClipAction::GenerateCaptions(id) => {
+                    self.start_caption_job(Some(id));
+                }
+                ClipAction::SeparateAudio(id) => {
+                    let cmd = caprust_core::commands::separate_audio::SeparateAudioCommand::new(id);
                     if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
-                        tracing::error!("duplicate track failed: {e}");
+                        tracing::error!("separate audio failed: {e}");
+                        self.toast(tr("toast-separate-audio-failed"));
                     } else {
-                        tracing::info!("duplicate track {idx}");
+                        tracing::info!("separate audio: created Audio clip from {id}");
+                        self.toast(tr("toast-separate-audio-done"));
                     }
                 }
-                if let Some(idx) = pending_rename_track {
-                    let name = self
-                        .project
-                        .tracks
-                        .get(idx)
-                        .map(|t| t.name.clone())
-                        .unwrap_or_default();
-                    self.track_rename = Some((idx, name));
-                }
-
-                for a in pending_actions {
-                    match a {
-                        ClipAction::SetPlayhead(ms) => {
-                            let target = ms.min(total_ms.max(1));
-                            if self.preview.playing
-                                && (target as i64 - self.playhead_ms as i64).abs() > 500
-                            {
-                                self.explicit_seek_ms = Some(target);
-                                // Re-anchor wall clock so playhead stays
-                                // in sync with the new position.
-                                self.playback_started_at = Some(std::time::Instant::now());
-                                self.playback_started_ms = target;
-                            }
-                            self.playhead_ms = target;
-                        }
-                        ClipAction::FocusTextContent(id) => {
-                            // Select the clip (plain click semantics) and
-                            // ask the Properties panel to focus the content
-                            // editor on the next frame. If the clip is not
-                            // a TextOverlay, the panel clears the request
-                            // on its next render.
-                            self.selected_clips = vec![id];
-                            self.properties.focus_content_for = Some(id);
-                        }
-                        ClipAction::Select(id) => {
-                            let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                            if ctrl {
-                                // Ctrl+click toggles membership.
-                                if self.selected_clips.contains(&id) {
-                                    self.selected_clips.retain(|&x| x != id);
-                                } else {
-                                    self.selected_clips.push(id);
-                                }
-                            } else if !self.selected_clips.contains(&id) {
-                                // Plain click on an unselected clip
-                                // replaces the selection.
-                                self.selected_clips = vec![id];
-                            }
-                            // Plain click on an already-selected clip
-                            // keeps the multi-selection so the whole
-                            // group can be dragged together.
-                        }
-                        ClipAction::SetTrimEdge(id, edge) => {
-                            if let Some(d) = &mut self.clip_drag {
-                                if d.clip_id == id {
-                                    d.trim_edge = edge;
-                                }
-                            }
-                        }
-                        ClipAction::DragStart(id, ti, o) => {
-                            let (dur, sdr) = self
-                                .project
-                                .clips
-                                .iter()
-                                .find(|c| c.id == id)
-                                .map(|c| (c.duration_ms, c.source_duration_ms))
-                                .unwrap_or((3000, 0));
-                            let ptr = self.last_pointer.unwrap_or_else(|| egui::pos2(0.0, 0.0));
-                            self.clip_drag = Some(ClipDrag {
-                                clip_id: id,
-                                origin_ms: o,
-                                current_ms: o as i64,
-                                track_index: ti,
-                                clip_duration_ms: dur,
-                                origin_ptr: ptr,
-                                last_ptr: ptr,
-                                trim_edge: None,
-                                source_duration_ms: sdr,
-                                origin_duration_ms: dur,
-                            });
-                        }
-                        ClipAction::DragDelta(id, dx, ppm) => {
-                            if let Some(d) = self.clip_drag.clone() {
-                                if d.clip_id == id && ppm > 0.0 {
-                                    let cand = d.origin_ms as i64 + (dx / ppm) as i64;
-                                    let snapped = self.snap_ms(
-                                        id,
-                                        d.track_index,
-                                        cand.max(0),
-                                        d.clip_duration_ms,
-                                        ppm,
-                                    );
-                                    let new_track = self.track_for_y(d.track_index);
-                                    if let Some(cur) = &mut self.clip_drag {
-                                        cur.current_ms = snapped;
-                                        if let Some(t) = new_track {
-                                            cur.track_index = t;
-                                        }
-                                    }
-                                    // Trim-follow: while trimming an edge
-                                    // and the toggle is on, park the
-                                    // playhead on the edge so the preview
-                                    // shows the exact frame being set.
-                                    if self.settings.trim_follow && d.trim_edge.is_some() {
-                                        let target = snapped.max(0) as u64;
-                                        if target != self.playhead_ms {
-                                            if self.preview.playing {
-                                                self.explicit_seek_ms = Some(target);
-                                                self.playback_started_at =
-                                                    Some(std::time::Instant::now());
-                                                self.playback_started_ms = target;
-                                            }
-                                            self.playhead_ms = target;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        ClipAction::DragEnd(id) => {
-                            if let Some(d) = self.clip_drag.take() {
-                                if d.clip_id == id {
-                                    // Trim-follow: with magnetic ON the
-                                    // pack slides the clip back into the
-                                    // gap, so re-anchor the playhead on
-                                    // the FINAL edge after the command
-                                    // below runs.
-                                    let was_trim = d.trim_edge.is_some();
-                                    let follow = self.settings.trim_follow;
-                                    if let Some(edge) = d.trim_edge {
-                                        let dm = d.current_ms - d.origin_ms as i64;
-                                        let (ns, nd) = match edge {
-                                            TrimEdge::Left => (
-                                                (d.origin_ms as i64 + dm).max(0) as u64,
-                                                (d.origin_duration_ms as i64 - dm).max(100) as u64,
-                                            ),
-                                            TrimEdge::Right => {
-                                                let mut nd = (d.origin_duration_ms as i64 + dm)
-                                                    .max(100)
-                                                    as u64;
-                                                if d.source_duration_ms > 0 {
-                                                    nd = nd.min(d.source_duration_ms);
-                                                }
-                                                (d.origin_ms, nd)
-                                            }
-                                        };
-                                        let cmd =
-                                            caprust_core::commands::set_clip::SetClipCommand::new(
-                                                id,
-                                            )
-                                            .start_time_ms(ns)
-                                            .duration_ms(nd);
-                                        let _ = self
-                                            .undo_stack
-                                            .execute(Box::new(cmd), &mut self.project);
-                                        if follow {
-                                            // Re-anchor on the final edge so
-                                            // magnetic slide-backs land on
-                                            // the same frame the user saw
-                                            // while dragging.
-                                            let target = match edge {
-                                                TrimEdge::Left => ns,
-                                                TrimEdge::Right => ns + nd,
-                                            };
-                                            if self.preview.playing {
-                                                self.explicit_seek_ms = Some(target);
-                                                self.playback_started_at =
-                                                    Some(std::time::Instant::now());
-                                                self.playback_started_ms = target;
-                                            }
-                                            self.playhead_ms = target;
-                                        }
-                                        let _ = (was_trim, follow);
-                                    } else {
-                                        let nm = d.current_ms.max(0) as u64;
-                                        let nt = d.track_index;
-                                        if nm != d.origin_ms
-                                            || self
-                                                .project
-                                                .clips
-                                                .iter()
-                                                .find(|c| c.id == id)
-                                                .map(|c| c.track_index)
-                                                != Some(nt)
-                                        {
-                                            let cmd = MoveClipCommand {
-                                                clip_id: id,
-                                                from_ms: d.origin_ms,
-                                                to_ms: nm,
-                                            };
-                                            let _ = self
-                                                .undo_stack
-                                                .execute(Box::new(cmd), &mut self.project);
-                                            if let Some(c) =
-                                                self.project.clips.iter_mut().find(|c| c.id == id)
-                                            {
-                                                c.track_index = nt;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        ClipAction::Delete(id) => {
-                            let rip = self.timeline_tools.magnetic;
-                            let cmd = DeleteClipCommand::new(id, rip);
-                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                            self.selected_clips.retain(|&x| x != id);
-                        }
-                        ClipAction::Split(id, at) => {
-                            let cmd = SplitClipCommand::new(id, at);
-                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                        }
-                        ClipAction::ToggleReverse(id) => {
-                            if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
-                                c.reversed = !c.reversed;
-                            }
-                        }
-                        ClipAction::ToggleFlipH(id) => {
-                            if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
-                                c.flip_h = !c.flip_h;
-                            }
-                        }
-                        ClipAction::ToggleFlipV(id) => {
-                            if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
-                                c.flip_v = !c.flip_v;
-                            }
-                        }
-                        ClipAction::GenerateCaptions(id) => {
-                            self.start_caption_job(Some(id));
-                        }
-                        ClipAction::SeparateAudio(id) => {
-                            let cmd =
-                                caprust_core::commands::separate_audio::SeparateAudioCommand::new(
-                                    id,
-                                );
-                            if let Err(e) =
-                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                            {
-                                tracing::error!("separate audio failed: {e}");
-                                self.toast(tr("toast-separate-audio-failed"));
-                            } else {
-                                tracing::info!("separate audio: created Audio clip from {id}");
-                                self.toast(tr("toast-separate-audio-done"));
-                            }
-                        }
-                        ClipAction::Copy(id) => {
-                            if let Some(c) = self.project.clips.iter().find(|c| c.id == id) {
-                                self.clip_clipboard = Some(c.clone());
-                                tracing::info!("copy: {id}");
-                                self.toast(tr("toast-clip-copied"));
-                            }
-                        }
-                        ClipAction::Paste => {
-                            if let Some(mut c) = self.clip_clipboard.clone() {
-                                c.id = uuid::Uuid::new_v4();
-                                c.start_time_ms = self.playhead_ms;
-                                if c.track_index >= self.project.tracks.len() {
-                                    c.track_index = 0;
-                                }
-                                let cmd =
-                                    caprust_core::commands::ripple::RippleInsertCommand::new(c);
-                                if let Err(e) =
-                                    self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                                {
-                                    tracing::error!("paste failed: {e}");
-                                } else {
-                                    self.toast(tr("toast-clip-pasted"));
-                                }
-                            }
-                        }
-                        ClipAction::Duplicate(id) => {
-                            if let Some(orig) =
-                                self.project.clips.iter().find(|c| c.id == id).cloned()
-                            {
-                                let mut c = orig;
-                                c.id = uuid::Uuid::new_v4();
-                                c.start_time_ms += c.duration_ms;
-                                let cmd =
-                                    caprust_core::commands::ripple::RippleInsertCommand::new(c);
-                                if let Err(e) =
-                                    self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                                {
-                                    tracing::error!("duplicate failed: {e}");
-                                } else {
-                                    self.toast(tr("toast-clip-duplicated"));
-                                }
-                            }
-                        }
-                        ClipAction::RippleDelete(id) => {
-                            let cmd = caprust_core::commands::delete_clip::DeleteClipCommand::new(
-                                id, true,
-                            );
-                            if let Err(e) =
-                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                            {
-                                tracing::error!("ripple delete failed: {e}");
-                            }
-                        }
-                        ClipAction::SetSpeed(id, v) => {
-                            let cmd =
-                                caprust_core::commands::set_clip::SetClipCommand::new(id).speed(v);
-                            if let Err(e) =
-                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                            {
-                                tracing::error!("set speed failed: {e}");
-                            } else {
-                                tracing::info!("set speed {v}x on {id}");
-                            }
-                        }
-                        ClipAction::MuteClip(id) => {
-                            let cur = self
-                                .project
-                                .clips
-                                .iter()
-                                .find(|c| c.id == id)
-                                .map(|c| c.volume_db)
-                                .unwrap_or(0.0);
-                            let target = if cur <= -59.0 { 0.0 } else { -60.0 };
-                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
-                                .volume_db(target);
-                            if let Err(e) =
-                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                            {
-                                tracing::error!("mute clip failed: {e}");
-                            }
-                        }
-                        ClipAction::FadeDragStart(id, edge, current_ms) => {
-                            let (dur, fi, fo, ptr_x) = self
-                                .project
-                                .clips
-                                .iter()
-                                .find(|c| c.id == id)
-                                .map(|c| {
-                                    (
-                                        c.duration_ms,
-                                        c.fade_in_ms,
-                                        c.fade_out_ms,
-                                        self.last_pointer.map(|p| p.x).unwrap_or(0.0),
-                                    )
-                                })
-                                .unwrap_or((0, 0, 0, 0.0));
-                            let other = match edge {
-                                FadeEdge::In => fo,
-                                FadeEdge::Out => fi,
-                            };
-                            self.fade_drag = Some(FadeDrag {
-                                clip_id: id,
-                                edge,
-                                origin_ms: current_ms as u64,
-                                current_ms: current_ms as u64,
-                                origin_ptr_x: ptr_x,
-                                duration_ms: dur,
-                                other_fade_ms: other,
-                            });
-                        }
-                        ClipAction::FadeDragDelta(id, dx, ppm) => {
-                            if ppm > 0.0 {
-                                if let Some(fd) = self.fade_drag.clone() {
-                                    if fd.clip_id == id {
-                                        let delta_ms = (dx / ppm) as i64;
-                                        let cand = fd.origin_ms as i64 + delta_ms;
-                                        // Clamp: fade can't be negative,
-                                        // can't overlap the opposite
-                                        // edge's existing fade, and
-                                        // can't exceed the clip length.
-                                        let cap = fd.duration_ms.saturating_sub(fd.other_fade_ms);
-                                        let new_ms = cand.clamp(0, cap as i64) as u64;
-                                        if let Some(cur) = self.fade_drag.as_mut() {
-                                            cur.current_ms = new_ms;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        ClipAction::FadeDragEnd(id) => {
-                            if let Some(fd) = self.fade_drag.take() {
-                                if fd.clip_id == id && fd.current_ms != fd.origin_ms {
-                                    let new_val = fd.current_ms;
-                                    let cmd = match fd.edge {
-                                        FadeEdge::In => {
-                                            caprust_core::commands::set_clip::SetClipCommand::new(
-                                                id,
-                                            )
-                                            .fade_in_ms(new_val)
-                                        }
-                                        FadeEdge::Out => {
-                                            caprust_core::commands::set_clip::SetClipCommand::new(
-                                                id,
-                                            )
-                                            .fade_out_ms(new_val)
-                                        }
-                                    };
-                                    if let Err(e) =
-                                        self.undo_stack.execute(Box::new(cmd), &mut self.project)
-                                    {
-                                        tracing::error!("fade commit failed: {e}");
-                                    } else {
-                                        tracing::info!(
-                                            "fade {:?} = {}ms on {}",
-                                            fd.edge,
-                                            new_val,
-                                            id
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                ClipAction::Copy(id) => {
+                    if let Some(c) = self.project.clips.iter().find(|c| c.id == id) {
+                        self.clip_clipboard = Some(c.clone());
+                        tracing::info!("copy: {id}");
+                        self.toast(tr("toast-clip-copied"));
                     }
                 }
-
-                if let Some((mid, ti, t)) = pending_drop {
-                    let media = self
-                        .project
-                        .media
-                        .items
-                        .iter()
-                        .find(|m| m.id == mid)
-                        .cloned();
-                    if let Some(item) = media {
-                        use caprust_core::{Clip, MediaKind};
-                        let dur = if item.duration_ms > 0 {
-                            item.duration_ms
+                ClipAction::Paste => {
+                    if let Some(mut c) = self.clip_clipboard.clone() {
+                        c.id = uuid::Uuid::new_v4();
+                        c.start_time_ms = self.playhead_ms;
+                        if c.track_index >= self.project.tracks.len() {
+                            c.track_index = 0;
+                        }
+                        let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(c);
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("paste failed: {e}");
                         } else {
-                            3000
-                        };
-                        let mut clip = match item.kind {
-                            MediaKind::Video => Clip::new_video(&item.path, ti, t, dur),
-                            MediaKind::Audio => Clip::new_audio(&item.path, ti, t, dur),
-                            MediaKind::Image => Clip::new_image(&item.path, ti, t, dur),
-                        };
-                        clip.media_id = Some(item.id);
-                        let nid = clip.id;
-                        let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                        let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                        self.selected_clips = vec![nid];
+                            self.toast(tr("toast-clip-pasted"));
+                        }
                     }
-                    self.last_dnd_payload = None;
                 }
-            });
+                ClipAction::Duplicate(id) => {
+                    if let Some(orig) = self.project.clips.iter().find(|c| c.id == id).cloned() {
+                        let mut c = orig;
+                        c.id = uuid::Uuid::new_v4();
+                        c.start_time_ms += c.duration_ms;
+                        let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(c);
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("duplicate failed: {e}");
+                        } else {
+                            self.toast(tr("toast-clip-duplicated"));
+                        }
+                    }
+                }
+                ClipAction::RippleDelete(id) => {
+                    let cmd = caprust_core::commands::delete_clip::DeleteClipCommand::new(id, true);
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("ripple delete failed: {e}");
+                    }
+                }
+                ClipAction::SetSpeed(id, v) => {
+                    let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id).speed(v);
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("set speed failed: {e}");
+                    } else {
+                        tracing::info!("set speed {v}x on {id}");
+                    }
+                }
+                ClipAction::MuteClip(id) => {
+                    let cur = self
+                        .project
+                        .clips
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| c.volume_db)
+                        .unwrap_or(0.0);
+                    let target = if cur <= -59.0 { 0.0 } else { -60.0 };
+                    let cmd =
+                        caprust_core::commands::set_clip::SetClipCommand::new(id).volume_db(target);
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("mute clip failed: {e}");
+                    }
+                }
+                ClipAction::FadeDragStart(id, edge, current_ms) => {
+                    let (dur, fi, fo, ptr_x) = self
+                        .project
+                        .clips
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| {
+                            (
+                                c.duration_ms,
+                                c.fade_in_ms,
+                                c.fade_out_ms,
+                                self.last_pointer.map(|p| p.x).unwrap_or(0.0),
+                            )
+                        })
+                        .unwrap_or((0, 0, 0, 0.0));
+                    let other = match edge {
+                        FadeEdge::In => fo,
+                        FadeEdge::Out => fi,
+                    };
+                    self.fade_drag = Some(FadeDrag {
+                        clip_id: id,
+                        edge,
+                        origin_ms: current_ms as u64,
+                        current_ms: current_ms as u64,
+                        origin_ptr_x: ptr_x,
+                        duration_ms: dur,
+                        other_fade_ms: other,
+                    });
+                }
+                ClipAction::FadeDragDelta(id, dx, ppm) => {
+                    if ppm > 0.0 {
+                        if let Some(fd) = self.fade_drag.clone() {
+                            if fd.clip_id == id {
+                                let delta_ms = (dx / ppm) as i64;
+                                let cand = fd.origin_ms as i64 + delta_ms;
+                                // Clamp: fade can't be negative,
+                                // can't overlap the opposite
+                                // edge's existing fade, and
+                                // can't exceed the clip length.
+                                let cap = fd.duration_ms.saturating_sub(fd.other_fade_ms);
+                                let new_ms = cand.clamp(0, cap as i64) as u64;
+                                if let Some(cur) = self.fade_drag.as_mut() {
+                                    cur.current_ms = new_ms;
+                                }
+                            }
+                        }
+                    }
+                }
+                ClipAction::FadeDragEnd(id) => {
+                    if let Some(fd) = self.fade_drag.take() {
+                        if fd.clip_id == id && fd.current_ms != fd.origin_ms {
+                            let new_val = fd.current_ms;
+                            let cmd = match fd.edge {
+                                FadeEdge::In => {
+                                    caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                        .fade_in_ms(new_val)
+                                }
+                                FadeEdge::Out => {
+                                    caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                        .fade_out_ms(new_val)
+                                }
+                            };
+                            if let Err(e) =
+                                self.undo_stack.execute(Box::new(cmd), &mut self.project)
+                            {
+                                tracing::error!("fade commit failed: {e}");
+                            } else {
+                                tracing::info!("fade {:?} = {}ms on {}", fd.edge, new_val, id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((mid, ti, t)) = pending_drop {
+            let media = self
+                .project
+                .media
+                .items
+                .iter()
+                .find(|m| m.id == mid)
+                .cloned();
+            if let Some(item) = media {
+                use caprust_core::{Clip, MediaKind};
+                let dur = if item.duration_ms > 0 {
+                    item.duration_ms
+                } else {
+                    3000
+                };
+                let mut clip = match item.kind {
+                    MediaKind::Video => Clip::new_video(&item.path, ti, t, dur),
+                    MediaKind::Audio => Clip::new_audio(&item.path, ti, t, dur),
+                    MediaKind::Image => Clip::new_image(&item.path, ti, t, dur),
+                };
+                clip.media_id = Some(item.id);
+                let nid = clip.id;
+                let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                self.selected_clips = vec![nid];
+            }
+            self.last_dnd_payload = None;
+        }
     }
+
     /// New dock-based layout. Fallback to the classic layout via
     /// `show_editor_classic` while the migration is in progress; flip
     /// `USE_DOCK_LAYOUT` to compare them.

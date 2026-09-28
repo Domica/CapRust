@@ -100,6 +100,9 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             Tab::Preview => {
                 self.app.render_preview_panel(ui);
             }
+            Tab::Timeline => {
+                self.app.render_timeline_panel(ui);
+            }
             // Session 3 will migrate the remaining tabs one at a time.
             _ => {
                 let label = format!("[{} — migration in progress]", tr(tab.title_key()));
