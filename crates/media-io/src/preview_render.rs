@@ -129,6 +129,8 @@ impl PreviewRenderer {
                 // trim ends up looking at PTS it does not expect.
                 args.push("-ss".into());
                 args.push(format!("{:.6}", inp.source_start_sec));
+                args.push("-t".into());
+                args.push(format!("{:.6}", inp.duration_sec));
             }
             args.push("-i".into());
             args.push(inp.path.to_string_lossy().to_string());
@@ -247,8 +249,20 @@ impl PreviewRenderer {
         let frame_size = (w * h * 4) as usize;
         let frame_interval = Duration::from_secs_f64(1.0 / fps);
 
-        let av_delay = av_delay_ms();
-        tracing::info!("preview: A/V output delay compensation = {av_delay} ms");
+        // Seek-optimized plans start audio and video at the same wall
+        // clock: the audio cache (or preview PCM at seek-optimized
+        // offset 0) has no cpal startup to compensate for, and the
+        // video is already seeked at the input level. Applying the
+        // fixed delay here just pushes video 650 ms behind audio.
+        let av_delay = if plan.seek_optimized {
+            0
+        } else {
+            av_delay_ms()
+        };
+        tracing::info!(
+            "preview: A/V output delay compensation = {av_delay} ms (seek_optimized={})",
+            plan.seek_optimized
+        );
 
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
