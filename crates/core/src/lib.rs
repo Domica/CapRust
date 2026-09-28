@@ -11,6 +11,7 @@ pub mod project_io;
 pub mod recent;
 pub mod settings;
 pub mod track;
+pub mod translate;
 pub mod update_checker;
 
 pub use aspect_ratio::*;
