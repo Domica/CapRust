@@ -276,7 +276,9 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // --- Import buttons ---
     let mut newly_imported: Vec<Uuid> = Vec::new();
     let mut clear_all = false;
-    ui.horizontal(|ui| {
+    // horizontal_wrapped so a narrow dock zone reflows to two rows
+    // instead of clipping the trailing buttons.
+    ui.horizontal_wrapped(|ui| {
         if ui.button(tr("media-import-clips")).clicked() {
             newly_imported.extend(import_with(project, VIDEO_EXTS, "Video"));
         }
@@ -286,15 +288,14 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         if ui.button(tr("media-import-images")).clicked() {
             newly_imported.extend(import_with(project, IMAGE_EXTS, "Image"));
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(tr("media-clear-all"))
-                .on_hover_text(tr("media-clear-all-tooltip"))
-                .clicked()
-            {
-                clear_all = true;
-            }
-        });
+        ui.separator();
+        if ui
+            .button(tr("media-clear-all"))
+            .on_hover_text(tr("media-clear-all-tooltip"))
+            .clicked()
+        {
+            clear_all = true;
+        }
     });
     if clear_all {
         project.media.items.clear();
@@ -304,7 +305,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     ui.separator();
 
     // --- Sort + size controls ---
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt("media_sort")
             .selected_text(format!(
                 "{} {}",
