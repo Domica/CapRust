@@ -347,8 +347,13 @@ impl RenderPlan {
                 v_out.clone()
             };
 
+            // setpts BEFORE trim: when `-ss` is on the input and the
+            // ffmpeg build does not reset PTS, frame PTS starts at the
+            // seek offset. Resetting first makes `trim=duration` see a
+            // 0-based window and actually select frames. Same result
+            // for the no-seek case (first PTS is already 0).
             fg.push_str(&format!(
-                "{in_label}trim=duration={dur:.6},{setpts},{fit_chain},fps={num}/{den}",
+                "{in_label}{setpts},trim=duration={dur:.6},{fit_chain},fps={num}/{den}",
                 dur = c.duration_sec,
                 num = self.fps_num,
                 den = self.fps_den,
@@ -690,7 +695,7 @@ impl RenderPlan {
                     let atempo = atempo_chain(c.speed);
                     (
                         format!(
-                            "{in_label}atrim=duration={dur:.6},asetpts=PTS-STARTPTS{atempo}[a{i}_pre];",
+                            "{in_label}asetpts=PTS-STARTPTS,atrim=duration={dur:.6}{atempo}[a{i}_pre];",
                             dur = c.duration_sec,
                             atempo = atempo,
                             i = i,
@@ -1982,6 +1987,13 @@ pub fn plan_from_project(
                     } else {
                         (0.0, dur_sec, clip_start)
                     };
+                    // Drop clips reduced to less than 100 ms by the
+                    // seek. ffmpeg's trim can produce zero frames for
+                    // a duration this small, and a zero-frame branch
+                    // in the filtergraph stalls the whole pipeline.
+                    if do_input_seek && visible_dur < 0.1 {
+                        continue;
+                    }
                     let idx = register_input(&mut inputs, path, input_ss_sec, visible_dur);
                     video_clips.push(VideoClip {
                         input_index: idx,
@@ -2283,6 +2295,9 @@ pub fn plan_from_project(
         } else {
             (0.0, dur_sec, clip_start)
         };
+        if do_input_seek && visible_dur < 0.1 {
+            continue;
+        }
         let idx = register_input(&mut inputs, path, input_ss_sec, visible_dur);
         let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
         let start_sec = (new_start - shift_sec).max(0.0);
@@ -2365,11 +2380,11 @@ pub fn plan_from_project(
         has_audio,
         seek_ms,
         seek_optimized: do_input_seek,
-        total_duration_sec: if do_input_seek {
-            (total_duration_sec - seek_sec).max(0.0)
-        } else {
-            total_duration_sec
-        },
+        // `total_duration_sec` was derived from `video_clips` above,
+        // whose timeline_start_sec / duration_sec were ALREADY shifted
+        // by the seek when do_input_seek is true. Subtracting seek_sec
+        // here would zero it out. Leave as-is.
+        total_duration_sec,
     })
 }
 

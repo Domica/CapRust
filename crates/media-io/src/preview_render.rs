@@ -102,7 +102,7 @@ impl PreviewRenderer {
             "-y".into(),
             "-hide_banner".into(),
             "-loglevel".into(),
-            "error".into(),
+            "info".into(),
         ];
 
         // Inputs: images need -loop 1; everything else is plain -i.
@@ -123,6 +123,10 @@ impl PreviewRenderer {
                 // Seek optimization (2a): ffmpeg jumps to the offset
                 // at demuxer level, skipping decode of everything
                 // before it. Turns a 5-second seek into ~200 ms.
+                //
+                // The `-t` matches the exporter arg shape: without it
+                // ffmpeg decodes to end-of-file and the filtergraph
+                // trim ends up looking at PTS it does not expect.
                 args.push("-ss".into());
                 args.push(format!("{:.6}", inp.source_start_sec));
             }
@@ -197,6 +201,16 @@ impl PreviewRenderer {
                 .join(" ")
         );
 
+        // DIAGNOSTIC: dump full ffmpeg invocation + filtergraph
+        // to temp files. Remove after debugging the seek path.
+        let _ = std::fs::write(
+            std::env::temp_dir().join("caprust-last-preview-args.txt"),
+            args.join("\n"),
+        );
+        let _ = std::fs::write(
+            std::env::temp_dir().join("caprust-last-preview-filtergraph.txt"),
+            &fg,
+        );
         let mut child = Command::new(ffmpeg)
             .args(&args)
             .stdin(Stdio::null())

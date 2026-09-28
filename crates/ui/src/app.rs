@@ -2763,10 +2763,14 @@ impl CapRustApp {
             self.playhead_ms = (self.playhead_ms + 30_000).min(total_ms);
             seeked = true;
         }
-        if seeked && self.preview.playing {
-            self.explicit_seek_ms = Some(self.playhead_ms);
-            self.playback_started_at = Some(std::time::Instant::now());
-            self.playback_started_ms = self.playhead_ms;
+        if seeked {
+            if self.preview.playing {
+                self.explicit_seek_ms = Some(self.playhead_ms);
+                self.playback_started_at = Some(std::time::Instant::now());
+                self.playback_started_ms = self.playhead_ms;
+            } else {
+                self.paused_frame_dirty = true;
+            }
         }
         if ev.toggle_mute {
             self.settings.muted = !self.settings.muted;
@@ -4082,6 +4086,13 @@ impl CapRustApp {
                         // in sync with the new position.
                         self.playback_started_at = Some(std::time::Instant::now());
                         self.playback_started_ms = target;
+                    } else if !self.preview.playing {
+                        // Paused seek: force the paused one-shot to
+                        // re-render at the new playhead. Without this,
+                        // clicking the timeline while paused moves the
+                        // playhead but the preview shows a stale frame
+                        // and no renderer is ever spawned.
+                        self.paused_frame_dirty = true;
                     }
                     self.playhead_ms = target;
                 }
@@ -4170,6 +4181,8 @@ impl CapRustApp {
                                         self.explicit_seek_ms = Some(target);
                                         self.playback_started_at = Some(std::time::Instant::now());
                                         self.playback_started_ms = target;
+                                    } else {
+                                        self.paused_frame_dirty = true;
                                     }
                                     self.playhead_ms = target;
                                 }
