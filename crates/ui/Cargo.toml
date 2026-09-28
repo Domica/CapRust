@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+egui_dock = { version = "0.16", features = ["serde"] }
 open = { workspace = true }
 caprust-core = { path = "../core" }
 caprust-media-io = { path = "../media-io" }
