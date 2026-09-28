@@ -4636,193 +4636,200 @@ impl CapRustApp {
 
         // Central preview (frame + transport)
         egui::CentralPanel::default().show(ctx, |ui| {
-            let total_ms = self.total_duration_ms();
+            self.render_preview_panel(ui);
+        });
+    }
 
-            // ---- Frame area ----
-            let avail = ui.available_size();
-            let frame_h = (avail.y - 60.0).max(120.0);
-            let frame_rect_size = egui::vec2(avail.x, frame_h);
-            let (rect, _) = ui.allocate_exact_size(frame_rect_size, egui::Sense::hover());
-            ui.painter()
-                .rect_filled(rect, 6.0, egui::Color32::from_gray(12));
+    /// Preview panel body. Migrated out of the CentralPanel closure
+    /// so the dock viewer can render it inside a Tab::Preview zone.
+    pub(crate) fn render_preview_panel(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let total_ms = self.total_duration_ms();
 
-            // ---- Target decode size ----
-            let (pw, ph) = self.project.project_dimensions();
-            let max_side = match self.preview.quality {
-                crate::panels::preview_window::PreviewQuality::Quarter => 320,
-                crate::panels::preview_window::PreviewQuality::Half => 480,
-                crate::panels::preview_window::PreviewQuality::Full => 640,
-            };
-            let (tw, th) = caprust_media_io::player::preview_size(pw, ph, max_side);
+        // ---- Frame area ----
+        let avail = ui.available_size();
+        let frame_h = (avail.y - 60.0).max(120.0);
+        let frame_rect_size = egui::vec2(avail.x, frame_h);
+        let (rect, _) = ui.allocate_exact_size(frame_rect_size, egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, 6.0, egui::Color32::from_gray(12));
 
-            // ---- Find clip under playhead on a visible track ----
-            let playhead = self.playhead_ms;
-            let clip_info: Option<(uuid::Uuid, String, u64, f32)> = self
-                .project
-                .clips
-                .iter()
-                .find(|c| {
-                    let on_playhead =
-                        playhead >= c.start_time_ms && playhead < c.start_time_ms + c.duration_ms;
-                    if !on_playhead {
-                        return false;
+        // ---- Target decode size ----
+        let (pw, ph) = self.project.project_dimensions();
+        let max_side = match self.preview.quality {
+            crate::panels::preview_window::PreviewQuality::Quarter => 320,
+            crate::panels::preview_window::PreviewQuality::Half => 480,
+            crate::panels::preview_window::PreviewQuality::Full => 640,
+        };
+        let (tw, th) = caprust_media_io::player::preview_size(pw, ph, max_side);
+
+        // ---- Find clip under playhead on a visible track ----
+        let playhead = self.playhead_ms;
+        let clip_info: Option<(uuid::Uuid, String, u64, f32)> = self
+            .project
+            .clips
+            .iter()
+            .find(|c| {
+                let on_playhead =
+                    playhead >= c.start_time_ms && playhead < c.start_time_ms + c.duration_ms;
+                if !on_playhead {
+                    return false;
+                }
+                let track_visible = self
+                    .project
+                    .tracks
+                    .get(c.track_index)
+                    .map(|t| t.visible)
+                    .unwrap_or(true);
+                if !track_visible {
+                    return false;
+                }
+                matches!(
+                    c.clip_type,
+                    caprust_core::ClipType::Video { .. } | caprust_core::ClipType::Image { .. }
+                )
+            })
+            .and_then(|c| match &c.clip_type {
+                caprust_core::ClipType::Video { path, .. }
+                | caprust_core::ClipType::Image { path, .. } => {
+                    Some((c.id, path.clone(), c.start_time_ms, c.speed))
+                }
+                _ => None,
+            });
+
+        // ---- Rate-limited state log ----
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static LAST: AtomicU64 = AtomicU64::new(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if now >= LAST.load(Ordering::Relaxed) + 5 {
+                LAST.store(now, Ordering::Relaxed);
+                tracing::info!(
+                    "preview state: playhead={}ms playing={} clips={} clip_info={} ffmpeg={}",
+                    playhead,
+                    self.preview.playing,
+                    self.project.clips.len(),
+                    clip_info.is_some(),
+                    self.ffmpeg_status.ffmpeg.is_some(),
+                );
+            }
+        }
+
+        // ---- Phase K (K1): auto-respawn on render-relevant change ----
+        // Hash-based detection instead of hooking every
+        // undo_stack.execute site. Undo/redo, paste, load, and any
+        // future command automatically invalidate. Guarded by
+        // `playing && has_frame` so a paused preview does not
+        // thrash and the very first spawn (has_frame == false) is
+        // not double-triggered.
+        //
+        // Limitation: a slider drag respawns once per change, not
+        // seamlessly. Seamless double-buffered swap is Phase K2,
+        // a separate PR if this proves jittery in practice.
+        //
+        // K1b: debounce the respawn so a DragValue slider does not
+        // spawn ffmpeg once per frame. We track the newest hash and
+        // the instant it last changed; the respawn fires only when
+        // the value has been stable for RESPAWN_DEBOUNCE_MS.
+        {
+            const RESPAWN_DEBOUNCE_MS: u128 = 250;
+            let live = self.project.render_hash();
+            if live != self.pending_hash {
+                self.pending_hash = live;
+                self.pending_respawn_at = Some(std::time::Instant::now());
+            }
+            if live != self.preview_plan_hash {
+                let ready = self
+                    .pending_respawn_at
+                    .map(|t| t.elapsed().as_millis() >= RESPAWN_DEBOUNCE_MS)
+                    .unwrap_or(true);
+                if ready {
+                    self.preview_plan_hash = live;
+                    self.pending_respawn_at = None;
+                    if self.preview.playing && self.preview_player.has_frame {
+                        self.explicit_seek_ms = Some(self.playhead_ms);
+                    } else if !self.preview.playing {
+                        // K1c: paused preview. Mark dirty so the paused
+                        // branch re-renders exactly one frame through
+                        // the full filtergraph.
+                        self.paused_frame_dirty = true;
                     }
-                    let track_visible = self
-                        .project
-                        .tracks
-                        .get(c.track_index)
-                        .map(|t| t.visible)
-                        .unwrap_or(true);
-                    if !track_visible {
-                        return false;
-                    }
-                    matches!(
-                        c.clip_type,
-                        caprust_core::ClipType::Video { .. } | caprust_core::ClipType::Image { .. }
-                    )
-                })
-                .and_then(|c| match &c.clip_type {
-                    caprust_core::ClipType::Video { path, .. }
-                    | caprust_core::ClipType::Image { path, .. } => {
-                        Some((c.id, path.clone(), c.start_time_ms, c.speed))
-                    }
-                    _ => None,
-                });
-
-            // ---- Rate-limited state log ----
-            {
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static LAST: AtomicU64 = AtomicU64::new(0);
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                if now >= LAST.load(Ordering::Relaxed) + 5 {
-                    LAST.store(now, Ordering::Relaxed);
-                    tracing::info!(
-                        "preview state: playhead={}ms playing={} clips={} clip_info={} ffmpeg={}",
-                        playhead,
-                        self.preview.playing,
-                        self.project.clips.len(),
-                        clip_info.is_some(),
-                        self.ffmpeg_status.ffmpeg.is_some(),
-                    );
                 }
             }
+        }
 
-            // ---- Phase K (K1): auto-respawn on render-relevant change ----
-            // Hash-based detection instead of hooking every
-            // undo_stack.execute site. Undo/redo, paste, load, and any
-            // future command automatically invalidate. Guarded by
-            // `playing && has_frame` so a paused preview does not
-            // thrash and the very first spawn (has_frame == false) is
-            // not double-triggered.
-            //
-            // Limitation: a slider drag respawns once per change, not
-            // seamlessly. Seamless double-buffered swap is Phase K2,
-            // a separate PR if this proves jittery in practice.
-            //
-            // K1b: debounce the respawn so a DragValue slider does not
-            // spawn ffmpeg once per frame. We track the newest hash and
-            // the instant it last changed; the respawn fires only when
-            // the value has been stable for RESPAWN_DEBOUNCE_MS.
-            {
-                const RESPAWN_DEBOUNCE_MS: u128 = 250;
-                let live = self.project.render_hash();
-                if live != self.pending_hash {
-                    self.pending_hash = live;
-                    self.pending_respawn_at = Some(std::time::Instant::now());
+        // ---- Playing vs paused ----
+        let playing = self.preview.playing;
+
+        if playing {
+            // Ensure the timeline renderer is running.
+            let renderer_dead = self.preview_renderer.is_none();
+            let explicit_seek = self.explicit_seek_ms.is_some();
+            let need_start = renderer_dead || explicit_seek;
+
+            if need_start {
+                // Where to start the renderer from.
+                let start_from = self.explicit_seek_ms.take().unwrap_or(self.playhead_ms);
+
+                // Kill old one
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
                 }
-                if live != self.preview_plan_hash {
-                    let ready = self
-                        .pending_respawn_at
-                        .map(|t| t.elapsed().as_millis() >= RESPAWN_DEBOUNCE_MS)
-                        .unwrap_or(true);
-                    if ready {
-                        self.preview_plan_hash = live;
-                        self.pending_respawn_at = None;
-                        if self.preview.playing && self.preview_player.has_frame {
-                            self.explicit_seek_ms = Some(self.playhead_ms);
-                        } else if !self.preview.playing {
-                            // K1c: paused preview. Mark dirty so the paused
-                            // branch re-renders exactly one frame through
-                            // the full filtergraph.
-                            self.paused_frame_dirty = true;
-                        }
-                    }
-                }
-            }
 
-            // ---- Playing vs paused ----
-            let playing = self.preview.playing;
+                // Build the same render plan that export uses.
+                let (pw, ph) = self.project.project_dimensions();
+                let max_side = match self.preview.quality {
+                    crate::panels::preview_window::PreviewQuality::Quarter => 320,
+                    crate::panels::preview_window::PreviewQuality::Half => 480,
+                    crate::panels::preview_window::PreviewQuality::Full => 640,
+                };
+                let (rw, rh) = caprust_media_io::player::preview_size(pw, ph, max_side);
 
-            if playing {
-                // Ensure the timeline renderer is running.
-                let renderer_dead = self.preview_renderer.is_none();
-                let explicit_seek = self.explicit_seek_ms.is_some();
-                let need_start = renderer_dead || explicit_seek;
+                let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+                    self.project.frame_rate.num as i64,
+                    self.project.frame_rate.den as i64,
+                );
+                let fps_f = fps_num as f64 / fps_den.max(1) as f64;
 
-                if need_start {
-                    // Where to start the renderer from.
-                    let start_from = self.explicit_seek_ms.take().unwrap_or(self.playhead_ms);
+                if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
+                    let models_dir = self.settings.effective_models_dir();
+                    match caprust_media_io::export_graph::plan_from_project(
+                        &self.project,
+                        rw,
+                        rh,
+                        fps_num,
+                        fps_den,
+                        23,
+                        "veryfast",
+                        &models_dir,
+                    ) {
+                        Ok(plan) => {
+                            self.report_skipped(plan.skipped.missing_source);
+                            match PreviewRenderer::spawn(
+                                std::path::Path::new(&ffmpeg),
+                                &plan,
+                                start_from,
+                                rw,
+                                rh,
+                                fps_f,
+                            ) {
+                                Ok(renderer) => {
+                                    // Re-anchor wall clock so drift during
+                                    // renderer startup doesn't push playhead.
+                                    self.playback_started_at = Some(std::time::Instant::now());
+                                    self.playback_started_ms = start_from;
 
-                    // Kill old one
-                    if let Some(mut r) = self.preview_renderer.take() {
-                        r.kill();
-                    }
-
-                    // Build the same render plan that export uses.
-                    let (pw, ph) = self.project.project_dimensions();
-                    let max_side = match self.preview.quality {
-                        crate::panels::preview_window::PreviewQuality::Quarter => 320,
-                        crate::panels::preview_window::PreviewQuality::Half => 480,
-                        crate::panels::preview_window::PreviewQuality::Full => 640,
-                    };
-                    let (rw, rh) = caprust_media_io::player::preview_size(pw, ph, max_side);
-
-                    let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
-                        self.project.frame_rate.num as i64,
-                        self.project.frame_rate.den as i64,
-                    );
-                    let fps_f = fps_num as f64 / fps_den.max(1) as f64;
-
-                    if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
-                        let models_dir = self.settings.effective_models_dir();
-                        match caprust_media_io::export_graph::plan_from_project(
-                            &self.project,
-                            rw,
-                            rh,
-                            fps_num,
-                            fps_den,
-                            23,
-                            "veryfast",
-                            &models_dir,
-                        ) {
-                            Ok(plan) => {
-                                self.report_skipped(plan.skipped.missing_source);
-                                match PreviewRenderer::spawn(
-                                    std::path::Path::new(&ffmpeg),
-                                    &plan,
-                                    start_from,
-                                    rw,
-                                    rh,
-                                    fps_f,
-                                ) {
-                                    Ok(renderer) => {
-                                        // Re-anchor wall clock so drift during
-                                        // renderer startup doesn't push playhead.
-                                        self.playback_started_at = Some(std::time::Instant::now());
-                                        self.playback_started_ms = start_from;
-
-                                        // Start audio playback from the PCM file
-                                        // that this renderer will write. Audio is
-                                        // optional: if there's no track, or no
-                                        // device, or the file can't be opened,
-                                        // video keeps playing silently.
-                                        self.audio_player = match renderer.pcm_path.as_ref() {
-                                            Some(path) => match AudioPlayer::play_pcm_file(
-                                                path, start_from,
-                                            ) {
+                                    // Start audio playback from the PCM file
+                                    // that this renderer will write. Audio is
+                                    // optional: if there's no track, or no
+                                    // device, or the file can't be opened,
+                                    // video keeps playing silently.
+                                    self.audio_player = match renderer.pcm_path.as_ref() {
+                                        Some(path) => {
+                                            match AudioPlayer::play_pcm_file(path, start_from) {
                                                 Ok(p) => {
                                                     // Apply user's persisted
                                                     // volume / mute settings
@@ -4845,209 +4852,196 @@ impl CapRustApp {
                                                     );
                                                     None
                                                 }
-                                            },
-                                            None => None,
-                                        };
+                                            }
+                                        }
+                                        None => None,
+                                    };
 
-                                        tracing::info!(
-                                            "preview: renderer started from {}ms",
-                                            self.playhead_ms
-                                        );
-                                        self.preview_renderer = Some(renderer);
-                                        self.stream_needs_restart = false;
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("preview renderer spawn failed: {e}");
-                                    }
+                                    tracing::info!(
+                                        "preview: renderer started from {}ms",
+                                        self.playhead_ms
+                                    );
+                                    self.preview_renderer = Some(renderer);
+                                    self.stream_needs_restart = false;
+                                }
+                                Err(e) => {
+                                    tracing::error!("preview renderer spawn failed: {e}");
                                 }
                             }
-                            Err(e) => {
-                                tracing::error!("preview plan failed: {e}");
-                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("preview plan failed: {e}");
                         }
                     }
                 }
+            }
 
-                // Drain ready frames; keep only the last.
-                let mut consumed = 0u32;
-                let mut latest: Option<Vec<u8>> = None;
-                // Audio-priming gate, moved here from the reader thread.
-                //
-                // ffmpeg needs ~0.5-4 s before its first audio byte hits
-                // the PCM file (filtergraph priming + muxer buffering).
-                // During that window we do NOT consume video frames: the
-                // reader keeps filling the sync_channel at fps, but we
-                // hold the display on whatever was last shown. When the
-                // audio player finally produces samples, this opens and
-                // we start consuming from the FRONT of the buffer, so
-                // frame 0 corresponds to audio position 0 ms.
-                //
-                // If there is no audio track at all (audio_player is
-                // None), the gate is trivially open.
-                let audio_playing = self
-                    .audio_player
-                    .as_ref()
-                    .is_none_or(|ap| ap.playhead_ms() > 0);
-                if audio_playing {
-                    if let Some(r) = self.preview_renderer.as_ref() {
-                        while let Some(frame) = r.try_next() {
-                            latest = Some(frame);
-                            consumed += 1;
-                            if consumed > 6 {
-                                break;
-                            }
+            // Drain ready frames; keep only the last.
+            let mut consumed = 0u32;
+            let mut latest: Option<Vec<u8>> = None;
+            // Audio-priming gate, moved here from the reader thread.
+            //
+            // ffmpeg needs ~0.5-4 s before its first audio byte hits
+            // the PCM file (filtergraph priming + muxer buffering).
+            // During that window we do NOT consume video frames: the
+            // reader keeps filling the sync_channel at fps, but we
+            // hold the display on whatever was last shown. When the
+            // audio player finally produces samples, this opens and
+            // we start consuming from the FRONT of the buffer, so
+            // frame 0 corresponds to audio position 0 ms.
+            //
+            // If there is no audio track at all (audio_player is
+            // None), the gate is trivially open.
+            let audio_playing = self
+                .audio_player
+                .as_ref()
+                .is_none_or(|ap| ap.playhead_ms() > 0);
+            if audio_playing {
+                if let Some(r) = self.preview_renderer.as_ref() {
+                    while let Some(frame) = r.try_next() {
+                        latest = Some(frame);
+                        consumed += 1;
+                        if consumed > 6 {
+                            break;
                         }
                     }
                 }
+            }
 
-                if let Some(buf) = latest {
-                    if let Some(r) = self.preview_renderer.as_ref() {
-                        let w = r.width as usize;
-                        let h = r.height as usize;
-                        let expected = w * h * 4;
-                        if buf.len() >= expected {
-                            let img =
-                                egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
-                            let handle = ctx.load_texture(
-                                "preview-timeline",
-                                img,
-                                egui::TextureOptions::LINEAR,
+            if let Some(buf) = latest {
+                if let Some(r) = self.preview_renderer.as_ref() {
+                    let w = r.width as usize;
+                    let h = r.height as usize;
+                    let expected = w * h * 4;
+                    if buf.len() >= expected {
+                        let img =
+                            egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
+                        let handle =
+                            ctx.load_texture("preview-timeline", img, egui::TextureOptions::LINEAR);
+                        self.preview_player.texture = Some(handle);
+                        self.preview_player.has_frame = true;
+
+                        // Re-anchor wall clock to the first consumed
+                        // frame of this session. Without this, wall_ms
+                        // includes the ~1 s of ffmpeg audio priming and
+                        // every sync log line shows a bogus drift.
+                        if !self.play_anchor_set {
+                            self.playback_started_at = Some(std::time::Instant::now());
+                            // Capture audio position now. See field docs.
+                            self.audio_baseline_ms =
+                                self.audio_player.as_ref().map_or(0, |ap| ap.playhead_ms());
+                            self.play_anchor_set = true;
+                            tracing::info!(
+                                "playhead: re-anchored at {}ms (audio_baseline={}ms)",
+                                self.playhead_ms,
+                                self.audio_baseline_ms
                             );
-                            self.preview_player.texture = Some(handle);
-                            self.preview_player.has_frame = true;
-
-                            // Re-anchor wall clock to the first consumed
-                            // frame of this session. Without this, wall_ms
-                            // includes the ~1 s of ffmpeg audio priming and
-                            // every sync log line shows a bogus drift.
-                            if !self.play_anchor_set {
-                                self.playback_started_at = Some(std::time::Instant::now());
-                                // Capture audio position now. See field docs.
-                                self.audio_baseline_ms = self
-                                    .audio_player
-                                    .as_ref()
-                                    .map_or(0, |ap| ap.playhead_ms());
-                                self.play_anchor_set = true;
-                                tracing::info!(
-                                    "playhead: re-anchored at {}ms (audio_baseline={}ms)",
-                                    self.playhead_ms,
-                                    self.audio_baseline_ms
-                                );
-                            }
-
                         }
-                        // Advance playhead — audio-master when audio is
-                        // running, wall-clock fallback otherwise (§21).
-                        let wall_ms = self
-                            .playback_started_at
-                            .map(|t0| {
-                                self.playback_started_ms
-                                    + t0.elapsed().as_millis() as u64
-                            })
-                            .unwrap_or(self.playhead_ms);
+                    }
+                    // Advance playhead — audio-master when audio is
+                    // running, wall-clock fallback otherwise (§21).
+                    let wall_ms = self
+                        .playback_started_at
+                        .map(|t0| self.playback_started_ms + t0.elapsed().as_millis() as u64)
+                        .unwrap_or(self.playhead_ms);
 
-                        // Playhead source: the wall clock is the
-                        // reference; the audio sample counter only serves
-                        // to SLOW US DOWN when audio is falling behind.
-                        //
-                        // Why not let audio lead: on Windows WASAPI the
-                        // cpal callback can fire slightly more often than
-                        // the nominal rate. Over 60 s we measured a
-                        // steady +19 ms/s error, i.e. the sample counter
-                        // ran ~1.9% fast. That produced a +1157 ms
-                        // playhead-ahead-of-wall over one minute, which
-                        // is a real, visible desync (video led audio).
-                        //
-                        // Capping at wall_ms eliminates that class of
-                        // drift entirely: if audio is late we freeze the
-                        // playhead (correct), if audio is early we ignore
-                        // it (correct). Sample counter accuracy no longer
-                        // matters for absolute position, only for the
-                        // relative "is audio behind" signal.
-                        let (new_ph, src_tag) = match self.audio_player.as_ref() {
-                            Some(ap) => {
-                                let audio_ms = self.playback_started_ms
-                                    + ap.playhead_ms()
-                                        .saturating_sub(self.audio_baseline_ms);
-                                if audio_ms < wall_ms {
-                                    (audio_ms, "audio")
-                                } else {
-                                    (wall_ms, "wall")
-                                }
+                    // Playhead source: the wall clock is the
+                    // reference; the audio sample counter only serves
+                    // to SLOW US DOWN when audio is falling behind.
+                    //
+                    // Why not let audio lead: on Windows WASAPI the
+                    // cpal callback can fire slightly more often than
+                    // the nominal rate. Over 60 s we measured a
+                    // steady +19 ms/s error, i.e. the sample counter
+                    // ran ~1.9% fast. That produced a +1157 ms
+                    // playhead-ahead-of-wall over one minute, which
+                    // is a real, visible desync (video led audio).
+                    //
+                    // Capping at wall_ms eliminates that class of
+                    // drift entirely: if audio is late we freeze the
+                    // playhead (correct), if audio is early we ignore
+                    // it (correct). Sample counter accuracy no longer
+                    // matters for absolute position, only for the
+                    // relative "is audio behind" signal.
+                    let (new_ph, src_tag) = match self.audio_player.as_ref() {
+                        Some(ap) => {
+                            let audio_ms = self.playback_started_ms
+                                + ap.playhead_ms().saturating_sub(self.audio_baseline_ms);
+                            if audio_ms < wall_ms {
+                                (audio_ms, "audio")
+                            } else {
+                                (wall_ms, "wall")
                             }
-                            None => (wall_ms, "wall"),
-                        };
+                        }
+                        None => (wall_ms, "wall"),
+                    };
 
-                        let underruns = self
-                            .audio_player
-                            .as_ref()
-                            .map_or(0, |ap| ap.underruns());
-                        tracing::debug!(
-                            "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={} underruns={}",
-                            new_ph,
-                            self.audio_player.as_ref().map(|ap| ap.playhead_ms()),
-                            wall_ms,
-                            new_ph as i64 - wall_ms as i64,
-                            src_tag,
-                            underruns
-                        );
+                    let underruns = self.audio_player.as_ref().map_or(0, |ap| ap.underruns());
+                    tracing::debug!(
+                        "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={} underruns={}",
+                        new_ph,
+                        self.audio_player.as_ref().map(|ap| ap.playhead_ms()),
+                        wall_ms,
+                        new_ph as i64 - wall_ms as i64,
+                        src_tag,
+                        underruns
+                    );
 
-                        self.playhead_ms = new_ph;
-                    }
+                    self.playhead_ms = new_ph;
                 }
+            }
 
-                ctx.request_repaint();
-            } else {
-                // Paused: stop audio/streaming, keep a one-shot renderer
-                // alive across frames so the UI thread never blocks.
-                self.preview_player.stop_stream();
-                self.preview_player.cancel_pending();
+            ctx.request_repaint();
+        } else {
+            // Paused: stop audio/streaming, keep a one-shot renderer
+            // alive across frames so the UI thread never blocks.
+            self.preview_player.stop_stream();
+            self.preview_player.cancel_pending();
 
-                // K1c: fire a new one-shot when the render hash changed.
-                // The renderer is left running until it produces its first
-                // frame (or the deadline expires). That makes filtered
-                // edits (text content, caption style, motion, effects,
-                // transitions) visible without pressing play.
-                if std::mem::take(&mut self.paused_frame_dirty) {
-                    if let Some(mut r) = self.preview_renderer.take() {
-                        r.kill();
-                    }
-                    self.paused_renderer_deadline = None;
-                    if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
-                        let (pw, ph) = self.project.project_dimensions();
-                        let max_side = match self.preview.quality {
-                            crate::panels::preview_window::PreviewQuality::Quarter => 320,
-                            crate::panels::preview_window::PreviewQuality::Half => 480,
-                            crate::panels::preview_window::PreviewQuality::Full => 640,
-                        };
-                        let (rw, rh) =
-                            caprust_media_io::player::preview_size(pw, ph, max_side);
-                        let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
-                            self.project.frame_rate.num as i64,
-                            self.project.frame_rate.den as i64,
-                        );
-                        let fps_f = fps_num as f64 / fps_den.max(1) as f64;
-                        let models_dir = self.settings.effective_models_dir();
-                        match caprust_media_io::export_graph::plan_from_project(
-                            &self.project,
-                            rw,
-                            rh,
-                            fps_num,
-                            fps_den,
-                            23,
-                            "veryfast",
-                            &models_dir,
-                        ) {
-                            Ok(plan) => {
-                                self.report_skipped(plan.skipped.missing_source);
-                                match PreviewRenderer::spawn(
-                                    std::path::Path::new(&ffmpeg),
-                                    &plan,
-                                    playhead,
-                                    rw,
-                                    rh,
-                                    fps_f,
-                                ) {
+            // K1c: fire a new one-shot when the render hash changed.
+            // The renderer is left running until it produces its first
+            // frame (or the deadline expires). That makes filtered
+            // edits (text content, caption style, motion, effects,
+            // transitions) visible without pressing play.
+            if std::mem::take(&mut self.paused_frame_dirty) {
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
+                }
+                self.paused_renderer_deadline = None;
+                if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
+                    let (pw, ph) = self.project.project_dimensions();
+                    let max_side = match self.preview.quality {
+                        crate::panels::preview_window::PreviewQuality::Quarter => 320,
+                        crate::panels::preview_window::PreviewQuality::Half => 480,
+                        crate::panels::preview_window::PreviewQuality::Full => 640,
+                    };
+                    let (rw, rh) = caprust_media_io::player::preview_size(pw, ph, max_side);
+                    let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+                        self.project.frame_rate.num as i64,
+                        self.project.frame_rate.den as i64,
+                    );
+                    let fps_f = fps_num as f64 / fps_den.max(1) as f64;
+                    let models_dir = self.settings.effective_models_dir();
+                    match caprust_media_io::export_graph::plan_from_project(
+                        &self.project,
+                        rw,
+                        rh,
+                        fps_num,
+                        fps_den,
+                        23,
+                        "veryfast",
+                        &models_dir,
+                    ) {
+                        Ok(plan) => {
+                            self.report_skipped(plan.skipped.missing_source);
+                            match PreviewRenderer::spawn(
+                                std::path::Path::new(&ffmpeg),
+                                &plan,
+                                playhead,
+                                rw,
+                                rh,
+                                fps_f,
+                            ) {
                                 Ok(r) => {
                                     tracing::info!(
                                         "preview: paused one-shot render from {}ms",
@@ -5062,433 +5056,410 @@ impl CapRustApp {
                                 Err(e) => {
                                     tracing::warn!("preview: paused spawn failed: {e}");
                                 }
-                                }
                             }
-                            Err(e) => {
-                                tracing::warn!("preview: paused plan failed: {e}");
-                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("preview: paused plan failed: {e}");
                         }
                     }
                 }
+            }
 
-                // Poll the paused one-shot, if one is in flight.
-                let mut got_frame = false;
-                if let Some(r) = self.preview_renderer.as_ref() {
-                    if let Some(buf) = r.try_next() {
-                        let w = r.width as usize;
-                        let h = r.height as usize;
-                        let expected = w * h * 4;
-                        if buf.len() >= expected {
-                            let img = egui::ColorImage::from_rgba_unmultiplied(
-                                [w, h],
-                                &buf[..expected],
-                            );
-                            let handle = ctx.load_texture(
-                                "preview-timeline",
-                                img,
-                                egui::TextureOptions::LINEAR,
-                            );
-                            self.preview_player.texture = Some(handle);
-                            self.preview_player.has_frame = true;
-                            got_frame = true;
-                        }
+            // Poll the paused one-shot, if one is in flight.
+            let mut got_frame = false;
+            if let Some(r) = self.preview_renderer.as_ref() {
+                if let Some(buf) = r.try_next() {
+                    let w = r.width as usize;
+                    let h = r.height as usize;
+                    let expected = w * h * 4;
+                    if buf.len() >= expected {
+                        let img =
+                            egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
+                        let handle =
+                            ctx.load_texture("preview-timeline", img, egui::TextureOptions::LINEAR);
+                        self.preview_player.texture = Some(handle);
+                        self.preview_player.has_frame = true;
+                        got_frame = true;
                     }
                 }
-                if got_frame {
+            }
+            if got_frame {
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
+                }
+                self.paused_renderer_deadline = None;
+                tracing::info!("preview: paused one-shot delivered frame");
+            } else if self.preview_renderer.is_some() {
+                let expired = self
+                    .paused_renderer_deadline
+                    .map(|t| std::time::Instant::now() >= t)
+                    .unwrap_or(false);
+                if expired {
+                    tracing::warn!("preview: paused one-shot timed out");
                     if let Some(mut r) = self.preview_renderer.take() {
                         r.kill();
                     }
                     self.paused_renderer_deadline = None;
-                    tracing::info!("preview: paused one-shot delivered frame");
-                } else if self.preview_renderer.is_some() {
-                    let expired = self
-                        .paused_renderer_deadline
-                        .map(|t| std::time::Instant::now() >= t)
-                        .unwrap_or(false);
-                    if expired {
-                        tracing::warn!("preview: paused one-shot timed out");
-                        if let Some(mut r) = self.preview_renderer.take() {
-                            r.kill();
-                        }
-                        self.paused_renderer_deadline = None;
-                    } else {
-                        ctx.request_repaint_after(std::time::Duration::from_millis(30));
-                    }
-                }
-
-                // Fallback: no frame ever uploaded (first open, or after
-                // a failed one-shot). Direct source extract without
-                // filtergraph.
-                if self.preview_renderer.is_none()
-                    && !got_frame
-                    && self.preview_player.texture.is_none()
-                {
-                    if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
-                        (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
-                    {
-                        let source_ms =
-                            ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
-                        self.preview_player.request(
-                            std::path::Path::new(&ffmpeg),
-                            std::path::Path::new(&path),
-                            clip_id,
-                            source_ms,
-                            tw,
-                            th,
-                        );
-                        self.preview_player.poll(ctx);
-                        if self.preview_player.pending.is_some() {
-                            ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                        }
-                    }
-                }
-            }
-
-            // ---- Render frame or placeholder ----
-            // Capture the draw_rect / tex_size so the overlay below can
-            // use them after the texture borrow ends.
-            let mut overlay_ctx: Option<(egui::Rect, egui::Vec2)> = None;
-            if let Some(tex) = self.preview_player.texture.as_ref() {
-                let tex_size = tex.size_vec2();
-                let avail_w = rect.width() - 16.0;
-                let avail_h = rect.height() - 16.0;
-                let scale = (avail_w / tex_size.x).min(avail_h / tex_size.y);
-                let draw_size = tex_size * scale;
-                let draw_rect = egui::Rect::from_center_size(rect.center(), draw_size);
-                ui.painter().image(
-                    tex.id(),
-                    draw_rect,
-                    egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-                overlay_ctx = Some((draw_rect, tex_size));
-            } else {
-                let msg = if self.ffmpeg_status.ffmpeg.is_none() {
-                    "FFmpeg not detected — set it in Settings → Paths"
-                } else if clip_info.is_none() {
-                    if self.project.clips.is_empty() {
-                        "No clips on timeline"
-                    } else {
-                        "Playhead is not over a video clip"
-                    }
                 } else {
-                    "Decoding…"
-                };
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "🎬 Preview",
-                    egui::FontId::proportional(22.0),
-                    egui::Color32::from_gray(90),
-                );
-                ui.painter().text(
-                    rect.center() + egui::vec2(0.0, 26.0),
-                    egui::Align2::CENTER_CENTER,
-                    msg,
-                    egui::FontId::proportional(12.0),
-                    egui::Color32::from_gray(120),
-                );
+                    ctx.request_repaint_after(std::time::Duration::from_millis(30));
+                }
             }
 
-            // ---- TextOverlay bounding box + drag ----
-            // Approximate where the drawtext sits inside the frame using
-            // the same math build_drawtext_body uses for the x/y exprs:
-            //   left = (w - text_w)/2 + mx * w
-            //   top  = h*0.08 + my*h          (above == true)
-            //   top  = h*0.82 + my*h          (above == false)
-            // text_w is a monospace-ish approximation; exact metrics
-            // would require the font file, not worth it here. Only the
-            // single selected clip is handled; multi-select drags stay
-            // timeline-only.
-            if let Some((draw_rect, tex_size)) = overlay_ctx {
-                let active_id = self.selected_clips.first().copied();
-                let info = active_id.and_then(|id| {
-                    self.project.clips.iter().find(|c| c.id == id).and_then(|c| {
-                        match &c.clip_type {
-                            ClipType::TextOverlay {
-                                content,
-                                font_size,
-                                above,
-                                motion,
-                                ..
-                            } => Some((
-                                id,
-                                content.chars().count() as f32,
-                                *font_size,
-                                *above,
-                                motion.x,
-                                motion.y,
-                                motion.scale,
-                            )),
-                            _ => None,
-                        }
-                    })
-                });
-
-                if let Some((id, chars, font_size, above, mx, my, m_scale)) = info {
-                    let rw = tex_size.x.max(1.0);
-                    let rh = tex_size.y.max(1.0);
-                    let sx = draw_rect.width() / rw;
-                    let sy = draw_rect.height() / rh;
-                    let fs = font_size * m_scale.max(0.01);
-
-                    // Approximate text extents in frame pixels.
-                    let text_w = (chars * fs * 0.55).max(8.0);
-                    let text_h = (fs * 1.2).max(8.0);
-
-                    let frame_left = rw * 0.5 + mx * rw - text_w * 0.5;
-                    let frame_top = if above {
-                        rh * 0.08 + my * rh
-                    } else {
-                        rh * 0.82 + my * rh
-                    };
-
-                    let s_left = draw_rect.left() + frame_left * sx;
-                    let s_top = draw_rect.top() + frame_top * sy;
-                    let s_w = text_w * sx;
-                    let s_h = text_h * sy;
-                    let box_rect = egui::Rect::from_min_size(
-                        egui::pos2(s_left, s_top),
-                        egui::vec2(s_w, s_h),
+            // Fallback: no frame ever uploaded (first open, or after
+            // a failed one-shot). Direct source extract without
+            // filtergraph.
+            if self.preview_renderer.is_none()
+                && !got_frame
+                && self.preview_player.texture.is_none()
+            {
+                if let (Some(ffmpeg), Some((clip_id, path, clip_start, speed))) =
+                    (self.ffmpeg_status.ffmpeg.clone(), clip_info.clone())
+                {
+                    let source_ms = ((playhead.saturating_sub(clip_start)) as f32 * speed) as u64;
+                    self.preview_player.request(
+                        std::path::Path::new(&ffmpeg),
+                        std::path::Path::new(&path),
+                        clip_id,
+                        source_ms,
+                        tw,
+                        th,
                     );
-
-                    let dragging_this = self
-                        .text_overlay_drag
-                        .as_ref()
-                        .map(|d| d.clip_id == id)
-                        .unwrap_or(false);
-
-                    // Accent-coloured outline; brighter while dragging.
-                    let stroke_color = if dragging_this {
-                        egui::Color32::from_rgb(120, 220, 255)
-                    } else {
-                        egui::Color32::from_rgb(0, 170, 220)
-                    };
-                    ui.painter().rect_stroke(
-                        box_rect,
-                        2.0,
-                        egui::Stroke::new(1.5_f32, stroke_color),
-                        egui::StrokeKind::Inside,
-                    );
-
-                    // Corner squares: the bottom-right one is the
-                    // resize handle; the other three are decorative.
-                    let corner = 6.0;
-                    let handle_center = box_rect.right_bottom();
-                    for pos in [
-                        box_rect.left_top(),
-                        box_rect.right_top(),
-                        box_rect.left_bottom(),
-                    ] {
-                        let r = egui::Rect::from_center_size(pos, egui::vec2(corner, corner));
-                        ui.painter().rect_filled(r, 0.0, stroke_color);
+                    self.preview_player.poll(&ctx);
+                    if self.preview_player.pending.is_some() {
+                        ctx.request_repaint_after(std::time::Duration::from_millis(50));
                     }
-                    let handle_size = 14.0;
-                    let handle_rect = egui::Rect::from_center_size(
-                        handle_center,
-                        egui::vec2(handle_size, handle_size),
-                    );
-                    ui.painter().rect_filled(
-                        egui::Rect::from_center_size(
-                            handle_center,
-                            egui::vec2(corner, corner),
-                        ),
-                        0.0,
-                        stroke_color,
-                    );
+                }
+            }
+        }
 
-                    // Body drag: move. Hit-test should exclude the
-                    // handle so a click on the handle does not start a
-                    // move instead.
-                    let body_rect = egui::Rect::from_min_max(
-                        box_rect.min,
-                        egui::pos2(box_rect.max.x - handle_size * 0.5, box_rect.max.y),
-                    );
-                    let body_resp = ui.interact(
-                        body_rect,
-                        egui::Id::new(("text_overlay_body", id)),
-                        egui::Sense::click_and_drag(),
-                    );
-                    let handle_resp = ui.interact(
-                        handle_rect,
-                        egui::Id::new(("text_overlay_handle", id)),
-                        egui::Sense::click_and_drag(),
-                    );
+        // ---- Render frame or placeholder ----
+        // Capture the draw_rect / tex_size so the overlay below can
+        // use them after the texture borrow ends.
+        let mut overlay_ctx: Option<(egui::Rect, egui::Vec2)> = None;
+        if let Some(tex) = self.preview_player.texture.as_ref() {
+            let tex_size = tex.size_vec2();
+            let avail_w = rect.width() - 16.0;
+            let avail_h = rect.height() - 16.0;
+            let scale = (avail_w / tex_size.x).min(avail_h / tex_size.y);
+            let draw_size = tex_size * scale;
+            let draw_rect = egui::Rect::from_center_size(rect.center(), draw_size);
+            ui.painter().image(
+                tex.id(),
+                draw_rect,
+                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+            overlay_ctx = Some((draw_rect, tex_size));
+        } else {
+            let msg = if self.ffmpeg_status.ffmpeg.is_none() {
+                "FFmpeg not detected — set it in Settings → Paths"
+            } else if clip_info.is_none() {
+                if self.project.clips.is_empty() {
+                    "No clips on timeline"
+                } else {
+                    "Playhead is not over a video clip"
+                }
+            } else {
+                "Decoding…"
+            };
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "🎬 Preview",
+                egui::FontId::proportional(22.0),
+                egui::Color32::from_gray(90),
+            );
+            ui.painter().text(
+                rect.center() + egui::vec2(0.0, 26.0),
+                egui::Align2::CENTER_CENTER,
+                msg,
+                egui::FontId::proportional(12.0),
+                egui::Color32::from_gray(120),
+            );
+        }
 
-                    let over_handle = handle_resp.hovered();
-                    let over_body = body_resp.hovered();
-                    if over_handle || dragging_this
+        // ---- TextOverlay bounding box + drag ----
+        // Approximate where the drawtext sits inside the frame using
+        // the same math build_drawtext_body uses for the x/y exprs:
+        //   left = (w - text_w)/2 + mx * w
+        //   top  = h*0.08 + my*h          (above == true)
+        //   top  = h*0.82 + my*h          (above == false)
+        // text_w is a monospace-ish approximation; exact metrics
+        // would require the font file, not worth it here. Only the
+        // single selected clip is handled; multi-select drags stay
+        // timeline-only.
+        if let Some((draw_rect, tex_size)) = overlay_ctx {
+            let active_id = self.selected_clips.first().copied();
+            let info = active_id.and_then(|id| {
+                self.project
+                    .clips
+                    .iter()
+                    .find(|c| c.id == id)
+                    .and_then(|c| match &c.clip_type {
+                        ClipType::TextOverlay {
+                            content,
+                            font_size,
+                            above,
+                            motion,
+                            ..
+                        } => Some((
+                            id,
+                            content.chars().count() as f32,
+                            *font_size,
+                            *above,
+                            motion.x,
+                            motion.y,
+                            motion.scale,
+                        )),
+                        _ => None,
+                    })
+            });
+
+            if let Some((id, chars, font_size, above, mx, my, m_scale)) = info {
+                let rw = tex_size.x.max(1.0);
+                let rh = tex_size.y.max(1.0);
+                let sx = draw_rect.width() / rw;
+                let sy = draw_rect.height() / rh;
+                let fs = font_size * m_scale.max(0.01);
+
+                // Approximate text extents in frame pixels.
+                let text_w = (chars * fs * 0.55).max(8.0);
+                let text_h = (fs * 1.2).max(8.0);
+
+                let frame_left = rw * 0.5 + mx * rw - text_w * 0.5;
+                let frame_top = if above {
+                    rh * 0.08 + my * rh
+                } else {
+                    rh * 0.82 + my * rh
+                };
+
+                let s_left = draw_rect.left() + frame_left * sx;
+                let s_top = draw_rect.top() + frame_top * sy;
+                let s_w = text_w * sx;
+                let s_h = text_h * sy;
+                let box_rect =
+                    egui::Rect::from_min_size(egui::pos2(s_left, s_top), egui::vec2(s_w, s_h));
+
+                let dragging_this = self
+                    .text_overlay_drag
+                    .as_ref()
+                    .map(|d| d.clip_id == id)
+                    .unwrap_or(false);
+
+                // Accent-coloured outline; brighter while dragging.
+                let stroke_color = if dragging_this {
+                    egui::Color32::from_rgb(120, 220, 255)
+                } else {
+                    egui::Color32::from_rgb(0, 170, 220)
+                };
+                ui.painter().rect_stroke(
+                    box_rect,
+                    2.0,
+                    egui::Stroke::new(1.5_f32, stroke_color),
+                    egui::StrokeKind::Inside,
+                );
+
+                // Corner squares: the bottom-right one is the
+                // resize handle; the other three are decorative.
+                let corner = 6.0;
+                let handle_center = box_rect.right_bottom();
+                for pos in [
+                    box_rect.left_top(),
+                    box_rect.right_top(),
+                    box_rect.left_bottom(),
+                ] {
+                    let r = egui::Rect::from_center_size(pos, egui::vec2(corner, corner));
+                    ui.painter().rect_filled(r, 0.0, stroke_color);
+                }
+                let handle_size = 14.0;
+                let handle_rect = egui::Rect::from_center_size(
+                    handle_center,
+                    egui::vec2(handle_size, handle_size),
+                );
+                ui.painter().rect_filled(
+                    egui::Rect::from_center_size(handle_center, egui::vec2(corner, corner)),
+                    0.0,
+                    stroke_color,
+                );
+
+                // Body drag: move. Hit-test should exclude the
+                // handle so a click on the handle does not start a
+                // move instead.
+                let body_rect = egui::Rect::from_min_max(
+                    box_rect.min,
+                    egui::pos2(box_rect.max.x - handle_size * 0.5, box_rect.max.y),
+                );
+                let body_resp = ui.interact(
+                    body_rect,
+                    egui::Id::new(("text_overlay_body", id)),
+                    egui::Sense::click_and_drag(),
+                );
+                let handle_resp = ui.interact(
+                    handle_rect,
+                    egui::Id::new(("text_overlay_handle", id)),
+                    egui::Sense::click_and_drag(),
+                );
+
+                let over_handle = handle_resp.hovered();
+                let over_body = body_resp.hovered();
+                if over_handle
+                    || dragging_this
                         && self
                             .text_overlay_drag
                             .as_ref()
                             .map(|d| d.mode == TextOverlayDragMode::Scale)
                             .unwrap_or(false)
-                    {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
-                    } else if over_body || dragging_this {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-                    }
+                {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                } else if over_body || dragging_this {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                }
 
-                    if handle_resp.drag_started() {
-                        let ptr = handle_resp
-                            .interact_pointer_pos()
-                            .unwrap_or(handle_center);
-                        let anchor_screen = box_rect.center();
-                        let origin_dist =
-                            (ptr - anchor_screen).length().max(1.0);
-                        self.text_overlay_drag = Some(TextOverlayDrag {
-                            clip_id: id,
-                            mode: TextOverlayDragMode::Scale,
-                            start_ptr: ptr,
-                            origin_x: mx,
-                            origin_y: my,
-                            origin_scale: m_scale,
-                            anchor_screen,
-                            origin_dist,
-                            rw,
-                            rh,
-                            sx,
-                            sy,
-                        });
-                    } else if body_resp.drag_started() {
-                        self.text_overlay_drag = Some(TextOverlayDrag {
-                            clip_id: id,
-                            mode: TextOverlayDragMode::Move,
-                            start_ptr: body_resp
-                                .interact_pointer_pos()
-                                .unwrap_or(egui::Pos2::ZERO),
-                            origin_x: mx,
-                            origin_y: my,
-                            origin_scale: m_scale,
-                            anchor_screen: box_rect.center(),
-                            origin_dist: 1.0,
-                            rw,
-                            rh,
-                            sx,
-                            sy,
-                        });
-                    }
+                if handle_resp.drag_started() {
+                    let ptr = handle_resp.interact_pointer_pos().unwrap_or(handle_center);
+                    let anchor_screen = box_rect.center();
+                    let origin_dist = (ptr - anchor_screen).length().max(1.0);
+                    self.text_overlay_drag = Some(TextOverlayDrag {
+                        clip_id: id,
+                        mode: TextOverlayDragMode::Scale,
+                        start_ptr: ptr,
+                        origin_x: mx,
+                        origin_y: my,
+                        origin_scale: m_scale,
+                        anchor_screen,
+                        origin_dist,
+                        rw,
+                        rh,
+                        sx,
+                        sy,
+                    });
+                } else if body_resp.drag_started() {
+                    self.text_overlay_drag = Some(TextOverlayDrag {
+                        clip_id: id,
+                        mode: TextOverlayDragMode::Move,
+                        start_ptr: body_resp.interact_pointer_pos().unwrap_or(egui::Pos2::ZERO),
+                        origin_x: mx,
+                        origin_y: my,
+                        origin_scale: m_scale,
+                        anchor_screen: box_rect.center(),
+                        origin_dist: 1.0,
+                        rw,
+                        rh,
+                        sx,
+                        sy,
+                    });
+                }
 
-                    if let Some(drag) = self.text_overlay_drag.as_ref() {
-                        if drag.clip_id == id {
-                            if let Some(ptr) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                                match drag.mode {
-                                    TextOverlayDragMode::Move => {
-                                        let dx_screen = ptr.x - drag.start_ptr.x;
-                                        let dy_screen = ptr.y - drag.start_ptr.y;
-                                        let dx_frame = dx_screen / drag.sx;
-                                        let dy_frame = dy_screen / drag.sy;
-                                        let new_mx = (drag.origin_x + dx_frame / drag.rw)
-                                            .clamp(-1.0, 1.0);
-                                        let new_my = (drag.origin_y + dy_frame / drag.rh)
-                                            .clamp(-1.0, 1.0);
-                                        if let Some(c) =
-                                            self.project.clips.iter_mut().find(|c| c.id == id)
-                                        {
-                                            if let ClipType::TextOverlay { motion, .. } =
-                                                &mut c.clip_type
-                                            {
-                                                motion.x = new_mx;
-                                                motion.y = new_my;
-                                            }
-                                        }
-                                    }
-                                    TextOverlayDragMode::Scale => {
-                                        let dist = (ptr - drag.anchor_screen).length();
-                                        let ratio = dist / drag.origin_dist;
-                                        let new_scale =
-                                            (drag.origin_scale * ratio).clamp(0.3, 3.0);
-                                        if let Some(c) =
-                                            self.project.clips.iter_mut().find(|c| c.id == id)
-                                        {
-                                            if let ClipType::TextOverlay { motion, .. } =
-                                                &mut c.clip_type
-                                            {
-                                                motion.scale = new_scale;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            let stopped = match drag.mode {
-                                TextOverlayDragMode::Move => body_resp.drag_stopped(),
-                                TextOverlayDragMode::Scale => handle_resp.drag_stopped(),
-                            };
-                            if stopped {
-                                let drag = self.text_overlay_drag.take().unwrap();
-                                let final_motion = self
-                                    .project
-                                    .clips
-                                    .iter()
-                                    .find(|c| c.id == id)
-                                    .and_then(|c| match &c.clip_type {
-                                        ClipType::TextOverlay { motion, .. } => Some(*motion),
-                                        _ => None,
-                                    });
-                                if let Some(final_motion) = final_motion {
-                                    // Restore origin in-place so the
-                                    // command's `before` snapshot is the
-                                    // pre-drag state.
+                if let Some(drag) = self.text_overlay_drag.as_ref() {
+                    if drag.clip_id == id {
+                        if let Some(ptr) = ui.ctx().input(|i| i.pointer.interact_pos()) {
+                            match drag.mode {
+                                TextOverlayDragMode::Move => {
+                                    let dx_screen = ptr.x - drag.start_ptr.x;
+                                    let dy_screen = ptr.y - drag.start_ptr.y;
+                                    let dx_frame = dx_screen / drag.sx;
+                                    let dy_frame = dy_screen / drag.sy;
+                                    let new_mx =
+                                        (drag.origin_x + dx_frame / drag.rw).clamp(-1.0, 1.0);
+                                    let new_my =
+                                        (drag.origin_y + dy_frame / drag.rh).clamp(-1.0, 1.0);
                                     if let Some(c) =
                                         self.project.clips.iter_mut().find(|c| c.id == id)
                                     {
                                         if let ClipType::TextOverlay { motion, .. } =
                                             &mut c.clip_type
                                         {
-                                            motion.x = drag.origin_x;
-                                            motion.y = drag.origin_y;
-                                            motion.scale = drag.origin_scale;
+                                            motion.x = new_mx;
+                                            motion.y = new_my;
                                         }
                                     }
-                                    let cmd =
-                                        caprust_core::commands::set_clip::SetClipCommand::new(id)
-                                            .text_motion(final_motion);
-                                    let _ = self
-                                        .undo_stack
-                                        .execute(Box::new(cmd), &mut self.project);
                                 }
+                                TextOverlayDragMode::Scale => {
+                                    let dist = (ptr - drag.anchor_screen).length();
+                                    let ratio = dist / drag.origin_dist;
+                                    let new_scale = (drag.origin_scale * ratio).clamp(0.3, 3.0);
+                                    if let Some(c) =
+                                        self.project.clips.iter_mut().find(|c| c.id == id)
+                                    {
+                                        if let ClipType::TextOverlay { motion, .. } =
+                                            &mut c.clip_type
+                                        {
+                                            motion.scale = new_scale;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let stopped = match drag.mode {
+                            TextOverlayDragMode::Move => body_resp.drag_stopped(),
+                            TextOverlayDragMode::Scale => handle_resp.drag_stopped(),
+                        };
+                        if stopped {
+                            let drag = self.text_overlay_drag.take().unwrap();
+                            let final_motion =
+                                self.project.clips.iter().find(|c| c.id == id).and_then(
+                                    |c| match &c.clip_type {
+                                        ClipType::TextOverlay { motion, .. } => Some(*motion),
+                                        _ => None,
+                                    },
+                                );
+                            if let Some(final_motion) = final_motion {
+                                // Restore origin in-place so the
+                                // command's `before` snapshot is the
+                                // pre-drag state.
+                                if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id)
+                                {
+                                    if let ClipType::TextOverlay { motion, .. } = &mut c.clip_type {
+                                        motion.x = drag.origin_x;
+                                        motion.y = drag.origin_y;
+                                        motion.scale = drag.origin_scale;
+                                    }
+                                }
+                                let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                    .text_motion(final_motion);
+                                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                             }
                         }
                     }
                 }
             }
+        }
 
-            ui.add_space(6.0);
+        ui.add_space(6.0);
 
-            // ---- Transport bar ----
-            let ev = crate::panels::preview_window::show_transport(
-                ui,
-                &mut self.preview,
-                self.playhead_ms,
-                total_ms,
-                &mut self.project.aspect_ratio,
-                self.settings.muted,
-                self.settings.master_volume,
-            );
-            self.handle_preview_events(ev, total_ms);
+        // ---- Transport bar ----
+        let ev = crate::panels::preview_window::show_transport(
+            ui,
+            &mut self.preview,
+            self.playhead_ms,
+            total_ms,
+            &mut self.project.aspect_ratio,
+            self.settings.muted,
+            self.settings.master_volume,
+        );
+        self.handle_preview_events(ev, total_ms);
 
-            // ---- End-of-timeline ----
-            if self.preview.playing && total_ms > 0 && self.playhead_ms >= total_ms {
-                if self.preview.loop_playback {
-                    self.playhead_ms = 0;
-                    // Force renderer restart from t=0.
-                    if let Some(mut r) = self.preview_renderer.take() {
-                        r.kill();
-                    }
-                    self.explicit_seek_ms = Some(0);
-                    self.playback_started_at = Some(std::time::Instant::now());
-                    self.playback_started_ms = 0;
-                } else {
-                    self.playhead_ms = total_ms;
-                    self.preview.playing = false;
-                    self.preview_player.stop_stream();
-                    if let Some(mut r) = self.preview_renderer.take() {
-                        r.kill();
-                    }
+        // ---- End-of-timeline ----
+        if self.preview.playing && total_ms > 0 && self.playhead_ms >= total_ms {
+            if self.preview.loop_playback {
+                self.playhead_ms = 0;
+                // Force renderer restart from t=0.
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
+                }
+                self.explicit_seek_ms = Some(0);
+                self.playback_started_at = Some(std::time::Instant::now());
+                self.playback_started_ms = 0;
+            } else {
+                self.playhead_ms = total_ms;
+                self.preview.playing = false;
+                self.preview_player.stop_stream();
+                if let Some(mut r) = self.preview_renderer.take() {
+                    r.kill();
                 }
             }
-        });
+        }
     }
 
     fn show_export_window(&mut self, ctx: &egui::Context) {

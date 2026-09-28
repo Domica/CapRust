@@ -96,11 +96,17 @@ impl<'a> TabViewer for AppTabViewer<'a> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        // Placeholder during the migration. Each arm will be replaced
-        // by a call into the existing panel render function.
-        let label = format!("[{} — migration in progress]", tr(tab.title_key()));
-        ui.centered_and_justified(|ui| {
-            ui.label(egui::RichText::new(label).italics().weak());
-        });
+        match tab {
+            Tab::Preview => {
+                self.app.render_preview_panel(ui);
+            }
+            // Session 3 will migrate the remaining tabs one at a time.
+            _ => {
+                let label = format!("[{} — migration in progress]", tr(tab.title_key()));
+                ui.centered_and_justified(|ui| {
+                    ui.label(egui::RichText::new(label).italics().weak());
+                });
+            }
+        }
     }
 }
