@@ -420,7 +420,13 @@ impl CapRustApp {
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
-            dock_state: crate::dock::default_dock_state(),
+            dock_state: settings
+                .dock_layout
+                .as_ref()
+                .and_then(|json| {
+                    serde_json::from_str::<egui_dock::DockState<crate::dock::Tab>>(json).ok()
+                })
+                .unwrap_or_else(crate::dock::default_dock_state),
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
@@ -893,6 +899,21 @@ impl CapRustApp {
                                 self.media_bin.preview = sz;
                                 ui.close_menu();
                             }
+                        }
+                    });
+                    ui.menu_button(tr("menu-view-layout"), |ui| {
+                        for p in crate::dock::LayoutPreset::all() {
+                            if ui.button(tr(p.label_key())).clicked() {
+                                self.dock_state = crate::dock::preset_dock_state(p);
+                                tracing::info!("dock layout preset applied: {:?}", p);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button(tr("menu-view-layout-reset")).clicked() {
+                            self.dock_state = crate::dock::default_dock_state();
+                            tracing::info!("dock layout reset to default");
+                            ui.close_menu();
                         }
                     });
                 });
@@ -6303,6 +6324,12 @@ impl eframe::App for CapRustApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // Snapshot the current dock tree into settings before
+        // serializing, so a layout change made in this session is
+        // persisted with the next save() tick.
+        if let Ok(json) = serde_json::to_string(&self.dock_state) {
+            self.settings.dock_layout = Some(json);
+        }
         if let Ok(json) = serde_json::to_string(&self.theme) {
             storage.set_string("theme", json);
         }

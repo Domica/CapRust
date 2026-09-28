@@ -479,3 +479,10 @@ ffmpeg-prompt-retry = Retry
 
 dock-tab-preview = Preview
 dock-tab-timeline = Timeline
+
+menu-view-layout = Layout
+menu-view-layout-classic = Classic
+menu-view-layout-wide-timeline = Wide timeline
+menu-view-layout-timeline-focus = Timeline focus
+menu-view-layout-preview-focus = Preview focus
+menu-view-layout-reset = Reset to default

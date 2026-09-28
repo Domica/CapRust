@@ -81,6 +81,86 @@ pub fn default_dock_state() -> DockState<Tab> {
     state
 }
 
+/// Alternative layouts available from View → Layout. The classic
+/// one is `default_dock_state`; the others place Timeline at the
+/// root level so it always spans the full window width and cannot
+/// be dragged into a mid-column by accident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutPreset {
+    Classic,
+    WideTimeline,
+    TimelineFocus,
+    PreviewFocus,
+}
+
+impl LayoutPreset {
+    pub fn all() -> [Self; 4] {
+        [
+            Self::Classic,
+            Self::WideTimeline,
+            Self::TimelineFocus,
+            Self::PreviewFocus,
+        ]
+    }
+    pub fn label_key(&self) -> &'static str {
+        match self {
+            Self::Classic => "menu-view-layout-classic",
+            Self::WideTimeline => "menu-view-layout-wide-timeline",
+            Self::TimelineFocus => "menu-view-layout-timeline-focus",
+            Self::PreviewFocus => "menu-view-layout-preview-focus",
+        }
+    }
+}
+
+/// Build one of the alternative editor layouts.
+///
+/// All non-classic presets share this shape:
+///
+///   ┌─────────────────────────┬────────┐
+///   │  Assets | Preview       │ Props  │
+///   ├─────────────────────────┴────────┤
+///   │  Timeline (full width)           │
+///   └──────────────────────────────────┘
+///
+/// so Timeline is a root-level split and always spans the window.
+pub fn preset_dock_state(preset: LayoutPreset) -> DockState<Tab> {
+    if matches!(preset, LayoutPreset::Classic) {
+        return default_dock_state();
+    }
+
+    let timeline_fraction = match preset {
+        LayoutPreset::WideTimeline => 0.35,
+        LayoutPreset::TimelineFocus => 0.50,
+        LayoutPreset::PreviewFocus => 0.20,
+        LayoutPreset::Classic => unreachable!(),
+    };
+
+    // Root: [top-row] over [Timeline]
+    let mut state = DockState::new(vec![Tab::Preview]);
+    let surface = state.main_surface_mut();
+    let [top, _timeline] =
+        surface.split_below(NodeIndex::root(), timeline_fraction, vec![Tab::Timeline]);
+
+    // top-row: [assets | preview] | [props]
+    let [center, _props] = surface.split_right(top, 0.78, vec![Tab::Properties]);
+
+    // center: assets | preview
+    let [_assets, _preview] = surface.split_left(
+        center,
+        0.24,
+        vec![
+            Tab::AssetMedia,
+            Tab::AssetTransitions,
+            Tab::AssetEffects,
+            Tab::AssetFilters,
+            Tab::AssetText,
+            Tab::AssetTemplates,
+        ],
+    );
+
+    state
+}
+
 /// Bridge between egui_dock and `CapRustApp`. Session 3 will fill in
 /// the real per-tab `ui()` calls; for now every tab renders a
 /// placeholder so the layout itself can be tested.

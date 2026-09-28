@@ -479,3 +479,10 @@ ffmpeg-prompt-retry = Pokušaj ponovno
 
 dock-tab-preview = Pregled
 dock-tab-timeline = Vremenska traka
+
+menu-view-layout = Raspored
+menu-view-layout-classic = Klasično
+menu-view-layout-wide-timeline = Široka vremenska traka
+menu-view-layout-timeline-focus = Fokus na traku
+menu-view-layout-preview-focus = Fokus na pregled
+menu-view-layout-reset = Vrati na zadano
