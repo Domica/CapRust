@@ -132,6 +132,9 @@ pub struct CapRustApp {
     /// True after the auto-open check has run once this session, so
     /// the modal is only offered at most once per launch.
     pub ffmpeg_prompt_checked: bool,
+    /// Dock tree that owns every editor panel. Replaces the fixed
+    /// SidePanel / CentralPanel layout. See `crate::dock`.
+    pub dock_state: egui_dock::DockState<crate::dock::Tab>,
     pub preview: PreviewState,
     pub selected_clips: Vec<uuid::Uuid>,
     pub clip_drag: Option<ClipDrag>,
@@ -417,6 +420,7 @@ impl CapRustApp {
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
+            dock_state: crate::dock::default_dock_state(),
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
@@ -4314,7 +4318,34 @@ impl CapRustApp {
                 }
             });
     }
+    /// New dock-based layout. Fallback to the classic layout via
+    /// `show_editor_classic` while the migration is in progress; flip
+    /// `USE_DOCK_LAYOUT` to compare them.
     fn show_editor(&mut self, ctx: &egui::Context) {
+        const USE_DOCK_LAYOUT: bool = true;
+        if USE_DOCK_LAYOUT {
+            self.show_editor_dock(ctx);
+        } else {
+            self.show_editor_classic(ctx);
+        }
+    }
+
+    fn show_editor_dock(&mut self, ctx: &egui::Context) {
+        self.show_menu_bar(ctx);
+        self.show_toolbar(ctx);
+
+        // Move the dock state out so the viewer can borrow `self`
+        // mutably without aliasing `self.dock_state`.
+        let mut ds = std::mem::replace(&mut self.dock_state, egui_dock::DockState::new(Vec::new()));
+        {
+            let mut viewer = crate::dock::AppTabViewer { app: self };
+            egui_dock::DockArea::new(&mut ds).show(ctx, &mut viewer);
+        }
+        self.dock_state = ds;
+    }
+
+    #[allow(dead_code)]
+    fn show_editor_classic(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
 

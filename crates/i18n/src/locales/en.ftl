@@ -476,3 +476,6 @@ ffmpeg-prompt-close = Close
 ffmpeg-prompt-failed = Download failed
 ffmpeg-prompt-failed-hint = Check the log for details. You can retry, or set an existing ffmpeg path in Settings → Paths.
 ffmpeg-prompt-retry = Retry
+
+dock-tab-preview = Preview
+dock-tab-timeline = Timeline

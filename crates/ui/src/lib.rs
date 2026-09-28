@@ -1,4 +1,5 @@
 pub mod app;
+pub mod dock;
 pub mod i18n_helper;
 pub mod media_jobs;
 pub mod panels;

@@ -476,3 +476,6 @@ ffmpeg-prompt-close = Zatvori
 ffmpeg-prompt-failed = Preuzimanje nije uspjelo
 ffmpeg-prompt-failed-hint = Provjeri log za detalje. Možeš pokušati ponovno ili postaviti postojeći ffmpeg u Postavke → Putanje.
 ffmpeg-prompt-retry = Pokušaj ponovno
+
+dock-tab-preview = Pregled
+dock-tab-timeline = Vremenska traka
