@@ -4975,6 +4975,7 @@ impl CapRustApp {
                         "veryfast",
                         &models_dir,
                         start_from,
+                        caprust_core::project::VideoEncoder::H264Cpu,
                     ) {
                         Ok(plan) => {
                             self.report_skipped(plan.skipped.missing_source);
@@ -5222,6 +5223,7 @@ impl CapRustApp {
                         "veryfast",
                         &models_dir,
                         playhead,
+                        caprust_core::project::VideoEncoder::H264Cpu,
                     ) {
                         Ok(plan) => {
                             self.report_skipped(plan.skipped.missing_source);
@@ -6121,6 +6123,7 @@ impl CapRustApp {
             "veryfast",
             &models_dir,
             0,
+            caprust_core::project::VideoEncoder::H264Cpu,
         ) {
             Ok(p) => {
                 self.report_skipped(p.skipped.missing_source);
@@ -6244,6 +6247,7 @@ impl CapRustApp {
             "veryfast",
             &models_dir,
             0,
+            caprust_core::project::VideoEncoder::H264Cpu,
         ) {
             Ok(p) => p,
             Err(e) => {

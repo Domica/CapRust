@@ -244,6 +244,9 @@ pub struct RenderPlan {
     /// valid for the remaining clips.
     pub skipped: PlanSkipped,
     /// Timeline position (ms) that this plan's output starts from.
+    /// Video encoder to hand ffmpeg at export time. Preview and the
+    /// audio PCM cache ignore it (they use raw output / audio only).
+    pub encoder: caprust_core::project::VideoEncoder,
     /// 0 for export and for the audio PCM cache render; the actual
     /// playhead for preview seek-respawns.
     pub seek_ms: u64,
@@ -973,13 +976,61 @@ impl RenderPlan {
             args.push(format!("[{a}]"));
         }
 
-        // Encoder
+        // Encoder. `crf` and `preset` are interpreted per family:
+        //   - CPU x264/x265:   -preset <name> -crf <q>
+        //   - CPU libsvtav1:   -preset <0-13> -crf <q>
+        //   - NVENC:           -preset p<n> -tune hq -rc vbr -cq <q> -b:v 0
+        //   - AMF:             -quality balanced -rc cqp -qp_i <q> -qp_p <q+2>
+        // HEVC and AV1 get an mp4 tag so players recognise the stream.
+        use caprust_core::project::VideoEncoder as Enc;
         args.push("-c:v".into());
-        args.push("libx264".into());
-        args.push("-preset".into());
-        args.push(self.preset.clone());
-        args.push("-crf".into());
-        args.push(self.crf.to_string());
+        args.push(self.encoder.ffmpeg_id().into());
+        match self.encoder {
+            Enc::H264Cpu | Enc::H265Cpu => {
+                args.push("-preset".into());
+                args.push(self.preset.clone());
+                args.push("-crf".into());
+                args.push(self.crf.to_string());
+            }
+            Enc::Av1Cpu => {
+                // libsvtav1 wants an integer preset; 8 is the default
+                // (roughly medium). The string mapping does not apply.
+                args.push("-preset".into());
+                args.push("8".into());
+                args.push("-crf".into());
+                args.push(self.crf.to_string());
+            }
+            Enc::H264Nvenc | Enc::H265Nvenc | Enc::Av1Nvenc => {
+                args.push("-preset".into());
+                args.push(nvenc_preset(&self.preset).into());
+                args.push("-tune".into());
+                args.push("hq".into());
+                args.push("-rc".into());
+                args.push("vbr".into());
+                args.push("-cq".into());
+                args.push(self.crf.to_string());
+                args.push("-b:v".into());
+                args.push("0".into());
+            }
+            Enc::H264Amf | Enc::H265Amf | Enc::Av1Amf => {
+                args.push("-quality".into());
+                args.push("balanced".into());
+                args.push("-rc".into());
+                args.push("cqp".into());
+                args.push("-qp_i".into());
+                args.push(self.crf.to_string());
+                args.push("-qp_p".into());
+                args.push((self.crf as u32 + 2).min(51).to_string());
+            }
+        }
+        if matches!(self.encoder, Enc::H265Cpu | Enc::H265Nvenc | Enc::H265Amf) {
+            args.push("-tag:v".into());
+            args.push("hvc1".into());
+        }
+        if matches!(self.encoder, Enc::Av1Cpu | Enc::Av1Nvenc | Enc::Av1Amf) {
+            args.push("-tag:v".into());
+            args.push("av01".into());
+        }
         args.push("-pix_fmt".into());
         args.push("yuv420p".into());
 
@@ -1857,6 +1908,7 @@ pub fn plan_from_project(
     preset: &str,
     models_dir: &std::path::Path,
     seek_ms: u64,
+    encoder: caprust_core::project::VideoEncoder,
 ) -> Result<RenderPlan> {
     use caprust_core::{ClipType, TrackKind};
 
@@ -2378,6 +2430,7 @@ pub fn plan_from_project(
         crf,
         preset: preset.to_string(),
         has_audio,
+        encoder,
         seek_ms,
         seek_optimized: do_input_seek,
         // `total_duration_sec` was derived from `video_clips` above,
@@ -2386,6 +2439,24 @@ pub fn plan_from_project(
         // here would zero it out. Leave as-is.
         total_duration_sec,
     })
+}
+
+/// Map a CPU x264/x265 preset name to the equivalent NVENC preset.
+/// NVENC exposes 7 levels (p1 fastest .. p7 slowest). Unknown names
+/// fall back to p5 (medium).
+fn nvenc_preset(cpu: &str) -> &'static str {
+    match cpu {
+        "ultrafast" => "p1",
+        "superfast" => "p2",
+        "veryfast" => "p3",
+        "faster" => "p4",
+        "fast" => "p4",
+        "medium" => "p5",
+        "slow" => "p6",
+        "slower" => "p7",
+        "veryslow" => "p7",
+        _ => "p5",
+    }
 }
 
 #[cfg(test)]
@@ -2538,6 +2609,8 @@ mod tests {
             has_audio: false,
 
             skipped: PlanSkipped::default(),
+
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
             crf: 23,
             preset: "veryfast".to_string(),
             seek_ms: 0,
@@ -2614,6 +2687,7 @@ mod tests {
             "veryfast",
             std::path::Path::new("."),
             0,
+            caprust_core::project::VideoEncoder::H264Cpu,
         )
         .expect("plan built");
 
@@ -2697,6 +2771,8 @@ mod tests {
             has_audio: false,
 
             skipped: PlanSkipped::default(),
+
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
             crf: 23,
             preset: "veryfast".to_string(),
             seek_ms: 0,
@@ -2859,6 +2935,98 @@ mod tests {
         assert!(atempo_chain(0.25).contains("atempo=0.5"));
     }
 
+    fn enc_cmd_for(enc: caprust_core::project::VideoEncoder) -> Vec<String> {
+        let plan = RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: PathBuf::from("a.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 2.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 2.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: None,
+                transition_out: None,
+                auto_reframe: Vec::new(),
+                bg_removal_path: None,
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 2.0,
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            crf: 23,
+            preset: "veryfast".into(),
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            encoder: enc,
+            seek_ms: 0,
+            seek_optimized: false,
+        };
+        plan.build_command(
+            std::path::Path::new("ffmpeg"),
+            std::path::Path::new("out.mp4"),
+        )
+    }
+
+    fn arg_after(args: &[String], key: &str) -> Option<String> {
+        let pos = args.iter().position(|a| a == key)?;
+        args.get(pos + 1).cloned()
+    }
+
+    #[test]
+    fn build_command_cpu_h264_uses_libx264_and_crf() {
+        use caprust_core::project::VideoEncoder as Enc;
+        let a = enc_cmd_for(Enc::H264Cpu);
+        assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("libx264"));
+        assert_eq!(arg_after(&a, "-crf").as_deref(), Some("23"));
+        assert_eq!(arg_after(&a, "-preset").as_deref(), Some("veryfast"));
+        assert!(!a.iter().any(|x| x == "-cq"), "cpu must not emit -cq");
+        assert!(!a.iter().any(|x| x == "-tag:v"), "h264 must not tag");
+    }
+
+    #[test]
+    fn build_command_nvenc_h264_uses_cq_and_no_crf() {
+        use caprust_core::project::VideoEncoder as Enc;
+        let a = enc_cmd_for(Enc::H264Nvenc);
+        assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("h264_nvenc"));
+        assert_eq!(arg_after(&a, "-cq").as_deref(), Some("23"));
+        assert_eq!(arg_after(&a, "-b:v").as_deref(), Some("0"));
+        assert_eq!(arg_after(&a, "-preset").as_deref(), Some("p3"));
+        assert_eq!(arg_after(&a, "-tune").as_deref(), Some("hq"));
+        assert!(!a.iter().any(|x| x == "-crf"), "nvenc must not emit -crf");
+    }
+
+    #[test]
+    fn build_command_amf_h264_uses_cqp() {
+        use caprust_core::project::VideoEncoder as Enc;
+        let a = enc_cmd_for(Enc::H264Amf);
+        assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("h264_amf"));
+        assert_eq!(arg_after(&a, "-rc").as_deref(), Some("cqp"));
+        assert_eq!(arg_after(&a, "-qp_i").as_deref(), Some("23"));
+        assert_eq!(arg_after(&a, "-qp_p").as_deref(), Some("25"));
+        assert!(!a.iter().any(|x| x == "-crf"), "amf must not emit -crf");
+    }
+
+    #[test]
+    fn build_command_hevc_nvenc_tags_hvc1() {
+        use caprust_core::project::VideoEncoder as Enc;
+        let a = enc_cmd_for(Enc::H265Nvenc);
+        assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("hevc_nvenc"));
+        assert_eq!(arg_after(&a, "-tag:v").as_deref(), Some("hvc1"));
+    }
+
     #[test]
     fn filtergraph_contains_scale() {
         let plan = RenderPlan {
@@ -2896,6 +3064,7 @@ mod tests {
             has_audio: false,
 
             skipped: PlanSkipped::default(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
         };
