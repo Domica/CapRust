@@ -103,12 +103,32 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             Tab::Timeline => {
                 self.app.render_timeline_panel(ui);
             }
-            // Session 3 will migrate the remaining tabs one at a time.
-            _ => {
-                let label = format!("[{} — migration in progress]", tr(tab.title_key()));
-                ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new(label).italics().weak());
-                });
+            Tab::Properties => {
+                self.app.render_properties_panel(ui);
+            }
+            Tab::AssetMedia => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Media);
+            }
+            Tab::AssetTransitions => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Transitions);
+            }
+            Tab::AssetEffects => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Effects);
+            }
+            Tab::AssetFilters => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Filters);
+            }
+            Tab::AssetText => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Text);
+            }
+            Tab::AssetTemplates => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Templates);
             }
         }
     }
