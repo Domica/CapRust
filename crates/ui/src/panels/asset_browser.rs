@@ -53,6 +53,27 @@ impl AssetTab {
             Self::Templates => "🧩",
         }
     }
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Media => "media",
+            Self::Transitions => "transitions",
+            Self::Effects => "effects",
+            Self::Filters => "filters",
+            Self::Text => "text",
+            Self::Templates => "templates",
+        }
+    }
+    pub fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "media" => Self::Media,
+            "transitions" => Self::Transitions,
+            "effects" => Self::Effects,
+            "filters" => Self::Filters,
+            "text" => Self::Text,
+            "templates" => Self::Templates,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -509,8 +530,25 @@ pub fn show(
     });
     ui.separator();
 
-    // --- Tab content ---
-    match state.active {
+    let content = render_tab_content(ui, state.active, project, state, media_state);
+    out.media = content.media;
+    out.preset_clicked = content.preset_clicked;
+
+    out
+}
+
+/// Render the content of one tab, without the tab strip. Shared
+/// between the main asset browser and any docked (floating) copy of a
+/// tab.
+pub fn render_tab_content(
+    ui: &mut Ui,
+    tab: AssetTab,
+    project: &mut ProjectState,
+    state: &mut AssetBrowserState,
+    media_state: &mut MediaBinState,
+) -> AssetBrowserOutput {
+    let mut out = AssetBrowserOutput::default();
+    match tab {
         AssetTab::Media => {
             out.media = crate::panels::media_bin::show(ui, project, media_state);
         }
@@ -549,7 +587,6 @@ pub fn show(
             });
         }
     }
-
     out
 }
 
