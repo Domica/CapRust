@@ -579,11 +579,31 @@ impl RenderPlan {
         // switching styles never moves the text off the frame.
         for (t_i, t) in self.text_clips.iter().enumerate() {
             let v_next = format!("v_txt{t_i}");
+            // Escape for ffmpeg's filtergraph parser. Single-quote
+            // escaping uses the close-reopen idiom: a literal `'`
+            // inside a `text='...'` value must be written as `'\\''`
+            // (close quote, escaped quote, reopen quote). Writing
+            // `\\'` instead makes ffmpeg see the backslash as literal
+            // and terminate the string early, which leaks subsequent
+            // filter text (enable windows, etc.) into the graph as
+            // top-level tokens and produces "No such filter: '<number>'".
+            // Filtergraph escaping. `\'` and `'\''` both fail on
+            // the BtbN/gyan ffmpeg builds: the first leaks the rest
+            // of the option list as a new filter name, the second
+            // terminates the string early. The reliable fix is a
+            // Unicode substitution: replace ASCII apostrophe with
+            // U+2019 RIGHT SINGLE QUOTATION MARK, which is not a
+            // filtergraph special char, renders typographically
+            // better, and never needs escaping. Same for ASCII
+            // double-quote -> curly quotes. Source text in the
+            // project file is untouched; substitution is render-time
+            // only.
             let escaped = t
                 .content
                 .replace('\\', "\\\\")
                 .replace(':', "\\:")
-                .replace('\'', "\\'");
+                .replace('\'', "\u{2019}")
+                .replace('"', "\u{201C}");
             // Captions path: user-editable CaptionStyle wins over the
             // preset string. TextOverlay path: classic preset layout.
             if let Some(cs) = t.caption_style.as_ref() {
@@ -2106,11 +2126,52 @@ pub fn plan_from_project(
                     motion,
                     effect,
                 } => {
+                    // Drop the overlay when it sits entirely before the
+                    // seek. Without this the arm clamps timeline_start
+                    // to 0 and the overlay appears in the first N
+                    // seconds of the seek-shifted output even though it
+                    // belongs elsewhere on the timeline.
+                    {
+                        let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
+                        let raw_start = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+                        let raw_end = raw_start + c.duration_ms as f64 / 1000.0;
+                        if do_input_seek && raw_end <= seek_sec {
+                            continue;
+                        }
+                    }
                     text_clips.push(TextClip {
                         content: content.clone(),
                         font_size: *font_size,
-                        timeline_start_sec: c.start_time_ms as f64 / 1000.0,
-                        duration_sec: c.duration_ms as f64 / 1000.0,
+                        timeline_start_sec: {
+                            // Same seek arithmetic as video/audio.
+                            // Without this the enable='between(t,...)'
+                            // windows stay on the original timeline and
+                            // every overlay fires at once or at the
+                            // wrong time when the preview is seeked.
+                            let clip_start = c.start_time_ms as f64 / 1000.0;
+                            if do_input_seek {
+                                if clip_start >= seek_sec {
+                                    clip_start - seek_sec
+                                } else {
+                                    0.0
+                                }
+                            } else {
+                                clip_start
+                            }
+                        },
+                        duration_sec: {
+                            let clip_start = c.start_time_ms as f64 / 1000.0;
+                            let clip_end = clip_start + c.duration_ms as f64 / 1000.0;
+                            if do_input_seek {
+                                if clip_start >= seek_sec {
+                                    c.duration_ms as f64 / 1000.0
+                                } else {
+                                    (clip_end - seek_sec).max(0.0)
+                                }
+                            } else {
+                                c.duration_ms as f64 / 1000.0
+                            }
+                        },
                         above: *above || track_kind == TrackKind::Overlay,
                         z_order: z,
                         style: style.clone(),
@@ -2146,10 +2207,42 @@ pub fn plan_from_project(
                     //     same centring the single-drawtext path uses,
                     //     so nothing else needs to change.
                     let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
-                    let clip_start_sec = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+                    // Raw timeline position after the xfade shift. Used
+                    // to decide drop / partial visibility, then remapped
+                    // to the seek-relative output timeline below.
+                    let clip_start_raw = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+                    let clip_end_raw = clip_start_raw + c.duration_ms as f64 / 1000.0;
+                    if do_input_seek && clip_end_raw <= seek_sec {
+                        // Caption sits entirely before the seek. Same
+                        // drop as video and audio clips: otherwise its
+                        // enable windows stay on the original timeline
+                        // and every segment fires at once against a
+                        // shortened output.
+                        continue;
+                    }
+                    // Seek-relative clip start in the output timeline.
+                    let clip_start_sec = if do_input_seek {
+                        (clip_start_raw - seek_sec).max(0.0)
+                    } else {
+                        clip_start_raw
+                    };
                     for seg in segments {
-                        let seg_start_sec = clip_start_sec + seg.start_ms as f64 / 1000.0;
-                        let seg_end_sec = clip_start_sec + seg.end_ms as f64 / 1000.0;
+                        let seg_start_raw = clip_start_raw + seg.start_ms as f64 / 1000.0;
+                        let seg_end_raw = clip_start_raw + seg.end_ms as f64 / 1000.0;
+                        if do_input_seek && seg_end_raw <= seek_sec {
+                            // Segment sits entirely before the seek.
+                            continue;
+                        }
+                        // Map from original timeline to seek-relative
+                        // output. For a straddling segment this pulls
+                        // the enable window forward to t=0 of the
+                        // shortened output.
+                        let seg_start_sec = if do_input_seek {
+                            (seg_start_raw - seek_sec).max(0.0)
+                        } else {
+                            seg_start_raw
+                        };
+                        let seg_end_sec = seg_start_sec + (seg_end_raw - seg_start_raw).max(0.0);
 
                         // Fallback to a single drawtext when either the
                         // word list is empty, or every word carries a
@@ -2192,6 +2285,9 @@ pub fn plan_from_project(
                                 }
                                 acc.push_str(word_text);
                                 let word_start_sec = clip_start_sec + w.start_ms as f64 / 1000.0;
+                                // (clip_start_sec is already seek-shifted;
+                                // word.start_ms is source-relative to the
+                                // caption clip, so no further adjustment.)
                                 // Each drawtext is on screen until the
                                 // next word starts; the last one stays
                                 // until the segment end. Clamped so a
@@ -2207,9 +2303,14 @@ pub fn plan_from_project(
                                         !(t.starts_with('[') && t.ends_with(']'))
                                     })
                                     .map(|x| x.start_ms);
-                                let word_end_sec = match next_real_start {
-                                    Some(ms) => clip_start_sec + ms as f64 / 1000.0,
-                                    None => seg_end_sec,
+                                let word_end_raw = match next_real_start {
+                                    Some(ms) => clip_start_raw + ms as f64 / 1000.0,
+                                    None => seg_end_raw,
+                                };
+                                let word_end_sec = if do_input_seek {
+                                    (word_end_raw - seek_sec).max(word_start_sec)
+                                } else {
+                                    word_end_raw
                                 };
                                 let dur = (word_end_sec - word_start_sec).max(0.05);
                                 text_clips.push(TextClip {
