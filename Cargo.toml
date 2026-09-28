@@ -15,7 +15,13 @@ license = "MIT"
 
 [workspace.dependencies]
 egui = "0.31"
-eframe = { version = "0.31", features = ["persistence"] }
+eframe = { version = "0.31", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
 egui-phosphor = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
