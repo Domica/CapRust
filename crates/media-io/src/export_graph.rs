@@ -805,20 +805,20 @@ impl RenderPlan {
                         bus = ctrl_bus,
                     ));
                 } else {
-                    // Chain amix, output last link as ctrl_bus.
-                    let mut prev = format!("a_delayed{}", ctrl_indices[0]);
-                    let last = ctrl_indices.len() - 1;
-                    for (k, &idx) in ctrl_indices.iter().enumerate().skip(1) {
-                        let out = if k == last {
-                            ctrl_bus.to_string()
-                        } else {
-                            format!("a_ctrl_tmp{k}")
-                        };
-                        fg.push_str(&format!(
-                            "[{prev}][a_delayed{idx}]amix=inputs=2:duration=longest:dropout_transition=0[{out}];",
-                        ));
-                        prev = out;
+                    // Single amix over every control input. The
+                    // previous sequential 2-input chain kept the
+                    // default normalize=1, which attenuates the first
+                    // input by 1/2^N and the last by 1/2. normalize=0
+                    // keeps every contribution at its original level.
+                    let mut ctrl_inputs = String::new();
+                    for &idx in &ctrl_indices {
+                        ctrl_inputs.push_str(&format!("[a_delayed{idx}]"));
                     }
+                    let n_ctrl = ctrl_indices.len();
+                    fg.push_str(&format!(
+                        "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[{}];",
+                        ctrl_inputs, n_ctrl, ctrl_bus,
+                    ));
                 }
 
                 // asplit the control bus once per consumer.
@@ -850,20 +850,25 @@ impl RenderPlan {
             }
 
             // ---- Final mix ----
-            let mut a_prev = String::from("a_base");
-            for (i, _c) in self.audio_clips.iter().enumerate() {
-                let a_next = format!("a_mix{i}");
-                fg.push_str(&format!(
-                    "[{a_prev}][{clip}]amix=inputs=2:duration=longest:dropout_transition=0[{a_next}];",
-                    a_prev = a_prev,
-                    clip = mixed_labels[i],
-                    a_next = a_next,
-                ));
-                a_prev = a_next;
+            // One amix with every input (base + all clips), normalize=0.
+            // The previous sequential 2-input chain with the default
+            // normalize=1 attenuated the first clip by 1/2^N and the
+            // last by 1/2. On a 17-clip project that made the opening
+            // clip effectively silent while the closing clip played at
+            // -6 dB -- audible as a slow fade-in across the whole
+            // timeline. A single amix also drops CPU: one mixer
+            // instead of N, no per-stage buffering.
+            let mut final_inputs = String::from("[a_base]");
+            for lbl in &mixed_labels {
+                final_inputs.push_str(&format!("[{lbl}]"));
             }
+            let n_final = self.audio_clips.len() + 1;
             fg.push_str(&format!(
-                "[{a_prev}]atrim=duration={dur:.6},asetpts=PTS-STARTPTS[a_final]",
-                a_prev = a_prev,
+                "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[a_mix_joined];",
+                final_inputs, n_final,
+            ));
+            fg.push_str(&format!(
+                "[a_mix_joined]atrim=duration={dur:.6},asetpts=PTS-STARTPTS[a_final]",
                 dur = self.total_duration_sec,
             ));
             Some(String::from("a_final"))
