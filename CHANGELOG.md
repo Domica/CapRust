@@ -2,6 +2,110 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.4.0-alpha.2] — 2026-09-29
+
+Second alpha of the 0.4 line. Transitions on the timeline, batch
+undo, and UX polish.
+
+### Added
+- **Transition easing.** Clips carry `transition_in_easing` and
+  `transition_out_easing` (both `EaseCurve`, default Linear). The
+  clip properties panel shows an Easing dropdown under any
+  transition that is present. The render currently emits plain
+  linear fades because the gyan.dev essentials build we test
+  against (2026-01-26) rejects `fade=curve=` with "Option not
+  found". The field is stored and preserved for the day we pin a
+  newer ffmpeg.
+- **Configurable transition duration.** New
+  `Clip.transition_duration_ms` (default 500) with a 100..3000 ms
+  slider in the clip properties panel. Applies to both in and out
+  edges of a clip.
+- **Xfade shifts followers.** Attaching an xfade between two
+  adjacent clips on the same track now moves the follower clip and
+  every clip after it on that track left by the transition
+  duration. Removing the transition shifts them back. Changing the
+  duration shifts by the delta. All in one command so Ctrl+Z
+  restores the whole batch. Applied in `SetTransitionCommand` and
+  `SetTransitionDurationCommand`.
+- **Timeline overlap shading.** Clips that carry an xfade on their
+  in-edge show an accent-tinted slice with thin diagonal hatching
+  over the overlap region. The crossfade footprint is visible at a
+  glance.
+- **Fade-out on the last clip of an xfade run.** The earlier
+  clips' ends are consumed by the next clip's xfade, but the tail
+  of the run can now fade back to black when its clip has
+  `transition_out == Some("fade")`.
+- **MacroCommand.** Runs a list of commands as a single undoable
+  step, with rollback on mid-batch failure. Used by the media bin
+  batch drop so a 4-clip drop is one Ctrl+Z.
+- **Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z** keyboard shortcuts for
+  undo/redo. Previously only reachable through the timeline
+  toolbar icons.
+- **App icon** embedded in the .exe via winres, runtime window
+  icon, README header logo.
+- **Material-style egui_dock theme.** Tab bar matches the panel
+  fill, 30px tall, active tab uses an accent wash. Close button
+  subtle, brightens on hover.
+- **Brighter toasts.** Accent border, top highlight line, and a
+  fill lift so notifications read as elevated.
+
+### Fixed
+- **Media bin multi-select and long-press drag.** Ctrl+click
+  toggles membership, plain click replaces. Holding the primary
+  button for 500 ms on a card starts a drag; a shorter click only
+  selects. The X button on a multi-selection removes every
+  selected item at once.
+- **Batch drag to timeline.** Dropping a multi-selection chains
+  the clips left-to-right at the drop position and selects the
+  result so a follow-up move or delete acts on the whole batch.
+- **Group move on the timeline.** Ctrl+click or marquee selects
+  multiple clips; dragging one of them moves the entire group by
+  the same time and track delta in a single undoable step.
+- **Captions and text overlays seek-shift correctly.** Their
+  `timeline_start_sec` now follows the playhead seek, matching
+  video and audio. Previously a seek into the middle of a long
+  project left their enable windows on the original timeline.
+- **Apostrophes in caption text no longer break the preview.**
+  ASCII apostrophe and double quote substitute to U+2019 / U+201C
+  at render time; both are safe inside a filtergraph single-quoted
+  value.
+- **Media bin X button clickable on hover.** The enclosing drag
+  source claimed the pointer, so the button vanished mid-click.
+  Rewritten to use the raw pointer position for visibility and the
+  raw primary-click edge for the action.
+- **Total render duration accounts for xfade shortening.** A
+  3-second crossfade used to leave a 3-second black tail at the
+  end of the render because the base and audio bed were sized to
+  the unshortened sum.
+- **Overlapping clip detection.** Run grouping now accepts a
+  positive overlap equal to the transition duration, not just
+  butt-joined clips.
+- **Dragging a clip that carries an xfade now removes the
+  transition** with a toast, restoring every follower to its
+  original position. The user re-adds after the move.
+
+### Changed
+- `SetTransitionCommand` rewritten: the shift is applied to the
+  follower clip and every clip after it on the same track.
+- `Clip` gained `applied_xfade_shift_ms` to track the shift the
+  transition command applied.
+- `move_many::MoveManyCommand` and `macro_command::MacroCommand`
+  new core modules.
+- `VideoEncoder` enum (H264/H265/AV1 x CPU/NVENC/AMF) added to
+  `ExportSettings` in the previous alpha; unchanged here.
+
+### Known issues
+- No installer yet; download the nightly ZIP and extract it.
+- FFmpeg is not bundled. First run offers to download a BtbN build
+  or to point at an existing install.
+- Windows only.
+- Transition easing stored but not rendered on the current ffmpeg
+  build. Needs a build with `fade=curve=` support.
+- Text overlay rotation is stored in the model but neither
+  rendered nor exposed in the UI.
+- Preview A/V sync has a residual 100-300 ms lead/lag on some
+  hardware. Tunable via `CAPRUST_AV_DELAY_MS`.
+
 ## [0.4.0-alpha.1] — 2026-09-28
 
 Fourth public alpha. Editor interaction pass: media bin multi-select,
