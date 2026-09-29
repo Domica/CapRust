@@ -5,6 +5,7 @@ members = [
     "crates/ui",
     "crates/i18n",
     "crates/app",
+    "crates/mcp",
 ]
 resolver = "2"
 
