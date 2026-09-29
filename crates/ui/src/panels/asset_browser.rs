@@ -20,10 +20,11 @@ pub enum AssetTab {
     Filters,
     Text,
     Templates,
+    Plugins,
 }
 
 impl AssetTab {
-    pub fn all() -> [Self; 6] {
+    pub fn all() -> [Self; 7] {
         [
             Self::Media,
             Self::Transitions,
@@ -31,6 +32,7 @@ impl AssetTab {
             Self::Filters,
             Self::Text,
             Self::Templates,
+            Self::Plugins,
         ]
     }
     pub fn label(&self) -> &'static str {
@@ -41,6 +43,7 @@ impl AssetTab {
             Self::Filters => "asset-tab-filters",
             Self::Text => "asset-tab-text",
             Self::Templates => "asset-tab-templates",
+            Self::Plugins => "asset-tab-plugins",
         }
     }
     pub fn icon(&self) -> &'static str {
@@ -50,6 +53,7 @@ impl AssetTab {
             Self::Effects => ph::SPARKLE,
             Self::Filters => "🎨",
             Self::Text => "T",
+            Self::Plugins => ph::PLUG,
             Self::Templates => "🧩",
         }
     }
@@ -61,6 +65,7 @@ impl AssetTab {
             Self::Filters => "filters",
             Self::Text => "text",
             Self::Templates => "templates",
+            Self::Plugins => "plugins",
         }
     }
     pub fn from_id(id: &str) -> Option<Self> {
@@ -71,6 +76,7 @@ impl AssetTab {
             "filters" => Self::Filters,
             "text" => Self::Text,
             "templates" => Self::Templates,
+            "plugins" => Self::Plugins,
             _ => return None,
         })
     }
@@ -81,6 +87,7 @@ pub struct AssetBrowserState {
     pub active: AssetTab,
     pub search: String,
     pub card_size: f32,
+    pub plugin_browser: crate::panels::plugin_browser::PluginBrowserState,
 }
 
 impl AssetBrowserState {
@@ -89,6 +96,7 @@ impl AssetBrowserState {
             active: AssetTab::Media,
             search: String::new(),
             card_size: 96.0,
+            plugin_browser: Default::default(),
         }
     }
 }
@@ -575,6 +583,9 @@ pub fn render_tab_content(
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Text));
             }
+        }
+        AssetTab::Plugins => {
+            crate::panels::plugin_browser::show(ui, &mut state.plugin_browser);
         }
         AssetTab::Templates => {
             ui.add_space(20.0);

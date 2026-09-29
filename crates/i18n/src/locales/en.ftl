@@ -535,3 +535,8 @@ media-drag-many = clips
 props-transition-easing = Easing
 props-transition-duration = Duration
 toast-xfade-removed-on-move = Transition removed because the clip moved
+
+asset-tab-plugins = Plugins
+plugin-browser-heading = CLAP Plugins
+plugin-browser-refresh = Refresh
+plugin-browser-empty = No plugins found. Drop .clap files into one of:

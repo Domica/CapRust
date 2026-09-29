@@ -535,3 +535,8 @@ media-drag-many = isjecaka
 props-transition-easing = Ublažavanje
 props-transition-duration = Trajanje
 toast-xfade-removed-on-move = Tranzicija uklonjena jer je isječak pomaknut
+
+asset-tab-plugins = Dodaci
+plugin-browser-heading = CLAP dodaci
+plugin-browser-refresh = Osvježi
+plugin-browser-empty = Nema pronađenih dodataka. Stavi .clap datoteke u jednu od:

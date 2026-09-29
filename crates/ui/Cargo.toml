@@ -8,7 +8,7 @@ license.workspace = true
 egui_dock = { version = "0.16", features = ["serde"] }
 open = { workspace = true }
 caprust-core = { path = "../core" }
-caprust-media-io = { path = "../media-io" }
+caprust-media-io = { path = "../media-io", features = ["clap"] }
 caprust-i18n = { path = "../i18n" }
 egui = { workspace = true }
 egui-phosphor = { workspace = true }

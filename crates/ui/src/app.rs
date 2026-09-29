@@ -5084,7 +5084,7 @@ impl CapRustApp {
                             tracing::info!("inserted TextOverlay clip with style '{preset_id}'");
                         }
                     }
-                    AssetTab::Media | AssetTab::Templates => {}
+                    AssetTab::Media | AssetTab::Templates | AssetTab::Plugins => {}
                 }
             } else {
                 tracing::warn!("preset '{preset_id}' clicked but no clip selected");
