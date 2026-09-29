@@ -141,6 +141,21 @@ impl ProjectState {
             // or a lock toggle does not trigger a preview respawn.
         }
 
+        // Master-bus CLAP chain (Faza I). Applied to the final mix,
+        // so any change forces a preview respawn. Instance id is
+        // excluded (fresh on every add); plugin_id + bypassed +
+        // params define the actual sound.
+        self.master_plugins.len().hash(&mut h);
+        for p in &self.master_plugins {
+            p.plugin_id.hash(&mut h);
+            p.bypassed.hash(&mut h);
+            p.params.len().hash(&mut h);
+            for (id, v) in &p.params {
+                id.hash(&mut h);
+                v.to_bits().hash(&mut h);
+            }
+        }
+
         h.finish()
     }
 
@@ -324,6 +339,67 @@ mod tests {
         }
         let h2 = p.render_hash();
         assert_ne!(h1, h2, "easing change must invalidate the render hash");
+    }
+
+    #[test]
+    fn render_hash_changes_on_master_plugin_add() {
+        use crate::plugin::PluginInstance;
+        use std::path::PathBuf;
+
+        let a = ProjectState::default();
+        let mut b = ProjectState::default();
+        b.master_plugins.push(PluginInstance::new(
+            "com.example.Reverb",
+            PathBuf::from("/reverb.clap"),
+            "Reverb",
+        ));
+        assert_ne!(a.render_hash(), b.render_hash());
+    }
+
+    #[test]
+    fn render_hash_changes_on_master_plugin_param() {
+        use crate::plugin::PluginInstance;
+        use std::path::PathBuf;
+
+        let mut a = ProjectState::default();
+        a.master_plugins.push(PluginInstance::new(
+            "com.example.Reverb",
+            PathBuf::from("/reverb.clap"),
+            "Reverb",
+        ));
+        let mut b = a.clone();
+        b.master_plugins[0].set_param(1, 0.5);
+        assert_ne!(a.render_hash(), b.render_hash());
+    }
+
+    #[test]
+    fn render_hash_ignores_master_plugin_instance_id() {
+        use crate::plugin::PluginInstance;
+        use std::path::PathBuf;
+
+        let mut a = ProjectState::default();
+        let mut b = ProjectState::default();
+        let mut pa = PluginInstance::new(
+            "com.example.Reverb",
+            PathBuf::from("/reverb.clap"),
+            "Reverb",
+        );
+        let mut pb = PluginInstance::new(
+            "com.example.Reverb",
+            PathBuf::from("/reverb.clap"),
+            "Reverb",
+        );
+        // Force same id so only id would differ if we hashed it
+        pb.id = pa.id;
+        pa.set_param(2, 0.7);
+        pb.set_param(2, 0.7);
+        a.master_plugins.push(pa);
+        b.master_plugins.push(pb);
+        assert_eq!(
+            a.render_hash(),
+            b.render_hash(),
+            "instance id must not affect render_hash"
+        );
     }
 
     #[test]
