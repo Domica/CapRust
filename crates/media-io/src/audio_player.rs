@@ -12,6 +12,9 @@
 //! `AudioPlayer` on whichever thread created it (usually the UI thread).
 //! The PCM reader is a separate thread; it exits on `stop_flag` or EOF.
 
+#[cfg(feature = "clap")]
+use crate::clap_chain::ClapChain;
+use caprust_core::plugin::PluginInstance;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -125,6 +128,41 @@ impl AudioPlayer {
     /// opened. The caller should handle that gracefully and keep the video
     /// preview running without sound.
     pub fn play_pcm_file(path: &Path, start_ms: u64) -> Result<Self> {
+        #[cfg(feature = "clap")]
+        {
+            Self::play_pcm_file_with_chain(path, start_ms, Vec::new())
+        }
+        #[cfg(not(feature = "clap"))]
+        {
+            Self::play_pcm_file_inner(path, start_ms)
+        }
+    }
+
+    /// Play a raw PCM file with a master CLAP chain applied on the
+    /// reader thread. Empty `chain` is identical to `play_pcm_file`.
+    ///
+    /// Feature-gated: only available with `--features clap`.
+    #[cfg(feature = "clap")]
+    pub fn play_pcm_file_with_chain(
+        path: &Path,
+        start_ms: u64,
+        chain: Vec<PluginInstance>,
+    ) -> Result<Self> {
+        Self::play_pcm_file_inner_with_chain(path, start_ms, Some(chain))
+    }
+
+    #[cfg(not(feature = "clap"))]
+    fn play_pcm_file_inner(path: &Path, start_ms: u64) -> Result<Self> {
+        Self::play_pcm_file_inner_with_chain(path, start_ms, None)
+    }
+
+    fn play_pcm_file_inner_with_chain(
+        path: &Path,
+        start_ms: u64,
+        #[cfg_attr(not(feature = "clap"), allow(unused_variables))] chain: Option<
+            Vec<PluginInstance>,
+        >,
+    ) -> Result<Self> {
         // Verify the file exists before we commit to spawning anything.
         // NOTE: do NOT clamp byte_offset to the file's current size. At this
         // point ffmpeg may not have written anything yet (file size 0), and
@@ -138,8 +176,14 @@ impl AudioPlayer {
         let (producer, mut consumer) = rb.split();
 
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let reader_handle =
-            spawn_pcm_reader(path.to_path_buf(), byte_offset, producer, stop_flag.clone())?;
+        let reader_handle = spawn_pcm_reader(
+            path.to_path_buf(),
+            byte_offset,
+            producer,
+            stop_flag.clone(),
+            #[cfg(feature = "clap")]
+            chain,
+        )?;
 
         let source: SourceFn = Box::new(move |out: &mut [f32]| consumer.pop_slice(out));
 
@@ -425,11 +469,24 @@ fn spawn_pcm_reader(
     byte_offset: u64,
     mut producer: HeapProd<f32>,
     stop: Arc<AtomicBool>,
+    #[cfg(feature = "clap")] chain: Option<Vec<PluginInstance>>,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name("caprust-audio-reader".into())
         .spawn(move || {
-            if let Err(e) = pcm_reader_loop(&path, byte_offset, &mut producer, &stop) {
+            #[cfg(feature = "clap")]
+            let mut chain = chain.map(|c| {
+                crate::clap_chain::ClapChain::load(c, TARGET_SAMPLE_RATE, READ_CHUNK_FRAMES)
+            });
+
+            if let Err(e) = pcm_reader_loop(
+                &path,
+                byte_offset,
+                &mut producer,
+                &stop,
+                #[cfg(feature = "clap")]
+                chain.as_mut(),
+            ) {
                 tracing::warn!("audio reader exited: {e:#}");
             } else {
                 tracing::debug!("audio reader finished");
@@ -447,6 +504,7 @@ fn pcm_reader_loop(
     byte_offset: u64,
     producer: &mut HeapProd<f32>,
     stop: &Arc<AtomicBool>,
+    #[cfg(feature = "clap")] mut chain: Option<&mut ClapChain>,
 ) -> Result<()> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     file.seek(SeekFrom::Start(byte_offset))
@@ -455,6 +513,8 @@ fn pcm_reader_loop(
     let mut bytes = vec![0u8; READ_CHUNK_FRAMES * BYTES_PER_FRAME as usize];
     let mut eof_streak: u32 = 0;
     let mut first_data = true;
+    #[cfg(feature = "clap")]
+    let mut chain_error_logged = false;
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -489,10 +549,29 @@ fn pcm_reader_loop(
         // 1.88 in CI). Allow the lint with an explicit reason rather
         // than bumping the toolchain just to silence it.
         #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
-        let samples: Vec<f32> = bytes[..n]
+        // `mut` is only needed with the `clap` feature, where the
+        // chain processes the block in place. Gate the mut keyword
+        // rather than the binding so the non-clap build stays
+        // warning-free under `-D warnings`.
+        #[cfg_attr(not(feature = "clap"), allow(unused_mut))]
+        let mut samples: Vec<f32> = bytes[..n]
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
             .collect();
+
+        #[cfg(feature = "clap")]
+        if let Some(c) = chain.as_deref_mut() {
+            let frames = samples.len() / 2;
+            if let Err(e) = c.process(&mut samples, frames) {
+                if !chain_error_logged {
+                    tracing::warn!("CLAP chain disabled: {e:#}");
+                    chain_error_logged = true;
+                }
+                // Commit 3a: leave samples untouched on error so the
+                // preview stays audible. Commit 3b will replace this
+                // path with real processing.
+            }
+        }
 
         let mut pushed = 0usize;
         while pushed < samples.len() {
