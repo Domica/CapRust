@@ -534,3 +534,4 @@ media-drag-one = 1 isjecak
 media-drag-many = isjecaka
 props-transition-easing = Ublažavanje
 props-transition-duration = Trajanje
+toast-xfade-removed-on-move = Tranzicija uklonjena jer je isječak pomaknut

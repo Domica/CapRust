@@ -224,6 +224,90 @@ impl Command for SetTransitionCommand {
     }
 }
 
+/// Change the shared transition duration on a clip. If the clip has
+/// an active xfade on its in-edge, every clip at or after it on the
+/// same track shifts by (old_duration - new_duration) so the
+/// overlap stays exact. If there is no active xfade, only the field
+/// changes.
+pub struct SetTransitionDurationCommand {
+    pub clip_id: Uuid,
+    pub new_duration_ms: u64,
+    before: Option<Clip>,
+    shifted: Vec<(Uuid, u64)>,
+}
+
+impl SetTransitionDurationCommand {
+    pub fn new(clip_id: Uuid, new_duration_ms: u64) -> Self {
+        Self {
+            clip_id,
+            new_duration_ms,
+            before: None,
+            shifted: Vec::new(),
+        }
+    }
+}
+
+impl Command for SetTransitionDurationCommand {
+    fn execute(&mut self, state: &mut ProjectState) -> Result<()> {
+        self.shifted.clear();
+
+        let Some(clip) = state.clips.iter().find(|c| c.id == self.clip_id).cloned() else {
+            return Ok(());
+        };
+        self.before = Some(clip.clone());
+
+        let track_idx = clip.track_index;
+        let current_start = clip.start_time_ms;
+        let old_shift = clip.applied_xfade_shift_ms;
+        let new_duration = self.new_duration_ms;
+
+        // New shift mirrors the duration only when an xfade is
+        // currently active. If the clip has no xfade, the field
+        // change is standalone and no clip moves.
+        let new_shift = if old_shift > 0 { new_duration } else { 0 };
+        let delta = old_shift as i64 - new_shift as i64;
+
+        if let Some(c) = state.clips.iter_mut().find(|c| c.id == self.clip_id) {
+            c.transition_duration_ms = new_duration;
+            c.applied_xfade_shift_ms = new_shift;
+        }
+
+        if delta != 0 {
+            let affected: Vec<(Uuid, u64)> = state
+                .clips
+                .iter()
+                .filter(|c| c.track_index == track_idx && c.start_time_ms >= current_start)
+                .map(|c| (c.id, c.start_time_ms))
+                .collect();
+            for (id, orig) in &affected {
+                if let Some(c) = state.clips.iter_mut().find(|c| c.id == *id) {
+                    c.start_time_ms = (*orig as i64 + delta).max(0) as u64;
+                }
+            }
+            self.shifted = affected;
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self, state: &mut ProjectState) -> Result<()> {
+        for (id, orig_ms) in self.shifted.drain(..).rev() {
+            if let Some(c) = state.clips.iter_mut().find(|c| c.id == id) {
+                c.start_time_ms = orig_ms;
+            }
+        }
+        if let Some(orig) = self.before.take() {
+            if let Some(clip) = state.clips.iter_mut().find(|c| c.id == self.clip_id) {
+                *clip = orig;
+            }
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> String {
+        format!("Set transition duration = {}ms", self.new_duration_ms)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4381,7 +4381,35 @@ impl CapRustApp {
                                     .map(|c| c.track_index)
                                     != Some(nt);
 
-                                if d.group.len() > 1 && (time_changed || track_changed) {
+                                // Xfade cleanup on move. If the user
+                                // drags a clip that carries an xfade,
+                                // its `applied_xfade_shift_ms` is no
+                                // longer accurate: the predecessor is
+                                // at its old spot but the clip just
+                                // moved. Drop the transition and its
+                                // shift (restoring every follower to
+                                // its original position) so the
+                                // timeline stays consistent.
+                                let had_xfade = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == id)
+                                    .map(|c| c.applied_xfade_shift_ms > 0)
+                                    .unwrap_or(false);
+                                if had_xfade && (time_changed || track_changed) {
+                                    let clear = caprust_core::commands::set_effect::
+                                        SetTransitionCommand::new(id, true, None);
+                                    let _ =
+                                        self.undo_stack.execute(Box::new(clear), &mut self.project);
+                                    self.toast(tr("toast-xfade-removed-on-move"));
+                                    // Move no longer applies: followers
+                                    // were just restored by clearing the
+                                    // transition, and the clip itself
+                                    // sits at its old position again.
+                                    // Skip the move below so the user
+                                    // sees a consistent state.
+                                } else if d.group.len() > 1 && (time_changed || track_changed) {
                                     // Multi-select drag: one command
                                     // moves every member by the same
                                     // delta. Undo restores the whole
@@ -4846,8 +4874,13 @@ impl CapRustApp {
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                         PendingEdit::TransitionDuration(v) => {
-                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
-                                .transition_duration_ms(v);
+                            // Uses the transition-specific command so the
+                            // follower shift is recomputed when an xfade
+                            // is active. The generic SetClipCommand would
+                            // change the duration without moving anything,
+                            // leaving the overlap wrong.
+                            let cmd = caprust_core::commands::set_effect::
+                                SetTransitionDurationCommand::new(id, v);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                         PendingEdit::SpeedRange(v) => {

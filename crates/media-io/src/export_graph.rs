@@ -576,8 +576,26 @@ impl RenderPlan {
                     current_label = link_out;
                     current_dur = current_dur + c.duration_sec - d;
                 }
+                // Fade-out on the LAST clip of the run. Earlier clips
+                // have their end consumed by the next clip's xfade, so
+                // only the tail can fade back to black. The user has
+                // to have set transition_out on that clip for this to
+                // apply.
+                let last_idx = *run.members.last().unwrap();
+                let last_clip = &self.video_clips[last_idx];
+                let tail_out = if last_clip.transition_out.as_deref() == Some("fade") {
+                    let fade_d = last_clip
+                        .transition_duration_sec
+                        .min(last_clip.duration_sec * 0.5);
+                    let st = (current_dur - fade_d).max(0.0);
+                    format!("fade=t=out:st={st:.3}:d={fade_d:.3}")
+                } else {
+                    "null".to_string()
+                };
                 fg.push_str(&format!(
-                    "[{current_label}]setpts=PTS+{start:.6}/TB[{out}];",
+                    "[{current_label}]{tail_out},setpts=PTS+{start:.6}/TB[{out}];",
+                    current_label = current_label,
+                    tail_out = tail_out,
                     start = effective_start,
                     out = out_label,
                 ));

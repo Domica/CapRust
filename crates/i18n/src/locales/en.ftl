@@ -534,3 +534,4 @@ media-drag-one = 1 clip
 media-drag-many = clips
 props-transition-easing = Easing
 props-transition-duration = Duration
+toast-xfade-removed-on-move = Transition removed because the clip moved
