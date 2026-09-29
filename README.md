@@ -8,9 +8,9 @@
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
-[![Version](https://img.shields.io/badge/version-0.4.0--alpha.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0--alpha.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
 
 ---
@@ -55,6 +55,8 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Background removal | Yes — u2netp, per-clip mask cache |
 | Speed ramps with easing | Yes — 0.1x-10x, ease + range |
 | Auto-ducking | Yes — sidechaincompress |
+| CLAP plugin hosting | Yes — master chain, undoable, local |
+| MCP server for AI clients | Yes — 15 tools, JSON-RPC over stdio |
 | Update checker | Yes — GitHub Releases, opt-out |
 | Hardware encoding | Yes (NVENC + AMF, probed at runtime) |
 | Zero-config install | Yes — portable .exe |
@@ -111,6 +113,24 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Auto-reframe** — YuNet face detection + keypoint pan, cached per clip
 - **Background removal** — u2netp segmentation, FFV1 mask cache, maskedmerge render stage
 - **DEMO marker** — zero-byte DEMO file in the models dir exercises the caption pipeline without weights
+
+### Plugins (CLAP)
+- **Scan** of the two standard CLAP folders on Windows:
+  `C:\Program Files\Common Files\CLAP` and `%APPDATA%\CapRust\plugins`
+- **Plugins tab** in the asset browser lists every discovered `.clap` binary with name, vendor, version, and descriptor id
+- **Master chain** — one click adds a plugin to the project's master bus. New **Master dock tab** shows the active chain with per-instance Bypass and Remove
+- **Real audio processing** on the PCM reader thread, between the ffmpeg decode and the cpal ring buffer. Interleaved stereo is deinterleaved, processed by each plugin in turn, reinterleaved
+- **Undoable** — every add / remove / parameter edit goes through the same `UndoStack` as the rest of the app
+- **Feature-gated** behind `--features clap` so Linux CI without the CLAP SDK still builds
+- **Tested** against u-he ZebraHZ 2.9.4
+
+### MCP server
+- **Standalone binary** — `caprust-mcp.exe`, line-delimited JSON-RPC 2.0 on stdio
+- **15 tools** — read-only inspection plus mutating operations, all going through `UndoStack`
+- **Read-only:** `get_project_summary`, `list_tracks`, `list_clips`, `list_media`
+- **Mutating:** `add_media`, `add_clip_to_timeline`, `move_clip`, `split_clip`, `set_transition`, `set_clip_volume`, `set_clip_speed`, `set_clip_fade`, `undo`, `redo`, `save_project`
+- **No tokio, no rmcp** — 200-line hand-rolled dispatch
+- **Claude Desktop** config template in `docs/mcp.md`
 
 ### Preview
 - **Real-time preview** through the same filtergraph as export
@@ -178,6 +198,8 @@ Prerequisites:
 
 FFmpeg is called as a **subprocess**, never linked. Binary stays small, no build issues.
 
+**CLAP plugins (optional).** CapRust scans two folders on Windows: `C:\Program Files\Common Files\CLAP` (system) and `%APPDATA%\CapRust\plugins` (user). Drop any `.clap` binary (and its `.data` folder, if the plugin has one) into either location and it appears in the Plugins tab on the next refresh. Feature is compiled in by default; Linux CI builds without the `clap` feature so the CLAP SDK is not required.
+
 ### Dev Container (Codespaces / VS Code)
 
     .devcontainer/
@@ -201,6 +223,7 @@ Everything pre-installed: ffmpeg (via apt), ALSA, GTK, X11 libs, cargo-nextest.
 | **media-io** | ffprobe, thumbnail extraction, mux, export filtergraph, preview renderer, whisper, piper, face detection, frame extraction, background removal |
 | **ui** | egui app, theme, panels, timeline widgets, background jobs |
 | **i18n** | Fluent bundles (en, hr) |
+| **mcp** | Standalone MCP server binary (JSON-RPC over stdio) |
 | **app** | Binary entry point |
 
 ### Design principles
@@ -242,8 +265,8 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | **T3** | Xfade shifts followers + overlap shading | Done |
 | **U1** | Batch undo (`MacroCommand`) + Ctrl+Z / Ctrl+Y | Done |
 | **U2** | Media bin multi-select + long-press batch drag | Done |
-| **I** | CLAP audio plugins | Planned |
-| **N** | MCP server — AI-driven editing | Planned |
+| **I** | CLAP audio plugins | Done |
+| **N** | MCP server — AI-driven editing | Done |
 | **K2** | Seamless double-buffer preview | Planned |
 | **Q** | Multi-cam / templates / screen record | Planned |
 
@@ -303,6 +326,14 @@ CapRust is:
 ## Version History
 
 Full details in [CHANGELOG.md](CHANGELOG.md).
+
+### 0.5.0-alpha.1 - 2026-09-29
+
+- **CLAP plugin hosting** - scan the two standard CLAP folders, browse plugins in a new Plugins tab, drop any of them onto the master bus with one click. Full audio processing runs on the reader thread.
+- **Master chain panel** - new dock tab shows the active chain with per-instance Bypass and Remove. Every change is undoable.
+- **MCP server** - standalone `caprust-mcp.exe` speaks JSON-RPC 2.0 over stdio. Claude Desktop and Cursor can open a `.caprust` file and drive the editor through 15 tools. No tokio, no rmcp.
+- **Xfade preview drift fixed** - playback of a project with a transition used to run with 2-3 s of audio-to-video offset. Root cause: audio started on Play, playhead waited for the first frame. Both now start from the same position.
+- **`SetTransitionCommand` clamp fix** - a 3000 ms slide on a short clip was shifting followers by 3000 ms while the render shortened by 2000 ms. Model and render now use the same clamp.
 
 ### 0.4.0-alpha.2 - 2026-09-29
 
@@ -368,6 +399,7 @@ Icons: Phosphor Icons
 ONNX inference: tract (pure-Rust)
 Face detection model: YuNet (opencv_zoo, Apache 2.0)
 Background removal model: u2netp (rembg, Apache 2.0)
+CLAP hosting: clack-host (MIT/Apache-2.0), tested against u-he ZebraHZ
 
 ---
 
