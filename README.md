@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
-[![Version](https://img.shields.io/badge/version-0.4.0--alpha.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0--alpha.2-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
@@ -20,6 +20,23 @@
 A modern video editor focused on **short-form social content**. Built from scratch in Rust with egui for the UI and ffmpeg for media processing.
 
 **Not another Electron wrapper.** Native binary, starts in under 500 ms.
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/start-screen.png" alt="CapRust start screen" width="720">
+  <br>
+  <em>Start screen: pick a recent project or create a new one.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/editor.png" alt="CapRust editor" width="900">
+  <br>
+  <em>Editor: media bin on the left, preview in the center, timeline below, clip properties on the right.</em>
+</p>
+
 
 ### Design goals
 
@@ -278,6 +295,16 @@ CapRust is:
 ## Version History
 
 Full details in [CHANGELOG.md](CHANGELOG.md).
+
+### 0.4.0-alpha.2 - 2026-09-29
+
+- **Transition easing model + UI** - EaseCurve stored on every clip, dropdown in the properties panel. Render still emits linear fades on the current gyan.dev ffmpeg build (no `fade=curve=` support).
+- **Configurable transition duration** - 100..3000 ms slider, applies to both edges.
+- **Xfade shifts followers** - adding an xfade between two clips pulls the second clip and everything after it left by the transition duration. Removing shifts back. One undo.
+- **Timeline overlap shading** - accent tint + diagonal hatch over the overlap region.
+- **Media bin multi-select + long-press drag** - Ctrl+click toggles, 500 ms hold drags the whole selection to the timeline as a batch.
+- **MacroCommand + Ctrl+Z / Ctrl+Y shortcuts.**
+- **App icon, Material-style dock theme, brighter toasts.**
 
 ### 0.4.0-alpha.1 - 2026-09-28
 
