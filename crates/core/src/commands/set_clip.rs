@@ -54,6 +54,8 @@ pub struct SetClipCommand {
     pub transition_in_easing: Option<crate::clip::EaseCurve>,
     /// Same as `transition_in_easing`, for the out transition.
     pub transition_out_easing: Option<crate::clip::EaseCurve>,
+    /// Some(v) = replace the shared transition duration in ms.
+    pub transition_duration_ms: Option<u64>,
     before: Option<Clip>,
 }
 
@@ -86,6 +88,7 @@ impl SetClipCommand {
             bg_removal: None,
             transition_in_easing: None,
             transition_out_easing: None,
+            transition_duration_ms: None,
             before: None,
         }
     }
@@ -163,6 +166,11 @@ impl SetClipCommand {
     /// `transition_out` is `Some("fade")`.
     pub fn transition_out_easing(mut self, v: crate::clip::EaseCurve) -> Self {
         self.transition_out_easing = Some(v);
+        self
+    }
+    /// Replace the shared transition duration (ms).
+    pub fn transition_duration_ms(mut self, v: u64) -> Self {
+        self.transition_duration_ms = Some(v);
         self
     }
     pub fn fade_in_ms(mut self, v: u64) -> Self {
@@ -304,6 +312,9 @@ impl Command for SetClipCommand {
         if let Some(v) = self.transition_out_easing {
             c.transition_out_easing = v;
         }
+        if let Some(v) = self.transition_duration_ms {
+            c.transition_duration_ms = v;
+        }
         Ok(())
     }
 
@@ -379,6 +390,49 @@ mod text_motion_cmd_tests {
         let back = p.clips.iter().find(|c| c.id == id).unwrap();
         assert_eq!(back.transition_in_easing, EaseCurve::Linear);
         assert_eq!(back.transition_out_easing, EaseCurve::Linear);
+    }
+
+    #[test]
+    fn transition_duration_set_and_undo() {
+        use crate::clip::Clip;
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let before = p
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .transition_duration_ms;
+        assert_eq!(before, 500, "default is 500 ms");
+
+        let mut stack = crate::commands::UndoStack::default();
+        stack
+            .execute(
+                Box::new(SetClipCommand::new(id).transition_duration_ms(1500)),
+                &mut p,
+            )
+            .unwrap();
+        assert_eq!(
+            p.clips
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .transition_duration_ms,
+            1500
+        );
+
+        stack.undo(&mut p).unwrap();
+        assert_eq!(
+            p.clips
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .transition_duration_ms,
+            500
+        );
     }
 
     #[test]

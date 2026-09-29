@@ -201,6 +201,13 @@ fn default_motion_scale() -> f32 {
     1.0
 }
 
+/// Default duration of a video transition (fade in/out). 500 ms is
+/// what CapCut uses out of the box and reads as a real transition
+/// rather than a pop.
+fn default_transition_duration_ms() -> u64 {
+    500
+}
+
 impl Default for TextMotion {
     fn default() -> Self {
         Self {
@@ -298,6 +305,12 @@ pub struct Clip {
     /// `transition_in_easing`.
     #[serde(default)]
     pub transition_out_easing: EaseCurve,
+    /// Duration of the video fade in/out in milliseconds. Shared by
+    /// the in and the out edge, matching how CapCut exposes a single
+    /// slider. Ignored when neither `transition_in` nor
+    /// `transition_out` is set.
+    #[serde(default = "default_transition_duration_ms")]
+    pub transition_duration_ms: u64,
     /// True when the user has explicitly separated this video's audio
     /// onto an Audio track. The video continues to render, but its
     /// embedded audio is not harvested into the mix — the detached
@@ -372,6 +385,7 @@ impl Clip {
             transition_out: None,
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
+            transition_duration_ms: default_transition_duration_ms(),
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -408,6 +422,7 @@ impl Clip {
             transition_out: None,
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
+            transition_duration_ms: default_transition_duration_ms(),
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -444,6 +459,7 @@ impl Clip {
             transition_out: None,
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
+            transition_duration_ms: default_transition_duration_ms(),
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -484,6 +500,7 @@ impl Clip {
             transition_out: None,
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
+            transition_duration_ms: default_transition_duration_ms(),
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -528,6 +545,7 @@ impl Clip {
             transition_out: None,
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
+            transition_duration_ms: default_transition_duration_ms(),
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -572,6 +590,7 @@ impl Clip {
             transition_out: None,
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
+            transition_duration_ms: default_transition_duration_ms(),
             audio_detached: false,
             name: None,
             fade_in_ms: 0,

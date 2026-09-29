@@ -100,6 +100,7 @@ impl ProjectState {
             c.transition_out.hash(&mut h);
             format!("{:?}", c.transition_in_easing).hash(&mut h);
             format!("{:?}", c.transition_out_easing).hash(&mut h);
+            c.transition_duration_ms.hash(&mut h);
             c.duck_against.hash(&mut h);
             c.speed_end.map(|s| s.to_bits()).hash(&mut h);
             format!("{:?}", c.speed_ease).hash(&mut h);
@@ -249,6 +250,39 @@ mod tests {
         }
         let h2 = p.render_hash();
         assert_ne!(h1, h2, "reframe keypoints must invalidate the render hash");
+    }
+
+    #[test]
+    fn transition_duration_defaults_to_500ms_on_old_projects() {
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "track_index": 0,
+            "start_time_ms": 0,
+            "duration_ms": 1000,
+            "clip_type": { "Video": { "path": "a.mp4", "duration_ms": 1000 } },
+            "speed": 1.0,
+            "reversed": false,
+            "flip_h": false,
+            "flip_v": false,
+            "volume_db": 0.0
+        }"#;
+        let c: Clip = serde_json::from_str(json).expect("legacy clip deserializes");
+        assert_eq!(c.transition_duration_ms, 500);
+    }
+
+    #[test]
+    fn render_hash_changes_on_transition_duration_edit() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let h1 = p.render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.transition_duration_ms = 1200;
+        }
+        let h2 = p.render_hash();
+        assert_ne!(h1, h2, "duration change must invalidate the render hash");
     }
 
     #[test]
