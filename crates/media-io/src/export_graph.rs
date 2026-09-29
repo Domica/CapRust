@@ -54,6 +54,13 @@ pub struct VideoClip {
     pub transition_in: Option<String>,
     /// Transition preset id on the out edge.
     pub transition_out: Option<String>,
+    /// Easing of the in transition. Only meaningful for the single-
+    /// clip `fade` arm, which maps it to ffmpeg's `fade=curve=`
+    /// parameter. Other transitions (xfade chains, slide/wipe/zoom)
+    /// still use ffmpeg's built-in linear ramp.
+    pub transition_in_easing: caprust_core::clip::EaseCurve,
+    /// Same as `transition_in_easing`, for the out edge.
+    pub transition_out_easing: caprust_core::clip::EaseCurve,
     /// Auto-reframe keypoints (Phase P2c). Empty = render as-is.
     pub auto_reframe: Vec<caprust_core::clip::ReframeKeypoint>,
     /// Absolute path to the per-clip alpha mask (Phase P3d). None =
@@ -485,11 +492,21 @@ impl RenderPlan {
                 let c = &self.video_clips[idx];
                 let mut tail = String::new();
                 if c.transition_in.as_deref() == Some("fade") {
-                    tail.push_str(",fade=t=in:st=0:d=0.35");
+                    match ease_curve_name(c.transition_in_easing) {
+                        Some(curve) => {
+                            tail.push_str(&format!(",fade=t=in:st=0:d=0.35:curve={curve}"))
+                        }
+                        None => tail.push_str(",fade=t=in:st=0:d=0.35"),
+                    }
                 }
                 if c.transition_out.as_deref() == Some("fade") {
                     let st = (c.duration_sec - 0.35).max(0.0);
-                    tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35"));
+                    match ease_curve_name(c.transition_out_easing) {
+                        Some(curve) => {
+                            tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35:curve={curve}"))
+                        }
+                        None => tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35")),
+                    }
                 }
                 // ffmpeg requires `[label]filter`, never `[label],filter`.
                 // Strip the leading comma that all our fragments carry and
@@ -1082,6 +1099,25 @@ pub const XFADE_DUR_SEC: f64 = 0.5;
 /// True if `id` is a transition we know how to hand to xfade.
 pub fn is_xfade_id(id: &str) -> bool {
     xfade_name(id).is_some()
+}
+
+/// Map an EaseCurve variant to the closest ffmpeg `fade=curve=`
+/// parameter value. Returns None for Linear because the default
+/// curve (tri) is already correct and the older code path omits
+/// the parameter entirely -- keeping the byte layout of the
+/// filtergraph unchanged for projects that do not use easing.
+fn ease_curve_name(e: caprust_core::clip::EaseCurve) -> Option<&'static str> {
+    use caprust_core::clip::EaseCurve;
+    match e {
+        EaseCurve::Linear => None,
+        // Accelerating: cubic ramp gives a stronger start than
+        // ffmpeg's quad.
+        EaseCurve::EaseIn => Some("cubic"),
+        // Decelerating: parabola gives a soft landing.
+        EaseCurve::EaseOut => Some("par"),
+        // Both ends smooth: sine is the closest built-in.
+        EaseCurve::EaseInOut => Some("sin"),
+    }
 }
 
 /// Map a preset id to the ffmpeg `xfade=transition=...` keyword.
@@ -2080,6 +2116,8 @@ pub fn plan_from_project(
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
+                        transition_in_easing: c.transition_in_easing,
+                        transition_out_easing: c.transition_out_easing,
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
                     });
@@ -2114,6 +2152,8 @@ pub fn plan_from_project(
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
+                        transition_in_easing: c.transition_in_easing,
+                        transition_out_easing: c.transition_out_easing,
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
                     });
@@ -2697,6 +2737,8 @@ mod tests {
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],
@@ -2859,6 +2901,8 @@ mod tests {
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
                 auto_reframe: Vec::new(),
                 bg_removal_path: mask.map(std::path::PathBuf::from),
             }],
@@ -3020,6 +3064,46 @@ mod tests {
     }
 
     #[test]
+    fn ease_curve_name_linear_is_none() {
+        assert!(ease_curve_name(caprust_core::clip::EaseCurve::Linear).is_none());
+    }
+
+    #[test]
+    fn ease_curve_name_maps_each_variant() {
+        use caprust_core::clip::EaseCurve;
+        assert_eq!(ease_curve_name(EaseCurve::EaseIn), Some("cubic"));
+        assert_eq!(ease_curve_name(EaseCurve::EaseOut), Some("par"));
+        assert_eq!(ease_curve_name(EaseCurve::EaseInOut), Some("sin"));
+    }
+
+    #[test]
+    fn single_clip_fade_linear_keeps_old_shape() {
+        // Byte-identical to the pre-easing filtergraph: no `curve=`
+        // parameter when the easing is Linear.
+        let plan = single_fade_plan(caprust_core::clip::EaseCurve::Linear);
+        let (fg, _, _) = plan.build_filtergraph().expect("fg");
+        assert!(
+            fg.contains("fade=t=in:st=0:d=0.35,") || fg.contains("fade=t=in:st=0:d=0.35["),
+            "expected legacy fade-in without curve: {fg}"
+        );
+        assert!(
+            !fg.contains("curve="),
+            "linear easing must not emit a curve parameter: {fg}"
+        );
+    }
+
+    #[test]
+    fn single_clip_fade_eased_emits_curve() {
+        use caprust_core::clip::EaseCurve;
+        let plan = single_fade_plan(EaseCurve::EaseInOut);
+        let (fg, _, _) = plan.build_filtergraph().expect("fg");
+        assert!(
+            fg.contains("fade=t=in:st=0:d=0.35:curve=sin"),
+            "expected eased fade-in: {fg}"
+        );
+    }
+
+    #[test]
     fn xfade_names_match_ffmpeg_keywords() {
         assert_eq!(xfade_name("fade"), Some("fade"));
         assert_eq!(xfade_name("slide_l"), Some("slideleft"));
@@ -3034,6 +3118,49 @@ mod tests {
         assert!(atempo_chain(4.0).contains("atempo=2.0"));
         assert!(atempo_chain(4.0).ends_with("atempo=2.000000"));
         assert!(atempo_chain(0.25).contains("atempo=0.5"));
+    }
+
+    fn single_fade_plan(easing: caprust_core::clip::EaseCurve) -> RenderPlan {
+        RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: PathBuf::from("a.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 2.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 2.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: Some("fade".into()),
+                transition_out: None,
+                transition_in_easing: easing,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                auto_reframe: Vec::new(),
+                bg_removal_path: None,
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 2.0,
+            width: 320,
+            height: 240,
+            fps_num: 30,
+            fps_den: 1,
+            crf: 23,
+            preset: "veryfast".into(),
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
+            seek_ms: 0,
+            seek_optimized: false,
+        }
     }
 
     fn enc_cmd_for(enc: caprust_core::project::VideoEncoder) -> Vec<String> {
@@ -3057,6 +3184,8 @@ mod tests {
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],
@@ -3150,6 +3279,8 @@ mod tests {
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],
