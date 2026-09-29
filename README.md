@@ -232,12 +232,20 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | **F1b** | Model downloader with SHA-256 | Done |
 | **K** | Preview auto-respawn on edit | Done |
 | **P1** | Progressive-reveal captions | Done |
-| **P2** | Auto-reframe (YuNet + crop pan) | Done |
+| **P2** | Auto-reframe (SCRFD primary, YuNet fallback) | Done |
 | **P3** | Background removal (u2netp) | Done |
+| **K3** | Seek-optimized preview (per-input `-ss`/`-t`) | Done |
+| **K4** | Pre-rendered audio PCM cache | Done |
+| **R2** | Missing-media relink on load | Done |
+| **T1** | Transition easing (model + UI) | Done |
+| **T2** | Configurable transition duration | Done |
+| **T3** | Xfade shifts followers + overlap shading | Done |
+| **U1** | Batch undo (`MacroCommand`) + Ctrl+Z / Ctrl+Y | Done |
+| **U2** | Media bin multi-select + long-press batch drag | Done |
 | **I** | CLAP audio plugins | Planned |
 | **N** | MCP server — AI-driven editing | Planned |
 | **K2** | Seamless double-buffer preview | Planned |
-| **G** | Hardware encoding — NVENC / AMF / QSV | Planned |
+| **Q** | Multi-cam / templates / screen record | Planned |
 
 See DIRECTIVES.md section 18 for the full roadmap.
 
