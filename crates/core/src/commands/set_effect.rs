@@ -97,6 +97,13 @@ impl Command for RemoveEffectCommand {
 /// rule (ADJACENCY_TOL_SEC).
 const ADJACENCY_TOL_MS: u64 = 200;
 
+/// Must match `media-io::export_graph::XFADE_DUR_SEC` exactly.
+/// Both the model and the render clamp the effective xfade duration
+/// the same way; if the model shifts by more than the render uses,
+/// the follower overlaps further than the xfade covers and the
+/// timeline gains a gap.
+const XFADE_DUR_SEC: f64 = 0.5;
+
 pub struct SetTransitionCommand {
     pub clip_id: Uuid,
     pub in_edge: bool,
@@ -143,28 +150,45 @@ impl Command for SetTransitionCommand {
                 .map(crate::clip::is_xfade_transition)
                 .unwrap_or(false);
 
-        let has_predecessor = if wants_xfade {
+        // Find the touching predecessor AND its duration. The render
+        // clamps the effective xfade duration to half of either clip;
+        // the model has to match that clamp or the follower is pulled
+        // further left than the xfade actually covers and the tail
+        // ends up as a gap (DIRECTIVES 10.4).
+        let predecessor_dur_ms: Option<u64> = if wants_xfade {
             state
                 .clips
                 .iter()
                 .filter(|c| c.track_index == track_idx && c.id != self.clip_id)
                 .filter_map(|c| {
                     let end = c.start_time_ms + c.duration_ms;
-                    if end <= current_start {
-                        Some(end)
+                    if end <= current_start && current_start.saturating_sub(end) <= ADJACENCY_TOL_MS
+                    {
+                        Some((end, c.duration_ms))
                     } else {
                         None
                     }
                 })
-                .max()
-                .map(|end| current_start.saturating_sub(end) <= ADJACENCY_TOL_MS)
-                .unwrap_or(false)
+                .max_by_key(|(end, _)| *end)
+                .map(|(_, dur)| dur)
         } else {
-            false
+            None
         };
 
-        let target_shift_ms = if wants_xfade && has_predecessor {
-            clip.transition_duration_ms
+        let target_shift_ms = if wants_xfade {
+            if let Some(prev_dur_ms) = predecessor_dur_ms {
+                let requested = clip.transition_duration_ms as f64 / 1000.0;
+                let prev_dur = prev_dur_ms as f64 / 1000.0;
+                let curr_dur = clip.duration_ms as f64 / 1000.0;
+                let d = requested
+                    .max(XFADE_DUR_SEC)
+                    .min(prev_dur * 0.5)
+                    .min(curr_dur * 0.5)
+                    .max(0.05);
+                (d * 1000.0).round() as u64
+            } else {
+                0
+            }
         } else {
             0
         };
@@ -262,9 +286,42 @@ impl Command for SetTransitionDurationCommand {
         let new_duration = self.new_duration_ms;
 
         // New shift mirrors the duration only when an xfade is
-        // currently active. If the clip has no xfade, the field
-        // change is standalone and no clip moves.
-        let new_shift = if old_shift > 0 { new_duration } else { 0 };
+        // currently active. Same clamp as the render: half of either
+        // clip, floored at XFADE_DUR_SEC. Without this, changing a
+        // 3000ms slide to 5000ms on a 4s clip would shift followers
+        // by 5000ms while the render only shortens by 2000ms.
+        let new_shift = if old_shift > 0 {
+            let predecessor_dur_ms: Option<u64> = state
+                .clips
+                .iter()
+                .filter(|c| c.track_index == track_idx && c.id != self.clip_id)
+                .filter_map(|c| {
+                    let end = c.start_time_ms + c.duration_ms;
+                    if end <= current_start && current_start.saturating_sub(end) <= ADJACENCY_TOL_MS
+                    {
+                        Some((end, c.duration_ms))
+                    } else {
+                        None
+                    }
+                })
+                .max_by_key(|(end, _)| *end)
+                .map(|(_, dur)| dur);
+            if let Some(prev_dur_ms) = predecessor_dur_ms {
+                let requested = new_duration as f64 / 1000.0;
+                let prev_dur = prev_dur_ms as f64 / 1000.0;
+                let curr_dur = clip.duration_ms as f64 / 1000.0;
+                let d = requested
+                    .max(XFADE_DUR_SEC)
+                    .min(prev_dur * 0.5)
+                    .min(curr_dur * 0.5)
+                    .max(0.05);
+                (d * 1000.0).round() as u64
+            } else {
+                0
+            }
+        } else {
+            0
+        };
         let delta = old_shift as i64 - new_shift as i64;
 
         if let Some(c) = state.clips.iter_mut().find(|c| c.id == self.clip_id) {

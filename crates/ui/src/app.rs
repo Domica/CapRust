@@ -289,6 +289,14 @@ pub struct CapRustApp {
     pub preview_player: PreviewPlayer,
     /// Audio playback for the current preview session. None = no audio.
     pub audio_player: Option<AudioPlayer>,
+    /// Deferred audio start. Preview with a transition takes 1-3 s
+    /// to deliver the first frame (xfade forces ffmpeg to decode both
+    /// clips from their beginning). If audio starts on Play click it
+    /// is already that far ahead by the time the playhead anchors,
+    /// producing drift equal to the render delay. Store the pending
+    /// (pcm path, offset, using_cache) here on Play and start it from
+    /// the re-anchor block instead.
+    pub pending_audio_start: Option<(std::path::PathBuf, u64, bool)>,
     /// True after we have re-anchored playback_started_at to the first
     /// consumed video frame of the current play session. Reset on every
     /// toggle_play(true). See comments at the anchor site.
@@ -538,6 +546,7 @@ impl CapRustApp {
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
             audio_player: None,
+            pending_audio_start: None,
             play_anchor_set: false,
             audio_baseline_ms: 0,
             asset_browser: AssetBrowserState::new(),
@@ -5218,12 +5227,19 @@ impl CapRustApp {
             if now >= LAST.load(Ordering::Relaxed) + 5 {
                 LAST.store(now, Ordering::Relaxed);
                 tracing::info!(
-                    "preview state: playhead={}ms playing={} clips={} clip_info={} ffmpeg={}",
+                    "preview state: playhead={}ms playing={} clips={} clip_info={} ffmpeg={} audio_ms={:?} delta={:?}",
                     playhead,
                     self.preview.playing,
                     self.project.clips.len(),
                     clip_info.is_some(),
                     self.ffmpeg_status.ffmpeg.is_some(),
+                    self.audio_player
+                        .as_ref()
+                        .map(|ap| ap.samples_played() * 1000 / 48_000),
+                    self.audio_player
+                        .as_ref()
+                        .map(|ap| playhead as i64 - (ap.samples_played() * 1000 / 48_000) as i64),
+
                 );
             }
         }
@@ -5358,36 +5374,17 @@ impl CapRustApp {
                                     } else {
                                         0
                                     };
-                                    self.audio_player = match pcm_path.as_ref() {
-                                        Some(path) => {
-                                            match AudioPlayer::play_pcm_file(path, pcm_offset) {
-                                                Ok(p) => {
-                                                    // Apply user's persisted
-                                                    // volume / mute settings
-                                                    // to the freshly created
-                                                    // stream before playback
-                                                    // starts.
-                                                    p.set_volume(self.settings.master_volume);
-                                                    p.set_muted(self.settings.muted);
-                                                    tracing::info!(
-                                                        "preview: audio started from {}ms (vol={:.2} muted={}) [{}]",
-                                                        start_from,
-                                                        self.settings.master_volume,
-                                                        self.settings.muted,
-                                                        if using_cache { "cache" } else { "preview-pcm" },
-                                                    );
-                                                    Some(p)
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "preview: audio unavailable: {e}"
-                                                    );
-                                                    None
-                                                }
-                                            }
-                                        }
-                                        None => None,
-                                    };
+                                    // Deferred audio start (see field docs).
+                                    // Preview with a transition takes 1-3 s
+                                    // to render the first frame; if audio
+                                    // started now it would already be that
+                                    // far ahead when the playhead anchors,
+                                    // producing the exact xfade drift we
+                                    // chased for a day. Queue it here and
+                                    // start from the re-anchor block.
+                                    self.pending_audio_start = pcm_path
+                                        .as_ref()
+                                        .map(|p| (p.clone(), pcm_offset, using_cache));
 
                                     tracing::info!(
                                         "preview: renderer started from {}ms",
@@ -5459,10 +5456,45 @@ impl CapRustApp {
                         // every sync log line shows a bogus drift.
                         if !self.play_anchor_set {
                             self.playback_started_at = Some(std::time::Instant::now());
-                            // Capture audio position now. See field docs.
+                            self.play_anchor_set = true;
+
+                            // Start deferred audio HERE, synchronised with
+                            // the playhead anchor. Audio and video now both
+                            // begin from self.playhead_ms, so the first
+                            // sync measurement reads ~0 ms instead of the
+                            // 2+ seconds the xfade chain takes to deliver
+                            // the first frame.
+                            if let Some((path, offset, using_cache)) =
+                                self.pending_audio_start.take()
+                            {
+                                match AudioPlayer::play_pcm_file(&path, offset) {
+                                    Ok(p) => {
+                                        p.set_volume(self.settings.master_volume);
+                                        p.set_muted(self.settings.muted);
+                                        tracing::info!(
+                                            "preview: audio started from {}ms (vol={:.2} muted={}) [{}]",
+                                            self.playhead_ms,
+                                            self.settings.master_volume,
+                                            self.settings.muted,
+                                            if using_cache { "cache" } else { "preview-pcm" },
+                                        );
+                                        self.audio_player = Some(p);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("preview: audio unavailable: {e}");
+                                        self.audio_player = None;
+                                    }
+                                }
+                            } else {
+                                self.audio_player = None;
+                            }
+
+                            // Capture audio position now, AFTER any
+                            // deferred player was just created. With the
+                            // deferral above this baseline should always
+                            // be near zero.
                             self.audio_baseline_ms =
                                 self.audio_player.as_ref().map_or(0, |ap| ap.playhead_ms());
-                            self.play_anchor_set = true;
                             tracing::info!(
                                 "playhead: re-anchored at {}ms (audio_baseline={}ms)",
                                 self.playhead_ms,

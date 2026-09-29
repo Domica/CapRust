@@ -1817,7 +1817,19 @@ fn compute_xfade_audio_shifts(
                 if has_xfade && overlap_sec >= -ADJACENCY_TOL_SEC {
                     let prev_dur = p.duration_ms as f64 / 1000.0;
                     let curr_dur = c.duration_ms as f64 / 1000.0;
-                    let d = XFADE_DUR_SEC
+                    // Match build_filtergraph exactly: user-configured
+                    // transition duration, floored at XFADE_DUR_SEC,
+                    // then clamped to half of either clip. Without this
+                    // the video xfade could compress the timeline for
+                    // 1.0s while audio shifted only 0.5s -> cumulative
+                    // drift after each transition (DIRECTIVES 10.4).
+                    let requested = if c.transition_duration_ms > 0 {
+                        c.transition_duration_ms as f64 / 1000.0
+                    } else {
+                        XFADE_DUR_SEC
+                    };
+                    let d = requested
+                        .max(XFADE_DUR_SEC)
                         .min(prev_dur * 0.5)
                         .min(curr_dur * 0.5)
                         .max(0.05);
@@ -2216,8 +2228,22 @@ pub fn plan_from_project(
                     // seconds of the seek-shifted output even though it
                     // belongs elsewhere on the timeline.
                     {
+                        // The model (SetTransitionCommand) already shifts
+                        // clips on the xfade's own track by the effective
+                        // transition duration. compute_xfade_audio_shifts
+                        // returns the SAME amount for those clips, so
+                        // subtracting it again would double-shift the
+                        // audio. Only apply the audio shift to clips the
+                        // model did NOT move (separated audio tracks and
+                        // follower tracks inherit through Pass 2).
                         let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
-                        let raw_start = (c.start_time_ms as f64 / 1000.0 - shift_sec).max(0.0);
+                        let effective_shift = if c.applied_xfade_shift_ms > 0 {
+                            0.0
+                        } else {
+                            shift_sec
+                        };
+                        let raw_start =
+                            (c.start_time_ms as f64 / 1000.0 - effective_shift).max(0.0);
                         let raw_end = raw_start + c.duration_ms as f64 / 1000.0;
                         if do_input_seek && raw_end <= seek_sec {
                             continue;
@@ -2290,7 +2316,14 @@ pub fn plan_from_project(
                     //     "types itself" as the speaker talks, at the
                     //     same centring the single-drawtext path uses,
                     //     so nothing else needs to change.
+                    // Same rule as the block above: only apply the
+                    // audio shift to clips the model did not move.
                     let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
+                    let shift_sec = if c.applied_xfade_shift_ms > 0 {
+                        0.0
+                    } else {
+                        shift_sec
+                    };
                     // Raw timeline position after the xfade shift. Used
                     // to decide drop / partial visibility, then remapped
                     // to the seek-relative output timeline below.
@@ -2537,7 +2570,12 @@ pub fn plan_from_project(
         }
         let idx = register_input(&mut inputs, path, input_ss_sec, visible_dur);
         let shift_sec = xfade_audio_shifts.get(&c.id).copied().unwrap_or(0.0);
-        let start_sec = (new_start - shift_sec).max(0.0);
+        let effective_shift = if c.applied_xfade_shift_ms > 0 {
+            0.0
+        } else {
+            shift_sec
+        };
+        let start_sec = (new_start - effective_shift).max(0.0);
 
         // Fades: clamp so the two never overlap. If the sum exceeds the
         // clip's duration, scale both down proportionally. Skip
