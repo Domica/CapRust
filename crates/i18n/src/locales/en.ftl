@@ -532,3 +532,4 @@ exp-codec-av1-amf = AV1 (AMF)
 
 media-drag-one = 1 clip
 media-drag-many = clips
+props-transition-easing = Easing

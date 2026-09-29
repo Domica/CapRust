@@ -4738,6 +4738,16 @@ impl CapRustApp {
                                 .speed_ease(v);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::TransitionInEasing(v) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .transition_in_easing(v);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
+                        PendingEdit::TransitionOutEasing(v) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .transition_out_easing(v);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::SpeedRange(v) => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .speed_range(v);

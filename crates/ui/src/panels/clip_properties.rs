@@ -108,6 +108,11 @@ pub enum PendingEdit {
     SpeedEase(caprust_core::clip::EaseCurve),
     /// Set the range of the speed ramp (whole clip / first N / last N).
     SpeedRange(caprust_core::clip::SpeedRampRange),
+    /// Set the in-transition easing curve. Only meaningful when
+    /// `transition_in == Some("fade")`.
+    TransitionInEasing(caprust_core::clip::EaseCurve),
+    /// Set the out-transition easing curve.
+    TransitionOutEasing(caprust_core::clip::EaseCurve),
 }
 
 pub fn show(
@@ -1455,12 +1460,69 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.end_row();
 
+            // Easing row for the in transition. Visible only when
+            // there is a transition, and only enabled for the
+            // transitions that support easing (currently `fade`).
+            if clip.transition_in.is_some() {
+                ui.label(tr("props-transition-easing"));
+                let supports_easing = clip.transition_in.as_deref() == Some("fade");
+                ui.add_enabled_ui(supports_easing, |ui| {
+                    egui::ComboBox::from_id_salt("trans_in_ease_combo")
+                        .selected_text(ease_label(clip.transition_in_easing))
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            for e in [
+                                caprust_core::clip::EaseCurve::Linear,
+                                caprust_core::clip::EaseCurve::EaseIn,
+                                caprust_core::clip::EaseCurve::EaseOut,
+                                caprust_core::clip::EaseCurve::EaseInOut,
+                            ] {
+                                let selected = clip.transition_in_easing == e;
+                                if ui.selectable_label(selected, ease_label(e)).clicked()
+                                    && !selected
+                                {
+                                    state.pending.push(PendingEdit::TransitionInEasing(e));
+                                }
+                            }
+                        });
+                });
+                ui.label("");
+                ui.end_row();
+            }
+
             ui.label("Out");
             ui.label(clip.transition_out.clone().unwrap_or_else(|| "—".into()));
             if clip.transition_out.is_some() && ui.small_button(ph::X).clicked() {
                 state.pending.push(PendingEdit::ClearTransitionOut);
             }
             ui.end_row();
+
+            if clip.transition_out.is_some() {
+                ui.label(tr("props-transition-easing"));
+                let supports_easing = clip.transition_out.as_deref() == Some("fade");
+                ui.add_enabled_ui(supports_easing, |ui| {
+                    egui::ComboBox::from_id_salt("trans_out_ease_combo")
+                        .selected_text(ease_label(clip.transition_out_easing))
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            for e in [
+                                caprust_core::clip::EaseCurve::Linear,
+                                caprust_core::clip::EaseCurve::EaseIn,
+                                caprust_core::clip::EaseCurve::EaseOut,
+                                caprust_core::clip::EaseCurve::EaseInOut,
+                            ] {
+                                let selected = clip.transition_out_easing == e;
+                                if ui.selectable_label(selected, ease_label(e)).clicked()
+                                    && !selected
+                                {
+                                    state.pending.push(PendingEdit::TransitionOutEasing(e));
+                                }
+                            }
+                        });
+                });
+                ui.label("");
+                ui.end_row();
+            }
         });
 
     ui.add_space(10.0);
