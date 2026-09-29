@@ -3,6 +3,7 @@ pub mod clip_properties;
 pub mod export_dialog;
 pub mod export_window;
 pub mod ffmpeg_prompt;
+pub mod master_chain;
 pub mod media_bin;
 pub mod narration_input;
 pub mod plugin_browser;

@@ -32,7 +32,15 @@ impl PluginBrowserState {
     }
 }
 
-pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) {
+#[derive(Default)]
+pub struct PluginBrowserOutput {
+    /// User clicked the "+" on a plugin card; app.rs will add it to
+    /// the master chain via AddMasterPluginCommand.
+    pub add_requested: Option<PluginInfo>,
+}
+
+pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) -> PluginBrowserOutput {
+    let mut out = PluginBrowserOutput::default();
     if !state.scanned {
         state.rescan();
     }
@@ -69,7 +77,7 @@ pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) {
                 );
             }
         });
-        return;
+        return out;
     }
 
     egui::ScrollArea::vertical()
@@ -77,16 +85,29 @@ pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) {
         .show(ui, |ui| {
             for p in &state.plugins {
                 ui.group(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(&p.name).strong());
-                        ui.label(
-                            RichText::new(format!("{} \u{2014} {}", p.vendor, p.version))
-                                .small()
-                                .weak(),
-                        );
-                        ui.label(RichText::new(p.id.as_str()).small().monospace().weak());
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&p.name).strong());
+                            ui.label(
+                                RichText::new(format!("{} \u{2014} {}", p.vendor, p.version))
+                                    .small()
+                                    .weak(),
+                            );
+                            ui.label(RichText::new(p.id.as_str()).small().monospace().weak());
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            if ui
+                                .button(ph::PLUS)
+                                .on_hover_text(tr("plugin-browser-add"))
+                                .clicked()
+                            {
+                                out.add_requested = Some(p.clone());
+                            }
+                        });
                     });
                 });
             }
         });
+
+    out
 }

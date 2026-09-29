@@ -509,6 +509,8 @@ pub struct AssetBrowserOutput {
     pub media: MediaBinOutput,
     /// Id of the preset the user clicked (transitions/effects/filters/text).
     pub preset_clicked: Option<(&'static str, AssetTab)>,
+    /// User asked to add a CLAP plugin to the master chain.
+    pub plugin_add_requested: Option<caprust_media_io::clap_host::PluginInfo>,
 }
 
 pub fn show(
@@ -585,7 +587,10 @@ pub fn render_tab_content(
             }
         }
         AssetTab::Plugins => {
-            crate::panels::plugin_browser::show(ui, &mut state.plugin_browser);
+            let pb_out = crate::panels::plugin_browser::show(ui, &mut state.plugin_browser);
+            if let Some(info) = pb_out.add_requested {
+                out.plugin_add_requested = Some(info);
+            }
         }
         AssetTab::Templates => {
             ui.add_space(20.0);

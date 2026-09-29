@@ -28,6 +28,7 @@ pub enum Tab {
     Preview,
     Properties,
     Timeline,
+    MasterChain,
 }
 
 impl Tab {
@@ -44,6 +45,7 @@ impl Tab {
             Self::Preview => "dock-tab-preview",
             Self::Properties => "props-heading",
             Self::Timeline => "dock-tab-timeline",
+            Self::MasterChain => "dock-tab-master",
         }
     }
 }
@@ -61,7 +63,11 @@ pub fn default_dock_state() -> DockState<Tab> {
     let surface = state.main_surface_mut();
 
     // Root: [Preview]. Split right: [Preview] | [Properties].
-    let [center, _right] = surface.split_right(NodeIndex::root(), 0.78, vec![Tab::Properties]);
+    let [center, _right] = surface.split_right(
+        NodeIndex::root(),
+        0.78,
+        vec![Tab::Properties, Tab::MasterChain],
+    );
 
     // Center: split vertically into Preview (top) + Timeline (bottom).
     let [center, _bottom] = surface.split_below(center, 0.62, vec![Tab::Timeline]);
@@ -186,6 +192,9 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             }
             Tab::Timeline => {
                 self.app.render_timeline_panel(ui);
+            }
+            Tab::MasterChain => {
+                self.app.render_master_chain_panel(ui);
             }
             Tab::Properties => {
                 self.app.render_properties_panel(ui);

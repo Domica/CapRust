@@ -540,3 +540,10 @@ asset-tab-plugins = Dodaci
 plugin-browser-heading = CLAP dodaci
 plugin-browser-refresh = Osvježi
 plugin-browser-empty = Nema pronađenih dodataka. Stavi .clap datoteke u jednu od:
+plugin-browser-add = Dodaj u master lanac
+
+dock-tab-master = Master
+master-chain-heading = Master lanac
+master-chain-empty = Nema dodataka na masteru. Otvori Dodaci tab i klikni + na dodatku.
+master-chain-remove = Ukloni
+master-chain-bypass = Zaobiđi

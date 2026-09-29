@@ -540,3 +540,10 @@ asset-tab-plugins = Plugins
 plugin-browser-heading = CLAP Plugins
 plugin-browser-refresh = Refresh
 plugin-browser-empty = No plugins found. Drop .clap files into one of:
+plugin-browser-add = Add to master chain
+
+dock-tab-master = Master
+master-chain-heading = Master chain
+master-chain-empty = No plugins on the master bus. Open the Plugins tab and click + on a plugin.
+master-chain-remove = Remove
+master-chain-bypass = Bypass

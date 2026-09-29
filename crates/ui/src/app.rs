@@ -188,6 +188,7 @@ pub struct CapRustApp {
     /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
     pub properties: PropertiesState,
+    pub master_chain: crate::panels::master_chain::MasterChainState,
     pub model_prompt: Option<caprust_core::ModelKind>,
     /// Active tab inside the model prompt window. Lets the user switch
     /// between Caption and Narration model lists without closing and
@@ -502,6 +503,7 @@ impl CapRustApp {
             last_pointer: None,
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
+            master_chain: Default::default(),
             model_prompt: None,
             model_prompt_tab: caprust_core::ModelKind::Caption,
             model_download: None,
@@ -4805,6 +4807,29 @@ impl CapRustApp {
     /// Properties panel body. Migrated out of the SidePanel::right
     /// closure so the dock viewer can render it inside a Tab::Properties
     /// zone.
+    pub(crate) fn render_master_chain_panel(&mut self, ui: &mut egui::Ui) {
+        let out = crate::panels::master_chain::show(ui, &self.project, &mut self.master_chain);
+
+        if let Some(id) = out.remove_instance {
+            let cmd =
+                caprust_core::commands::remove_master_plugin::RemoveMasterPluginCommand::new(id);
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::warn!("remove master plugin failed: {e:#}");
+            }
+        }
+        if let Some((id, bypassed)) = out.set_bypass {
+            // Reuse AddMasterPluginCommand is wrong; we need a direct
+            // field edit. For MVP the bypass toggle goes through the
+            // existing per-instance edit path.
+            if let Some(inst) = self.project.master_plugins.iter_mut().find(|p| p.id == id) {
+                inst.bypassed = bypassed;
+                // Intentionally not undoable yet (follow-up: a proper
+                // SetMasterPluginBypassCommand). Preview still respawns
+                // because render_hash includes `bypassed`.
+            }
+        }
+    }
+
     pub(crate) fn render_properties_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading(tr("props-heading"));
         ui.separator();
@@ -4981,6 +5006,21 @@ impl CapRustApp {
         &mut self,
         out: crate::panels::asset_browser::AssetBrowserOutput,
     ) {
+        // Master-chain plugin add request from the browser.
+        if let Some(info) = out.plugin_add_requested {
+            let inst = caprust_core::plugin::PluginInstance::new(
+                info.id.clone(),
+                info.path.clone(),
+                info.name.clone(),
+            );
+            let cmd = caprust_core::commands::add_master_plugin::AddMasterPluginCommand::new(inst);
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::warn!("add master plugin failed: {e:#}");
+            } else {
+                tracing::info!("added master plugin: {}", info.name);
+            }
+        }
+
         // Enqueue background probe + thumbnail jobs for new imports.
         for id in out.media.newly_imported {
             if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
