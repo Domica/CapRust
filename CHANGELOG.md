@@ -2,6 +2,79 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.5.0-alpha.1] — 2026-09-29
+
+First alpha of the 0.5 line. CLAP plugin hosting, a standalone MCP
+server, and the xfade preview drift fix that had been outstanding
+since 0.4.
+
+### Added
+- **CLAP plugin hosting (Faza I).** Non-recursive scan of the two
+  standard CLAP directories (`C:\Program Files\Common Files\CLAP`
+  and `%APPDATA%\CapRust\plugins`), feature-gated behind `clap`
+  so Linux CI without the CLAP SDK still builds. Plugin binaries
+  are untrusted code; every load is wrapped in `catch_unwind`.
+- **Master plugin chain.** `ProjectState.master_plugins:
+  Vec<PluginInstance>`. A new Plugins tab in the asset browser
+  lists discovered plugins; a `+` on any card adds it to the
+  chain. A new Master dock tab shows the active chain with Bypass
+  and Remove per instance. All mutations go through the undo
+  stack (`AddMasterPluginCommand`, `RemoveMasterPluginCommand`,
+  `SetPluginParamCommand`). `render_hash` includes the chain, so
+  any change respawns the preview.
+- **CLAP audio processing.** The master chain runs on the PCM
+  reader thread between the ffmpeg decode and the cpal ring
+  buffer. Interleaved stereo is deinterleaved to planar, processed
+  by each plugin in turn, then reinterleaved. Verified against
+  u-he ZebraHZ 2.9.4 on Windows: the plugin loads, activates,
+  and processes a test sine without NaN.
+- **MCP server (Faza N).** Standalone `caprust-mcp` binary crate.
+  Line-delimited JSON-RPC 2.0 on stdio; loads a `.caprust`
+  project file and exposes read-only inspection plus mutating
+  tools. 15 tools total: `get_project_summary`, `list_tracks`,
+  `list_clips`, `list_media`, `add_media`,
+  `add_clip_to_timeline`, `move_clip`, `split_clip`,
+  `set_transition`, `set_clip_volume`, `set_clip_speed`,
+  `set_clip_fade`, `undo`, `redo`, `save_project`. Every mutating
+  tool goes through `UndoStack`, same as the UI. No tokio, no
+  rmcp — 200-line hand-rolled dispatch.
+- **`AddMediaCommand`** in core (was missing for the MCP
+  `add_media` tool to satisfy DIRECTIVES 6).
+- **`docs/mcp.md`** with a Claude Desktop config template, tool
+  reference, and known limits.
+
+### Fixed
+- **Xfade audio drift in preview.** The audio player started on
+  the Play click, but the playhead anchors only on the first
+  consumed video frame. A project without any transition
+  delivered that frame in ~370 ms, so audio and playhead stayed
+  in step. A project with an xfade or slide forces ffmpeg to
+  decode both clips from their beginning to build the blend;
+  the first frame arrived 2.2-2.4 s later. By then audio was
+  already 2.2-2.4 s ahead of the playhead. Fix: audio is now
+  deferred until the first frame is consumed. Audio and playhead
+  both start from the same position, so `audio_baseline` is near
+  zero regardless of transition complexity.
+- **`SetTransitionCommand` clamp.** The model shifted followers
+  by the raw `transition_duration_ms`; the render clamps to half
+  of the shorter clip. For a 3000 ms slide on a 4 s clip the
+  model shifted 3000 ms while the render shortened by 2000 ms,
+  adding a 1000 ms gap after the transition. The model now uses
+  the same clamp as the render.
+- **`commands.rs` module ordering.** Doc comment / `pub mod` order
+  was fragile; the module list is now always below the doc block.
+
+### Changed
+- **`crates/mcp/Cargo.toml`** switched from a hardcoded `version`
+  to `version.workspace = true`, so a release bump touches one
+  place.
+
+### Tests
+- 241 passing, 8 skipped (6 existing + 2 new CLAP tests requiring
+  ZebraHZ at a fixed path). New since 0.4: master plugin model +
+  commands, CLAP scanner + chain, MCP rpc/server/tools,
+  `AddMediaCommand`, xfade clamp, audio shift guards.
+
 ## [0.4.0-alpha.2] — 2026-09-29
 
 Second alpha of the 0.4 line. Transitions on the timeline, batch
