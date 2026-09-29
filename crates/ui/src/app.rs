@@ -2641,30 +2641,59 @@ impl CapRustApp {
 
         for (i, t) in self.toasts.iter().enumerate() {
             let id = egui::Id::new(("caprust-toast", i, t.created_at));
+            let accent = self.theme.accent_color();
+            // Slightly brighter than the window fill so the toast
+            // reads as elevated against panels of the same hue.
+            let toast_fill = ctx.style().visuals.window_fill.linear_multiply(1.9);
+            let border = egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.55));
+            let highlight = accent.gamma_multiply(0.7);
+
             egui::Window::new(format!("caprust-toast-{i}"))
                 .id(id)
                 .resizable(false)
                 .collapsible(false)
                 .title_bar(false)
+                .frame(egui::Frame::NONE)
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, y))
                 .default_width(320.0)
                 .show(ctx, |ui| {
-                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&t.text).size(13.0));
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.button(ph::X).clicked() {
-                                        dismiss = Some(i);
-                                    }
-                                },
-                            );
+                    let inner = egui::Frame::new()
+                        .fill(toast_fill)
+                        .stroke(border)
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(12, 10))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&t.text)
+                                        .size(13.0)
+                                        .color(egui::Color32::from_gray(235)),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.button(ph::X).clicked() {
+                                            dismiss = Some(i);
+                                        }
+                                    },
+                                );
+                            });
                         });
-                    });
+
+                    // 1px accent line along the top edge: a cheap
+                    // fake drop shadow that reads as "this is on
+                    // top of the editor".
+                    let rect = inner.response.rect;
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(rect.left() + 8.0, rect.top() + 0.5),
+                            egui::pos2(rect.right() - 8.0, rect.top() + 0.5),
+                        ],
+                        egui::Stroke::new(1.0_f32, highlight),
+                    );
                 });
 
-            y += 56.0;
+            y += 62.0;
         }
 
         if let Some(i) = dismiss {
