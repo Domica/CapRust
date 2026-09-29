@@ -11,5 +11,9 @@ path = "src/main.rs"
 [dependencies]
 caprust-ui = { path = "../ui" }
 eframe = { workspace = true }
+image = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"

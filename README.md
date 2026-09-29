@@ -1,6 +1,10 @@
-# CapRust
+<p align="center">
+  <img src="docs/logo.png" alt="CapRust" width="128" height="128">
+</p>
 
-> Social-first video editor in Rust. Native Windows .exe, built for short-form creators.
+<h1 align="center">CapRust</h1>
+
+<p align="center"><em>Social-first video editor in Rust. Native Windows .exe, built for short-form creators.</em></p>
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
