@@ -4548,8 +4548,13 @@ impl CapRustApp {
 
         if let Some((mids, ti, t)) = pending_drop {
             use caprust_core::{Clip, MediaKind};
-            let mut cursor_ms = t;
+            // Build every clip first, then wrap in either a single
+            // RippleInsertCommand or a MacroCommand. Wrapping in a
+            // macro means Ctrl+Z restores the whole batch in one
+            // step instead of popping one clip at a time.
+            let mut clips: Vec<Clip> = Vec::new();
             let mut added: Vec<uuid::Uuid> = Vec::new();
+            let mut cursor_ms = t;
             for mid in mids {
                 let item = self
                     .project
@@ -4570,11 +4575,32 @@ impl CapRustApp {
                     MediaKind::Image => Clip::new_image(&item.path, ti, cursor_ms, dur),
                 };
                 clip.media_id = Some(item.id);
-                let nid = clip.id;
-                let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                added.push(nid);
+                added.push(clip.id);
                 cursor_ms = cursor_ms.saturating_add(dur);
+                clips.push(clip);
+            }
+            match clips.len() {
+                0 => {}
+                1 => {
+                    let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(
+                        clips.into_iter().next().unwrap(),
+                    );
+                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                }
+                n => {
+                    let inner: Vec<Box<dyn caprust_core::Command>> = clips
+                        .into_iter()
+                        .map(|c| {
+                            Box::new(caprust_core::commands::ripple::RippleInsertCommand::new(c))
+                                as Box<dyn caprust_core::Command>
+                        })
+                        .collect();
+                    let cmd = caprust_core::commands::macro_command::MacroCommand::new(
+                        format!("Insert {n} clips"),
+                        inner,
+                    );
+                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                }
             }
             if !added.is_empty() {
                 self.selected_clips = added;
@@ -6876,6 +6902,7 @@ impl eframe::App for CapRustApp {
             });
 
             let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+            let shift = ctx.input(|i| i.modifiers.shift);
             // Don't hijack keys while typing in a text field.
             let typing = ctx.wants_keyboard_input();
 
@@ -6950,6 +6977,25 @@ impl eframe::App for CapRustApp {
                     }
                     egui::Key::A if ctrl => {
                         self.selected_clips = self.project.clips.iter().map(|c| c.id).collect();
+                    }
+                    // Undo / redo. Windows convention is Ctrl+Z / Ctrl+Y;
+                    // macOS and some editors also accept Ctrl+Shift+Z for
+                    // redo. The !shift guard must come before the shift
+                    // variant because match arms are evaluated in order.
+                    egui::Key::Z if ctrl && !shift => {
+                        if let Err(e) = self.undo_stack.undo(&mut self.project) {
+                            tracing::error!("undo failed: {e}");
+                        }
+                    }
+                    egui::Key::Z if ctrl && shift => {
+                        if let Err(e) = self.undo_stack.redo(&mut self.project) {
+                            tracing::error!("redo failed: {e}");
+                        }
+                    }
+                    egui::Key::Y if ctrl => {
+                        if let Err(e) = self.undo_stack.redo(&mut self.project) {
+                            tracing::error!("redo failed: {e}");
+                        }
                     }
                     _ => {}
                 }

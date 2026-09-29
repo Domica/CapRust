@@ -3,6 +3,7 @@
 pub mod delete_clip;
 pub mod duplicate_track;
 pub mod edit_caption_segment;
+pub mod macro_command;
 pub mod move_clip;
 pub mod move_many;
 pub mod relink;
