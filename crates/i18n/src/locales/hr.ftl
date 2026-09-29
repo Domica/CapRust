@@ -547,3 +547,12 @@ master-chain-heading = Master lanac
 master-chain-empty = Nema dodataka na masteru. Otvori Dodaci tab i klikni + na dodatku.
 master-chain-remove = Ukloni
 master-chain-bypass = Zaobiđi
+
+set-backup-heading = Sigurnosna kopija
+set-backup-hint = Izvezi postavke u datoteku i uvezi ih na drugom racunalu.
+set-backup-export = Izvezi postavke…
+set-backup-import = Uvezi postavke…
+toast-settings-exported = Postavke izvezene
+toast-settings-imported = Postavke uvezene
+toast-settings-export-failed = Izvoz postavki nije uspio
+toast-settings-import-failed = Uvoz postavki nije uspio

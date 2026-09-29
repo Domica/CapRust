@@ -547,3 +547,12 @@ master-chain-heading = Master chain
 master-chain-empty = No plugins on the master bus. Open the Plugins tab and click + on a plugin.
 master-chain-remove = Remove
 master-chain-bypass = Bypass
+
+set-backup-heading = Backup
+set-backup-hint = Export your settings to a file and import them on another machine.
+set-backup-export = Export settings…
+set-backup-import = Import settings…
+toast-settings-exported = Settings exported
+toast-settings-imported = Settings imported
+toast-settings-export-failed = Settings export failed
+toast-settings-import-failed = Settings import failed

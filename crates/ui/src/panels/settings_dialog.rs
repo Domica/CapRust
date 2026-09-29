@@ -25,6 +25,12 @@ pub struct SettingsEvents {
     /// The app layer consumes this by calling start_model_download; the
     /// settings panel itself has no way to spawn threads.
     pub download_requested: Option<String>,
+    /// User clicked "Export settings" in Paths -> Backup. app.rs opens
+    /// a save dialog and writes AppSettings via export_to_file.
+    pub export_requested: bool,
+    /// User clicked "Import settings" in Paths -> Backup. app.rs opens
+    /// a pick dialog and loads AppSettings via import_from_file.
+    pub import_requested: bool,
 }
 
 pub fn show(
@@ -39,6 +45,8 @@ pub fn show(
         save: false,
         close: false,
         download_requested: None,
+        export_requested: false,
+        import_requested: false,
     };
 
     ui.horizontal(|ui| {
@@ -63,7 +71,7 @@ pub fn show(
             }
             SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
             SettingsTab::Language => show_language(ui, &mut settings.language),
-            SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status),
+            SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status, &mut ev),
             SettingsTab::Audio => show_audio(ui, settings),
             SettingsTab::Translation => show_translation(ui, settings),
         });
@@ -427,7 +435,12 @@ fn show_language(ui: &mut Ui, language: &mut String) {
 // Paths (models dir + ffmpeg)
 // ---------------------------------------------------------------------------
 
-fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus) {
+fn show_paths(
+    ui: &mut Ui,
+    settings: &mut AppSettings,
+    status: &mut FfmpegStatus,
+    ev: &mut SettingsEvents,
+) {
     ui.label(egui::RichText::new(tr("set-paths-models")).strong());
     ui.horizontal(|ui| {
         ui.add(
@@ -542,6 +555,24 @@ fn show_paths(ui: &mut Ui, settings: &mut AppSettings, status: &mut FfmpegStatus
                 .color(egui::Color32::from_gray(140)),
         );
     }
+
+    ui.add_space(16.0);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-backup-heading")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-backup-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.button(tr("set-backup-export")).clicked() {
+            ev.export_requested = true;
+        }
+        if ui.button(tr("set-backup-import")).clicked() {
+            ev.import_requested = true;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

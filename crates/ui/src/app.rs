@@ -6939,6 +6939,12 @@ impl CapRustApp {
                 if let Some(id) = ev.download_requested.clone() {
                     self.start_model_download(&id);
                 }
+                if ev.export_requested {
+                    self.handle_settings_export();
+                }
+                if ev.import_requested {
+                    self.handle_settings_import();
+                }
                 if ev.save {
                     // Re-detect ffmpeg with new paths
                     self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
@@ -6953,6 +6959,59 @@ impl CapRustApp {
                 }
             });
         self.settings_open = open;
+    }
+
+    /// Export AppSettings to a user-chosen JSON file. Called from the
+    /// Paths -> Backup section. Success and failure both surface as a
+    /// toast; errors also log at warn level.
+    fn handle_settings_export(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr("set-backup-export"))
+            .add_filter("JSON", &["json"])
+            .set_file_name("caprust-settings.json")
+            .save_file()
+        else {
+            return;
+        };
+
+        match self.settings.export_to_file(&path) {
+            Ok(()) => {
+                tracing::info!("settings exported to {}", path.display());
+                self.toast(tr("toast-settings-exported"));
+            }
+            Err(e) => {
+                tracing::warn!("settings export failed: {e:#}");
+                self.toast(tr("toast-settings-export-failed"));
+            }
+        }
+    }
+
+    /// Load AppSettings from a user-chosen JSON file and replace the
+    /// current one. Re-detects ffmpeg because ffmpeg_path / models_dir
+    /// may have changed. Language is picked up on the next update()
+    /// via caprust_i18n::set_current_lang, theme is separate storage
+    /// and untouched.
+    fn handle_settings_import(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr("set-backup-import"))
+            .add_filter("JSON", &["json"])
+            .pick_file()
+        else {
+            return;
+        };
+
+        match caprust_core::settings::AppSettings::import_from_file(&path) {
+            Ok(new_settings) => {
+                self.settings = new_settings;
+                self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
+                tracing::info!("settings imported from {}", path.display());
+                self.toast(tr("toast-settings-imported"));
+            }
+            Err(e) => {
+                tracing::warn!("settings import failed: {e:#}");
+                self.toast(tr("toast-settings-import-failed"));
+            }
+        }
     }
 }
 
