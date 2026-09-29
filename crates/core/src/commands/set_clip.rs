@@ -47,6 +47,13 @@ pub struct SetClipCommand {
     /// Some(Some(p)) = set the mask path. Some(None) = clear it.
     /// None = leave untouched.
     pub bg_removal: Option<Option<String>>,
+    /// Some(v) = replace the in-transition easing. None = leave
+    /// untouched. Easing is only meaningful when `transition_in` is
+    /// `Some("fade")`; on other transitions the field is stored but
+    /// ignored by the render arms.
+    pub transition_in_easing: Option<crate::clip::EaseCurve>,
+    /// Same as `transition_in_easing`, for the out transition.
+    pub transition_out_easing: Option<crate::clip::EaseCurve>,
     before: Option<Clip>,
 }
 
@@ -77,6 +84,8 @@ impl SetClipCommand {
             speed_range: None,
             auto_reframe: None,
             bg_removal: None,
+            transition_in_easing: None,
+            transition_out_easing: None,
             before: None,
         }
     }
@@ -142,6 +151,18 @@ impl SetClipCommand {
     /// kinds. Pass None to remove an effect.
     pub fn text_effect(mut self, v: Option<crate::clip::TextEffect>) -> Self {
         self.text_effect = Some(v);
+        self
+    }
+    /// Replace the in-transition easing. Ignored by the render arms
+    /// unless `transition_in` is `Some("fade")`.
+    pub fn transition_in_easing(mut self, v: crate::clip::EaseCurve) -> Self {
+        self.transition_in_easing = Some(v);
+        self
+    }
+    /// Replace the out-transition easing. Ignored unless
+    /// `transition_out` is `Some("fade")`.
+    pub fn transition_out_easing(mut self, v: crate::clip::EaseCurve) -> Self {
+        self.transition_out_easing = Some(v);
         self
     }
     pub fn fade_in_ms(mut self, v: u64) -> Self {
@@ -277,6 +298,12 @@ impl Command for SetClipCommand {
         if let Some(v) = self.bg_removal.clone() {
             c.bg_removal = v;
         }
+        if let Some(v) = self.transition_in_easing {
+            c.transition_in_easing = v;
+        }
+        if let Some(v) = self.transition_out_easing {
+            c.transition_out_easing = v;
+        }
         Ok(())
     }
 
@@ -323,6 +350,56 @@ mod text_motion_cmd_tests {
             ClipType::TextOverlay { effect, .. } => *effect,
             _ => panic!("not a TextOverlay"),
         }
+    }
+
+    #[test]
+    fn transition_easing_set_and_undo() {
+        use crate::clip::{Clip, EaseCurve};
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        // Before: Linear (default).
+        let before = p.clips.iter().find(|c| c.id == id).unwrap().clone();
+        assert_eq!(before.transition_in_easing, EaseCurve::Linear);
+        assert_eq!(before.transition_out_easing, EaseCurve::Linear);
+
+        let mut stack = crate::commands::UndoStack::default();
+        let cmd = SetClipCommand::new(id)
+            .transition_in_easing(EaseCurve::EaseIn)
+            .transition_out_easing(EaseCurve::EaseInOut);
+        stack.execute(Box::new(cmd), &mut p).unwrap();
+
+        let after = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(after.transition_in_easing, EaseCurve::EaseIn);
+        assert_eq!(after.transition_out_easing, EaseCurve::EaseInOut);
+
+        stack.undo(&mut p).unwrap();
+        let back = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(back.transition_in_easing, EaseCurve::Linear);
+        assert_eq!(back.transition_out_easing, EaseCurve::Linear);
+    }
+
+    #[test]
+    fn transition_easing_builders_are_noop_when_unset() {
+        use crate::clip::{Clip, EaseCurve};
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        clip.transition_in_easing = EaseCurve::EaseIn;
+        clip.transition_out_easing = EaseCurve::EaseOut;
+        let id = clip.id;
+        p.add_clip(clip);
+
+        // Command with no builders set touches nothing.
+        let mut stack = crate::commands::UndoStack::default();
+        stack
+            .execute(Box::new(SetClipCommand::new(id)), &mut p)
+            .unwrap();
+
+        let after = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(after.transition_in_easing, EaseCurve::EaseIn);
+        assert_eq!(after.transition_out_easing, EaseCurve::EaseOut);
     }
 
     #[test]
