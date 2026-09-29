@@ -23,3 +23,5 @@ pub use models::{ModelInfo, ModelKind, ModelRegistry, ModelStatus};
 pub use project::ProjectState;
 pub use settings::{detect_ffmpeg, AppSettings, FfmpegStatus};
 pub use track::{Track, TrackKind};
+
+pub mod plugin;

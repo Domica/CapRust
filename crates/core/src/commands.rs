@@ -1,5 +1,6 @@
 //! Command pattern (undo/redo).
 
+pub mod add_master_plugin;
 pub mod add_media;
 pub mod delete_clip;
 pub mod duplicate_track;
@@ -9,10 +10,12 @@ pub mod move_clip;
 pub mod move_many;
 pub mod relink;
 pub mod relink_many;
+pub mod remove_master_plugin;
 pub mod ripple;
 pub mod separate_audio;
 pub mod set_clip;
 pub mod set_effect;
+pub mod set_plugin_param;
 pub mod split_clip;
 pub mod translate_captions;
 

@@ -17,6 +17,10 @@ pub struct ProjectState {
     pub media: crate::media::MediaLibrary,
     pub models: crate::models::ModelRegistry,
     pub tracks: Vec<crate::track::Track>,
+    /// Master-bus CLAP plugin chain (Faza I). Applied to the
+    /// final mix, not per-clip. See DIRECTIVES 12 and 28.3.
+    #[serde(default)]
+    pub master_plugins: Vec<crate::plugin::PluginInstance>,
 }
 
 impl Default for ProjectState {
@@ -35,6 +39,7 @@ impl Default for ProjectState {
             media: crate::media::MediaLibrary::default(),
             models: crate::models::ModelRegistry::default(),
             tracks: crate::track::default_tracks(),
+            master_plugins: Vec::new(),
         }
     }
 }
