@@ -61,6 +61,9 @@ pub struct VideoClip {
     pub transition_in_easing: caprust_core::clip::EaseCurve,
     /// Same as `transition_in_easing`, for the out edge.
     pub transition_out_easing: caprust_core::clip::EaseCurve,
+    /// Duration of the video fade in/out in seconds. Shared by both
+    /// edges. Clamped to a sane range at use time.
+    pub transition_duration_sec: f64,
     /// Auto-reframe keypoints (Phase P2c). Empty = render as-is.
     pub auto_reframe: Vec<caprust_core::clip::ReframeKeypoint>,
     /// Absolute path to the per-clip alpha mask (Phase P3d). None =
@@ -454,13 +457,19 @@ impl RenderPlan {
                 let prev = &self.video_clips[*current.last().unwrap()];
                 let next = &self.video_clips[idx];
                 let prev_end = prev.timeline_start_sec + prev.duration_sec;
-                let gap = (next.timeline_start_sec - prev_end).abs();
+                // Positive = overlap (the follower starts before the
+                // predecessor ends). The model shifts the follower
+                // left by the transition duration when an xfade is
+                // attached, so the normal case is a positive
+                // overlap. Accept anything from "-tolerance" upward:
+                // no gap.
+                let overlap = prev_end - next.timeline_start_sec;
                 let has_xfade = next
                     .transition_in
                     .as_deref()
                     .map(is_xfade_id)
                     .unwrap_or(false);
-                if has_xfade && gap <= ADJACENCY_TOL_SEC {
+                if has_xfade && overlap >= -ADJACENCY_TOL_SEC {
                     current.push(idx);
                 } else {
                     runs.push(Run {
@@ -482,8 +491,13 @@ impl RenderPlan {
 
         // ---- Phase 2b: render each run ----
         let mut run_labels: Vec<(u32, f64, String)> = Vec::with_capacity(runs.len());
+        // The model already stores follower clips at their shifted
+        // positions when an xfade is attached; no per-z bookkeeping
+        // is needed here.
+
         for (ri, run) in runs.iter().enumerate() {
             let out_label = format!("v_run{ri}");
+            let effective_start = run.start_sec;
 
             if run.members.len() == 1 {
                 // Single clip: apply legacy fade from/to-black edges
@@ -491,22 +505,26 @@ impl RenderPlan {
                 let idx = run.members[0];
                 let c = &self.video_clips[idx];
                 let mut tail = String::new();
+                // Clamp fade so it never occupies more than half the
+                // clip. On a short clip, a 3 s user setting would
+                // otherwise start fading almost at the beginning and
+                // read as a bug. Half-clip is what Premiere, Resolve
+                // and CapCut all do.
+                let fade_d = c.transition_duration_sec.min(c.duration_sec * 0.5);
+                // NOTE: the gyan.dev essentials build we test against
+                // (2026-01-26) rejects `fade=curve=` with "Option not
+                // found". The `curve` parameter was added to the video
+                // fade filter only in newer ffmpeg builds. Until the
+                // project pins a newer ffmpeg, the fade arms emit
+                // plain linear fades; the EaseCurve stored on the
+                // clip is preserved in the project file but ignored
+                // at render time.
                 if c.transition_in.as_deref() == Some("fade") {
-                    match ease_curve_name(c.transition_in_easing) {
-                        Some(curve) => {
-                            tail.push_str(&format!(",fade=t=in:st=0:d=0.35:curve={curve}"))
-                        }
-                        None => tail.push_str(",fade=t=in:st=0:d=0.35"),
-                    }
+                    tail.push_str(&format!(",fade=t=in:st=0:d={fade_d:.3}"));
                 }
                 if c.transition_out.as_deref() == Some("fade") {
-                    let st = (c.duration_sec - 0.35).max(0.0);
-                    match ease_curve_name(c.transition_out_easing) {
-                        Some(curve) => {
-                            tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35:curve={curve}"))
-                        }
-                        None => tail.push_str(&format!(",fade=t=out:st={st:.3}:d=0.35")),
-                    }
+                    let st = (c.duration_sec - fade_d).max(0.0);
+                    tail.push_str(&format!(",fade=t=out:st={st:.3}:d={fade_d:.3}"));
                 }
                 // ffmpeg requires `[label]filter`, never `[label],filter`.
                 // Strip the leading comma that all our fragments carry and
@@ -522,7 +540,7 @@ impl RenderPlan {
                     "[{base}]{chain},setpts=PTS+{start:.6}/TB[{out}];",
                     base = v_base_labels[idx],
                     chain = chain,
-                    start = run.start_sec,
+                    start = effective_start,
                     out = out_label,
                 ));
             } else {
@@ -538,7 +556,9 @@ impl RenderPlan {
                         .as_deref()
                         .and_then(xfade_name)
                         .unwrap_or("fade");
-                    let d = XFADE_DUR_SEC
+                    let d = c
+                        .transition_duration_sec
+                        .max(XFADE_DUR_SEC)
                         .min(current_dur * 0.5)
                         .min(c.duration_sec * 0.5)
                         .max(0.05);
@@ -558,12 +578,12 @@ impl RenderPlan {
                 }
                 fg.push_str(&format!(
                     "[{current_label}]setpts=PTS+{start:.6}/TB[{out}];",
-                    start = run.start_sec,
+                    start = effective_start,
                     out = out_label,
                 ));
             }
 
-            run_labels.push((run.z_order, run.start_sec, out_label));
+            run_labels.push((run.z_order, effective_start, out_label));
         }
 
         // ---- Phase 3: black base + overlay in z-order ----
@@ -1106,17 +1126,20 @@ pub fn is_xfade_id(id: &str) -> bool {
 /// curve (tri) is already correct and the older code path omits
 /// the parameter entirely -- keeping the byte layout of the
 /// filtergraph unchanged for projects that do not use easing.
+/// Kept for the day we pin a newer ffmpeg that has `fade=curve=`.
+/// The current gyan.dev essentials build (2026-01-26) does not.
+#[allow(dead_code)]
 fn ease_curve_name(e: caprust_core::clip::EaseCurve) -> Option<&'static str> {
     use caprust_core::clip::EaseCurve;
     match e {
         EaseCurve::Linear => None,
-        // Accelerating: cubic ramp gives a stronger start than
-        // ffmpeg's quad.
-        EaseCurve::EaseIn => Some("cubic"),
-        // Decelerating: parabola gives a soft landing.
+        // ffmpeg's fade filter names are abbreviated: cub (not cubic),
+        // qsin (quarter of a sine wave) not sin, par is exactly par.
+        // A wrong value here makes ffmpeg refuse the whole filtergraph
+        // with "Error applying option 'curve' to filter 'fade'".
+        EaseCurve::EaseIn => Some("cub"),
         EaseCurve::EaseOut => Some("par"),
-        // Both ends smooth: sine is the closest built-in.
-        EaseCurve::EaseInOut => Some("sin"),
+        EaseCurve::EaseInOut => Some("qsin"),
     }
 }
 
@@ -1771,10 +1794,9 @@ fn compute_xfade_audio_shifts(
         for c in clips {
             if let Some(p) = prev {
                 let prev_end = p.start_time_ms + p.duration_ms;
-                let gap_sec =
-                    ((c.start_time_ms as i64 - prev_end as i64).unsigned_abs() as f64) / 1000.0;
+                let overlap_sec = (prev_end as i64 - c.start_time_ms as i64) as f64 / 1000.0;
                 let has_xfade = c.transition_in.as_deref().map(is_xfade_id).unwrap_or(false);
-                if has_xfade && gap_sec <= ADJACENCY_TOL_SEC {
+                if has_xfade && overlap_sec >= -ADJACENCY_TOL_SEC {
                     let prev_dur = p.duration_ms as f64 / 1000.0;
                     let curr_dur = c.duration_ms as f64 / 1000.0;
                     let d = XFADE_DUR_SEC
@@ -2118,6 +2140,8 @@ pub fn plan_from_project(
                         transition_out: c.transition_out.clone(),
                         transition_in_easing: c.transition_in_easing,
                         transition_out_easing: c.transition_out_easing,
+                        transition_duration_sec: (c.transition_duration_ms as f64 / 1000.0)
+                            .clamp(0.1, 3.0),
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
                     });
@@ -2154,6 +2178,8 @@ pub fn plan_from_project(
                         transition_out: c.transition_out.clone(),
                         transition_in_easing: c.transition_in_easing,
                         transition_out_easing: c.transition_out_easing,
+                        transition_duration_sec: (c.transition_duration_ms as f64 / 1000.0)
+                            .clamp(0.1, 3.0),
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
                     });
@@ -2536,15 +2562,77 @@ pub fn plan_from_project(
         anyhow::bail!("no video or text clips on any video track — nothing to export");
     }
 
-    let total_duration_sec = video_clips
-        .iter()
-        .map(|c| c.timeline_start_sec + c.duration_sec)
-        .chain(
-            text_clips
-                .iter()
-                .map(|c| c.timeline_start_sec + c.duration_sec),
-        )
-        .fold(0.0_f64, f64::max);
+    // Effective video duration, accounting for xfade shortening.
+    // A naive "max(start + dur)" over every clip is wrong once a
+    // transition is in play: an xfade between clip A and clip B
+    // shortens that run by D seconds (sum of durations minus the
+    // overlap). If the black base and audio bed are sized to the
+    // unshortened sum, the tail of the render is N seconds of pure
+    // black where the overlay has no frames left. This mirrors the
+    // run grouping in build_filtergraph so the bed matches what the
+    // stack actually produces.
+    let video_duration_sec: f64 = {
+        use std::collections::BTreeMap;
+        let mut by_z: BTreeMap<u32, Vec<&VideoClip>> = BTreeMap::new();
+        for vc in &video_clips {
+            by_z.entry(vc.z_order).or_default().push(vc);
+        }
+        let mut overall_max: f64 = 0.0;
+        for (_z, mut group) in by_z {
+            group.sort_by(|a, b| {
+                a.timeline_start_sec
+                    .partial_cmp(&b.timeline_start_sec)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let mut run_start = 0.0_f64;
+            let mut run_dur = 0.0_f64;
+            let mut prev_end = f64::NEG_INFINITY;
+            let mut first = true;
+            for vc in group {
+                if first {
+                    run_start = vc.timeline_start_sec;
+                    run_dur = vc.duration_sec;
+                    prev_end = vc.timeline_start_sec + vc.duration_sec;
+                    first = false;
+                    continue;
+                }
+                let has_xfade = vc
+                    .transition_in
+                    .as_deref()
+                    .map(is_xfade_id)
+                    .unwrap_or(false);
+                let overlap = prev_end - vc.timeline_start_sec;
+                if has_xfade && overlap >= -ADJACENCY_TOL_SEC {
+                    // Same clamp build_filtergraph uses for the
+                    // xfade link.
+                    let d = vc
+                        .transition_duration_sec
+                        .max(XFADE_DUR_SEC)
+                        .min(run_dur * 0.5)
+                        .min(vc.duration_sec * 0.5)
+                        .max(0.05);
+                    run_dur = run_dur + vc.duration_sec - d;
+                    prev_end = vc.timeline_start_sec + vc.duration_sec;
+                } else {
+                    overall_max = overall_max.max(run_start + run_dur);
+                    run_start = vc.timeline_start_sec;
+                    run_dur = vc.duration_sec;
+                    prev_end = vc.timeline_start_sec + vc.duration_sec;
+                }
+            }
+            if !first {
+                overall_max = overall_max.max(run_start + run_dur);
+            }
+        }
+        overall_max
+    };
+
+    let total_duration_sec = video_duration_sec.max(
+        text_clips
+            .iter()
+            .map(|c| c.timeline_start_sec + c.duration_sec)
+            .fold(0.0_f64, f64::max),
+    );
 
     let has_audio = !audio_clips.is_empty();
 
@@ -2739,6 +2827,7 @@ mod tests {
                 transition_out: None,
                 transition_in_easing: caprust_core::clip::EaseCurve::Linear,
                 transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],
@@ -2903,6 +2992,7 @@ mod tests {
                 transition_out: None,
                 transition_in_easing: caprust_core::clip::EaseCurve::Linear,
                 transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: mask.map(std::path::PathBuf::from),
             }],
@@ -3071,9 +3161,9 @@ mod tests {
     #[test]
     fn ease_curve_name_maps_each_variant() {
         use caprust_core::clip::EaseCurve;
-        assert_eq!(ease_curve_name(EaseCurve::EaseIn), Some("cubic"));
+        assert_eq!(ease_curve_name(EaseCurve::EaseIn), Some("cub"));
         assert_eq!(ease_curve_name(EaseCurve::EaseOut), Some("par"));
-        assert_eq!(ease_curve_name(EaseCurve::EaseInOut), Some("sin"));
+        assert_eq!(ease_curve_name(EaseCurve::EaseInOut), Some("qsin"));
     }
 
     #[test]
@@ -3083,7 +3173,7 @@ mod tests {
         let plan = single_fade_plan(caprust_core::clip::EaseCurve::Linear);
         let (fg, _, _) = plan.build_filtergraph().expect("fg");
         assert!(
-            fg.contains("fade=t=in:st=0:d=0.35,") || fg.contains("fade=t=in:st=0:d=0.35["),
+            fg.contains("fade=t=in:st=0:d=0.350,") || fg.contains("fade=t=in:st=0:d=0.350["),
             "expected legacy fade-in without curve: {fg}"
         );
         assert!(
@@ -3093,13 +3183,18 @@ mod tests {
     }
 
     #[test]
-    fn single_clip_fade_eased_emits_curve() {
+    fn single_clip_fade_ignores_easing_on_builds_without_curve() {
+        // The gyan.dev essentials build (2026-01-26) rejects
+        // `fade=curve=` with "Option not found". The fade arm
+        // therefore always emits a plain linear fade; the EaseCurve
+        // stored on the clip is preserved for a future build, but not
+        // emitted here.
         use caprust_core::clip::EaseCurve;
         let plan = single_fade_plan(EaseCurve::EaseInOut);
         let (fg, _, _) = plan.build_filtergraph().expect("fg");
         assert!(
-            fg.contains("fade=t=in:st=0:d=0.35:curve=sin"),
-            "expected eased fade-in: {fg}"
+            fg.contains("fade=t=in:st=0:d=0.350") && !fg.contains("curve="),
+            "fade must not emit curve on a build without support: {fg}"
         );
     }
 
@@ -3143,6 +3238,7 @@ mod tests {
                 transition_out: None,
                 transition_in_easing: easing,
                 transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],
@@ -3186,6 +3282,7 @@ mod tests {
                 transition_out: None,
                 transition_in_easing: caprust_core::clip::EaseCurve::Linear,
                 transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],
@@ -3281,6 +3378,7 @@ mod tests {
                 transition_out: None,
                 transition_in_easing: caprust_core::clip::EaseCurve::Linear,
                 transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
             }],

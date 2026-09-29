@@ -208,6 +208,29 @@ fn default_transition_duration_ms() -> u64 {
     500
 }
 
+/// The set of transition preset ids that render as an xfade between
+/// two adjacent clips. These transitions overlap the two clips and
+/// therefore shorten the run by their duration; the model shifts
+/// the follower clip left when one is applied. Single-clip fade
+/// edges (fade in/out) are not in this set: they apply to one clip
+/// and never move their neighbours.
+pub fn is_xfade_transition(id: &str) -> bool {
+    matches!(
+        id,
+        "fade"
+            | "slide_l"
+            | "slide_r"
+            | "slide_u"
+            | "slide_d"
+            | "wipe_l"
+            | "wipe_r"
+            | "zoom_in"
+            | "zoom_out"
+            | "rotate"
+            | "blur_t"
+    )
+}
+
 impl Default for TextMotion {
     fn default() -> Self {
         Self {
@@ -311,6 +334,14 @@ pub struct Clip {
     /// `transition_out` is set.
     #[serde(default = "default_transition_duration_ms")]
     pub transition_duration_ms: u64,
+    /// Horizontal shift that was applied to this clip when its
+    /// `transition_in` xfade was attached. Zero means no shift is in
+    /// effect. Used by `SetTransitionCommand` so changing the
+    /// transition duration from D1 to D2 shifts the clip and every
+    /// following clip on its track by (D1 - D2), and removing the
+    /// transition shifts back by the stored value.
+    #[serde(default)]
+    pub applied_xfade_shift_ms: u64,
     /// True when the user has explicitly separated this video's audio
     /// onto an Audio track. The video continues to render, but its
     /// embedded audio is not harvested into the mix — the detached
@@ -386,6 +417,7 @@ impl Clip {
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
             transition_duration_ms: default_transition_duration_ms(),
+            applied_xfade_shift_ms: 0,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -423,6 +455,7 @@ impl Clip {
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
             transition_duration_ms: default_transition_duration_ms(),
+            applied_xfade_shift_ms: 0,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -460,6 +493,7 @@ impl Clip {
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
             transition_duration_ms: default_transition_duration_ms(),
+            applied_xfade_shift_ms: 0,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -501,6 +535,7 @@ impl Clip {
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
             transition_duration_ms: default_transition_duration_ms(),
+            applied_xfade_shift_ms: 0,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -546,6 +581,7 @@ impl Clip {
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
             transition_duration_ms: default_transition_duration_ms(),
+            applied_xfade_shift_ms: 0,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -591,6 +627,7 @@ impl Clip {
             transition_in_easing: EaseCurve::Linear,
             transition_out_easing: EaseCurve::Linear,
             transition_duration_ms: default_transition_duration_ms(),
+            applied_xfade_shift_ms: 0,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,

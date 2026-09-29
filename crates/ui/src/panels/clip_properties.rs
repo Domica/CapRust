@@ -113,6 +113,8 @@ pub enum PendingEdit {
     TransitionInEasing(caprust_core::clip::EaseCurve),
     /// Set the out-transition easing curve.
     TransitionOutEasing(caprust_core::clip::EaseCurve),
+    /// Set the shared transition duration in milliseconds.
+    TransitionDuration(u64),
 }
 
 pub fn show(
@@ -1486,6 +1488,21 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                             }
                         });
                 });
+                ui.label("");
+                ui.end_row();
+
+                // Shared duration slider on the in row. Applies to
+                // both edges; not duplicated on the out side.
+                ui.label(tr("props-transition-duration"));
+                let mut dur = clip.transition_duration_ms;
+                let resp = ui.add(
+                    egui::Slider::new(&mut dur, 100..=3000)
+                        .suffix(" ms")
+                        .step_by(10.0),
+                );
+                if resp.changed() && dur != clip.transition_duration_ms {
+                    state.pending.push(PendingEdit::TransitionDuration(dur));
+                }
                 ui.label("");
                 ui.end_row();
             }

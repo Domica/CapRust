@@ -3323,6 +3323,72 @@ impl CapRustApp {
                                 // Dim overlay so clip-type color stays readable.
                                 p.rect_filled(clip_rect, 4.0, c.gamma_multiply(0.35));
                             }
+
+                            // Crossfade overlap shading. When the
+                            // clip carries an xfade on its in-edge
+                            // the model shifted it left by D ms so
+                            // it overlaps the predecessor. Tint the
+                            // overlapping slice with the accent so
+                            // the user sees the crossfade footprint
+                            // directly on the timeline. Drawn after
+                            // the dim overlay, before the selection
+                            // stroke, so a selected clip still
+                            // reads as selected.
+                            let overlap_ms = self
+                                .project
+                                .clips
+                                .iter()
+                                .find(|cc| cc.id == clip_id)
+                                .map(|cc| cc.applied_xfade_shift_ms)
+                                .unwrap_or(0);
+                            if overlap_ms > 0 {
+                                let overlap_px = (overlap_ms as f32 * px_per_ms).max(2.0);
+                                let overlap_rect = egui::Rect::from_min_size(
+                                    clip_rect.min,
+                                    egui::vec2(
+                                        overlap_px.min(clip_rect.width()),
+                                        clip_rect.height(),
+                                    ),
+                                );
+                                // Accent wash: strong enough to read
+                                // the overlap, light enough that the
+                                // thumbnail underneath is still
+                                // visible.
+                                p.rect_filled(
+                                    overlap_rect,
+                                    4.0,
+                                    theme_snapshot.accent_color().gamma_multiply(0.35),
+                                );
+                                // Thin diagonal hatching for
+                                // unambiguous "this slice is a
+                                // crossfade" read at a glance.
+                                let hatch_stroke = egui::Stroke::new(
+                                    1.0_f32,
+                                    theme_snapshot.accent_color().gamma_multiply(0.9),
+                                );
+                                let h_ov = overlap_rect.height();
+                                let step_ov = 8.0_f32;
+                                let mut hx = overlap_rect.left() - h_ov;
+                                while hx < overlap_rect.right() {
+                                    let x0 = hx.max(overlap_rect.left());
+                                    let x1 = (hx + h_ov).min(overlap_rect.right());
+                                    if x1 > x0 {
+                                        // Clip the line to the
+                                        // overlap slice by lerping
+                                        // along the diagonal.
+                                        let t0 = (x0 - hx) / h_ov;
+                                        let t1 = (x1 - hx) / h_ov;
+                                        let y0 = overlap_rect.bottom() - t0 * h_ov;
+                                        let y1 = overlap_rect.bottom() - t1 * h_ov;
+                                        p.line_segment(
+                                            [egui::pos2(x0, y0), egui::pos2(x1, y1)],
+                                            hatch_stroke,
+                                        );
+                                    }
+                                    hx += step_ov;
+                                }
+                            }
+
                             if self.selected_clips.contains(&clip_id) || is_dragged {
                                 p.rect_stroke(
                                     clip_rect,
@@ -4777,6 +4843,11 @@ impl CapRustApp {
                         PendingEdit::TransitionOutEasing(v) => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .transition_out_easing(v);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
+                        PendingEdit::TransitionDuration(v) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .transition_duration_ms(v);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                         PendingEdit::SpeedRange(v) => {
