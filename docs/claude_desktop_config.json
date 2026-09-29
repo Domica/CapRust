@@ -1,0 +1,8 @@
+﻿{
+  "mcpServers": {
+    "caprust": {
+      "command": "F:/Dev/projects/CapRust/target/release/caprust-mcp.exe",
+      "args": ["F:/Dev/projects/MyVlog.caprust"]
+    }
+  }
+}

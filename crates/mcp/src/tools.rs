@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use caprust_core::clip::{Clip, ClipType};
+use caprust_core::commands::add_media::AddMediaCommand;
 use caprust_core::commands::ripple::RippleInsertCommand;
 use caprust_core::commands::set_clip::SetClipCommand;
 use caprust_core::commands::set_effect::SetTransitionCommand;
@@ -158,6 +159,19 @@ pub fn definitions() -> Vec<Value> {
             "description": "Save the project to the path it was loaded from.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         }),
+        json!({
+            "name": "add_media",
+            "description": "Register a file from disk into the project's media library. Kind is inferred from extension unless kind is supplied.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["video", "audio", "image"] }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }
+        }),
     ]
 }
 
@@ -185,6 +199,7 @@ pub fn call(
         "undo" => do_undo(project, undo),
         "redo" => do_redo(project, undo),
         "save_project" => save_project(project, project_path),
+        "add_media" => add_media(args, project, undo),
         other => bail!("unknown tool: {other}"),
     }
 }
@@ -495,6 +510,45 @@ fn save_project(project: &ProjectState, path: &Path) -> Result<String> {
     Ok(json!({ "ok": true, "path": path.display().to_string() }).to_string())
 }
 
+fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> Result<String> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .context("missing or non-string `path`")?;
+
+    if !Path::new(path).is_file() {
+        bail!("file does not exist: {path}");
+    }
+
+    let kind = match args.get("kind").and_then(Value::as_str) {
+        Some("video") => MediaKind::Video,
+        Some("audio") => MediaKind::Audio,
+        Some("image") => MediaKind::Image,
+        Some(other) => bail!("unknown media kind: {other:?}"),
+        None => infer_kind(path).with_context(|| {
+            format!("could not infer media kind from {path}; pass `kind` explicitly")
+        })?,
+    };
+
+    undo.execute(Box::new(AddMediaCommand::new(path, kind)), project)?;
+
+    let new_id = project.media.items.last().map(|m| m.id);
+    Ok(json!({ "ok": true, "media_id": new_id }).to_string())
+}
+
+fn infer_kind(path: &str) -> Option<MediaKind> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => Some(MediaKind::Video),
+        "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" => Some(MediaKind::Audio),
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => Some(MediaKind::Image),
+        _ => None,
+    }
+}
+
 // ── tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -748,5 +802,71 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("unknown tool"));
+    }
+
+    #[test]
+    fn add_media_rejects_missing_file() {
+        let mut p = ProjectState::default();
+        let mut u = UndoStack::new();
+        let err = add_media(
+            &json!({ "path": "Z:/caprust_definitely_missing_xyz.mp4" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn add_media_infers_video_kind_and_adds() {
+        let tmp = std::env::temp_dir().join(format!("caprust_mcp_{}.mp4", Uuid::new_v4()));
+        std::fs::write(&tmp, b"fake").unwrap();
+
+        let mut p = ProjectState::default();
+        let mut u = UndoStack::new();
+        let before = p.media.items.len();
+
+        add_media(&json!({ "path": tmp.to_string_lossy() }), &mut p, &mut u).unwrap();
+        assert_eq!(p.media.items.len(), before + 1);
+        assert!(matches!(
+            p.media.items.last().unwrap().kind,
+            MediaKind::Video
+        ));
+
+        u.undo(&mut p).unwrap();
+        assert_eq!(p.media.items.len(), before);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn add_media_unknown_extension_errors() {
+        let tmp = std::env::temp_dir().join(format!("caprust_mcp_{}.qqq", Uuid::new_v4()));
+        std::fs::write(&tmp, b"fake").unwrap();
+
+        let mut p = ProjectState::default();
+        let mut u = UndoStack::new();
+        let err = add_media(&json!({ "path": tmp.to_string_lossy() }), &mut p, &mut u).unwrap_err();
+        assert!(err.to_string().contains("could not infer"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn add_media_explicit_kind_overrides_inference() {
+        let tmp = std::env::temp_dir().join(format!("caprust_mcp_{}.bin", Uuid::new_v4()));
+        std::fs::write(&tmp, b"fake").unwrap();
+
+        let mut p = ProjectState::default();
+        let mut u = UndoStack::new();
+        add_media(
+            &json!({ "path": tmp.to_string_lossy(), "kind": "audio" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert!(matches!(
+            p.media.items.last().unwrap().kind,
+            MediaKind::Audio
+        ));
+        let _ = std::fs::remove_file(&tmp);
     }
 }
