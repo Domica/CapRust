@@ -287,6 +287,17 @@ pub struct Clip {
     pub transition_in: Option<String>,
     #[serde(default)]
     pub transition_out: Option<String>,
+    /// Easing applied to the in transition's interpolation curve.
+    /// Only meaningful for transitions that support easing (currently
+    /// `fade`; slide/wipe/zoom still use ffmpeg's linear ramp).
+    /// `Linear` matches the pre-feature behaviour, so old projects
+    /// load unchanged.
+    #[serde(default)]
+    pub transition_in_easing: EaseCurve,
+    /// Easing applied to the out transition. Same semantics as
+    /// `transition_in_easing`.
+    #[serde(default)]
+    pub transition_out_easing: EaseCurve,
     /// True when the user has explicitly separated this video's audio
     /// onto an Audio track. The video continues to render, but its
     /// embedded audio is not harvested into the mix — the detached
@@ -359,6 +370,8 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            transition_in_easing: EaseCurve::Linear,
+            transition_out_easing: EaseCurve::Linear,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -393,6 +406,8 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            transition_in_easing: EaseCurve::Linear,
+            transition_out_easing: EaseCurve::Linear,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -427,6 +442,8 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            transition_in_easing: EaseCurve::Linear,
+            transition_out_easing: EaseCurve::Linear,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -465,6 +482,8 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            transition_in_easing: EaseCurve::Linear,
+            transition_out_easing: EaseCurve::Linear,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -507,6 +526,8 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            transition_in_easing: EaseCurve::Linear,
+            transition_out_easing: EaseCurve::Linear,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
@@ -549,6 +570,8 @@ impl Clip {
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            transition_in_easing: EaseCurve::Linear,
+            transition_out_easing: EaseCurve::Linear,
             audio_detached: false,
             name: None,
             fade_in_ms: 0,
