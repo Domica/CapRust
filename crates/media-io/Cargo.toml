@@ -33,6 +33,18 @@ tract-onnx = { workspace = true }
 workspace = true
 optional = true
 
+# CLAP plugin hosting (Phase I). Feature-gated so CI without the CLAP
+# SDK can build the workspace without pulling clack-host. Same pattern
+# as `ffmpeg` (DIRECTIVES 10.6).
+[dependencies.clack-host]
+version = "0.2"
+optional = true
+
+[dependencies.clack-extensions]
+version = "0.2"
+optional = true
+
 [features]
 default = []
 ffmpeg = ["dep:ffmpeg-next"]
+clap = ["dep:clack-host", "dep:clack-extensions"]

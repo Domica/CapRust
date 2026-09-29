@@ -20,3 +20,6 @@ pub mod whisper;
 
 #[cfg(feature = "ffmpeg")]
 pub mod mux;
+
+#[cfg(feature = "clap")]
+pub mod clap_host;
