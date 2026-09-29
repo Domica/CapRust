@@ -213,3 +213,70 @@ impl<'a> TabViewer for AppTabViewer<'a> {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Material-style egui_dock theme
+// ---------------------------------------------------------------------------
+
+/// Build an egui_dock [`Style`] that matches the app's Material-ish
+/// design language: no full-width tab bar fill, accent-tinted active
+/// tab, 1px hairline under the active label, transparent hover with
+/// a subtle accent wash. Colors come from [`Theme`], so switching to
+/// light mode or changing the accent updates the dock too.
+pub fn material_style(ctx: &egui::Context, theme: &crate::theme::Theme) -> egui_dock::Style {
+    let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
+    let visuals = ctx.style().visuals.clone();
+    let accent = theme.accent_color();
+    let panel_fill = visuals.panel_fill;
+    let hairline = egui::Color32::from_gray(58);
+    let inactive_text = egui::Color32::from_gray(160);
+    let hover_text = egui::Color32::from_gray(225);
+
+    // Outer surface: slight rounding, 1px hairline border.
+    style.main_surface_border_rounding = egui::CornerRadius::same(6);
+    style.main_surface_border_stroke = egui::Stroke::new(1.0_f32, hairline);
+    style.dock_area_padding = None;
+
+    // Tab bar: matches the panel background, no fill, 1px bottom
+    // hairline colour to separate tab strip from body.
+    style.tab_bar.bg_fill = panel_fill;
+    style.tab_bar.height = 30.0;
+    style.tab_bar.corner_radius = egui::CornerRadius::ZERO;
+    style.tab_bar.hline_color = hairline;
+    style.tab_bar.fill_tab_bar = false;
+    style.tab_bar.show_scroll_bar_on_overflow = false;
+
+    // Active tab: accent wash background, accent text.
+    style.tab.active.bg_fill = accent.gamma_multiply(0.22);
+    style.tab.active.text_color = accent;
+    style.tab.active.outline_color = egui::Color32::TRANSPARENT;
+    style.tab.active_with_kb_focus = style.tab.active.clone();
+
+    // Inactive tab: transparent background, muted text.
+    style.tab.inactive.bg_fill = egui::Color32::TRANSPARENT;
+    style.tab.inactive.text_color = inactive_text;
+    style.tab.inactive.outline_color = egui::Color32::TRANSPARENT;
+
+    // Hover: light accent wash, brighter text.
+    style.tab.hovered.bg_fill = accent.gamma_multiply(0.10);
+    style.tab.hovered.text_color = hover_text;
+    style.tab.hovered.outline_color = egui::Color32::TRANSPARENT;
+
+    // Focused (but not active): same as inactive for the moment,
+    // keyboard focus will not draw a distracting ring on the tab.
+    let inactive_snapshot = style.tab.inactive.clone();
+    style.tab.focused = inactive_snapshot.clone();
+    style.tab.focused_with_kb_focus = inactive_snapshot.clone();
+    style.tab.inactive_with_kb_focus = inactive_snapshot;
+
+    // Tab body: same panel background as the rest of the editor.
+    style.tab.tab_body.bg_fill = panel_fill;
+    style.tab.tab_body.stroke = egui::Stroke::NONE;
+
+    // Close button: subtle grey, brightens on hover of the tab.
+    style.buttons.close_tab_color = egui::Color32::from_gray(150);
+    style.buttons.close_tab_active_color = egui::Color32::from_gray(230);
+    style.buttons.close_tab_bg_fill = egui::Color32::TRANSPARENT;
+
+    style
+}

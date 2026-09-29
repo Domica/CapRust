@@ -4603,8 +4603,13 @@ impl CapRustApp {
         // mutably without aliasing `self.dock_state`.
         let mut ds = std::mem::replace(&mut self.dock_state, egui_dock::DockState::new(Vec::new()));
         {
+            // Compute the dock style BEFORE we move `self` into the
+            // viewer; material_style borrows the theme immutably.
+            let style = crate::dock::material_style(ctx, &self.theme);
             let mut viewer = crate::dock::AppTabViewer { app: self };
-            egui_dock::DockArea::new(&mut ds).show(ctx, &mut viewer);
+            egui_dock::DockArea::new(&mut ds)
+                .style(style)
+                .show(ctx, &mut viewer);
         }
         self.dock_state = ds;
     }
