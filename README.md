@@ -26,17 +26,31 @@ A modern video editor focused on **short-form social content**. Built from scrat
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/start-screen.png" alt="CapRust start screen" width="720">
-  <br>
-  <em>Start screen: pick a recent project or create a new one.</em>
-</p>
-
-<p align="center">
   <img src="docs/screenshots/editor.png" alt="CapRust editor" width="900">
   <br>
   <em>Editor: media bin on the left, preview in the center, timeline below, clip properties on the right.</em>
 </p>
 
+<p align="center">
+  <a href="docs/screenshots/editor-master.png"><img src="docs/screenshots/editor-master.png" alt="Master chain" width="280"></a>
+  <a href="docs/screenshots/editor-clip-effects.png"><img src="docs/screenshots/editor-clip-effects.png" alt="Clip effects" width="280"></a>
+  <a href="docs/screenshots/editor-effects.png"><img src="docs/screenshots/editor-effects.png" alt="Effects browser" width="280"></a>
+</p>
+<p align="center">
+  <a href="docs/screenshots/editor-settings.png"><img src="docs/screenshots/editor-settings.png" alt="Settings" width="280"></a>
+  <a href="docs/screenshots/editor-settings-backup.png"><img src="docs/screenshots/editor-settings-backup.png" alt="Settings backup" width="280"></a>
+  <a href="docs/screenshots/editor-tracks-caption.png"><img src="docs/screenshots/editor-tracks-caption.png" alt="Captions on timeline" width="280"></a>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/editor-transitions.png"><img src="docs/screenshots/editor-transitions.png" alt="Transitions" width="280"></a>
+  <a href="docs/screenshots/editor-filters.png"><img src="docs/screenshots/editor-filters.png" alt="Filters" width="280"></a>
+  <a href="docs/screenshots/editor-clip-properties.png"><img src="docs/screenshots/editor-clip-properties.png" alt="Clip properties" width="280"></a>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/start-screen.png"><img src="docs/screenshots/start-screen.png" alt="Start screen" width="900"></a>
+</p>
 
 ### Design goals
 
