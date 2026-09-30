@@ -77,6 +77,21 @@ pub struct AppSettings {
     /// Never sent anywhere else.
     #[serde(default)]
     pub translate_email: Option<String>,
+    /// Optional folder that cloud clients (Google Drive, OneDrive,
+    /// Dropbox, Box, iCloud Drive, Syncthing, Nextcloud) keep in
+    /// sync between machines. If set, `save()` writes a snapshot of
+    /// this AppSettings to `<sync_folder>/caprust-settings.json` so
+    /// the other machine can pick it up on next launch. CapRust does
+    /// not talk to any cloud API; the client's folder sync is the
+    /// entire transport.
+    #[serde(default)]
+    pub sync_folder: Option<String>,
+    /// Unix seconds of the last successful sync write or load. Used
+    /// to decide whether the sync file is newer than what this
+    /// machine already knows about. `None` means "this machine has
+    /// never synced", which makes any existing sync file newer.
+    #[serde(default)]
+    pub last_synced_at: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -117,6 +132,8 @@ impl Default for AppSettings {
             translate_source_lang: default_translate_source(),
             translate_target_lang: default_translate_target(),
             translate_email: None,
+            sync_folder: None,
+            last_synced_at: None,
         }
     }
 }
@@ -148,6 +165,7 @@ impl AppSettings {
         let file = SettingsFile {
             caprust_settings_version: SETTINGS_FILE_VERSION,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
+            exported_at: now_unix_secs(),
             settings: self.clone(),
         };
         let json = serde_json::to_string_pretty(&file).context("serialize AppSettings to JSON")?;
@@ -161,6 +179,84 @@ impl AppSettings {
         fs::write(path, json).with_context(|| format!("write {}", path.display()))?;
         tracing::info!("settings exported to {}", path.display());
         Ok(())
+    }
+
+    /// Absolute path to the sync file when a sync folder is set.
+    /// `None` if `sync_folder` is unset or blank.
+    pub fn sync_path(&self) -> Option<PathBuf> {
+        let f = self.sync_folder.as_ref()?.trim();
+        if f.is_empty() {
+            return None;
+        }
+        Some(PathBuf::from(f).join("caprust-settings.json"))
+    }
+
+    /// Write the current settings snapshot to the sync folder, if
+    /// one is set. Updates `last_synced_at` on success. Safe to call
+    /// on every save tick; callers can guard with a hash check to
+    /// avoid spamming a cloud client with identical writes.
+    ///
+    /// Returns the `exported_at` value on success, or `None` when no
+    /// sync folder is configured.
+    pub fn sync_now(&mut self) -> Result<Option<u64>> {
+        let Some(path) = self.sync_path() else {
+            return Ok(None);
+        };
+        let now = now_unix_secs();
+        let file = SettingsFile {
+            caprust_settings_version: SETTINGS_FILE_VERSION,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            exported_at: now,
+            settings: self.clone(),
+        };
+        let json = serde_json::to_string_pretty(&file).context("serialize sync snapshot")?;
+
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create sync dir {}", parent.display()))?;
+            }
+        }
+        fs::write(&path, json).with_context(|| format!("write sync {}", path.display()))?;
+        self.last_synced_at = Some(now);
+        Ok(Some(now))
+    }
+
+    /// Return the sync file path and its `exported_at` if the file
+    /// exists and is newer than `last_synced_at`. `None` when no
+    /// sync folder is set, the file is missing, unparseable, or not
+    /// newer. Failures are silent: a broken sync file must not block
+    /// startup.
+    pub fn check_sync_newer(&self) -> Option<(PathBuf, u64)> {
+        let path = self.sync_path()?;
+        if !path.is_file() {
+            return None;
+        }
+        let text = fs::read_to_string(&path).ok()?;
+        let file: SettingsFile = serde_json::from_str(&text).ok()?;
+        let last = self.last_synced_at.unwrap_or(0);
+        if file.exported_at > last {
+            Some((path, file.exported_at))
+        } else {
+            None
+        }
+    }
+
+    /// Load the settings snapshot from a sync file, ignoring nothing.
+    /// Returns the parsed AppSettings and the file's `exported_at` so
+    /// the caller can stamp `last_synced_at` after applying.
+    pub fn load_sync_file(path: &Path) -> Result<(Self, u64)> {
+        let text =
+            fs::read_to_string(path).with_context(|| format!("read sync {}", path.display()))?;
+        let file: SettingsFile = serde_json::from_str(&text).context("parse sync JSON")?;
+        if file.caprust_settings_version > SETTINGS_FILE_VERSION {
+            bail!(
+                "sync file is version {} but this build knows only up to {}",
+                file.caprust_settings_version,
+                SETTINGS_FILE_VERSION
+            );
+        }
+        Ok((file.settings, file.exported_at))
     }
 
     /// Read a settings snapshot from `path`.
@@ -209,7 +305,20 @@ pub struct SettingsFile {
     pub caprust_settings_version: u32,
     #[serde(default)]
     pub app_version: String,
+    /// Unix seconds when this snapshot was written. Used by the
+    /// sync feature to decide whether a file is newer than the
+    /// local `last_synced_at`. Older exports without this field
+    /// load with 0, which means "never newer than anything else".
+    #[serde(default)]
+    pub exported_at: u64,
     pub settings: AppSettings,
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn default_settings_version() -> u32 {
@@ -375,5 +484,110 @@ mod tests {
     fn default_export_path_is_under_home() {
         let p = default_export_path();
         assert!(p.to_string_lossy().ends_with("caprust-settings.json"));
+    }
+
+    fn tmp_sync_dir(label: &str) -> PathBuf {
+        let d =
+            std::env::temp_dir().join(format!("caprust_sync_{}_{}", label, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn sync_path_none_when_unset_or_blank() {
+        let mut a = AppSettings::default();
+        assert!(a.sync_path().is_none());
+        a.sync_folder = Some("".into());
+        assert!(a.sync_path().is_none());
+        a.sync_folder = Some("   ".into());
+        assert!(a.sync_path().is_none());
+    }
+
+    #[test]
+    fn sync_now_writes_file_and_stamps_last_synced() {
+        let dir = tmp_sync_dir("write");
+        let mut a = AppSettings {
+            sync_folder: Some(dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+
+        assert!(a.last_synced_at.is_none());
+        let stamp = a.sync_now().unwrap().expect("stamp on success");
+        assert!(stamp > 0);
+        assert_eq!(a.last_synced_at, Some(stamp));
+        assert!(dir.join("caprust-settings.json").is_file());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sync_now_noop_without_folder() {
+        let mut a = AppSettings::default();
+        assert!(a.sync_now().unwrap().is_none());
+        assert!(a.last_synced_at.is_none());
+    }
+
+    #[test]
+    fn check_sync_newer_detects_external_write() {
+        let dir = tmp_sync_dir("newer");
+        let mut a = AppSettings {
+            sync_folder: Some(dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+
+        // No file yet.
+        assert!(a.check_sync_newer().is_none());
+
+        // Simulate a snapshot written by another machine: future stamp.
+        let future = now_unix_secs() + 10_000;
+        let body = format!(
+            r#"{{"caprust_settings_version": 1, "app_version": "x", "exported_at": {}, "settings": {}}}"#,
+            future,
+            serde_json::to_string(&AppSettings::default()).unwrap(),
+        );
+        fs::write(dir.join("caprust-settings.json"), body).unwrap();
+
+        let (path, stamp) = a.check_sync_newer().expect("newer file detected");
+        assert!(path.to_string_lossy().ends_with("caprust-settings.json"));
+        assert_eq!(stamp, future);
+
+        // Once we acknowledge (stamp last_synced_at), it stops prompting.
+        a.last_synced_at = Some(future);
+        assert!(a.check_sync_newer().is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_sync_file_round_trips_settings_and_stamp() {
+        let dir = tmp_sync_dir("load");
+        let mut a = AppSettings {
+            language: "hr".into(),
+            sync_folder: Some(dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        a.sync_now().unwrap();
+
+        let path = dir.join("caprust-settings.json");
+        let (b, stamp) = AppSettings::load_sync_file(&path).unwrap();
+        assert_eq!(b.language, "hr");
+        assert!(stamp > 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_sync_newer_ignores_corrupt_file() {
+        let dir = tmp_sync_dir("corrupt");
+        let a = AppSettings {
+            sync_folder: Some(dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        fs::write(dir.join("caprust-settings.json"), b"not json").unwrap();
+
+        // Corrupt file -> silent None, no panic.
+        assert!(a.check_sync_newer().is_none());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

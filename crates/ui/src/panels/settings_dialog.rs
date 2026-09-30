@@ -560,6 +560,49 @@ fn show_paths(
     ui.separator();
     ui.label(egui::RichText::new(tr("set-backup-heading")).strong());
     ui.label(
+        egui::RichText::new(tr("set-backup-sync-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let mut f = settings.sync_folder.clone().unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut f)
+                    .desired_width(280.0)
+                    .hint_text(tr("set-backup-sync-none")),
+            )
+            .changed()
+        {
+            settings.sync_folder = if f.trim().is_empty() { None } else { Some(f) };
+        }
+        if ui.button(tr("new-button-browse")).clicked() {
+            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                settings.sync_folder = Some(dir.to_string_lossy().to_string());
+            }
+        }
+        if settings.sync_folder.is_some() && ui.button(egui_phosphor::regular::X).clicked() {
+            settings.sync_folder = None;
+        }
+    });
+    if let Some(ts) = settings.last_synced_at {
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new(format!("{} {}", tr("set-backup-sync-last"), ts))
+                .small()
+                .color(egui::Color32::from_gray(150)),
+        );
+    } else if settings.sync_path().is_some() {
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new(tr("set-backup-sync-never"))
+                .small()
+                .color(egui::Color32::from_gray(150)),
+        );
+    }
+    ui.add_space(8.0);
+    ui.label(
         egui::RichText::new(tr("set-backup-hint"))
             .small()
             .color(egui::Color32::from_gray(150)),

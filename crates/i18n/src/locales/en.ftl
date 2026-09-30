@@ -556,3 +556,12 @@ toast-settings-exported = Settings exported
 toast-settings-imported = Settings imported
 toast-settings-export-failed = Settings export failed
 toast-settings-import-failed = Settings import failed
+
+set-backup-sync-hint = Sync folder: point at a Google Drive, OneDrive, Dropbox, Box, iCloud, or Syncthing folder to keep settings in step across machines.
+set-backup-sync-none = no sync folder
+set-backup-sync-last = Last synced (unix):
+set-backup-sync-never = Never synced yet.
+sync-prompt-title = Newer settings found
+sync-prompt-body = A newer settings snapshot was found in your sync folder. Load it or keep the local settings?
+sync-prompt-load = Load them
+sync-prompt-keep = Keep local

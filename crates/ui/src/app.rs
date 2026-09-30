@@ -166,6 +166,17 @@ pub struct CapRustApp {
     /// True after the auto-open check has run once this session, so
     /// the modal is only offered at most once per launch.
     pub ffmpeg_prompt_checked: bool,
+    /// Some((path, exported_at)) when the sync folder holds a newer
+    /// snapshot than this machine has acknowledged. The prompt modal
+    /// offers Load / Keep local. Set on startup and cleared when the
+    /// user picks one.
+    pub settings_sync_prompt: Option<(std::path::PathBuf, u64)>,
+    /// True after the sync-newer check has run once this session.
+    pub settings_sync_prompt_checked: bool,
+    /// Hash of the last settings snapshot written to the sync folder.
+    /// Guards against redundant writes when eframe calls save()
+    /// repeatedly with identical state.
+    pub last_sync_hash: Option<u64>,
     /// Missing-media relink dialog. Opened by `check_missing_media_on_load`
     /// when the media library references files that are not on disk.
     pub relink_dialog: crate::panels::relink_dialog::RelinkDialogState,
@@ -490,6 +501,9 @@ impl CapRustApp {
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
+            settings_sync_prompt: None,
+            settings_sync_prompt_checked: false,
+            last_sync_hash: None,
             relink_dialog: Default::default(),
             relink_dialog_open: false,
             dock_state: settings
@@ -7013,6 +7027,73 @@ impl CapRustApp {
             }
         }
     }
+
+    /// Modal shown once on startup when the sync folder holds a
+    /// snapshot newer than what this machine has acknowledged.
+    /// Load replaces settings and stamps last_synced_at. Keep local
+    /// only stamps, so the prompt does not return until the other
+    /// machine writes again.
+    fn show_settings_sync_prompt_window(&mut self, ctx: &egui::Context) {
+        let Some((path, stamp)) = self.settings_sync_prompt.clone() else {
+            return;
+        };
+        let mut open = true;
+
+        egui::Window::new(tr("sync-prompt-title"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(tr("sync-prompt-body"));
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(path.display().to_string())
+                        .small()
+                        .monospace()
+                        .color(egui::Color32::from_gray(150)),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(tr("sync-prompt-load")).clicked() {
+                        match caprust_core::settings::AppSettings::load_sync_file(&path) {
+                            Ok((loaded, loaded_stamp)) => {
+                                self.settings = loaded;
+                                self.settings.last_synced_at = Some(loaded_stamp);
+                                self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
+                                self.settings_sync_prompt = None;
+                                tracing::info!(
+                                    "settings sync: loaded snapshot from {}",
+                                    path.display()
+                                );
+                                self.toast(tr("toast-settings-imported"));
+                                return;
+                            }
+                            Err(e) => {
+                                tracing::warn!("settings sync: load failed: {e:#}");
+                                self.toast(tr("toast-settings-import-failed"));
+                                // Treat as acknowledged so the modal
+                                // does not reappear every frame.
+                                self.settings.last_synced_at = Some(stamp);
+                                self.settings_sync_prompt = None;
+                                return;
+                            }
+                        }
+                    }
+                    if ui.button(tr("sync-prompt-keep")).clicked() {
+                        // Acknowledge the file so the modal does not
+                        // return until the other machine writes again.
+                        self.settings.last_synced_at = Some(stamp);
+                        self.settings_sync_prompt = None;
+                        tracing::info!("settings sync: kept local, acknowledged stamp {stamp}");
+                    }
+                });
+            });
+
+        if !open {
+            self.settings_sync_prompt = None;
+        }
+    }
 }
 
 /// Short "3m 12s" / "45s" / "1h 05m" formatter for the export ETA
@@ -7290,6 +7371,21 @@ impl eframe::App for CapRustApp {
         if self.ffmpeg_prompt_open {
             self.show_ffmpeg_prompt_window(ctx);
         }
+
+        // Settings sync prompt. One check per session, like ffmpeg.
+        if !self.settings_sync_prompt_checked {
+            self.settings_sync_prompt_checked = true;
+            if let Some((path, stamp)) = self.settings.check_sync_newer() {
+                tracing::info!(
+                    "settings sync: newer snapshot in {} (stamp {stamp})",
+                    path.display()
+                );
+                self.settings_sync_prompt = Some((path, stamp));
+            }
+        }
+        if self.settings_sync_prompt.is_some() {
+            self.show_settings_sync_prompt_window(ctx);
+        }
         if self.relink_dialog_open {
             self.show_relink_dialog_window(ctx);
         }
@@ -7326,6 +7422,30 @@ impl eframe::App for CapRustApp {
         // persisted with the next save() tick.
         if let Ok(json) = serde_json::to_string(&self.dock_state) {
             self.settings.dock_layout = Some(json);
+        }
+
+        // Cloud-folder sync. Hash-guarded so identical settings do
+        // not spam the cloud client with writes on every save tick.
+        if self.settings.sync_path().is_some() {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            if let Ok(json) = serde_json::to_string(&self.settings) {
+                json.hash(&mut h);
+            }
+            let digest = h.finish();
+            if Some(digest) != self.last_sync_hash {
+                match self.settings.sync_now() {
+                    Ok(Some(stamp)) => {
+                        self.last_sync_hash = Some(digest);
+                        tracing::info!("settings: sync snapshot written (stamp {stamp})");
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!("settings: sync write failed: {e:#}");
+                    }
+                }
+            }
         }
         if let Ok(json) = serde_json::to_string(&self.theme) {
             storage.set_string("theme", json);

@@ -556,3 +556,12 @@ toast-settings-exported = Postavke izvezene
 toast-settings-imported = Postavke uvezene
 toast-settings-export-failed = Izvoz postavki nije uspio
 toast-settings-import-failed = Uvoz postavki nije uspio
+
+set-backup-sync-hint = Sync folder: pokaži na Google Drive, OneDrive, Dropbox, Box, iCloud ili Syncthing mapu da držiš postavke usklađene između računala.
+set-backup-sync-none = bez sync mape
+set-backup-sync-last = Zadnja sinkronizacija (unix):
+set-backup-sync-never = Još nije sinkronizirano.
+sync-prompt-title = Pronađene novije postavke
+sync-prompt-body = U sync mapi se nalazi novija snimka postavki. Učitati ih ili zadržati lokalne?
+sync-prompt-load = Učitaj ih
+sync-prompt-keep = Zadrži lokalne
