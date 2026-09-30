@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
-[![Version](https://img.shields.io/badge/version-0.5.0--alpha.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0--alpha.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
@@ -71,6 +71,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Auto-ducking | Yes — sidechaincompress |
 | CLAP plugin hosting | Yes — master chain, undoable, local |
 | MCP server for AI clients | Yes — 15 tools, JSON-RPC over stdio |
+| Settings sync (cloud folder) | Yes — Drive, OneDrive, Dropbox, Box, iCloud, Syncthing |
 | Update checker | Yes — GitHub Releases, opt-out |
 | Hardware encoding | Yes (NVENC + AMF, probed at runtime) |
 | Zero-config install | Yes — portable .exe |
@@ -145,6 +146,11 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Mutating:** `add_media`, `add_clip_to_timeline`, `move_clip`, `split_clip`, `set_transition`, `set_clip_volume`, `set_clip_speed`, `set_clip_fade`, `undo`, `redo`, `save_project`
 - **No tokio, no rmcp** — 200-line hand-rolled dispatch
 - **Claude Desktop** config template in `docs/mcp.md`
+
+### Settings
+- **Export / Import as JSON** — File → Settings → Paths → Backup. Versioned `SettingsFile` envelope; a newer format version is refused with a clear message, missing fields are defaulted.
+- **Auto-sync via cloud folder** — point CapRust at a Google Drive, OneDrive, Dropbox, Box, iCloud Drive, Syncthing, or Nextcloud folder. On every save a snapshot is written to `<folder>/caprust-settings.json`. On startup, if the folder holds a newer snapshot, a modal offers Load them / Keep local. CapRust never talks to a cloud API; the client's folder sync is the transport.
+- **User-selectable font family + size** — Settings → Appearance → Font. Families: Default (egui), Segoe UI, Arial, Consolas. Size 0.8–1.5× scales the entire UI. No font files bundled.
 
 ### Preview
 - **Real-time preview** through the same filtergraph as export
@@ -340,6 +346,14 @@ CapRust is:
 ## Version History
 
 Full details in [CHANGELOG.md](CHANGELOG.md).
+
+### 0.6.0-alpha.1 - 2026-09-30
+
+- **Settings export/import** - dump AppSettings to JSON, load it back. Versioned envelope (`SettingsFile`), refuses newer format versions.
+- **Settings auto-sync via cloud folder** - point at a Google Drive / OneDrive / Dropbox / Box / iCloud / Syncthing folder. Snapshot on every save (hash-guarded), startup modal offers Load them / Keep local when a newer snapshot is found.
+- **User-selectable app font family + size** - Default / Segoe UI / Arial / Consolas; 0.8-1.5x scale for the whole UI via egui's pixels-per-point.
+- **Captions motion + procedural effects** - Blink / Pulse / ColorCycle now work on Captions clips like TextOverlay; same Ctrl+Z, same render path.
+- **Issue templates** for bug reports and feature requests.
 
 ### 0.5.0-alpha.1 - 2026-09-29
 
