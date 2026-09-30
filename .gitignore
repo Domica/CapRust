@@ -30,3 +30,9 @@ DIRECTIVES.md
 
 # Local backlog (see §24 spirit)
 TODO.md
+
+# Local debug / test artifacts (never commit)
+fade_fix_*.txt
+caprust_*.log
+caprust_*.txt
+ntent*
