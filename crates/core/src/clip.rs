@@ -39,6 +39,15 @@ pub enum ClipType {
         segments: Vec<CaptionSegment>,
         #[serde(default)]
         style: CaptionStyle,
+        /// Motion transform shared with TextOverlay: normalized x/y
+        /// offset (fraction of frame), uniform scale. Applies to
+        /// every drawtext the render path expands from the segments.
+        #[serde(default)]
+        motion: TextMotion,
+        /// Procedural effect shared with TextOverlay: Blink, Pulse,
+        /// or ColorCycle. None = static captions.
+        #[serde(default)]
+        effect: Option<TextEffect>,
     },
     /// Text-to-speech narration.
     Narration {
@@ -569,6 +578,8 @@ impl Clip {
                 language: language.to_string(),
                 segments: Vec::new(),
                 style: CaptionStyle::default(),
+                motion: TextMotion::default(),
+                effect: None,
             },
             speed: 1.0,
             reversed: false,
@@ -652,6 +663,62 @@ impl Clip {
 #[cfg(test)]
 mod text_motion_tests {
     use super::*;
+
+    #[test]
+    fn captions_deserializes_without_motion_or_effect() {
+        // Old projects carry Captions clips without motion/effect.
+        // serde(default) must fill them in.
+        let raw = r#"{
+            "Captions": {
+                "model_id": "whisper-tiny",
+                "language": "en",
+                "segments": [],
+                "style": {
+                    "font_size": 32.0,
+                    "position": "bottom",
+                    "color": [255, 255, 0],
+                    "outline_color": [0, 0, 0],
+                    "outline_width": 2.0,
+                    "bg_enabled": false,
+                    "bg_opacity": 0.5
+                }
+            }
+        }"#;
+        let ct: ClipType = serde_json::from_str(raw).unwrap();
+        match ct {
+            ClipType::Captions { motion, effect, .. } => {
+                assert_eq!(motion, TextMotion::default());
+                assert!(effect.is_none());
+            }
+            _ => panic!("expected Captions"),
+        }
+    }
+
+    #[test]
+    fn captions_round_trip_with_motion_and_effect() {
+        let mut c = Clip::new_captions(0, 0, 3000, "whisper-tiny", "en");
+        if let ClipType::Captions { motion, effect, .. } = &mut c.clip_type {
+            motion.x = 0.25;
+            motion.y = -0.1;
+            motion.scale = 1.5;
+            *effect = Some(TextEffect {
+                kind: TextEffectKind::Pulse,
+                period: 0.8,
+                amount: 0.5,
+            });
+        }
+        let j = serde_json::to_string(&c).unwrap();
+        let back: Clip = serde_json::from_str(&j).unwrap();
+        match back.clip_type {
+            ClipType::Captions { motion, effect, .. } => {
+                assert_eq!(motion.x, 0.25);
+                assert_eq!(motion.scale, 1.5);
+                let e = effect.unwrap();
+                assert_eq!(e.kind, TextEffectKind::Pulse);
+            }
+            _ => panic!("expected Captions"),
+        }
+    }
 
     #[test]
     fn text_motion_default_is_identity() {

@@ -2293,6 +2293,8 @@ pub fn plan_from_project(
                 ClipType::Captions {
                     segments,
                     style: caption_style,
+                    motion,
+                    effect,
                     ..
                 } => {
                     // Each caption segment becomes its own drawtext with an
@@ -2381,8 +2383,8 @@ pub fn plan_from_project(
                                 above: false,
                                 z_order: z,
                                 style: "caption".to_string(),
-                                motion: caprust_core::clip::TextMotion::default(),
-                                effect: None,
+                                motion: *motion,
+                                effect: *effect,
                                 caption_style: Some(*caption_style),
                             });
                         } else {
@@ -2438,8 +2440,8 @@ pub fn plan_from_project(
                                     above: false,
                                     z_order: z,
                                     style: "caption".to_string(),
-                                    motion: caprust_core::clip::TextMotion::default(),
-                                    effect: None,
+                                    motion: *motion,
+                                    effect: *effect,
                                     caption_style: Some(*caption_style),
                                 });
                             }
@@ -2834,6 +2836,8 @@ mod tests {
             style: Default::default(),
             language: "en".into(),
             model_id: "test".into(),
+            motion: Default::default(),
+            effect: None,
             segments: vec![
                 CaptionSegment {
                     start_ms: 0,
@@ -2916,6 +2920,8 @@ mod tests {
             style: Default::default(),
             language: "en".into(),
             model_id: "test".into(),
+            motion: Default::default(),
+            effect: None,
             segments: vec![
                 CaptionSegment {
                     start_ms: 0,

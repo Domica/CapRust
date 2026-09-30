@@ -145,13 +145,13 @@ impl SetClipCommand {
         self.text_content = Some(v.into());
         self
     }
-    /// Replace the TextOverlay motion transform. No-op on other kinds.
+    /// Replace the TextOverlay OR Captions motion transform. No-op on other kinds.
     pub fn text_motion(mut self, v: crate::clip::TextMotion) -> Self {
         self.text_motion = Some(v);
         self
     }
-    /// Set or clear the TextOverlay procedural effect. No-op on other
-    /// kinds. Pass None to remove an effect.
+    /// Set or clear the TextOverlay OR Captions procedural effect.
+    /// No-op on other kinds. Pass None to remove an effect.
     pub fn text_effect(mut self, v: Option<crate::clip::TextEffect>) -> Self {
         self.text_effect = Some(v);
         self
@@ -270,13 +270,17 @@ impl Command for SetClipCommand {
             }
         }
         if let Some(v) = self.text_motion {
-            if let crate::clip::ClipType::TextOverlay { motion, .. } = &mut c.clip_type {
-                *motion = v;
+            match &mut c.clip_type {
+                crate::clip::ClipType::TextOverlay { motion, .. } => *motion = v,
+                crate::clip::ClipType::Captions { motion, .. } => *motion = v,
+                _ => {}
             }
         }
         if let Some(v) = self.text_effect {
-            if let crate::clip::ClipType::TextOverlay { effect, .. } = &mut c.clip_type {
-                *effect = v;
+            match &mut c.clip_type {
+                crate::clip::ClipType::TextOverlay { effect, .. } => *effect = v,
+                crate::clip::ClipType::Captions { effect, .. } => *effect = v,
+                _ => {}
             }
         }
         if let Some(v) = self.fade_in_ms {
