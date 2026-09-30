@@ -565,3 +565,7 @@ sync-prompt-title = Pronađene novije postavke
 sync-prompt-body = U sync mapi se nalazi novija snimka postavki. Učitati ih ili zadržati lokalne?
 sync-prompt-load = Učitaj ih
 sync-prompt-keep = Zadrži lokalne
+
+set-appearance-font = Font
+set-appearance-font-family = Obitelj
+set-appearance-font-scale = Veli\u010dina

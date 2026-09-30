@@ -153,6 +153,33 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
     });
 
     ui.add_space(12.0);
+
+    // --- Font ---
+    ui.label(egui::RichText::new(tr("set-appearance-font")).strong());
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(tr("set-appearance-font-family"));
+        egui::ComboBox::from_id_salt("font_family_combo")
+            .selected_text(theme.font_family.label())
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                for f in crate::theme::UiFontFamily::all() {
+                    ui.selectable_value(&mut theme.font_family, f, f.label());
+                }
+            });
+    });
+    ui.horizontal(|ui| {
+        ui.label(tr("set-appearance-font-scale"));
+        ui.add(
+            egui::Slider::new(&mut theme.font_scale, 0.8..=1.5)
+                .fixed_decimals(2)
+                .suffix("\u{00d7}"),
+        );
+        if ui.button("1.0").clicked() {
+            theme.font_scale = 1.0;
+        }
+    });
+    ui.add_space(12.0);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-tracks")).strong());
     ui.label(

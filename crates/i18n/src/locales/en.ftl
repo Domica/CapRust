@@ -565,3 +565,7 @@ sync-prompt-title = Newer settings found
 sync-prompt-body = A newer settings snapshot was found in your sync folder. Load it or keep the local settings?
 sync-prompt-load = Load them
 sync-prompt-keep = Keep local
+
+set-appearance-font = Font
+set-appearance-font-family = Family
+set-appearance-font-scale = Size

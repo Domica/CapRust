@@ -72,6 +72,74 @@ pub struct Theme {
     /// Playhead line extent.
     #[serde(default)]
     pub playhead_size: PlayheadSize,
+    /// Global UI scale. Multiplies egui's pixels-per-point, which
+    /// scales text, buttons, panels, and the window chrome in one
+    /// knob. 1.0 is the default look.
+    #[serde(default = "default_font_scale")]
+    pub font_scale: f32,
+    /// Which font family the UI renders in. EguiDefault uses egui's
+    /// bundled Proportional font (Ubuntu-Light). The others load a
+    /// system TTF at startup; a missing file falls back to
+    /// EguiDefault with a warning so the app never fails to open.
+    #[serde(default)]
+    pub font_family: UiFontFamily,
+}
+
+fn default_font_scale() -> f32 {
+    1.0
+}
+
+/// Font family selector for the whole UI. Values are the enum names
+/// (serde snake_case on the wire). The system families are Windows
+/// font paths; on other platforms they silently fall back to
+/// EguiDefault.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum UiFontFamily {
+    #[default]
+    EguiDefault,
+    SegoeUi,
+    Arial,
+    Consolas,
+}
+
+impl UiFontFamily {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::EguiDefault => "Default",
+            Self::SegoeUi => "Segoe UI",
+            Self::Arial => "Arial",
+            Self::Consolas => "Consolas",
+        }
+    }
+
+    pub fn all() -> [Self; 4] {
+        [
+            Self::EguiDefault,
+            Self::SegoeUi,
+            Self::Arial,
+            Self::Consolas,
+        ]
+    }
+
+    /// Absolute Windows path for the family's regular face. Returns
+    /// None for `EguiDefault` and for any family whose file is not on
+    /// this machine.
+    pub fn system_path(self) -> Option<std::path::PathBuf> {
+        let rel = match self {
+            Self::EguiDefault => return None,
+            Self::SegoeUi => "segoeui.ttf",
+            Self::Arial => "arial.ttf",
+            Self::Consolas => "consola.ttf",
+        };
+        let dirs = [std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into())];
+        for d in &dirs {
+            let p = std::path::PathBuf::from(d).join("Fonts").join(rel);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        None
+    }
 }
 
 fn default_playhead_color() -> [u8; 3] {
@@ -105,6 +173,8 @@ impl Default for Theme {
             track_text: default_track_text(),
             playhead: default_playhead_color(),
             playhead_size: PlayheadSize::default(),
+            font_scale: 1.0,
+            font_family: UiFontFamily::EguiDefault,
         }
     }
 }

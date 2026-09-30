@@ -177,6 +177,10 @@ pub struct CapRustApp {
     /// Guards against redundant writes when eframe calls save()
     /// repeatedly with identical state.
     pub last_sync_hash: Option<u64>,
+    /// The font family currently pushed into egui. Compared each
+    /// frame so a change in Settings -> Appearance rebuilds the font
+    /// map exactly once.
+    pub last_applied_font_family: Option<crate::theme::UiFontFamily>,
     /// Missing-media relink dialog. Opened by `check_missing_media_on_load`
     /// when the media library references files that are not on disk.
     pub relink_dialog: crate::panels::relink_dialog::RelinkDialogState,
@@ -464,12 +468,13 @@ fn spawn_update_check(
 
 impl CapRustApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        setup_phosphor_fonts(&cc.egui_ctx);
-        let theme = cc
+        let theme: Theme = cc
             .storage
             .and_then(|s| s.get_string("theme"))
             .and_then(|s| serde_json::from_str::<Theme>(&s).ok())
             .unwrap_or_default();
+        setup_phosphor_fonts(&cc.egui_ctx, theme.font_family);
+        cc.egui_ctx.set_pixels_per_point(theme.font_scale);
         let settings: AppSettings = cc
             .storage
             .and_then(|s| s.get_string("settings"))
@@ -504,6 +509,7 @@ impl CapRustApp {
             settings_sync_prompt: None,
             settings_sync_prompt_checked: false,
             last_sync_hash: None,
+            last_applied_font_family: None,
             relink_dialog: Default::default(),
             relink_dialog_open: false,
             dock_state: settings
@@ -7177,6 +7183,15 @@ enum ClipAction {
 
 impl eframe::App for CapRustApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Live-apply the UI scale and font family. Both are cheap
+        // for egui to re-evaluate; the font rebuild only fires when
+        // the family actually changes.
+        ctx.set_pixels_per_point(self.theme.font_scale);
+        if self.last_applied_font_family != Some(self.theme.font_family) {
+            setup_phosphor_fonts(ctx, self.theme.font_family);
+            self.last_applied_font_family = Some(self.theme.font_family);
+        }
+
         // Refresh the model registry from the built-in defaults once
         // per frame. Cheap (a dozen entries), idempotent, and makes
         // every downstream read site automatically aware of any entry
@@ -7460,9 +7475,49 @@ impl eframe::App for CapRustApp {
 }
 
 /// Register the Phosphor icon font family.
-fn setup_phosphor_fonts(ctx: &egui::Context) {
+fn setup_phosphor_fonts(ctx: &egui::Context, family: crate::theme::UiFontFamily) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+
+    // Optional system font as the highest-priority face in the
+    // Proportional family. The named key is inserted at position 0
+    // of the Proportional family's list so every proportional
+    // request uses it first, falling back to egui's bundled font
+    // for glyphs the system font is missing.
+    if let Some(path) = family.system_path() {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let key = format!("caprust-system-{family:?}").to_lowercase();
+                fonts.font_data.insert(
+                    key.clone(),
+                    std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+                );
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, key.clone());
+                tracing::info!(
+                    "font: loaded system family {} from {}",
+                    family.label(),
+                    path.display()
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "font: could not read {} for family {}: {e}",
+                    path.display(),
+                    family.label()
+                );
+            }
+        }
+    } else if family != crate::theme::UiFontFamily::EguiDefault {
+        tracing::warn!(
+            "font: family {} not available on this machine, using egui default",
+            family.label()
+        );
+    }
+
     ctx.set_fonts(fonts);
 }
 
