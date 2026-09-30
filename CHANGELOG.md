@@ -2,6 +2,48 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.6.0-alpha.1] — 2026-09-30
+
+First alpha of the 0.6 line. Settings portability, user-selectable
+fonts, and captions parity.
+
+### Added
+- **Settings export/import as JSON.** File → Settings → Paths →
+  Backup. Export writes a versioned `SettingsFile` envelope; import
+  reads it back. Missing fields are defaulted, a newer format
+  version is refused with a clear message.
+- **Settings auto-sync via cloud folder.** Point CapRust at a folder
+  that Google Drive, OneDrive, Dropbox, Box, iCloud Drive,
+  Syncthing, or Nextcloud keeps in sync. On every save a snapshot
+  is written to `<folder>/caprust-settings.json`. On startup, if
+  the folder holds a newer snapshot, a modal offers Load them /
+  Keep local. Transport is the cloud client's folder sync; CapRust
+  never talks to a cloud API.
+- **User-selectable app font family + size.** Settings → Appearance
+  → Font. Families: Default (egui), Segoe UI, Arial, Consolas.
+  Size 0.8–1.5× scales the entire UI via pixels-per-point. No font
+  files bundled; the system font is read from `%WINDIR%\Fonts`.
+- **Captions motion + procedural effects parity with text
+  overlays.** Captions clips now carry `TextMotion` (X/Y/Scale) and
+  `TextEffect` (Blink/Pulse/ColorCycle), editable from the clip
+  properties panel. Same command, same Ctrl+Z semantics as
+  TextOverlay.
+- **Issue templates** for bug reports and feature requests.
+- **Drift logger.** The periodic `preview state` INFO line now
+  includes `audio_ms` and `delta` for future sync regressions.
+
+### Changed
+- `crates/mcp/Cargo.toml` uses `version.workspace = true`.
+
+### Fixed
+- Captions drawtext now respects the clip's motion and effect
+  instead of hardcoding identity/none.
+- The `preview state` sync measurement no longer reports a bogus
+  drift when the audio player has not started yet.
+
+### Tests
+- 257 passing, 8 skipped.
+
 ## [0.5.0-alpha.1] — 2026-09-29
 
 First alpha of the 0.5 line. CLAP plugin hosting, a standalone MCP
