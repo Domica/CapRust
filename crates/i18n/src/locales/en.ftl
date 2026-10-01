@@ -50,6 +50,7 @@ clip-ctx-mirror-v = Mirror vertically
 
 # New project screen
 new-title = New Project
+new-tagline = Social-first video editor
 new-field-name = Name
 new-field-location = Location
 new-field-format = Format
@@ -64,6 +65,7 @@ new-recent-empty = No recent projects yet.
 new-recent-open = Open
 new-recent-forget = Forget
 new-recent-delete = Delete
+new-recent-delete-hint = Delete project file from disk
 
 # Media bin
 asset-tab-media = Media

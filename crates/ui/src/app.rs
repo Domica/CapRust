@@ -709,7 +709,7 @@ impl CapRustApp {
                 ui.add_space(((ui.available_height() - 500.0) / 2.0).max(24.0));
                 ui.heading(egui::RichText::new(format!("{} CapRust", ph::FILM_STRIP)).size(34.0));
                 ui.add_space(space::XS);
-                ui.label("Social-first video editor");
+                ui.label(tr("new-tagline"));
                 ui.add_space(space::XXXL);
             });
             // Two columns: left = New Project form, right = Recent
@@ -861,14 +861,15 @@ impl CapRustApp {
                                                     {
                                                         load_path = Some(rp.path.clone());
                                                     }
-                                                    if ui.small_button("Forget").clicked() {
+                                                    if ui
+                                                        .small_button(tr("new-recent-forget"))
+                                                        .clicked()
+                                                    {
                                                         forget_path = Some(rp.path.clone());
                                                     }
                                                     if ui
                                                         .small_button(ph::TRASH)
-                                                        .on_hover_text(
-                                                            "Delete project file from disk",
-                                                        )
+                                                        .on_hover_text(tr("new-recent-delete-hint"))
                                                         .clicked()
                                                     {
                                                         delete_from_disk = Some(rp.path.clone());

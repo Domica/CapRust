@@ -50,6 +50,7 @@ clip-ctx-mirror-v = Zrcali okomito
 
 # New project screen
 new-title = Novi projekt
+new-tagline = Video editor za društvene mreže
 new-field-name = Naziv
 new-field-location = Lokacija
 new-field-format = Format
@@ -64,6 +65,7 @@ new-recent-empty = Još nema nedavnih projekata.
 new-recent-open = Otvori
 new-recent-forget = Zaboravi
 new-recent-delete = Obriši
+new-recent-delete-hint = Obriši datoteku projekta s diska
 
 # Media bin
 asset-tab-media = Mediji
