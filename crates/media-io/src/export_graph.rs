@@ -386,6 +386,24 @@ impl RenderPlan {
             ));
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
+            // Effects like zoom_pulse and shake use
+            // `crop=w=iw*0.9:h=ih*0.9,...,scale=iw*1.111111:ih*1.111111`
+            // to crop a smaller window then restore it. f32 rounding
+            // (576 * 1.111111 = 639.9999...) makes ffmpeg floor to an
+            // even dimension (638, 268) instead of exactly 640x270.
+            // xfade and maskedmerge both reject differing input sizes
+            // ("First input link main parameters ... do not match").
+            // Normalize back to the exact project size after every
+            // effect chain so downstream stages always see identical
+            // dimensions. Skipped when there are no effects, so a
+            // clean clip's filtergraph is byte-identical to before.
+            if !effects_chain.is_empty() {
+                fg.push_str(&format!(
+                    ",scale={w}:{h}:flags=bicubic,setsar=1",
+                    w = self.width,
+                    h = self.height,
+                ));
+            }
             fg.push_str(&format!("[{video_out}];"));
 
             if let Some(mask) = mask_escaped {
