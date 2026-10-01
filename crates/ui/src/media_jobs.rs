@@ -12,6 +12,10 @@ pub enum Job {
         path: PathBuf,
         kind: MediaKind,
     },
+    /// Extract a waveform peak cache for a media item that carries
+    /// audio. Writes to a temp .bin; the drain handler copies it
+    /// into the project cache once project_path is known.
+    Waveform { media_id: uuid::Uuid, path: PathBuf },
 }
 
 #[derive(Debug)]
@@ -21,6 +25,9 @@ pub enum JobResult {
         duration_ms: u64,
     },
     ThumbDone {
+        media_id: uuid::Uuid,
+    },
+    WaveformDone {
         media_id: uuid::Uuid,
     },
     Failed {
@@ -97,6 +104,44 @@ impl JobRunner {
                             }
                         }
                     }
+                    Job::Waveform { media_id, path } => {
+                        let Some(ffmpeg) = &ffmpeg else {
+                            continue;
+                        };
+                        tracing::info!("job: Waveform {}", path.display());
+                        // Bucket count: 2048 gives ~2.5 px per bucket at
+                        // a 5k-px clip strip, plenty of resolution for
+                        // a visual waveform. The cache file is ~8 KB
+                        // per media item regardless of clip length.
+                        const WAVEFORM_BUCKETS: usize = 2048;
+                        match caprust_media_io::waveform::extract_peaks(
+                            ffmpeg,
+                            &path,
+                            WAVEFORM_BUCKETS,
+                        ) {
+                            Ok(peaks) => {
+                                let tmp_dir = std::env::temp_dir().join("caprust-waveforms");
+                                if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+                                    tracing::warn!("job: waveform tmp dir failed: {e}");
+                                    continue;
+                                }
+                                let tmp = tmp_dir.join(format!("{media_id}.bin"));
+                                if let Err(e) = write_waveform_bin(&tmp, &peaks) {
+                                    tracing::warn!("job: waveform write {}: {e}", tmp.display());
+                                    continue;
+                                }
+                                tracing::info!(
+                                    "job: waveform ok \u{2014} {} buckets -> {}",
+                                    peaks.len(),
+                                    tmp.display()
+                                );
+                                let _ = tx_result.send(JobResult::WaveformDone { media_id });
+                            }
+                            Err(e) => {
+                                tracing::warn!("job: waveform failed \u{2014} {e}");
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -104,13 +149,23 @@ impl JobRunner {
         Self { tx, rx }
     }
 
-    /// Kick off a probe+thumbnail job for a media item.
+    /// Kick off a probe+thumbnail+waveform job for a media item.
     pub fn enqueue(&self, item: &MediaItem) {
         let _ = self.tx.send(Job::Probe {
             media_id: item.id,
             path: PathBuf::from(&item.path),
             kind: item.kind,
         });
+        // Waveform for anything that carries audio: Audio files and
+        // Video (which may have an embedded audio stream). Images do
+        // not need one. The extraction is cheap (8 kHz mono decode)
+        // and the result is cached for every clip that uses the item.
+        if matches!(item.kind, MediaKind::Audio | MediaKind::Video) {
+            let _ = self.tx.send(Job::Waveform {
+                media_id: item.id,
+                path: PathBuf::from(&item.path),
+            });
+        }
     }
 
     /// Drain pending results, applying them to the media library.
@@ -125,6 +180,49 @@ impl JobRunner {
                     if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
                         m.duration_ms = duration_ms;
                         m.probe_done = true;
+                    }
+                }
+                JobResult::WaveformDone { media_id } => {
+                    tracing::info!("job: WaveformDone for {media_id}");
+                    if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
+                        m.waveform_done = true;
+                    }
+                    // Move the temp .bin into the project cache.
+                    if let Some(proj_path) = project.project_path.clone() {
+                        let src = std::env::temp_dir()
+                            .join("caprust-waveforms")
+                            .join(format!("{media_id}.bin"));
+                        let dst = caprust_core::cache::waveform_path(
+                            std::path::Path::new(&proj_path),
+                            media_id,
+                        );
+                        if let Some(parent) = dst.parent() {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                tracing::error!("create_dir_all {}: {e}", parent.display());
+                                continue;
+                            }
+                        }
+                        match std::fs::copy(&src, &dst) {
+                            Ok(_) => {
+                                let _ = std::fs::remove_file(&src);
+                                tracing::info!(
+                                    "waveform copied: {} \u{2192} {}",
+                                    src.display(),
+                                    dst.display()
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "waveform copy {} -> {}: {e}",
+                                    src.display(),
+                                    dst.display()
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            "WaveformDone but project_path is None \u{2014} left in temp"
+                        );
                     }
                 }
                 JobResult::ThumbDone { media_id } => {
@@ -178,6 +276,20 @@ impl JobRunner {
         }
         thumbs_ready
     }
+}
+
+/// Write a waveform cache file: u32 LE bucket count, then that
+/// many f32 LE values.
+fn write_waveform_bin(path: &std::path::Path, peaks: &[f32]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut buf = Vec::with_capacity(4 + peaks.len() * 4);
+    buf.extend_from_slice(&(peaks.len() as u32).to_le_bytes());
+    for &v in peaks {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(&buf)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

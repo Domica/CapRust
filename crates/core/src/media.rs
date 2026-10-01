@@ -43,6 +43,9 @@ pub struct MediaItem {
     /// Thumbnail status — set true once the JPEG is on disk.
     #[serde(default)]
     pub thumb_done: bool,
+    /// Waveform peak cache status — set true once the .bin is on disk.
+    #[serde(default)]
+    pub waveform_done: bool,
 }
 
 impl MediaItem {
@@ -62,6 +65,7 @@ impl MediaItem {
             added_at,
             probe_done: false,
             thumb_done: false,
+            waveform_done: false,
         }
     }
 }

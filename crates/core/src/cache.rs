@@ -16,6 +16,23 @@ pub fn thumbnail_exists(project_path: &Path, media_id: uuid::Uuid) -> bool {
     thumbnail_path(project_path, media_id).is_file()
 }
 
+/// Path: <project>/cache/waveforms/<media_id>.bin
+///
+/// Binary format: 4-byte little-endian bucket count, then that many
+/// f32 LE values in 0.0..=1.0. Same file for every clip that
+/// references the media item.
+pub fn waveform_path(project_path: &Path, media_id: uuid::Uuid) -> std::path::PathBuf {
+    project_path
+        .join("cache")
+        .join("waveforms")
+        .join(format!("{media_id}.bin"))
+}
+
+/// Best-effort: does the waveform cache already exist?
+pub fn waveform_exists(project_path: &Path, media_id: uuid::Uuid) -> bool {
+    waveform_path(project_path, media_id).is_file()
+}
+
 /// Path: <project>/cache/masks/<clip_id>.mkv
 ///
 /// One alpha-mask sequence per clip, encoded as FFV1 in Matroska so
