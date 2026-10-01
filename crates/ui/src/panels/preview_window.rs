@@ -4,6 +4,8 @@ use caprust_core::AspectRatio;
 use egui::{Color32, RichText, Ui, Vec2};
 use egui_phosphor::regular as ph;
 
+use crate::theme::tokens::{radius, text};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewQuality {
     Quarter,
@@ -60,6 +62,14 @@ pub struct PreviewEvents {
     pub volume_changed: Option<f32>,
 }
 
+// Transport-bar button sizes. Component-specific: the play button is
+// deliberately larger than the seek buttons to create visual rhythm.
+// Not global spacing tokens.
+const BTN_SEEK_BIG: Vec2 = Vec2::new(34.0, 28.0);
+const BTN_SEEK_SMALL: Vec2 = Vec2::new(30.0, 28.0);
+const BTN_PLAY: Vec2 = Vec2::new(38.0, 32.0);
+const BTN_MUTE: Vec2 = Vec2::new(28.0, 26.0);
+
 fn transport_button(ui: &mut Ui, icon: &str, tooltip: &str, size: Vec2) -> bool {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let bg = if resp.hovered() {
@@ -67,12 +77,12 @@ fn transport_button(ui: &mut Ui, icon: &str, tooltip: &str, size: Vec2) -> bool 
     } else {
         Color32::from_gray(50)
     };
-    ui.painter().rect_filled(rect, 5.0, bg);
+    ui.painter().rect_filled(rect, radius::cr(radius::SM), bg);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         icon,
-        egui::FontId::proportional(16.0),
+        egui::FontId::proportional(text::L),
         Color32::from_gray(220),
     );
     resp.on_hover_text(tooltip).clicked()
@@ -94,7 +104,7 @@ pub fn show_transport(
         // --- Left: ratio dropdown ---
         egui::ComboBox::from_id_salt("preview_ratio")
             .selected_text(ratio.label())
-            .width(150.0)
+            .width(150.0) // ratio label; component-specific
             .show_ui(ui, |ui| {
                 for preset in AspectRatio::presets() {
                     let mut p = preset.clone();
@@ -113,22 +123,20 @@ pub fn show_transport(
             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
             |ui| {
                 ui.horizontal(|ui| {
-                    if transport_button(ui, ph::REWIND, "Back 30 s", Vec2::new(34.0, 28.0)) {
+                    if transport_button(ui, ph::REWIND, "Back 30 s", BTN_SEEK_BIG) {
                         ev.seek_back_30 = true;
                     }
-                    if transport_button(ui, ph::SKIP_BACK, "Back 5 s", Vec2::new(30.0, 28.0)) {
+                    if transport_button(ui, ph::SKIP_BACK, "Back 5 s", BTN_SEEK_SMALL) {
                         ev.seek_back_5 = true;
                     }
                     let play_icon = if state.playing { ph::PAUSE } else { ph::PLAY };
-                    if transport_button(ui, play_icon, "Play / Pause", Vec2::new(38.0, 32.0)) {
+                    if transport_button(ui, play_icon, "Play / Pause", BTN_PLAY) {
                         ev.toggle_play = true;
                     }
-                    if transport_button(ui, ph::SKIP_FORWARD, "Forward 5 s", Vec2::new(30.0, 28.0))
-                    {
+                    if transport_button(ui, ph::SKIP_FORWARD, "Forward 5 s", BTN_SEEK_SMALL) {
                         ev.seek_fwd_5 = true;
                     }
-                    if transport_button(ui, ph::FAST_FORWARD, "Forward 30 s", Vec2::new(34.0, 28.0))
-                    {
+                    if transport_button(ui, ph::FAST_FORWARD, "Forward 30 s", BTN_SEEK_BIG) {
                         ev.seek_fwd_30 = true;
                     }
                     ui.separator();
@@ -137,7 +145,7 @@ pub fn show_transport(
                     } else {
                         ph::ARROW_RIGHT
                     };
-                    if transport_button(ui, loop_txt, "Loop", Vec2::new(30.0, 28.0)) {
+                    if transport_button(ui, loop_txt, "Loop", BTN_SEEK_SMALL) {
                         ev.toggle_loop = true;
                     }
 
@@ -159,7 +167,7 @@ pub fn show_transport(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::ComboBox::from_id_salt("preview_quality")
                 .selected_text(state.quality.label())
-                .width(70.0)
+                .width(70.0) // quality label; component-specific
                 .show_ui(ui, |ui| {
                     for q in PreviewQuality::all() {
                         ui.selectable_value(&mut state.quality, q, q.label());
@@ -174,7 +182,7 @@ pub fn show_transport(
             } else {
                 ph::SPEAKER_HIGH
             };
-            if transport_button(ui, mute_icon, "Mute", Vec2::new(28.0, 26.0)) {
+            if transport_button(ui, mute_icon, "Mute", BTN_MUTE) {
                 ev.toggle_mute = true;
             }
 
