@@ -4,6 +4,8 @@ use caprust_core::TrackKind;
 use egui::{Color32, CornerRadius, Stroke, Visuals};
 use serde::{Deserialize, Serialize};
 
+pub mod tokens;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeMode {
     Dark,
@@ -233,6 +235,7 @@ impl Theme {
         v.window_stroke = Stroke::new(1.0_f32, border);
 
         ctx.set_visuals(v);
+        tokens::apply_style(ctx);
     }
 
     /// Raw RGB chosen for a track kind.
