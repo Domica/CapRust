@@ -12,6 +12,7 @@ pub mod relink;
 pub mod relink_many;
 pub mod remove_master_plugin;
 pub mod ripple;
+pub mod ripple_move;
 pub mod separate_audio;
 pub mod set_clip;
 pub mod set_effect;

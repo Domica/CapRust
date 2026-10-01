@@ -112,6 +112,7 @@ media-size-large = L
 tt-add-track = Add track
 tt-pan = Pan tool (drag to scroll)
 tt-magnetic = Magnetic timeline
+tt-ripple-move = Ripple move (shift later clips)
 tt-snap = Snap to clips
 tt-follow = Follow playhead
 tt-trim-follow = Player follows the resize (trim-follow playhead)

@@ -4776,10 +4776,14 @@ impl CapRustApp {
                                 // its `applied_xfade_shift_ms` is no
                                 // longer accurate: the predecessor is
                                 // at its old spot but the clip just
-                                // moved. Drop the transition and its
-                                // shift (restoring every follower to
-                                // its original position) so the
-                                // timeline stays consistent.
+                                // moved. Drop the transition (which
+                                // also restores every follower to its
+                                // pre-xfade position) AND apply the
+                                // move in one MacroCommand so a single
+                                // Ctrl+Z restores both the transition
+                                // and the position, and the user sees
+                                // the clip actually move instead of
+                                // snapping back.
                                 let had_xfade = self
                                     .project
                                     .clips
@@ -4788,17 +4792,74 @@ impl CapRustApp {
                                     .map(|c| c.applied_xfade_shift_ms > 0)
                                     .unwrap_or(false);
                                 if had_xfade && (time_changed || track_changed) {
-                                    let clear = caprust_core::commands::set_effect::
-                                        SetTransitionCommand::new(id, true, None);
+                                    // Capture the clip's pre-clear
+                                    // position and its xfade shift so
+                                    // we know where it lands AFTER
+                                    // SetTransitionCommand::clear runs.
+                                    // MoveClipCommand::from_ms must be
+                                    // that post-clear position, not
+                                    // d.origin_ms, or undo drifts.
+                                    let (visual_start, pre_shift) = self
+                                        .project
+                                        .clips
+                                        .iter()
+                                        .find(|c| c.id == id)
+                                        .map(|c| (c.start_time_ms, c.applied_xfade_shift_ms))
+                                        .unwrap_or((d.origin_ms, 0));
+                                    let post_clear_start = visual_start + pre_shift;
+                                    let ripple = self.timeline_tools.ripple_move;
+
+                                    let mut cmds: Vec<Box<dyn caprust_core::commands::Command>> =
+                                        Vec::new();
+                                    cmds.push(Box::new(
+                                        caprust_core::commands::set_effect::SetTransitionCommand::new(
+                                            id, true, None,
+                                        ),
+                                    ));
+                                    if track_changed {
+                                        cmds.push(Box::new(
+                                            caprust_core::commands::set_clip::SetClipCommand::new(
+                                                id,
+                                            )
+                                            .track_index(nt),
+                                        ));
+                                        if time_changed {
+                                            cmds.push(Box::new(
+                                                caprust_core::commands::move_clip::MoveClipCommand {
+                                                    clip_id: id,
+                                                    from_ms: post_clear_start,
+                                                    to_ms: nm,
+                                                },
+                                            ));
+                                        }
+                                    } else if ripple && time_changed {
+                                        // Ripple move: same track, clear
+                                        // xfade, then shift clip plus
+                                        // every later clip by the delta.
+                                        cmds.push(Box::new(
+                                            caprust_core::commands::ripple_move::RippleMoveCommand::new(
+                                                id,
+                                                post_clear_start,
+                                                nm,
+                                            ),
+                                        ));
+                                    } else if time_changed {
+                                        cmds.push(Box::new(
+                                            caprust_core::commands::move_clip::MoveClipCommand {
+                                                clip_id: id,
+                                                from_ms: post_clear_start,
+                                                to_ms: nm,
+                                            },
+                                        ));
+                                    }
+                                    let cmd =
+                                        caprust_core::commands::macro_command::MacroCommand::new(
+                                            "Move clip (xfade cleared)",
+                                            cmds,
+                                        );
                                     let _ =
-                                        self.undo_stack.execute(Box::new(clear), &mut self.project);
+                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                     self.toast(tr("toast-xfade-removed-on-move"));
-                                    // Move no longer applies: followers
-                                    // were just restored by clearing the
-                                    // transition, and the clip itself
-                                    // sits at its old position again.
-                                    // Skip the move below so the user
-                                    // sees a consistent state.
                                 } else if d.group.len() > 1 && (time_changed || track_changed) {
                                     // Multi-select drag: one command
                                     // moves every member by the same
@@ -4832,14 +4893,58 @@ impl CapRustApp {
                                     let _ =
                                         self.undo_stack.execute(Box::new(cmd), &mut self.project);
                                 } else if time_changed || track_changed {
-                                    // Single-clip fallback.
-                                    let cmd = MoveClipCommand {
-                                        clip_id: id,
-                                        from_ms: d.origin_ms,
-                                        to_ms: nm,
-                                    };
-                                    let _ =
-                                        self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                                    // Single-clip fallback. If the
+                                    // track changed, chain a
+                                    // SetClipCommand so a track move
+                                    // and a time move undo together.
+                                    if track_changed {
+                                        let mut cmds: Vec<
+                                            Box<dyn caprust_core::commands::Command>,
+                                        > = Vec::new();
+                                        cmds.push(Box::new(
+                                            caprust_core::commands::set_clip::SetClipCommand::new(
+                                                id,
+                                            )
+                                            .track_index(nt),
+                                        ));
+                                        if time_changed {
+                                            cmds.push(Box::new(
+                                                caprust_core::commands::move_clip::MoveClipCommand {
+                                                    clip_id: id,
+                                                    from_ms: d.origin_ms,
+                                                    to_ms: nm,
+                                                },
+                                            ));
+                                        }
+                                        let cmd = caprust_core::commands::macro_command::MacroCommand::new(
+                                            "Move clip to another track",
+                                            cmds,
+                                        );
+                                        let _ = self
+                                            .undo_stack
+                                            .execute(Box::new(cmd), &mut self.project);
+                                    } else if self.timeline_tools.ripple_move && time_changed {
+                                        // Same track, ripple toggle ON:
+                                        // move this clip and shift every
+                                        // later clip on the track by the
+                                        // same delta in one undo step.
+                                        let cmd =
+                                            caprust_core::commands::ripple_move::RippleMoveCommand::new(
+                                                id, d.origin_ms, nm,
+                                            );
+                                        let _ = self
+                                            .undo_stack
+                                            .execute(Box::new(cmd), &mut self.project);
+                                    } else {
+                                        let cmd = MoveClipCommand {
+                                            clip_id: id,
+                                            from_ms: d.origin_ms,
+                                            to_ms: nm,
+                                        };
+                                        let _ = self
+                                            .undo_stack
+                                            .execute(Box::new(cmd), &mut self.project);
+                                    }
                                     if let Some(c) =
                                         self.project.clips.iter_mut().find(|c| c.id == id)
                                     {

@@ -112,6 +112,7 @@ media-size-large = V
 tt-add-track = Dodaj traku
 tt-pan = Alat za pomicanje
 tt-magnetic = Magnetska vremenska linija
+tt-ripple-move = Ripple pomak (pomi\u010de sljede\u0107e isje\u010dke)
 tt-snap = Prikači na isječke
 tt-follow = Prati kursor
 tt-trim-follow = Kazaljka prati rub pri obrezivanju

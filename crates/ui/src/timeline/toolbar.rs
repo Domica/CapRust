@@ -13,6 +13,10 @@ const ICON_BTN_SIZE: egui::Vec2 = egui::Vec2::new(30.0, 28.0);
 pub struct TimelineToolState {
     pub pan_mode: bool,
     pub magnetic: bool,
+    /// When true, dragging a clip shifts every later same-track
+    /// clip by the same delta. Off by default. Independent of
+    /// magnetic mode (which repacks end-to-end after an edit).
+    pub ripple_move: bool,
     pub snapping: bool,
     pub captions_enabled: bool,
     pub narration_enabled: bool,
@@ -27,6 +31,7 @@ pub struct TimelineToolEvents {
     pub add_track: bool,
     pub pan_toggled: bool,
     pub magnetic_toggled: bool,
+    pub ripple_move_toggled: bool,
     pub snapping_toggled: bool,
     pub captions_clicked: bool,
     /// Right-click dropdown on the 💬 button: caption every audio-bearing
@@ -211,7 +216,19 @@ pub fn show(
             ev.magnetic_toggled = true;
         }
 
-        // --- Snapping ---
+        // --- Ripple move ---
+        if icon_toggle(
+            ui,
+            ph::ARROW_RIGHT,
+            &tr("tt-ripple-move"),
+            state.ripple_move,
+            true,
+        ) {
+            state.ripple_move = !state.ripple_move;
+            ev.ripple_move_toggled = true;
+        }
+
+        // -- Snapping ---
         if icon_toggle(ui, ph::PAPERCLIP, &tr("tt-snap"), state.snapping, true) {
             state.snapping = !state.snapping;
             ev.snapping_toggled = true;
