@@ -5342,6 +5342,15 @@ impl CapRustApp {
                                 PendingEdit::FlipH(v) => cmd.flip_h(v),
                                 PendingEdit::FlipV(v) => cmd.flip_v(v),
                                 PendingEdit::VolumeDb(v) => cmd.volume_db(v),
+                                PendingEdit::FadeInSec(v) => {
+                                    cmd.fade_in_ms((v.max(0.0) * 1000.0).round() as u64)
+                                }
+                                PendingEdit::FadeOutSec(v) => {
+                                    cmd.fade_out_ms((v.max(0.0) * 1000.0).round() as u64)
+                                }
+                                PendingEdit::AudioNormalize(v) => cmd.audio_normalize(v),
+                                PendingEdit::AudioDenoise(v) => cmd.audio_denoise(v),
+                                PendingEdit::AudioVoiceBoost(v) => cmd.audio_voice_boost(v),
                                 PendingEdit::TrimStart(v) => cmd.start_time_ms(v),
                                 PendingEdit::TrimDuration(v) => cmd.duration_ms(v),
                                 PendingEdit::TrackIndex(v) => cmd.track_index(v),

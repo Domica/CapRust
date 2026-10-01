@@ -86,6 +86,17 @@ pub enum PendingEdit {
     TextEffect(Option<caprust_core::clip::TextEffect>),
     /// Replace the whole volume automation curve on a clip.
     VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
+    /// Fade-in duration in seconds. UI works in seconds; converted
+    /// to ms in the drain handler (SetClipCommand::fade_in_ms).
+    FadeInSec(f32),
+    /// Fade-out duration in seconds. Same conversion as FadeInSec.
+    FadeOutSec(f32),
+    /// Apply EBU R128 loudness normalization on this clip's audio.
+    AudioNormalize(bool),
+    /// Apply spectral denoise on this clip's audio.
+    AudioDenoise(bool),
+    /// Apply speech-tuned dynamic range compression on this clip.
+    AudioVoiceBoost(bool),
     /// Set or clear the auto-duck sidechain control clip.
     DuckAgainst(Option<Uuid>),
     /// Replace the auto-reframe keypoints on the clip. Empty Vec =
@@ -1523,25 +1534,39 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
     ui.label(egui::RichText::new(tr("props-sound-fade")).strong());
     ui.add_space(space::XS);
-    let mut fade_in = 0.0_f32;
-    let mut fade_out = 0.0_f32;
+    // Model stores milliseconds; the slider works in seconds. Max is
+    // the smaller of (clip duration, 5 s) so a long clip cannot
+    // accept a fade that extends beyond its own length.
+    let max_sec = (clip.duration_ms as f32 / 1000.0).min(5.0);
+    let mut fade_in_s = clip.fade_in_ms as f32 / 1000.0;
+    let mut fade_out_s = clip.fade_out_ms as f32 / 1000.0;
     egui::Grid::new("clip_fade_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
             ui.label(tr("props-sound-fade-in"));
-            ui.add(
-                egui::Slider::new(&mut fade_in, 0.0..=50.0)
-                    .suffix(" %")
-                    .show_value(true),
-            );
+            if ui
+                .add(
+                    egui::Slider::new(&mut fade_in_s, 0.0..=max_sec)
+                        .suffix(" s")
+                        .fixed_decimals(2),
+                )
+                .changed()
+            {
+                state.pending.push(PendingEdit::FadeInSec(fade_in_s));
+            }
             ui.end_row();
             ui.label(tr("props-sound-fade-out"));
-            ui.add(
-                egui::Slider::new(&mut fade_out, 0.0..=50.0)
-                    .suffix(" %")
-                    .show_value(true),
-            );
+            if ui
+                .add(
+                    egui::Slider::new(&mut fade_out_s, 0.0..=max_sec)
+                        .suffix(" s")
+                        .fixed_decimals(2),
+                )
+                .changed()
+            {
+                state.pending.push(PendingEdit::FadeOutSec(fade_out_s));
+            }
             ui.end_row();
         });
 
@@ -1549,18 +1574,32 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.separator();
     ui.label(egui::RichText::new(tr("props-sound-processing")).strong());
     ui.add_space(space::XS);
-    let mut norm = false;
-    let mut denoise = false;
-    let mut voice_boost = false;
-    ui.checkbox(&mut norm, tr("props-sound-normalize"));
-    ui.checkbox(&mut denoise, tr("props-sound-denoise"));
-    ui.checkbox(&mut voice_boost, tr("props-sound-boost"));
-    ui.label(
-        egui::RichText::new(tr("props-sound-wip"))
-            .small()
-            .italics()
-            .color(egui::Color32::from_gray(140)),
-    );
+    // Order matters in the render graph: denoise runs first (cleans
+    // the signal), then voice boost (raises quiet parts), then
+    // loudnorm last (targets a final integrated loudness).
+    let mut norm = clip.audio_normalize;
+    if ui
+        .checkbox(&mut norm, tr("props-sound-normalize"))
+        .changed()
+    {
+        state.pending.push(PendingEdit::AudioNormalize(norm));
+    }
+    let mut denoise = clip.audio_denoise;
+    if ui
+        .checkbox(&mut denoise, tr("props-sound-denoise"))
+        .changed()
+    {
+        state.pending.push(PendingEdit::AudioDenoise(denoise));
+    }
+    let mut voice_boost = clip.audio_voice_boost;
+    if ui
+        .checkbox(&mut voice_boost, tr("props-sound-boost"))
+        .changed()
+    {
+        state
+            .pending
+            .push(PendingEdit::AudioVoiceBoost(voice_boost));
+    }
 }
 
 fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
