@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CapRust — Social-first video editor for Windows</title>
+  <meta name="description" content="A native Windows video editor for short-form creators. Built in Rust. AI captions, auto-reframe, background removal. Free and open source.">
+  <link rel="icon" href="logo.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="#" class="brand">
+      <img src="logo.png" alt="CapRust">
+      CapRust
+    </a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/Domica/CapRust" target="_blank" rel="noopener">GitHub</a>
+      <a href="#download" class="btn btn-primary btn-sm">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <div class="badge">v0.7.0-beta.1 — first beta</div>
+    <h1>Video editing.<br>Without the drag.</h1>
+    <p class="tagline">
+      A native Windows video editor for short-form creators.
+      Rust under the hood, AI on your machine, no cloud required.
+    </p>
+    <div class="buttons">
+      <a href="#download" class="btn btn-primary">
+        ↓&nbsp; Download for Windows
+      </a>
+      <a href="https://github.com/Domica/CapRust" class="btn btn-secondary" target="_blank" rel="noopener">
+        View on GitHub
+      </a>
+    </div>
+    <div class="meta">
+      <span>Windows 10/11 · 64-bit</span>
+      <span>·</span>
+      <span>8 MB installer</span>
+      <span>·</span>
+      <span>MIT licensed</span>
+    </div>
+  </div>
+</header>
+
+<section class="screenshot">
+  <div class="container">
+    <img src="screenshots/editor.png" alt="CapRust editor: media bin on the left, preview in the center, timeline below, clip properties on the right.">
+    <p class="caption">The editor — media bin, live preview, magnetic timeline, clip properties.</p>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="section-head">
+      <h2>Built for short-form creators</h2>
+      <p>Everything you need for TikTok, Reels and Shorts — nothing you don't.</p>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <div class="icon">⚡</div>
+        <h3>Native and fast</h3>
+        <p>A single binary built with Rust and egui. Starts in under half a second, uses a fraction of the RAM of an Electron editor.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🎙</div>
+        <h3>AI captions, on device</h3>
+        <p>Whisper generates captions locally. Word-level timings drive a karaoke-style progressive reveal. No audio leaves your machine.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🎯</div>
+        <h3>Auto-reframe</h3>
+        <p>SCRFD face detection follows the speaker and keeps them centred when you switch from landscape to 9:16.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">✂️</div>
+        <h3>Magnetic timeline</h3>
+        <p>Ripple delete, snap, trim-follow playhead, multi-select drag, transitions with xfade. It just works.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🎚</div>
+        <h3>Audio that behaves</h3>
+        <p>Fade handles on the waveform, volume keyframes, auto-ducking against music, segmented speed ramps with synced audio.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🧩</div>
+        <h3>CLAP plugin hosting</h3>
+        <p>Load your favourite CLAP plugins on the master bus. Verified with u-he ZebraHZ 2.9.4.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🤖</div>
+        <h3>MCP server</h3>
+        <p>Drive the editor from Claude Desktop or Cursor through a Model Context Protocol server. 15 tools, undo-stack integrated.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">☁️</div>
+        <h3>Settings that travel</h3>
+        <p>Point CapRust at a Drive, OneDrive or Dropbox folder and it keeps settings in step across machines.</p>
+      </div>
+    </div>
+
+    <div class="tech">
+      <span>Rust 1.91</span>
+      <span>egui 0.31</span>
+      <span>ffmpeg</span>
+      <span>whisper.cpp</span>
+      <span>Piper TTS</span>
+      <span>tract-onnx</span>
+      <span>cpal</span>
+      <span>clack-host</span>
+    </div>
+  </div>
+</section>
+
+<section id="download" class="download">
+  <div class="container">
+    <h2>Download CapRust</h2>
+    <p>
+      One installer. Per-user by default, no admin prompt.
+      On first run it offers to fetch a static FFmpeg build if you don't have one.
+    </p>
+    <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
+      ↓&nbsp; Download v0.7.0-beta.1 for Windows
+    </a>
+    <p class="verify">
+      SHA-256: <code>4DAC4238FC6FB5394B0B999068296D0821F2DF438B0F1B241985271A31CFE457</code>
+    </p>
+    <p style="font-size: 13px; margin-top: 24px;">
+      <a href="https://github.com/Domica/CapRust/releases">All releases</a> ·
+      Windows 10 1809+ · 64-bit · MIT license
+    </p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="container">
+    <div class="section-head">
+      <h2>Frequently asked</h2>
+    </div>
+
+    <div class="faq">
+      <details>
+        <summary>Is it free?</summary>
+        <div class="answer">
+          Yes. CapRust is MIT-licensed open source. No account, no telemetry,
+          no upsell. The source is on
+          <a href="https://github.com/Domica/CapRust">GitHub</a>.
+        </div>
+      </details>
+      <details>
+        <summary>Why only Windows?</summary>
+        <div class="answer">
+          Windows is the primary target — the majority of short-form creators
+          ship from Windows machines. The core crate is written to be portable
+          and it compiles on Linux and macOS in CI, but UX polish (native
+          dialogs, taskbar integration, WASAPI) is Windows-only.
+        </div>
+      </details>
+      <details>
+        <summary>Where is FFmpeg?</summary>
+        <div class="answer">
+          CapRust does not link FFmpeg — it calls <code>ffmpeg.exe</code> and
+          <code>ffprobe.exe</code> as subprocesses. On first run, if neither is
+          on your <code>PATH</code>, it offers to download a static
+          BtbN build (~110 MB) into <code>%APPDATA%\CapRust\ffmpeg</code>.
+        </div>
+      </details>
+      <details>
+        <summary>Do I need to download AI models?</summary>
+        <div class="answer">
+          Only if you want auto-captions, narration, auto-reframe or
+          background removal. They download on demand from
+          <strong>Settings → AI Models</strong> and live in
+          <code>%APPDATA%\CapRust\models</code>. The editor works without
+          them.
+        </div>
+      </details>
+      <details>
+        <summary>It says "beta" — is it stable?</summary>
+        <div class="answer">
+          0.7.0-beta.1 is the first beta. Timeline, preview, export, captions,
+          audio effects, CLAP hosting and the MCP server are all in. Expect
+          rough edges; a crash handler writes a report to
+          <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and
+          the log is worth attaching to a
+          <a href="https://github.com/Domica/CapRust/issues">GitHub issue</a>.
+        </div>
+      </details>
+      <details>
+        <summary>Windows SmartScreen warns me. Is that normal?</summary>
+        <div class="answer">
+          Yes. The beta is not code-signed yet. Click <em>More info</em> →
+          <em>Run anyway</em>. Code signing is planned before the stable
+          release.
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div>© 2026 CapRust · MIT licensed</div>
+    <div class="links">
+      <a href="https://github.com/Domica/CapRust" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Domica/CapRust/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/Domica/CapRust/issues">Issues</a>
+      <a href="https://github.com/Domica/CapRust/blob/main/LICENSE">License</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
