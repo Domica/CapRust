@@ -10,6 +10,13 @@ pub struct RecentProject {
     /// Unix seconds.
     pub last_opened: u64,
     pub clip_count: usize,
+    /// Base resolution in pixels (short side); 0 on old entries
+    /// written before this field existed.
+    #[serde(default)]
+    pub base_resolution: u32,
+    /// Frame rate label, e.g. "24.00". Empty on old entries.
+    #[serde(default)]
+    pub frame_rate_label: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -52,6 +59,8 @@ pub fn entry_from(state: &crate::project::ProjectState, path: &str) -> RecentPro
         duration_ms,
         last_opened: now_unix(),
         clip_count: state.clips.len(),
+        base_resolution: state.base_resolution,
+        frame_rate_label: state.frame_rate.label(),
     }
 }
 
@@ -61,4 +70,44 @@ pub fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_recent_json_deserializes_with_defaults() {
+        // Shape written before base_resolution / frame_rate_label
+        // existed. Must still parse; new fields default to 0 / "".
+        let json = r#"
+        {
+            "path": "/tmp/a.caprust",
+            "name": "A",
+            "duration_ms": 1000,
+            "last_opened": 42,
+            "clip_count": 3
+        }
+        "#;
+        let rp: RecentProject = serde_json::from_str(json).expect("parse");
+        assert_eq!(rp.base_resolution, 0);
+        assert!(rp.frame_rate_label.is_empty());
+    }
+
+    #[test]
+    fn new_fields_round_trip() {
+        let rp = RecentProject {
+            path: "/tmp/b.caprust".into(),
+            name: "B".into(),
+            duration_ms: 5000,
+            last_opened: 99,
+            clip_count: 2,
+            base_resolution: 1080,
+            frame_rate_label: "24.00".into(),
+        };
+        let json = serde_json::to_string(&rp).expect("ser");
+        let back: RecentProject = serde_json::from_str(&json).expect("de");
+        assert_eq!(back.base_resolution, 1080);
+        assert_eq!(back.frame_rate_label, "24.00");
+    }
 }
