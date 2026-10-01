@@ -182,6 +182,17 @@ impl Default for Theme {
 }
 
 impl Theme {
+    /// Perceived-luminance-based text color for a filled background.
+    /// Bright accents get dark text, dark accents get white text.
+    fn contrast_on(bg: Color32) -> Color32 {
+        let lum = 0.299 * bg.r() as f32 + 0.587 * bg.g() as f32 + 0.114 * bg.b() as f32;
+        if lum > 140.0 {
+            Color32::from_gray(20)
+        } else {
+            Color32::WHITE
+        }
+    }
+
     pub fn accent_color(&self) -> Color32 {
         Color32::from_rgb(self.accent[0], self.accent[1], self.accent[2])
     }
@@ -217,7 +228,12 @@ impl Theme {
 
         let accent = self.accent_color();
         v.selection.bg_fill = accent;
-        v.selection.stroke = Stroke::NONE;
+        // egui 0.31 uses selection.stroke.color as the fg color of
+        // any selectable widget (selectable_value, selectable_label,
+        // etc). Setting Stroke::NONE makes the selected item's text
+        // invisible because NONE's color is transparent. Compute a
+        // readable text color based on the accent's luminance.
+        v.selection.stroke = Stroke::new(1.0_f32, Self::contrast_on(accent));
         v.hyperlink_color = accent;
 
         let r = CornerRadius::same(6);
