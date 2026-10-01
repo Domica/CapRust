@@ -28,7 +28,7 @@ Thumbs.db
 cache/
 DIRECTIVES.md
 
-# Local backlog (see ง24 spirit)
+# Local backlog (see ยง24 spirit)
 TODO.md
 
 # Local debug / test artifacts (never commit)
@@ -38,3 +38,7 @@ caprust_*.txt
 ntent*
 
 patch_*.py
+
+# Installer build output (staging + compiled setups)
+installer/dist/
+installer/staging/
