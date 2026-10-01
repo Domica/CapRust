@@ -15,6 +15,7 @@ use egui::Ui;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::dialog;
 
 #[derive(Debug, Clone, Default)]
 pub enum RelinkPhase {
@@ -94,29 +95,27 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
             }
 
             ui.add_space(space::M_PLUS);
-            ui.horizontal(|ui| {
-                let locate_label = if state.tried_folder {
-                    tr("relink-dialog-retry")
-                } else {
-                    tr("relink-dialog-locate")
-                };
-                if ui
-                    .button(locate_label)
-                    .on_hover_text(tr("relink-dialog-locate-hint"))
-                    .clicked()
-                {
-                    ev.locate_folder = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let locate_label = if state.tried_folder {
+                tr("relink-dialog-retry")
+            } else {
+                tr("relink-dialog-locate")
+            };
+            let skip_label = tr("relink-dialog-skip");
+            if dialog::footer_close(
+                ui,
+                |ui| {
                     if ui
-                        .button(tr("relink-dialog-skip"))
-                        .on_hover_text(tr("relink-dialog-skip-hint"))
+                        .button(locate_label)
+                        .on_hover_text(tr("relink-dialog-locate-hint"))
                         .clicked()
                     {
-                        ev.close = true;
+                        ev.locate_folder = true;
                     }
-                });
-            });
+                },
+                &skip_label,
+            ) {
+                ev.close = true;
+            }
         }
         RelinkPhase::Done {
             matched,
@@ -139,16 +138,19 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
             }
 
             ui.add_space(space::M_PLUS);
-            ui.horizontal(|ui| {
-                if *still_missing > 0 && ui.button(tr("relink-dialog-retry")).clicked() {
-                    ev.locate_folder = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("relink-dialog-close")).clicked() {
-                        ev.close = true;
+            let still = *still_missing;
+            let close_label = tr("relink-dialog-close");
+            if dialog::footer_close(
+                ui,
+                |ui| {
+                    if still > 0 && ui.button(tr("relink-dialog-retry")).clicked() {
+                        ev.locate_folder = true;
                     }
-                });
-            });
+                },
+                &close_label,
+            ) {
+                ev.close = true;
+            }
         }
         RelinkPhase::Failed(msg) => {
             ui.label(
@@ -162,16 +164,18 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
                     .color(egui::Color32::from_gray(180)),
             );
             ui.add_space(space::M_PLUS);
-            ui.horizontal(|ui| {
-                if ui.button(tr("relink-dialog-retry")).clicked() {
-                    ev.locate_folder = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("relink-dialog-close")).clicked() {
-                        ev.close = true;
+            let close_label = tr("relink-dialog-close");
+            if dialog::footer_close(
+                ui,
+                |ui| {
+                    if ui.button(tr("relink-dialog-retry")).clicked() {
+                        ev.locate_folder = true;
                     }
-                });
-            });
+                },
+                &close_label,
+            ) {
+                ev.close = true;
+            }
         }
     }
 
