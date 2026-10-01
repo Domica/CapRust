@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::empty;
 
 #[derive(Debug, Default)]
 pub struct PluginBrowserState {
@@ -61,8 +62,7 @@ pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) -> PluginBrowserOutput 
     ui.separator();
 
     if state.plugins.is_empty() {
-        ui.add_space(space::XXL);
-        ui.vertical_centered(|ui| {
+        empty::placeholder_with(ui, |ui| {
             ui.label(
                 RichText::new(tr("plugin-browser-empty"))
                     .italics()

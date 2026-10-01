@@ -1,7 +1,8 @@
 //! Media bin: dense grid, thumbnail cache, dynamic columns based on panel width.
 
 use crate::i18n_helper::tr;
-use crate::theme::tokens::{elev, space};
+use crate::theme::tokens::elev;
+use crate::widgets::empty;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -379,8 +380,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     }
 
     if sorted.is_empty() {
-        ui.add_space(space::XXL);
-        ui.vertical_centered(|ui| {
+        empty::placeholder_with(ui, |ui| {
             ui.label(
                 RichText::new("No media imported yet.")
                     .italics()

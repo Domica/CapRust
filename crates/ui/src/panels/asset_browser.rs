@@ -7,7 +7,8 @@
 
 use crate::i18n_helper::tr;
 use crate::panels::media_bin::{MediaBinOutput, MediaBinState};
-use crate::theme::tokens::{elev, space};
+use crate::theme::tokens::elev;
+use crate::widgets::empty;
 use caprust_core::ProjectState;
 use egui::{Color32, RichText, Sense, Ui, Vec2, Vec2 as V2};
 use egui_phosphor::regular as ph;
@@ -594,14 +595,7 @@ pub fn render_tab_content(
             }
         }
         AssetTab::Templates => {
-            ui.add_space(space::XXL);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new(tr("asset-templates-hint"))
-                        .italics()
-                        .color(Color32::from_gray(140)),
-                );
-            });
+            empty::placeholder(ui, tr("asset-templates-hint"));
         }
     }
     out
@@ -634,14 +628,7 @@ fn preset_grid(
         .collect();
 
     if filtered.is_empty() {
-        ui.add_space(space::XXL);
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(tr("asset-empty"))
-                    .italics()
-                    .color(Color32::from_gray(140)),
-            );
-        });
+        empty::placeholder(ui, tr("asset-empty"));
         return None;
     }
 

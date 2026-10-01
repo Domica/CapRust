@@ -6,12 +6,12 @@
 //! executes the corresponding commands on the undo stack.
 
 use caprust_core::ProjectState;
-use egui::{Color32, RichText, Ui};
+use egui::{RichText, Ui};
 use egui_phosphor::regular as ph;
 use uuid::Uuid;
 
 use crate::i18n_helper::tr;
-use crate::theme::tokens::space;
+use crate::widgets::empty;
 
 #[derive(Default)]
 pub struct MasterChainState {}
@@ -44,14 +44,7 @@ pub fn show(
     ui.separator();
 
     if project.master_plugins.is_empty() {
-        ui.add_space(space::XXL);
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(tr("master-chain-empty"))
-                    .italics()
-                    .color(Color32::from_gray(140)),
-            );
-        });
+        empty::placeholder(ui, tr("master-chain-empty"));
         return out;
     }
 
