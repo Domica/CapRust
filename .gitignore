@@ -36,3 +36,5 @@ fade_fix_*.txt
 caprust_*.log
 caprust_*.txt
 ntent*
+
+patch_*.py
