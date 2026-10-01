@@ -26,7 +26,10 @@ pub fn extract_peaks(ffmpeg: &Path, input: &Path, buckets: usize) -> Result<Vec<
     let buckets = buckets.max(1);
     let mut child = Command::new(ffmpeg)
         .args([
-            "-v", "error",
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file",
             "-i",
             // The path argument is passed as a &str via .arg below so
             // we do not need shell quoting.

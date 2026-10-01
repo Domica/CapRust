@@ -217,6 +217,8 @@ impl Default for ModelRegistry {
                 // YuNet, ~230 KB, Apache 2.0, fixed 320x320 input.
                 // SHA-256 is pinned below (hash of the current file on
                 // the mirror; not independently compared to opencv_zoo).
+                // TODO(directives §11): verify against the official
+                // opencv_zoo source, or migrate to another detector.
                 ModelInfo::new(
                     "yunet-face",
                     "YuNet face detector",
