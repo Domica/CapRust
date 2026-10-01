@@ -168,6 +168,19 @@ impl JobRunner {
         }
     }
 
+    /// Enqueue only a waveform job (no probe, no thumbnail). Used
+    /// for backfilling older projects whose media items were
+    /// imported before the waveform pipeline existed.
+    pub fn enqueue_waveform(&self, item: &MediaItem) {
+        if !matches!(item.kind, MediaKind::Audio | MediaKind::Video) {
+            return;
+        }
+        let _ = self.tx.send(Job::Waveform {
+            media_id: item.id,
+            path: PathBuf::from(&item.path),
+        });
+    }
+
     /// Drain pending results, applying them to the media library.
     pub fn drain(&self, project: &mut caprust_core::ProjectState) -> Vec<uuid::Uuid> {
         let mut thumbs_ready = Vec::new();

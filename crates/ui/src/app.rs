@@ -233,6 +233,10 @@ pub struct CapRustApp {
     /// Cache of decoded recent-project thumbnails, keyed by project
     /// path. Lazily populated by `recent_thumb_texture`.
     pub recent_thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
+    /// Cache of waveform peak arrays, keyed by media_id. Loaded
+    /// lazily from `<project>/cache/waveforms/<id>.bin` the first
+    /// time a clip referencing that item needs to draw.
+    pub waveform_cache: std::collections::HashMap<uuid::Uuid, std::sync::Arc<Vec<f32>>>,
     pub last_pointer: Option<egui::Pos2>,
     /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
@@ -565,6 +569,7 @@ impl CapRustApp {
             last_dnd_payload: None,
             recent,
             recent_thumb_cache: std::collections::HashMap::new(),
+            waveform_cache: std::collections::HashMap::new(),
             last_pointer: None,
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
@@ -706,6 +711,10 @@ impl CapRustApp {
                 // Scan for missing source files. If any are found, open
                 // the relink dialog on the next update() frame.
                 self.check_missing_media_on_load();
+                // Waveform cache may be missing on a freshly-opened project
+                // (different machine) or for media imported before the
+                // waveform pipeline existed. Enqueue what is missing.
+                self.backfill_waveforms();
             }
             Err(e) => tracing::error!("Load failed: {e}"),
         }
@@ -727,6 +736,39 @@ impl CapRustApp {
     /// or None if none is cached on disk. Loads lazily and stores the
     /// handle in `recent_thumb_cache` so we do not re-read the JPEG
     /// every frame.
+    /// Return the waveform peaks for `media_id`, loading them from
+    /// `<project>/cache/waveforms/<id>.bin` on first use. Returns
+    /// None when the cache file does not exist yet (job in flight
+    /// or item has no audio).
+    fn waveform_peaks_for(&mut self, media_id: uuid::Uuid) -> Option<std::sync::Arc<Vec<f32>>> {
+        if let Some(p) = self.waveform_cache.get(&media_id) {
+            return Some(p.clone());
+        }
+        let proj_path = self.project.project_path.as_deref()?;
+        let path = caprust_core::cache::waveform_path(std::path::Path::new(proj_path), media_id);
+        let bytes = std::fs::read(&path).ok()?;
+        if bytes.len() < 4 {
+            return None;
+        }
+        let n = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        if bytes.len() < 4 + n * 4 {
+            return None;
+        }
+        let mut peaks = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = 4 + i * 4;
+            peaks.push(f32::from_le_bytes([
+                bytes[off],
+                bytes[off + 1],
+                bytes[off + 2],
+                bytes[off + 3],
+            ]));
+        }
+        let arc = std::sync::Arc::new(peaks);
+        self.waveform_cache.insert(media_id, arc.clone());
+        Some(arc)
+    }
+
     fn recent_thumb_texture(
         &mut self,
         ctx: &egui::Context,
@@ -3168,6 +3210,55 @@ impl CapRustApp {
     /// referenced by the project are missing on disk. The Relink
     /// button opens the standard relink dialog with the current list
     /// of missing entries.
+    /// Enqueue a waveform job for every Audio/Video media item that
+    /// does not already have a `.bin` in the project cache. Called
+    /// once per project load. Catches media imported before the
+    /// waveform pipeline existed (B.2), and projects opened on a
+    /// different machine where the cache is empty.
+    fn backfill_waveforms(&mut self) {
+        let Some(proj_path) = self.project.project_path.clone() else {
+            return;
+        };
+        let mut enqueued = 0usize;
+        let mut marked = 0usize;
+        let items: Vec<(uuid::Uuid, caprust_core::MediaKind, String, bool)> = self
+            .project
+            .media
+            .items
+            .iter()
+            .map(|m| (m.id, m.kind, m.path.clone(), m.waveform_done))
+            .collect();
+        let proj = std::path::Path::new(&proj_path);
+        for (id, kind, path, done) in items {
+            if !matches!(
+                kind,
+                caprust_core::MediaKind::Audio | caprust_core::MediaKind::Video
+            ) {
+                continue;
+            }
+            if caprust_core::cache::waveform_exists(proj, id) {
+                if !done {
+                    if let Some(m) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+                        m.waveform_done = true;
+                        marked += 1;
+                    }
+                }
+                continue;
+            }
+            let _ = self.job_runner.tx.send(crate::media_jobs::Job::Waveform {
+                media_id: id,
+                path: std::path::PathBuf::from(&path),
+            });
+            enqueued += 1;
+        }
+        if marked > 0 {
+            tracing::info!("backfill: {marked} media items already had waveforms on disk");
+        }
+        if enqueued > 0 {
+            tracing::info!("backfill: enqueued {enqueued} waveform jobs");
+        }
+    }
+
     fn show_missing_media_banner(&mut self, ui: &mut egui::Ui) {
         let missing = caprust_core::commands::relink_many::find_missing_media_items(&self.project);
         if missing.is_empty() {
@@ -3806,6 +3897,50 @@ impl CapRustApp {
                             };
 
                             if carries_audio && clip_rect.width() > 24.0 {
+                                // Waveform peaks drawn behind the fade
+                                // curve, over the clip background.
+                                // Resolution is capped at one bar per
+                                // 2 px so the segment count stays
+                                // small regardless of clip width.
+                                if let Some(media_id) = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|cc| cc.id == clip_id)
+                                    .and_then(|cc| cc.media_id)
+                                {
+                                    if let Some(peaks) = self.waveform_peaks_for(media_id) {
+                                        let bar_w = 2.0_f32;
+                                        let n_bars = ((clip_rect.width() / bar_w) as usize).max(1);
+                                        let stride = (peaks.len() / n_bars).max(1);
+                                        let center_y = clip_rect.center().y;
+                                        let amp = clip_rect.height() * 0.35;
+                                        let stroke = egui::Stroke::new(
+                                            bar_w * 0.75,
+                                            egui::Color32::from_rgba_unmultiplied(
+                                                255, 255, 255, 110,
+                                            ),
+                                        );
+                                        let clip = ui.painter().with_clip_rect(clip_rect);
+                                        let mut i = 0usize;
+                                        let mut x = clip_rect.left();
+                                        while i < peaks.len() && x < clip_rect.right() {
+                                            let v = peaks[i];
+                                            let h = v * amp;
+                                            if h >= 0.5 {
+                                                clip.line_segment(
+                                                    [
+                                                        egui::pos2(x, center_y - h),
+                                                        egui::pos2(x, center_y + h),
+                                                    ],
+                                                    stroke,
+                                                );
+                                            }
+                                            x += bar_w;
+                                            i += stride;
+                                        }
+                                    }
+                                }
                                 let (fi_ms, fo_ms) = self
                                     .project
                                     .clips
