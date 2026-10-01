@@ -59,7 +59,7 @@ pub mod anim {
     pub const INSTANT: f32 = 0.0;
     pub const FAST: f32 = 0.10;
     pub const NORMAL: f32 = 0.20;
-    pub const SLOW: f32 = 0.35;
+    pub const SLOW: f32 = 0.28;
 }
 
 /// Elevation: stroke widths + shadow presets.
@@ -70,9 +70,23 @@ pub mod elev {
     pub const STROKE_HAIRLINE: f32 = 1.0;
     pub const STROKE_EMPHASIS: f32 = 1.5;
 
-    pub const SHADOW_LOW: ([i8; 2], u8, u8) = ([0, 1], 4, 0);
-    pub const SHADOW_MID: ([i8; 2], u8, u8) = ([0, 2], 8, 0);
-    pub const SHADOW_HIGH: ([i8; 2], u8, u8) = ([0, 4], 16, 0);
+    /// Elevation tiers. Tuple is `(offset, blur, spread, alpha)`. Build
+    /// with `shadow(spec)`; color is pure black at the given alpha so
+    /// tokens stay theme-agnostic.
+    pub const ELEV_0: ([i8; 2], u8, u8, u8) = ([0, 0], 0, 0, 0);
+    pub const ELEV_1: ([i8; 2], u8, u8, u8) = ([0, 1], 3, 0, 38);
+    pub const ELEV_2: ([i8; 2], u8, u8, u8) = ([0, 3], 8, 0, 51);
+    pub const ELEV_3: ([i8; 2], u8, u8, u8) = ([0, 6], 16, 0, 64);
+
+    pub fn shadow(spec: ([i8; 2], u8, u8, u8)) -> egui::epaint::Shadow {
+        let (offset, blur, spread, alpha) = spec;
+        egui::epaint::Shadow {
+            offset,
+            blur,
+            spread,
+            color: egui::Color32::from_black_alpha(alpha),
+        }
+    }
 }
 
 /// Apply token-driven spacing + baseline text sizes to the global style.
@@ -215,10 +229,16 @@ mod tests {
     }
 
     #[test]
-    fn shadow_presets_are_ordered() {
-        let (_, blur_low, _) = elev::SHADOW_LOW;
-        let (_, blur_mid, _) = elev::SHADOW_MID;
-        let (_, blur_high, _) = elev::SHADOW_HIGH;
-        assert!(blur_low < blur_mid && blur_mid < blur_high);
+    fn elevation_blurs_are_ordered() {
+        let (_, a, _, _) = elev::ELEV_1;
+        let (_, b, _, _) = elev::ELEV_2;
+        let (_, c, _, _) = elev::ELEV_3;
+        assert!(
+            a < b && b < c,
+            "ELEV blurs not ascending: {} {} {}",
+            a,
+            b,
+            c
+        );
     }
 }
