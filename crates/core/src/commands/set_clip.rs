@@ -34,6 +34,9 @@ pub struct SetClipCommand {
     pub text_effect: Option<Option<crate::clip::TextEffect>>,
     pub fade_in_ms: Option<u64>,
     pub fade_out_ms: Option<u64>,
+    pub audio_normalize: Option<bool>,
+    pub audio_denoise: Option<bool>,
+    pub audio_voice_boost: Option<bool>,
     pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
     pub duck_against: Option<Option<Uuid>>,
     /// Some(Some(x)) = ramp from `speed` to `x`.
@@ -79,6 +82,9 @@ impl SetClipCommand {
             text_effect: None,
             fade_in_ms: None,
             fade_out_ms: None,
+            audio_normalize: None,
+            audio_denoise: None,
+            audio_voice_boost: None,
             volume_keyframes: None,
             duck_against: None,
             speed_end: None,
@@ -179,6 +185,18 @@ impl SetClipCommand {
     }
     pub fn fade_out_ms(mut self, v: u64) -> Self {
         self.fade_out_ms = Some(v);
+        self
+    }
+    pub fn audio_normalize(mut self, v: bool) -> Self {
+        self.audio_normalize = Some(v);
+        self
+    }
+    pub fn audio_denoise(mut self, v: bool) -> Self {
+        self.audio_denoise = Some(v);
+        self
+    }
+    pub fn audio_voice_boost(mut self, v: bool) -> Self {
+        self.audio_voice_boost = Some(v);
         self
     }
     /// Replace the whole automation curve. Pass an empty Vec to fall
@@ -288,6 +306,15 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.fade_out_ms {
             c.fade_out_ms = v;
+        }
+        if let Some(v) = self.audio_normalize {
+            c.audio_normalize = v;
+        }
+        if let Some(v) = self.audio_denoise {
+            c.audio_denoise = v;
+        }
+        if let Some(v) = self.audio_voice_boost {
+            c.audio_voice_boost = v;
         }
         if let Some(v) = self.volume_keyframes.clone() {
             c.volume_keyframes = v;

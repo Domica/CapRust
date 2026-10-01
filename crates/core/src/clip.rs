@@ -368,6 +368,20 @@ pub struct Clip {
     /// Fade-out duration in ms. Same semantics as fade_in_ms.
     #[serde(default)]
     pub fade_out_ms: u64,
+    /// Apply EBU R128 loudness normalization (ffmpeg `loudnorm`) to
+    /// this clip's audio during export and preview. Target -16 LUFS,
+    /// -1.5 dBTP, LRA 11, matching the streaming loudness standard.
+    #[serde(default)]
+    pub audio_normalize: bool,
+    /// Apply spectral denoise (ffmpeg `afftdn`, noise floor -25 dB).
+    /// Runs before voice boost and normalize.
+    #[serde(default)]
+    pub audio_denoise: bool,
+    /// Apply dynamic range compression tuned for speech (ffmpeg
+    /// `dynaudnorm`, peak target 0.9, max gain 10x). Runs before
+    /// normalize.
+    #[serde(default)]
+    pub audio_voice_boost: bool,
     /// Volume automation curve. Empty = static `volume_db`. Non-empty
     /// = piecewise-linear in dB between sorted keyframes, held flat
     /// before the first and after the last.
@@ -431,6 +445,9 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            audio_normalize: false,
+            audio_denoise: false,
+            audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
@@ -469,6 +486,9 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            audio_normalize: false,
+            audio_denoise: false,
+            audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
@@ -507,6 +527,9 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            audio_normalize: false,
+            audio_denoise: false,
+            audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
@@ -549,6 +572,9 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            audio_normalize: false,
+            audio_denoise: false,
+            audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
@@ -597,6 +623,9 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            audio_normalize: false,
+            audio_denoise: false,
+            audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
@@ -643,6 +672,9 @@ impl Clip {
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
+            audio_normalize: false,
+            audio_denoise: false,
+            audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             speed_end: None,
