@@ -2,6 +2,73 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.7.0-beta.1] — 2026-10-01
+
+First beta of the 0.7 line. A UI polish pass (design tokens,
+widget library, feedback states, start-screen redesign), a crash
+handler, and a Windows installer.
+
+### Added
+- **Design tokens** in `theme/tokens.rs` (space, radius, text,
+  anim, elev). 143 hardcoded spacing/radius/font sites migrated
+  across 14 files; `apply_style(ctx)` folded into `Theme::apply`.
+- **Widget library** at `crates/ui/src/widgets/`: `button`,
+  `dialog`, `empty`, `loading`, `banner`, `property`, `section`,
+  `toolbar`.
+- **Loading widget** (`spinner`, `spinner_with`, `centered`).
+  FFmpeg downloads without a `Content-Length` now show a spinner
+  plus a running MiB counter instead of a frozen 0% bar.
+- **Banner widget** (`Info` / `Warning` / `Error`) with an
+  optional action slot. First use: a persistent warning above the
+  timeline when project media files are missing, with a Relink
+  call to action.
+- **Error toasts.** `ToastKind::{Info, Error}`; error toasts
+  render with a red accent and stay up 6 s (vs 4 s for Info).
+  13 failure paths migrated from `toast` to `toast_error`.
+- **Crash handler.** `crates/app/src/crash.rs` installs a panic
+  hook that writes `%APPDATA%/CapRust/crashes/crash-<unix>.log`
+  with version, timestamp, panic location, message, and a full
+  backtrace. Last 20 reports kept; older ones pruned on write.
+- **Windows installer.** Inno Setup 6 script at
+  `installer/caprust.iss` plus a one-shot `installer/build.ps1`.
+  Per-user install (no UAC prompt), Start Menu shortcut, optional
+  desktop shortcut, LZMA2/max compression (22 MB exe → 8 MB
+  setup). Output: `CapRust-<ver>-win64-setup.exe`.
+- **Start screen redesign.** Left sidebar with CapRust wordmark,
+  `+ New Project` (opens a modal), `Open Project`, `Settings`,
+  `Quit`, and a version label. Recent projects render as a
+  dynamic grid of 16:9 tiles with cached thumbnails and metadata
+  (duration · clips · age, then resolution · fps).
+
+### Changed
+- Version bumped `0.6.0-alpha.1` → `0.7.0-beta.1`; `winres`
+  embeds the new version in the executable's file properties.
+- `RecentProject` carries `base_resolution`, `frame_rate_label`,
+  and `first_media_id` (all `#[serde(default)]` for backward
+  compatibility).
+- Preview transport bar sizes extracted into file-local consts;
+  settings window is a fixed 640×700 (min) so tabs do not
+  resize it, opens centred.
+- Dock tab strip: darker background, full-accent active tab with
+  luminance-based text colour, dimmed 55% when the zone loses
+  keyboard focus.
+- Five panels migrated to `empty::placeholder`; four headings to
+  `section::header`; `ffmpeg_prompt` and `relink_dialog` to the
+  dialog widget.
+
+### Fixed
+- **Invisible text on selected `selectable_value` widgets.**
+  `Theme` set `selection.stroke = Stroke::NONE`, whose colour is
+  transparent; egui uses that colour for the label. Affected the
+  properties tab bar and every ComboBox dropdown. Now uses a
+  luminance-based `contrast_on(accent)`.
+- **`hr.ftl` literal `\uXXXX` escapes** (`\u0161`, `\u010d`,
+  `\u017e`, `\u2026`) replaced with real UTF-8 characters; the
+  start screen was showing them verbatim.
+
+### Tests
+- 295 passing, 8 skipped.
+
 ## [0.6.0-alpha.1] — 2026-09-30
 
 First alpha of the 0.6 line. Settings portability, user-selectable
