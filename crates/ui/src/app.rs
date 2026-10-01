@@ -6,7 +6,7 @@ use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
-use crate::theme::tokens::{elev, radius, space};
+use crate::theme::tokens::{elev, radius, space, text};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use crate::widgets::{button, empty, section};
@@ -172,6 +172,9 @@ pub struct CapRustApp {
     pub draft: NewProjectDraft,
     pub theme: Theme,
     pub settings_open: bool,
+    /// Start-screen New Project modal. Opened by the sidebar + button;
+    /// closed on Create or Cancel.
+    pub new_project_modal_open: bool,
     pub export_open: bool,
     pub export_state: ExportState,
     /// Hardware encoders confirmed to work at runtime.
@@ -525,6 +528,7 @@ impl CapRustApp {
             draft: NewProjectDraft::default(),
             theme,
             settings_open: false,
+            new_project_modal_open: false,
             export_open: false,
             export_state: ExportState::default(),
             available_encoders: None,
@@ -769,8 +773,6 @@ impl CapRustApp {
 
     fn show_start_screen(&mut self, ctx: &egui::Context) {
         let mut load_path: Option<String> = None;
-        let mut forget_path: Option<String> = None;
-        let mut delete_from_disk: Option<String> = None;
 
         // Drag & drop a .caprust file onto the start screen.
         ctx.input(|i| {
@@ -783,273 +785,372 @@ impl CapRustApp {
             }
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(((ui.available_height() - 500.0) / 2.0).max(24.0));
-                ui.heading(egui::RichText::new(format!("{} CapRust", ph::FILM_STRIP)).size(34.0));
-                ui.add_space(space::XS);
-                ui.label(tr("new-tagline"));
-                ui.add_space(space::XXXL);
-            });
-            // Two columns: left = New Project form, right = Recent
-            ui.horizontal_top(|ui| {
-                // Center the two columns horizontally.
-                ui.add_space(((ui.available_width() - 884.0) / 2.0).max(12.0));
-                // LEFT: New Project form (existing)
-                ui.vertical(|ui| {
-                    ui.set_min_width(520.0);
-                    egui::Frame::group(ui.style())
-                        .inner_margin(space::XXL)
-                        .show(ui, |ui| {
-                            ui.set_width(480.0);
-                            section::header(ui, tr("new-title"));
-                            egui::Grid::new("new_project_grid")
-                                .num_columns(2)
-                                .spacing([space::L, space::M_PLUS])
-                                .show(ui, |ui| {
-                                    ui.label(tr("new-field-name"));
-                                    ui.text_edit_singleline(&mut self.draft.name);
-                                    ui.end_row();
-                                    ui.label(tr("new-field-location"));
-                                    ui.horizontal(|ui| {
-                                        ui.text_edit_singleline(&mut self.draft.location);
-                                        if ui.button(tr("new-button-browse")).clicked() {
-                                            if let Some(dir) = rfd::FileDialog::new().pick_folder()
-                                            {
-                                                self.draft.location =
-                                                    dir.to_string_lossy().to_string();
-                                            }
-                                        }
-                                    });
-                                    ui.end_row();
-                                    ui.label(tr("new-field-format"));
-                                    egui::ComboBox::from_id_salt("draft_aspect")
-                                        .selected_text(self.draft.aspect_ratio.label())
-                                        .show_ui(ui, |ui| {
-                                            for preset in AspectRatio::presets() {
-                                                ui.selectable_value(
-                                                    &mut self.draft.aspect_ratio,
-                                                    preset.clone(),
-                                                    preset.label(),
-                                                );
-                                            }
-                                        });
-                                    ui.end_row();
-                                    ui.label(tr("new-field-resolution"));
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut self.draft.base_resolution,
-                                            480..=2160,
-                                        )
-                                        .suffix(" px"),
-                                    );
-                                    ui.end_row();
-                                    ui.label(tr("new-field-fps"));
-                                    egui::ComboBox::from_id_salt("draft_fps")
-                                        .selected_text(self.draft.frame_rate.label())
-                                        .show_ui(ui, |ui| {
-                                            for fps in FrameRate::all() {
-                                                ui.selectable_value(
-                                                    &mut self.draft.frame_rate,
-                                                    fps,
-                                                    fps.label(),
-                                                );
-                                            }
-                                        });
-                                    ui.end_row();
-                                });
-                            ui.add_space(space::XL);
-                            ui.horizontal(|ui| {
-                                let can_create = !self.draft.name.trim().is_empty()
-                                    && !self.draft.location.trim().is_empty();
-                                let resp = button::primary_enabled(
-                                    ui,
-                                    can_create,
-                                    tr("new-button-create"),
-                                );
-                                let resp = if can_create {
-                                    resp
-                                } else {
-                                    resp.on_disabled_hover_text(tr("new-button-create-hint"))
-                                };
-                                if resp.clicked() {
-                                    self.create_project();
-                                }
-                                if ui.button(tr("new-button-open")).clicked() {
-                                    if let Some(f) = rfd::FileDialog::new()
-                                        .add_filter("CapRust Project", &["caprust"])
-                                        .pick_file()
-                                    {
-                                        load_path = Some(f.to_string_lossy().to_string());
-                                    }
-                                }
-                                if ui.button(tr("menu-file-quit")).clicked() {
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
-                            });
-                        });
+        // LEFT: sidebar with primary actions.
+        egui::SidePanel::left("start_sidebar")
+            .exact_width(220.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.add_space(space::XXL);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{} CapRust", ph::FILM_STRIP))
+                            .size(22.0)
+                            .strong(),
+                    );
+                    ui.add_space(space::XS);
+                    ui.label(
+                        egui::RichText::new(tr("new-tagline"))
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
+                    );
                 });
+                ui.add_space(space::XXL);
 
-                // RIGHT: Recent Projects
+                let btn_w = ui.available_width() - space::XL;
+
+                if ui
+                    .add_sized(
+                        [btn_w, 36.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("{}  {}", ph::PLUS, tr("new-title")))
+                                .size(text::M),
+                        )
+                        .fill(ui.visuals().selection.bg_fill),
+                    )
+                    .clicked()
+                {
+                    self.new_project_modal_open = true;
+                }
+                ui.add_space(space::S);
+                if ui
+                    .add_sized(
+                        [btn_w, 32.0],
+                        egui::Button::new(format!(
+                            "{}  {}",
+                            ph::FOLDER_OPEN,
+                            tr("new-button-open")
+                        )),
+                    )
+                    .clicked()
+                {
+                    if let Some(f) = rfd::FileDialog::new()
+                        .add_filter("CapRust Project", &["caprust"])
+                        .pick_file()
+                    {
+                        load_path = Some(f.to_string_lossy().to_string());
+                    }
+                }
+                ui.add_space(space::S);
+                if ui
+                    .add_sized(
+                        [btn_w, 32.0],
+                        egui::Button::new(format!("{}  {}", ph::GEAR, tr("menu-file-settings"))),
+                    )
+                    .clicked()
+                {
+                    self.settings_open = true;
+                }
+                ui.add_space(space::S);
+                if ui
+                    .add_sized(
+                        [btn_w, 32.0],
+                        egui::Button::new(format!("{}  {}", ph::X, tr("menu-file-quit"))),
+                    )
+                    .clicked()
+                {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+
+                // Version pinned to the bottom.
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.add_space(space::M);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {}",
+                            tr("start-version-label"),
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .small()
+                        .color(egui::Color32::from_gray(90)),
+                    );
+                });
+            });
+
+        // CENTRAL: heading + subtitle + recent grid.
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(space::XXL);
+            ui.horizontal(|ui| {
+                ui.add_space(space::XXL);
                 ui.vertical(|ui| {
-                    ui.set_min_width(340.0);
-                    ui.set_max_width(380.0);
-                    section::header(ui, tr("new-recent-heading"));
+                    ui.label(
+                        egui::RichText::new(tr("start-projects-heading"))
+                            .size(text::XXL)
+                            .strong(),
+                    );
+                    ui.add_space(space::XS);
+                    ui.label(
+                        egui::RichText::new(tr("start-projects-subtitle"))
+                            .color(egui::Color32::from_gray(140)),
+                    );
+                });
+            });
+            ui.add_space(space::XL);
 
-                    if self.recent.items.is_empty() {
+            if self.recent.items.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(space::XXL);
+                    ui.vertical(|ui| {
                         empty::placeholder(ui, tr("new-recent-empty"));
-                    } else {
-                        let entries: Vec<RecentProject> = self.recent.items.clone();
-                        egui::ScrollArea::vertical()
-                            .max_height(500.0)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                for rp in entries {
-                                    let frame = egui::Frame::group(ui.style())
-                                        .inner_margin(space::M)
-                                        .fill(ui.visuals().faint_bg_color);
-                                    let card = frame.show(ui, |ui| {
-                                        ui.set_width(320.0);
-                                        ui.vertical(|ui| {
-                                            // 16:9 thumbnail placeholder, larger than the old
-                                            // 72x54 box so the tile reads as a project card rather
-                                            // than a list row.
-                                            let (rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(300.0, 169.0),
-                                                egui::Sense::hover(),
+                    });
+                });
+                return;
+            }
+
+            let entries: Vec<RecentProject> = self.recent.items.clone();
+            let mut forget_path: Option<String> = None;
+            let mut delete_from_disk: Option<String> = None;
+
+            let card_w = 300.0;
+            let gap = space::L;
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let avail = (ui.available_width() - space::XXL).max(card_w);
+                    let cols = (((avail + gap) / (card_w + gap)).floor() as usize).max(1);
+
+                    for chunk in entries.chunks(cols) {
+                        ui.horizontal_top(|ui| {
+                            ui.add_space(space::XXL);
+                            for rp in chunk {
+                                let frame = egui::Frame::group(ui.style())
+                                    .inner_margin(space::M)
+                                    .fill(ui.visuals().faint_bg_color);
+                                let card = frame.show(ui, |ui| {
+                                    ui.set_width(card_w);
+                                    ui.vertical(|ui| {
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(card_w, card_w * 9.0 / 16.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            radius::cr(radius::SM),
+                                            egui::Color32::from_gray(40),
+                                        );
+                                        let tex = self.recent_thumb_texture(
+                                            ui.ctx(),
+                                            &rp.path,
+                                            rp.first_media_id,
+                                        );
+                                        if let Some(tex) = tex {
+                                            let tex_size = tex.size_vec2();
+                                            let scale = (rect.width() / tex_size.x)
+                                                .max(rect.height() / tex_size.y);
+                                            let draw_size = tex_size * scale;
+                                            let frac_x = (rect.width() / draw_size.x).min(1.0);
+                                            let frac_y = (rect.height() / draw_size.y).min(1.0);
+                                            let uv_min = egui::Pos2::new(
+                                                (1.0 - frac_x) / 2.0,
+                                                (1.0 - frac_y) / 2.0,
                                             );
-                                            ui.painter().rect_filled(
+                                            let uv_max =
+                                                egui::Pos2::new(1.0 - uv_min.x, 1.0 - uv_min.y);
+                                            ui.painter().image(
+                                                tex.id(),
                                                 rect,
-                                                radius::cr(radius::SM),
-                                                egui::Color32::from_gray(40),
+                                                egui::Rect::from_min_max(uv_min, uv_max),
+                                                egui::Color32::WHITE,
                                             );
-                                            // Real thumbnail if the project cache holds one for the
-                                            // first media item; otherwise the placeholder icon.
-                                            let tex = self.recent_thumb_texture(
-                                                ui.ctx(),
-                                                &rp.path,
-                                                rp.first_media_id,
+                                        } else {
+                                            ui.painter().text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                ph::FILM_STRIP,
+                                                egui::FontId::proportional(42.0),
+                                                egui::Color32::from_gray(140),
                                             );
-                                            if let Some(tex) = tex {
-                                                let tex_size = tex.size_vec2();
-                                                let scale = (rect.width() / tex_size.x)
-                                                    .max(rect.height() / tex_size.y);
-                                                let draw_size = tex_size * scale;
-                                                let frac_x = (rect.width() / draw_size.x).min(1.0);
-                                                let frac_y = (rect.height() / draw_size.y).min(1.0);
-                                                let uv_min = egui::Pos2::new(
-                                                    (1.0 - frac_x) / 2.0,
-                                                    (1.0 - frac_y) / 2.0,
-                                                );
-                                                let uv_max =
-                                                    egui::Pos2::new(1.0 - uv_min.x, 1.0 - uv_min.y);
-                                                ui.painter().image(
-                                                    tex.id(),
-                                                    rect,
-                                                    egui::Rect::from_min_max(uv_min, uv_max),
-                                                    egui::Color32::WHITE,
-                                                );
-                                            } else {
-                                                ui.painter().text(
-                                                    rect.center(),
-                                                    egui::Align2::CENTER_CENTER,
-                                                    ph::FILM_STRIP,
-                                                    egui::FontId::proportional(48.0),
-                                                    egui::Color32::from_gray(140),
-                                                );
-                                            }
+                                        }
 
-                                            ui.add_space(space::S);
+                                        ui.add_space(space::S);
+                                        ui.label(egui::RichText::new(&rp.name).strong().size(14.0));
+
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} \u{00b7} {} clips \u{00b7} {}",
+                                                format_duration(rp.duration_ms),
+                                                rp.clip_count,
+                                                format_age(rp.last_opened),
+                                            ))
+                                            .small()
+                                            .color(egui::Color32::from_gray(150)),
+                                        );
+
+                                        let mut bits: Vec<String> = Vec::new();
+                                        if rp.base_resolution > 0 {
+                                            bits.push(format!("{}p", rp.base_resolution));
+                                        }
+                                        if !rp.frame_rate_label.is_empty() {
+                                            bits.push(format!("{} fps", rp.frame_rate_label));
+                                        }
+                                        if !bits.is_empty() {
                                             ui.label(
-                                                egui::RichText::new(&rp.name).strong().size(14.0),
+                                                egui::RichText::new(bits.join(" \u{00b7} "))
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(120)),
                                             );
+                                        }
 
-                                            // Metadata line 1: duration, clips, age.
-                                            ui.label(
-                                                egui::RichText::new(format!(
-                                                    "{} · {} clips · {}",
-                                                    format_duration(rp.duration_ms),
-                                                    rp.clip_count,
-                                                    format_age(rp.last_opened),
-                                                ))
-                                                .small()
-                                                .color(egui::Color32::from_gray(150)),
-                                            );
-
-                                            // Metadata line 2: resolution · fps, shown only when
-                                            // populated (old entries default to 0 / empty and skip).
-                                            let mut bits: Vec<String> = Vec::new();
-                                            if rp.base_resolution > 0 {
-                                                bits.push(format!("{}p", rp.base_resolution));
+                                        ui.add_space(space::XS);
+                                        ui.horizontal(|ui| {
+                                            if ui.small_button(tr("new-recent-open")).clicked() {
+                                                load_path = Some(rp.path.clone());
                                             }
-                                            if !rp.frame_rate_label.is_empty() {
-                                                bits.push(format!("{} fps", rp.frame_rate_label));
+                                            if ui.small_button(tr("new-recent-forget")).clicked() {
+                                                forget_path = Some(rp.path.clone());
                                             }
-                                            if !bits.is_empty() {
-                                                ui.label(
-                                                    egui::RichText::new(bits.join(" · "))
-                                                        .small()
-                                                        .color(egui::Color32::from_gray(120)),
-                                                );
+                                            if ui
+                                                .small_button(ph::TRASH)
+                                                .on_hover_text(tr("new-recent-delete-hint"))
+                                                .clicked()
+                                            {
+                                                delete_from_disk = Some(rp.path.clone());
                                             }
-
-                                            ui.add_space(space::XS);
-                                            ui.horizontal(|ui| {
-                                                if ui.small_button(tr("new-recent-open")).clicked()
-                                                {
-                                                    load_path = Some(rp.path.clone());
-                                                }
-                                                if ui
-                                                    .small_button(tr("new-recent-forget"))
-                                                    .clicked()
-                                                {
-                                                    forget_path = Some(rp.path.clone());
-                                                }
-                                                if ui
-                                                    .small_button(ph::TRASH)
-                                                    .on_hover_text(tr("new-recent-delete-hint"))
-                                                    .clicked()
-                                                {
-                                                    delete_from_disk = Some(rp.path.clone());
-                                                }
-                                            });
                                         });
                                     });
-                                    if ui.rect_contains_pointer(card.response.rect) {
-                                        ui.painter().rect_stroke(
-                                            card.response.rect,
-                                            radius::cr(radius::SM),
-                                            egui::Stroke::new(
-                                                elev::STROKE_HAIRLINE,
-                                                ui.visuals().selection.bg_fill,
-                                            ),
-                                            egui::StrokeKind::Inside,
-                                        );
-                                    }
-                                    ui.add_space(space::XS);
+                                });
+                                if ui.rect_contains_pointer(card.response.rect) {
+                                    ui.painter().rect_stroke(
+                                        card.response.rect,
+                                        radius::cr(radius::SM),
+                                        egui::Stroke::new(
+                                            elev::STROKE_HAIRLINE,
+                                            ui.visuals().selection.bg_fill,
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
                                 }
-                            });
+                                ui.add_space(gap);
+                            }
+                        });
+                        ui.add_space(space::M);
                     }
                 });
-            });
+
+            if let Some(p) = forget_path {
+                self.recent.forget(&p);
+            }
+            if let Some(p) = delete_from_disk {
+                let _ = std::fs::remove_file(&p);
+                self.recent.forget(&p);
+            }
         });
 
         if let Some(p) = load_path {
             self.load_project_from(&p);
         }
-        if let Some(p) = forget_path {
-            self.recent.forget(&p);
-        }
-        if let Some(p) = delete_from_disk {
-            let _ = std::fs::remove_file(&p);
-            // Also remove its folder cache? leave for later.
-            self.recent.forget(&p);
-        }
+
+        self.show_new_project_modal(ctx);
     }
 
-    // ---------------------------------------------------------------
-    // Menu bar
-    // ---------------------------------------------------------------
+    /// New Project modal, opened from the start-screen sidebar. Reuses
+    /// the draft fields stored on CapRustApp; the Create button runs
+    /// the same path as before (create_project).
+    fn show_new_project_modal(&mut self, ctx: &egui::Context) {
+        if !self.new_project_modal_open {
+            return;
+        }
+        let mut open = self.new_project_modal_open;
+        let mut created = false;
+
+        egui::Window::new(tr("new-title"))
+            .id(egui::Id::new("new_project_modal"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(460.0);
+                egui::Grid::new("new_project_modal_grid")
+                    .num_columns(2)
+                    .spacing([space::L, space::M_PLUS])
+                    .show(ui, |ui| {
+                        ui.label(tr("new-field-name"));
+                        ui.text_edit_singleline(&mut self.draft.name);
+                        ui.end_row();
+
+                        ui.label(tr("new-field-location"));
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut self.draft.location);
+                            if ui.button(tr("new-button-browse")).clicked() {
+                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                    self.draft.location = dir.to_string_lossy().to_string();
+                                }
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label(tr("new-field-format"));
+                        egui::ComboBox::from_id_salt("modal_draft_aspect")
+                            .selected_text(self.draft.aspect_ratio.label())
+                            .show_ui(ui, |ui| {
+                                for preset in AspectRatio::presets() {
+                                    ui.selectable_value(
+                                        &mut self.draft.aspect_ratio,
+                                        preset.clone(),
+                                        preset.label(),
+                                    );
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label(tr("new-field-resolution"));
+                        ui.add(
+                            egui::Slider::new(&mut self.draft.base_resolution, 480..=2160)
+                                .suffix(" px"),
+                        );
+                        ui.end_row();
+
+                        ui.label(tr("new-field-fps"));
+                        egui::ComboBox::from_id_salt("modal_draft_fps")
+                            .selected_text(self.draft.frame_rate.label())
+                            .show_ui(ui, |ui| {
+                                for fps in FrameRate::all() {
+                                    ui.selectable_value(
+                                        &mut self.draft.frame_rate,
+                                        fps,
+                                        fps.label(),
+                                    );
+                                }
+                            });
+                        ui.end_row();
+                    });
+
+                ui.add_space(space::XL);
+                ui.horizontal(|ui| {
+                    let can_create = !self.draft.name.trim().is_empty()
+                        && !self.draft.location.trim().is_empty();
+                    let resp = button::primary_enabled(ui, can_create, tr("new-button-create"));
+                    let resp = if can_create {
+                        resp
+                    } else {
+                        resp.on_disabled_hover_text(tr("new-button-create-hint"))
+                    };
+                    if resp.clicked() {
+                        self.create_project();
+                        created = true;
+                    }
+                    if ui.button(tr("menu-file-quit")).clicked() {
+                        created = true;
+                    }
+                });
+            });
+
+        // Apply open/close after the borrow of `self` inside `.show()`
+        // has ended (DIRECTIVES section 5, egui::Window::open trap).
+        self.new_project_modal_open = open && !created;
+    }
+
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
