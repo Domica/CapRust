@@ -15,6 +15,12 @@ pub fn header(ui: &mut Ui, title: impl Into<RichText>) {
     ui.separator();
 }
 
+/// Secondary line: small, muted. Use for "Model: x | Language: y" style
+/// summary rows. Caller keeps control of color via `RichText::color`.
+pub fn subtext(ui: &mut Ui, text: impl Into<RichText>) {
+    ui.label(text.into().small());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,6 +40,13 @@ mod tests {
     fn header_renders_without_panic() {
         run_ui(|ui| {
             header(ui, "Section");
+        });
+    }
+
+    #[test]
+    fn subtext_renders_without_panic() {
+        run_ui(|ui| {
+            subtext(ui, "Model: whisper-tiny");
         });
     }
 }

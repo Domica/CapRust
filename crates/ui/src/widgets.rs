@@ -5,5 +5,7 @@
 //! in a panel — reach for a widget here, or add one.
 
 pub mod button;
+pub mod dialog;
+pub mod property;
 pub mod section;
 pub mod toolbar;
