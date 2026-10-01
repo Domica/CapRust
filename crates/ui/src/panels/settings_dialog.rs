@@ -1,6 +1,7 @@
 //! Settings dialog — Appearance, AI Models, Shortcuts, Language, Paths.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
 use caprust_core::models::{ModelKind, ModelStatus};
 use caprust_core::{detect_ffmpeg, AppSettings, FfmpegStatus, ModelRegistry};
@@ -114,7 +115,7 @@ pub fn show(
 
 fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
     ui.label(egui::RichText::new(tr("set-tab-appearance")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
 
     ui.horizontal(|ui| {
         ui.label(tr("set-appearance-mode"));
@@ -123,7 +124,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
         }
     });
 
-    ui.add_space(8.0);
+    ui.add_space(space::M);
 
     ui.horizontal(|ui| {
         ui.label(tr("set-appearance-accent"));
@@ -152,11 +153,11 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
         }
     });
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
 
     // --- Font ---
     ui.label(egui::RichText::new(tr("set-appearance-font")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.horizontal(|ui| {
         ui.label(tr("set-appearance-font-family"));
         egui::ComboBox::from_id_salt("font_family_combo")
@@ -179,7 +180,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             theme.font_scale = 1.0;
         }
     });
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-tracks")).strong());
     ui.label(
@@ -187,7 +188,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(6.0);
+    ui.add_space(space::S);
     egui::Grid::new("track_colors_grid")
         .num_columns(2)
         .spacing([12.0, 8.0])
@@ -206,10 +207,10 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             ui.end_row();
         });
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-playhead")).strong());
-    ui.add_space(6.0);
+    ui.add_space(space::S);
     egui::Grid::new("playhead_grid")
         .num_columns(2)
         .spacing([12.0, 8.0])
@@ -227,7 +228,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
         });
 
     if theme.mode == ThemeMode::Custom {
-        ui.add_space(12.0);
+        ui.add_space(space::L);
         ui.label(egui::RichText::new(tr("set-appearance-custom")).strong());
         egui::Grid::new("custom_theme_grid")
             .num_columns(2)
@@ -245,13 +246,13 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             });
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
     if ui.button(tr("set-appearance-reset")).clicked() {
         *theme = Theme::default();
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-updates")).strong());
     ui.checkbox(
@@ -286,7 +287,7 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
         .small()
         .color(egui::Color32::from_gray(140)),
     );
-    ui.add_space(8.0);
+    ui.add_space(space::M);
 
     let mut clicked: Option<String> = None;
 
@@ -295,25 +296,25 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
         clicked = Some(id);
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-narration")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::Narration) {
         clicked = Some(id);
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-face")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::FaceDetector) {
         clicked = Some(id);
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-bg")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::BackgroundRemover) {
         clicked = Some(id);
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-scrfd")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::ScrfdDetector) {
         clicked = Some(id);
@@ -399,9 +400,9 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
 
 fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
     ui.label(egui::RichText::new(tr("set-shortcuts-heading")).strong());
-    ui.add_space(6.0);
+    ui.add_space(space::S);
     ui.checkbox(enable_shortcuts, tr("set-shortcuts-enable"));
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
 
     egui::Grid::new("kbd_shortcuts")
         .num_columns(2)
@@ -434,13 +435,13 @@ fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
 
 fn show_language(ui: &mut Ui, language: &mut String) {
     ui.label(egui::RichText::new(tr("set-language-heading")).strong());
-    ui.add_space(6.0);
+    ui.add_space(space::S);
     ui.label(
         egui::RichText::new(tr("set-language-applied"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(8.0);
+    ui.add_space(space::M);
 
     let current_name = caprust_i18n::LANGUAGES
         .iter()
@@ -482,7 +483,7 @@ fn show_paths(
         }
     });
 
-    ui.add_space(16.0);
+    ui.add_space(space::XL);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-paths-ffmpeg")).strong());
     ui.label(
@@ -490,7 +491,7 @@ fn show_paths(
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(6.0);
+    ui.add_space(space::S);
 
     egui::Grid::new("ffmpeg_paths")
         .num_columns(2)
@@ -539,7 +540,7 @@ fn show_paths(
             ui.end_row();
         });
 
-    ui.add_space(8.0);
+    ui.add_space(space::M);
     ui.horizontal(|ui| {
         if ui.button(tr("set-paths-detect")).clicked() {
             *status = detect_ffmpeg(settings);
@@ -574,7 +575,7 @@ fn show_paths(
     });
 
     if let (Some(p), _) = (&status.ffmpeg, &status.ffprobe) {
-        ui.add_space(6.0);
+        ui.add_space(space::S);
         ui.label(
             egui::RichText::new(p)
                 .small()
@@ -583,7 +584,7 @@ fn show_paths(
         );
     }
 
-    ui.add_space(16.0);
+    ui.add_space(space::XL);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-backup-heading")).strong());
     ui.label(
@@ -591,7 +592,7 @@ fn show_paths(
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.horizontal(|ui| {
         let mut f = settings.sync_folder.clone().unwrap_or_default();
         if ui
@@ -614,27 +615,27 @@ fn show_paths(
         }
     });
     if let Some(ts) = settings.last_synced_at {
-        ui.add_space(2.0);
+        ui.add_space(space::XXS);
         ui.label(
             egui::RichText::new(format!("{} {}", tr("set-backup-sync-last"), ts))
                 .small()
                 .color(egui::Color32::from_gray(150)),
         );
     } else if settings.sync_path().is_some() {
-        ui.add_space(2.0);
+        ui.add_space(space::XXS);
         ui.label(
             egui::RichText::new(tr("set-backup-sync-never"))
                 .small()
                 .color(egui::Color32::from_gray(150)),
         );
     }
-    ui.add_space(8.0);
+    ui.add_space(space::M);
     ui.label(
         egui::RichText::new(tr("set-backup-hint"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(6.0);
+    ui.add_space(space::S);
     ui.horizontal(|ui| {
         if ui.button(tr("set-backup-export")).clicked() {
             ev.export_requested = true;
@@ -651,13 +652,13 @@ fn show_paths(
 
 fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
     ui.label(egui::RichText::new(tr("set-tab-audio")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.label(
         egui::RichText::new(tr("set-audio-hint"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(12.0);
+    ui.add_space(space::L);
 
     ui.horizontal(|ui| {
         // Mute toggle on the left, matching the transport bar order.
@@ -686,7 +687,7 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
         });
     });
 
-    ui.add_space(8.0);
+    ui.add_space(space::M);
     ui.label(
         egui::RichText::new(tr("set-audio-preview-only"))
             .small()
@@ -702,13 +703,13 @@ const TRANSLATE_TARGET_LANGS: &[&str] = &["en", "hr", "de", "fr", "es", "it"];
 
 fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
     ui.label(egui::RichText::new(tr("set-tab-translation")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.label(
         egui::RichText::new(tr("set-translation-hint"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
 
     ui.horizontal(|ui| {
         ui.label(tr("set-translation-source"));
@@ -726,7 +727,7 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
             });
     });
 
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
 
     ui.horizontal(|ui| {
         ui.label(tr("set-translation-target"));
@@ -744,14 +745,14 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
             });
     });
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-translation-email")).strong());
     ui.label(
         egui::RichText::new(tr("set-translation-email-hint"))
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     let mut email = settings.translate_email.clone().unwrap_or_default();
     if ui
         .add(
@@ -768,9 +769,9 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
         };
     }
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
-    ui.add_space(6.0);
+    ui.add_space(space::S);
     ui.label(
         egui::RichText::new(tr("set-translation-provider-note"))
             .small()
