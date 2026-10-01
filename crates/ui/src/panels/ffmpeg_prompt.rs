@@ -17,6 +17,7 @@ use egui::Ui;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::dialog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptPhase {
@@ -145,27 +146,28 @@ pub fn show(
             );
 
             ui.add_space(space::M_PLUS);
-            ui.horizontal(|ui| {
-                if ui
-                    .button(tr("ffmpeg-prompt-download"))
-                    .on_hover_text(tr("ffmpeg-prompt-download-hint"))
-                    .clicked()
-                {
-                    ev.start_download = true;
-                }
-                if ui
-                    .button(tr("ffmpeg-prompt-browse"))
-                    .on_hover_text(tr("ffmpeg-prompt-browse-hint"))
-                    .clicked()
-                {
-                    ev.browse_existing = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("ffmpeg-prompt-cancel")).clicked() {
-                        ev.close = true;
+            if dialog::footer_close(
+                ui,
+                |ui| {
+                    if ui
+                        .button(tr("ffmpeg-prompt-download"))
+                        .on_hover_text(tr("ffmpeg-prompt-download-hint"))
+                        .clicked()
+                    {
+                        ev.start_download = true;
                     }
-                });
-            });
+                    if ui
+                        .button(tr("ffmpeg-prompt-browse"))
+                        .on_hover_text(tr("ffmpeg-prompt-browse-hint"))
+                        .clicked()
+                    {
+                        ev.browse_existing = true;
+                    }
+                },
+                &tr("ffmpeg-prompt-cancel"),
+            ) {
+                ev.close = true;
+            }
 
             ui.add_space(space::XS);
             ui.checkbox(&mut state.dont_ask_again, tr("ffmpeg-prompt-dont-ask"));
@@ -207,13 +209,9 @@ pub fn show(
                     .color(egui::Color32::from_rgb(120, 200, 120)),
             );
             ui.add_space(space::S);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("ffmpeg-prompt-close")).clicked() {
-                        ev.close = true;
-                    }
-                });
-            });
+            if dialog::footer_close(ui, |_| {}, &tr("ffmpeg-prompt-close")) {
+                ev.close = true;
+            }
         }
         PromptPhase::Failed => {
             ui.label(
@@ -227,16 +225,17 @@ pub fn show(
                     .color(egui::Color32::from_gray(150)),
             );
             ui.add_space(space::S);
-            ui.horizontal(|ui| {
-                if ui.button(tr("ffmpeg-prompt-retry")).clicked() {
-                    state.phase = PromptPhase::Choose;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("ffmpeg-prompt-cancel")).clicked() {
-                        ev.close = true;
+            if dialog::footer_close(
+                ui,
+                |ui| {
+                    if ui.button(tr("ffmpeg-prompt-retry")).clicked() {
+                        state.phase = PromptPhase::Choose;
                     }
-                });
-            });
+                },
+                &tr("ffmpeg-prompt-cancel"),
+            ) {
+                ev.close = true;
+            }
         }
     }
 
