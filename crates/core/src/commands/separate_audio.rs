@@ -25,6 +25,8 @@ pub struct SeparateAudioCommand {
     new_audio_id: Option<Uuid>,
     /// Previous value of video.audio_detached, for undo.
     previous_detached: Option<bool>,
+    /// Previous value of video.detached_audio_clip_id, for undo.
+    previous_back_ref: Option<Option<Uuid>>,
     /// Index of the audio track used, filled on execute.
     audio_track_index: Option<usize>,
     /// True when execute created a new Audio track, so undo can drop it.
@@ -37,6 +39,7 @@ impl SeparateAudioCommand {
             video_id,
             new_audio_id: None,
             previous_detached: None,
+            previous_back_ref: None,
             audio_track_index: None,
             created_track: false,
         }
@@ -83,12 +86,15 @@ impl Command for SeparateAudioCommand {
         audio.volume_db = volume_db;
         let audio_id = audio.id;
 
-        // 4. Mark the video as detached.
+        // 4. Mark the video as detached and record the back-reference
+        //    to the audio clip so Reattach can find it.
         let Some(video_mut) = state.clips.iter_mut().find(|c| c.id == self.video_id) else {
             return Ok(());
         };
         self.previous_detached = Some(video_mut.audio_detached);
+        self.previous_back_ref = Some(video_mut.detached_audio_clip_id);
         video_mut.audio_detached = true;
+        video_mut.detached_audio_clip_id = Some(audio_id);
 
         // 5. Insert the Audio clip.
         state.add_clip(audio);
@@ -103,10 +109,15 @@ impl Command for SeparateAudioCommand {
         if let Some(aid) = self.new_audio_id.take() {
             state.remove_clip(aid);
         }
-        // Restore audio_detached on the video.
+        // Restore audio_detached and the back-reference on the video.
         if let Some(prev) = self.previous_detached.take() {
             if let Some(video) = state.clips.iter_mut().find(|c| c.id == self.video_id) {
                 video.audio_detached = prev;
+            }
+        }
+        if let Some(prev) = self.previous_back_ref.take() {
+            if let Some(video) = state.clips.iter_mut().find(|c| c.id == self.video_id) {
+                video.detached_audio_clip_id = prev;
             }
         }
         // Drop the track we auto-created.

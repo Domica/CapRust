@@ -30,6 +30,15 @@ impl Command for DeleteClipCommand {
     fn execute(&mut self, state: &mut ProjectState) -> Result<()> {
         self.affected.clear();
         let removed = state.remove_clip(self.clip_id);
+        // If this clip was a detached audio clip, clear the
+        // back-reference from its source video so Reattach degrades
+        // gracefully to "just flip the flag". Do this before the
+        // ripple block so the numbers stay in sync.
+        for c in state.clips.iter_mut() {
+            if c.detached_audio_clip_id == Some(self.clip_id) {
+                c.detached_audio_clip_id = None;
+            }
+        }
         if let Some(removed) = removed {
             if self.ripple {
                 let gap = removed.duration_ms;

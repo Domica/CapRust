@@ -8,6 +8,7 @@ pub mod edit_caption_segment;
 pub mod macro_command;
 pub mod move_clip;
 pub mod move_many;
+pub mod reattach_audio;
 pub mod relink;
 pub mod relink_many;
 pub mod remove_master_plugin;

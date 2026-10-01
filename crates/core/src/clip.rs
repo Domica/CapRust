@@ -357,6 +357,14 @@ pub struct Clip {
     /// Audio clip is the sole audio source.
     #[serde(default)]
     pub audio_detached: bool,
+    /// Back-reference from a video clip to the Audio clip created
+    /// by SeparateAudioCommand. `Some(id)` means the video's
+    /// embedded audio was separated and the Audio clip still
+    /// exists; Reattach can move it back. Cleared when the audio
+    /// clip is deleted on its own, so reattach degrades to "just
+    /// flip audio_detached back to false".
+    #[serde(default)]
+    pub detached_audio_clip_id: Option<Uuid>,
     /// User-editable display name. None = derive from the source file
     /// name at render time.
     #[serde(default)]
@@ -442,6 +450,7 @@ impl Clip {
             transition_duration_ms: default_transition_duration_ms(),
             applied_xfade_shift_ms: 0,
             audio_detached: false,
+            detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
@@ -483,6 +492,7 @@ impl Clip {
             transition_duration_ms: default_transition_duration_ms(),
             applied_xfade_shift_ms: 0,
             audio_detached: false,
+            detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
@@ -524,6 +534,7 @@ impl Clip {
             transition_duration_ms: default_transition_duration_ms(),
             applied_xfade_shift_ms: 0,
             audio_detached: false,
+            detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
@@ -569,6 +580,7 @@ impl Clip {
             transition_duration_ms: default_transition_duration_ms(),
             applied_xfade_shift_ms: 0,
             audio_detached: false,
+            detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
@@ -620,6 +632,7 @@ impl Clip {
             transition_duration_ms: default_transition_duration_ms(),
             applied_xfade_shift_ms: 0,
             audio_detached: false,
+            detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,
@@ -669,6 +682,7 @@ impl Clip {
             transition_duration_ms: default_transition_duration_ms(),
             applied_xfade_shift_ms: 0,
             audio_detached: false,
+            detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
             fade_out_ms: 0,

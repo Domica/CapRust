@@ -4406,23 +4406,55 @@ impl CapRustApp {
                                     pending_actions.push(ClipAction::TranslateCaptions(clip_id));
                                     ui.close_menu();
                                 }
-                                // Separate audio only applies to clips that
-                                // actually have an embedded audio track and
-                                // have not already been detached.
-                                let can_detach = self
-                                    .project
-                                    .clips
-                                    .iter()
-                                    .find(|c| c.id == clip_id)
-                                    .map(|c| {
-                                        matches!(c.clip_type, caprust_core::ClipType::Video { .. })
-                                            && !c.audio_detached
-                                    })
-                                    .unwrap_or(false);
-                                if can_detach && ui.button(tr("clip-ctx-separate-audio")).clicked()
-                                {
-                                    pending_actions.push(ClipAction::SeparateAudio(clip_id));
-                                    ui.close_menu();
+                                // Audio detach / reattach. Three
+                                // cases:
+                                // 1. Video with embedded audio ->
+                                //    Separate audio.
+                                // 2. Video whose audio has been
+                                //    detached -> Reattach audio.
+                                // 3. Audio clip that was detached
+                                //    from some video -> Reattach to
+                                //    that video (reverse lookup
+                                //    through the back-reference).
+                                let menu_clip =
+                                    self.project.clips.iter().find(|c| c.id == clip_id).cloned();
+                                if let Some(c) = menu_clip.as_ref() {
+                                    let is_video =
+                                        matches!(c.clip_type, caprust_core::ClipType::Video { .. });
+                                    let is_audio =
+                                        matches!(c.clip_type, caprust_core::ClipType::Audio { .. });
+                                    if is_video
+                                        && !c.audio_detached
+                                        && ui.button(tr("clip-ctx-separate-audio")).clicked()
+                                    {
+                                        pending_actions.push(ClipAction::SeparateAudio(clip_id));
+                                        ui.close_menu();
+                                    }
+                                    if is_video
+                                        && c.audio_detached
+                                        && ui.button(tr("clip-ctx-reattach-audio")).clicked()
+                                    {
+                                        pending_actions.push(ClipAction::ReattachAudio(clip_id));
+                                        ui.close_menu();
+                                    }
+                                    if is_audio {
+                                        // Find the video whose back-ref
+                                        // points at this audio clip.
+                                        let parent_video = self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|cc| cc.detached_audio_clip_id == Some(clip_id))
+                                            .map(|cc| cc.id);
+                                        if let Some(parent) = parent_video {
+                                            if ui.button(tr("clip-ctx-reattach-to-video")).clicked()
+                                            {
+                                                pending_actions
+                                                    .push(ClipAction::ReattachAudio(parent));
+                                                ui.close_menu();
+                                            }
+                                        }
+                                    }
                                 }
                                 if self.settings.enable_shortcuts {
                                     ui.separator();
@@ -5129,6 +5161,32 @@ impl CapRustApp {
                     } else {
                         tracing::info!("separate audio: created Audio clip from {id}");
                         self.toast(tr("toast-separate-audio-done"));
+                    }
+                }
+                ClipAction::ReattachAudio(id) => {
+                    // `id` is either a video whose audio was detached,
+                    // or an audio clip that was detached from some
+                    // video. Resolve to the video id first.
+                    let video_id = if self.project.clips.iter().any(|c| {
+                        c.id == id && matches!(c.clip_type, caprust_core::ClipType::Video { .. })
+                    }) {
+                        Some(id)
+                    } else {
+                        self.project
+                            .clips
+                            .iter()
+                            .find(|c| c.detached_audio_clip_id == Some(id))
+                            .map(|c| c.id)
+                    };
+                    if let Some(vid) = video_id {
+                        let cmd =
+                            caprust_core::commands::reattach_audio::ReattachAudioCommand::new(vid);
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("reattach audio failed: {e}");
+                        } else {
+                            tracing::info!("reattach audio: video {vid}");
+                            self.toast(tr("toast-reattach-audio-done"));
+                        }
                     }
                 }
                 ClipAction::Copy(id) => {
@@ -7764,6 +7822,11 @@ enum ClipAction {
     ToggleFlipV(uuid::Uuid),
     GenerateCaptions(uuid::Uuid),
     SeparateAudio(uuid::Uuid),
+    /// Reattach a separated audio clip back into its source video.
+    /// `id` is the video id when the action is triggered from a
+    /// video's context menu, and the audio id when triggered from
+    /// the audio clip (the dispatcher resolves both cases).
+    ReattachAudio(uuid::Uuid),
     Copy(uuid::Uuid),
     Paste,
     Duplicate(uuid::Uuid),
