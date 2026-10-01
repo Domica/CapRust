@@ -209,6 +209,10 @@ pub struct CapRustApp {
     /// when the media library references files that are not on disk.
     pub relink_dialog: crate::panels::relink_dialog::RelinkDialogState,
     pub relink_dialog_open: bool,
+    /// Set when the user dismisses the missing-media banner. Reset
+    /// whenever the banner would show and there is nothing missing,
+    /// so a future regression re-opens it.
+    pub missing_media_dismissed: bool,
     /// Dock tree that owns every editor panel. Replaces the fixed
     /// SidePanel / CentralPanel layout. See `crate::dock`.
     pub dock_state: egui_dock::DockState<crate::dock::Tab>,
@@ -536,6 +540,7 @@ impl CapRustApp {
             last_applied_font_family: None,
             relink_dialog: Default::default(),
             relink_dialog_open: false,
+            missing_media_dismissed: false,
             dock_state: settings
                 .dock_layout
                 .as_ref()
@@ -2956,6 +2961,49 @@ impl CapRustApp {
     // ---------------------------------------------------------------
     // Timeline panel
     // ---------------------------------------------------------------
+    /// Full-width warning banner above the timeline when media files
+    /// referenced by the project are missing on disk. The Relink
+    /// button opens the standard relink dialog with the current list
+    /// of missing entries.
+    fn show_missing_media_banner(&mut self, ui: &mut egui::Ui) {
+        let missing = caprust_core::commands::relink_many::find_missing_media_items(&self.project);
+        if missing.is_empty() {
+            // Nothing missing: forget any past dismissal so a future
+            // regression (user moves a file out from under us, project
+            // reloaded) re-opens the banner.
+            self.missing_media_dismissed = false;
+            return;
+        }
+        if self.missing_media_dismissed {
+            return;
+        }
+
+        let msg = format!("{} ({})", tr("missing-media-banner"), missing.len());
+        let mut open_relink = false;
+        let dismissed = crate::widgets::banner::show_with_actions(
+            ui,
+            crate::widgets::banner::BannerKind::Warning,
+            &msg,
+            true,
+            |ui| {
+                if ui.button(tr("missing-media-relink")).clicked() {
+                    open_relink = true;
+                }
+            },
+        );
+
+        if dismissed {
+            self.missing_media_dismissed = true;
+        }
+        if open_relink {
+            self.relink_dialog = crate::panels::relink_dialog::RelinkDialogState {
+                missing,
+                ..Default::default()
+            };
+            self.relink_dialog_open = true;
+        }
+    }
+
     fn show_timeline(&mut self, ctx: &egui::Context) {
         let screen_h = ctx.screen_rect().height();
         egui::TopBottomPanel::bottom("timeline")
@@ -2977,6 +3025,11 @@ impl CapRustApp {
         ui.set_min_height(180.0);
         self.project.models.tick_downloads(1.0 / 60.0);
         self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
+
+        // Persistent banner when media files referenced by the
+        // project are not on disk. Auto-hides when everything is
+        // present again; the Relink CTA opens the relink dialog.
+        self.show_missing_media_banner(ui);
 
         // Toolbar
         let can_undo = self.undo_stack.can_undo();
@@ -6839,6 +6892,10 @@ impl CapRustApp {
             ..Default::default()
         };
         self.relink_dialog_open = true;
+        // Fresh load with missing entries: un-dismiss the banner so
+        // the user sees it again even if they dismissed it before
+        // reloading the same project.
+        self.missing_media_dismissed = false;
     }
 
     fn show_relink_dialog_window(&mut self, ctx: &egui::Context) {

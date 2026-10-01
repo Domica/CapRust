@@ -57,6 +57,20 @@ impl BannerKind {
 /// Full-width banner. Returns `true` if the dismiss button was clicked
 /// this frame. `msg` must already be translated.
 pub fn show(ui: &mut Ui, kind: BannerKind, msg: &str, dismissible: bool) -> bool {
+    show_with_actions(ui, kind, msg, dismissible, |_| {})
+}
+
+/// Banner with an optional primary action rendered to the left of
+/// the dismiss button, e.g. a "Relink…" CTA on the missing-media
+/// banner. The action closure runs inside the same right-to-left
+/// layout as the dismiss button, so its widgets appear left of the X.
+pub fn show_with_actions(
+    ui: &mut Ui,
+    kind: BannerKind,
+    msg: &str,
+    dismissible: bool,
+    add_actions: impl FnOnce(&mut Ui),
+) -> bool {
     let mut dismissed = false;
     egui::Frame::NONE
         .fill(kind.bg())
@@ -72,13 +86,12 @@ pub fn show(ui: &mut Ui, kind: BannerKind, msg: &str, dismissible: bool) -> bool
                 );
                 ui.add_space(space::XS);
                 ui.label(RichText::new(msg).color(Color32::from_gray(230)));
-                if dismissible {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(ph::X).clicked() {
-                            dismissed = true;
-                        }
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if dismissible && ui.button(ph::X).clicked() {
+                        dismissed = true;
+                    }
+                    add_actions(ui);
+                });
             });
         });
     dismissed
@@ -139,6 +152,17 @@ mod tests {
     fn dismissible_show_returns_false_without_input() {
         run_ui(|ui| {
             let dismissed = show(ui, BannerKind::Info, "Hello", true);
+            assert!(!dismissed);
+        });
+    }
+
+    #[test]
+    fn show_with_actions_renders_action_and_returns_false() {
+        run_ui(|ui| {
+            let dismissed =
+                show_with_actions(ui, BannerKind::Warning, "Missing files", true, |ui| {
+                    let _ = ui.button("Relink");
+                });
             assert!(!dismissed);
         });
     }

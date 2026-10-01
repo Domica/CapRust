@@ -577,3 +577,6 @@ sync-prompt-keep = Keep local
 set-appearance-font = Font
 set-appearance-font-family = Family
 set-appearance-font-scale = Size
+
+missing-media-banner = Some media files are missing
+missing-media-relink = Relink…

@@ -577,3 +577,6 @@ sync-prompt-keep = Zadrži lokalne
 set-appearance-font = Font
 set-appearance-font-family = Obitelj
 set-appearance-font-scale = Veli\u010dina
+
+missing-media-banner = Neke medijske datoteke nedostaju
+missing-media-relink = Ponovno pove\u017ei\u2026
