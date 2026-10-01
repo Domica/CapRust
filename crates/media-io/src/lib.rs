@@ -26,3 +26,4 @@ pub mod clap_host;
 
 #[cfg(feature = "clap")]
 pub mod clap_chain;
+pub mod waveform;
