@@ -1691,7 +1691,7 @@ impl CapRustApp {
                             .bg_removal(Some(rel));
                         if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
                             tracing::error!("bg-removal: apply failed: {e}");
-                            self.toast(format!("{}: {e}", tr("toast-bg-removal-failed")));
+                            self.toast_error(format!("{}: {e}", tr("toast-bg-removal-failed")));
                         } else {
                             tracing::info!(
                                 "bg-removal: clip {} mask applied ({frame_count} frames)",
@@ -1701,7 +1701,7 @@ impl CapRustApp {
                         }
                     } else {
                         tracing::warn!("bg-removal: finished but no relative path available");
-                        self.toast(tr("toast-bg-removal-failed"));
+                        self.toast_error(tr("toast-bg-removal-failed"));
                     }
                     if let Some(id) = self.bg_removal_job_id.take() {
                         self.finish_job(id);
@@ -1710,7 +1710,7 @@ impl CapRustApp {
                 }
                 Ok(crate::media_jobs::BgRemovalEvent::Failed(msg)) => {
                     tracing::error!("bg-removal: job failed: {msg}");
-                    self.toast(format!("{}: {msg}", tr("toast-bg-removal-failed")));
+                    self.toast_error(format!("{}: {msg}", tr("toast-bg-removal-failed")));
                     if let Some(id) = self.bg_removal_job_id.take() {
                         self.finish_job(id);
                     }
@@ -1859,7 +1859,7 @@ impl CapRustApp {
                         .auto_reframe(result.keypoints.clone());
                     if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
                         tracing::error!("reframe: apply failed: {e}");
-                        self.toast(format!("{}: {e}", tr("toast-reframe-failed")));
+                        self.toast_error(format!("{}: {e}", tr("toast-reframe-failed")));
                     } else {
                         tracing::info!(
                             "reframe: applied {} keypoints to clip {}",
@@ -1876,7 +1876,7 @@ impl CapRustApp {
             }
             Ok(Err(msg)) => {
                 tracing::error!("reframe: job failed: {msg}");
-                self.toast(format!("{}: {msg}", tr("toast-reframe-failed")));
+                self.toast_error(format!("{}: {msg}", tr("toast-reframe-failed")));
                 if let Some(id) = self.reframe_job_id.take() {
                     self.finish_job(id);
                 }
@@ -1925,7 +1925,7 @@ impl CapRustApp {
             }
             Ok(Err(msg)) => {
                 tracing::error!("narration: job failed: {msg}");
-                self.toast(format!("{}: {msg}", tr("toast-narration-failed")));
+                self.toast_error(format!("{}: {msg}", tr("toast-narration-failed")));
                 if let Some(id) = self.narration_job_id.take() {
                     self.finish_job(id);
                 }
@@ -2297,7 +2297,7 @@ impl CapRustApp {
             }
             Ok(Err(msg)) => {
                 tracing::error!("caption: job failed: {msg}");
-                self.toast(format!("{}: {msg}", tr("toast-caption-failed")));
+                self.toast_error(format!("{}: {msg}", tr("toast-caption-failed")));
                 if let Some(id) = self.caption_job_id.take() {
                     self.finish_job(id);
                 }
@@ -2425,13 +2425,13 @@ impl CapRustApp {
                     }
                     Err(e) => {
                         tracing::error!("translate: command failed: {e}");
-                        self.toast(format!("{} {e}", tr("translate-toast-failed")));
+                        self.toast_error(format!("{} {e}", tr("translate-toast-failed")));
                     }
                 }
             }
             TranslateEvent::Failed(msg) => {
                 tracing::error!("translate: failed: {msg}");
-                self.toast(format!("{} {msg}", tr("translate-toast-failed")));
+                self.toast_error(format!("{} {msg}", tr("translate-toast-failed")));
             }
             TranslateEvent::Progress { .. } => {}
         }
@@ -2480,7 +2480,7 @@ impl CapRustApp {
                         m.progress = 1.0;
                         m.enabled = true;
                     }
-                    self.toast(format!("Model ready: {model_id}"));
+                    self.toast(format!("{}: {model_id}", tr("model-toast-ready")));
                     keep = false;
                     break;
                 }
@@ -2490,7 +2490,7 @@ impl CapRustApp {
                         m.status = caprust_core::ModelStatus::Error;
                         m.progress = 0.0;
                     }
-                    self.toast(format!("Model download failed: {msg}"));
+                    self.toast_error(format!("{}: {msg}", tr("model-toast-failed")));
                     keep = false;
                     break;
                 }
@@ -2521,7 +2521,7 @@ impl CapRustApp {
         };
         if m.url.is_empty() {
             tracing::warn!("model {} has no URL set — cannot download", model_id);
-            self.toast(format!("No download URL configured for {}", m.name));
+            self.toast_error(format!("{}: {}", tr("model-toast-no-url"), m.name));
             return;
         }
         let url = m.url.clone();
@@ -2716,8 +2716,6 @@ impl CapRustApp {
     /// Push an error toast. Renders with a red accent and stays up
     /// longer than a plain Info toast (see Toast::error).
     ///
-    // TODO(directives §18): wired in P4.4 (call-site migration).
-    #[allow(dead_code)]
     fn toast_error(&mut self, text: impl Into<String>) {
         self.toasts.push(Toast::error(text));
     }
@@ -4631,7 +4629,7 @@ impl CapRustApp {
                     let cmd = caprust_core::commands::separate_audio::SeparateAudioCommand::new(id);
                     if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
                         tracing::error!("separate audio failed: {e}");
-                        self.toast(tr("toast-separate-audio-failed"));
+                        self.toast_error(tr("toast-separate-audio-failed"));
                     } else {
                         tracing::info!("separate audio: created Audio clip from {id}");
                         self.toast(tr("toast-separate-audio-done"));
@@ -6435,9 +6433,7 @@ impl CapRustApp {
                                             )),
                                         );
                                         if !has_url {
-                                            btn.on_hover_text(
-                                                "No download URL configured for this model",
-                                            );
+                                            btn.on_hover_text(tr("model-no-url-hint"));
                                         } else if btn.clicked() {
                                             // Defer the actual spawn until
                                             // after this borrow of
@@ -7076,7 +7072,7 @@ impl CapRustApp {
             }
             Err(e) => {
                 tracing::warn!("settings export failed: {e:#}");
-                self.toast(tr("toast-settings-export-failed"));
+                self.toast_error(tr("toast-settings-export-failed"));
             }
         }
     }
@@ -7104,7 +7100,7 @@ impl CapRustApp {
             }
             Err(e) => {
                 tracing::warn!("settings import failed: {e:#}");
-                self.toast(tr("toast-settings-import-failed"));
+                self.toast_error(tr("toast-settings-import-failed"));
             }
         }
     }
@@ -7152,7 +7148,7 @@ impl CapRustApp {
                             }
                             Err(e) => {
                                 tracing::warn!("settings sync: load failed: {e:#}");
-                                self.toast(tr("toast-settings-import-failed"));
+                                self.toast_error(tr("toast-settings-import-failed"));
                                 // Treat as acknowledged so the modal
                                 // does not reappear every frame.
                                 self.settings.last_synced_at = Some(stamp);
