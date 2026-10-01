@@ -16,10 +16,6 @@ impl Command for MoveClipCommand {
         if let Some(c) = state.clips.iter_mut().find(|c| c.id == self.clip_id) {
             c.start_time_ms = self.to_ms;
         }
-        // A drag can land a clip next to a new predecessor or away
-        // from its old one; re-derive xfade shifts so the model
-        // stays consistent with what the render planner will do.
-        state.normalize_xfade_shifts();
         Ok(())
     }
 

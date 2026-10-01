@@ -91,9 +91,13 @@ impl ProjectState {
     ///   3. Clip has a nonzero shift but `transition_in` is not an
     ///      xfade -> clear the shift marker.
     ///
-    /// Called on project load (migration for older `.caprust` files)
-    /// and after every move / delete command so the model stays in
-    /// step with what the render planner would do.
+    /// Called ONLY on project load (migration for older `.caprust`
+    /// files). Deliberately NOT called from move / delete commands:
+    /// the pass touches every clip on every track, so calling it on
+    /// an edit would silently mutate clips the user did not touch,
+    /// and those mutations would not be captured by the edit's undo
+    /// snapshot (so undo would restore positions but leave cleared
+    /// transitions cleared).
     pub fn normalize_xfade_shifts(&mut self) {
         use crate::clip::is_xfade_transition;
 
