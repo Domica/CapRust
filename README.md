@@ -10,6 +10,7 @@
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
 [![Version](https://img.shields.io/badge/version-0.7.0--beta.1-blue.svg)](CHANGELOG.md)
+[![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
@@ -50,24 +51,20 @@ A modern video editor focused on **short-form social content**. Built from scrat
 </p>
 
 <p align="center">
-  <a href="docs/screenshots/editor-master.png"><img src="docs/screenshots/editor-master.png" alt="Master chain" width="280"></a>
-  <a href="docs/screenshots/editor-clip-effects.png"><img src="docs/screenshots/editor-clip-effects.png" alt="Clip effects" width="280"></a>
-  <a href="docs/screenshots/editor-effects.png"><img src="docs/screenshots/editor-effects.png" alt="Effects browser" width="280"></a>
+  <a href="docs/screenshots/start-screen.png"><img src="docs/screenshots/start-screen.png" alt="Start screen" width="280"></a>
+  <a href="docs/screenshots/editor-tracks-caption.png"><img src="docs/screenshots/editor-tracks-caption.png" alt="Captions on timeline" width="280"></a>
+  <a href="docs/screenshots/editor-clip-properties.png"><img src="docs/screenshots/editor-clip-properties.png" alt="Clip properties" width="280"></a>
 </p>
+<p align="center">
+  <a href="docs/screenshots/editor-effects.png"><img src="docs/screenshots/editor-effects.png" alt="Effects browser" width="280"></a>
+  <a href="docs/screenshots/editor-transitions.png"><img src="docs/screenshots/editor-transitions.png" alt="Transitions" width="280"></a>
+  <a href="docs/screenshots/editor-master.png"><img src="docs/screenshots/editor-master.png" alt="Master chain" width="280"></a>
+</p>
+
 <p align="center">
   <a href="docs/screenshots/editor-settings.png"><img src="docs/screenshots/editor-settings.png" alt="Settings" width="280"></a>
   <a href="docs/screenshots/editor-settings-backup.png"><img src="docs/screenshots/editor-settings-backup.png" alt="Settings backup" width="280"></a>
-  <a href="docs/screenshots/editor-tracks-caption.png"><img src="docs/screenshots/editor-tracks-caption.png" alt="Captions on timeline" width="280"></a>
-</p>
-
-<p align="center">
-  <a href="docs/screenshots/editor-transitions.png"><img src="docs/screenshots/editor-transitions.png" alt="Transitions" width="280"></a>
   <a href="docs/screenshots/editor-filters.png"><img src="docs/screenshots/editor-filters.png" alt="Filters" width="280"></a>
-  <a href="docs/screenshots/editor-clip-properties.png"><img src="docs/screenshots/editor-clip-properties.png" alt="Clip properties" width="280"></a>
-</p>
-
-<p align="center">
-  <a href="docs/screenshots/start-screen.png"><img src="docs/screenshots/start-screen.png" alt="Start screen" width="900"></a>
 </p>
 
 ### Design goals
@@ -363,73 +360,18 @@ CapRust is:
 
 ## Version History
 
-Full details in [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
-### 0.6.0-alpha.1 - 2026-09-30
-
-- **Settings export/import** - dump AppSettings to JSON, load it back. Versioned envelope (`SettingsFile`), refuses newer format versions.
-- **Settings auto-sync via cloud folder** - point at a Google Drive / OneDrive / Dropbox / Box / iCloud / Syncthing folder. Snapshot on every save (hash-guarded), startup modal offers Load them / Keep local when a newer snapshot is found.
-- **User-selectable app font family + size** - Default / Segoe UI / Arial / Consolas; 0.8-1.5x scale for the whole UI via egui's pixels-per-point.
-- **Captions motion + procedural effects** - Blink / Pulse / ColorCycle now work on Captions clips like TextOverlay; same Ctrl+Z, same render path.
-- **Issue templates** for bug reports and feature requests.
-
-### 0.5.0-alpha.1 - 2026-09-29
-
-- **CLAP plugin hosting** - scan the two standard CLAP folders, browse plugins in a new Plugins tab, drop any of them onto the master bus with one click. Full audio processing runs on the reader thread.
-- **Master chain panel** - new dock tab shows the active chain with per-instance Bypass and Remove. Every change is undoable.
-- **MCP server** - standalone `caprust-mcp.exe` speaks JSON-RPC 2.0 over stdio. Claude Desktop and Cursor can open a `.caprust` file and drive the editor through 15 tools. No tokio, no rmcp.
-- **Xfade preview drift fixed** - playback of a project with a transition used to run with 2-3 s of audio-to-video offset. Root cause: audio started on Play, playhead waited for the first frame. Both now start from the same position.
-- **`SetTransitionCommand` clamp fix** - a 3000 ms slide on a short clip was shifting followers by 3000 ms while the render shortened by 2000 ms. Model and render now use the same clamp.
-
-### 0.4.0-alpha.2 - 2026-09-29
-
-- **Transition easing model + UI** - EaseCurve stored on every clip, dropdown in the properties panel. Render still emits linear fades on the current gyan.dev ffmpeg build (no `fade=curve=` support).
-- **Configurable transition duration** - 100..3000 ms slider, applies to both edges.
-- **Xfade shifts followers** - adding an xfade between two clips pulls the second clip and everything after it left by the transition duration. Removing shifts back. One undo.
-- **Timeline overlap shading** - accent tint + diagonal hatch over the overlap region.
-- **Media bin multi-select + long-press drag** - Ctrl+click toggles, 500 ms hold drags the whole selection to the timeline as a batch.
-- **MacroCommand + Ctrl+Z / Ctrl+Y shortcuts.**
-- **App icon, Material-style dock theme, brighter toasts.**
-
-### 0.4.0-alpha.1 - 2026-09-28
-
-- **Media bin multi-select** - Ctrl+click toggles, accent border on selected cards, batch X removes the whole selection.
-- **Long-press drag** - hold 500 ms to start a drag; short click selects. Drag badge shows how many items are in flight.
-- **Batch drag to timeline** - the whole selection lands in sequence at the drop position.
-- **Group move on the timeline** - dragging one of a multi-selection moves the entire group in one undoable step.
-- Captions and text overlays now seek-shift correctly, and apostrophes no longer break the filtergraph.
-
-
-Full details in [CHANGELOG.md](CHANGELOG.md).
-
-### 0.3.0-alpha.1 - 2026-09-28
-
-- **Hardware-accelerated export** - NVENC H.264 / HEVC and AMF wired into the export dialog. 5-15x faster on the RTX 2060 reference machine.
-- **Pre-rendered audio PCM cache** - background ffmpeg renders the project audio to a stable file in `%TEMP%`. Fixes the 17-clip cumulative attenuation bug (opening clip was ~1/2^17 of the last).
-- **Seek-optimized preview** - plan rewrites inputs to `-ss`/`-t` for the current playhead. Seek into a 3-minute project went from 5-10 s to ~200-500 ms.
-- **Missing-media relink on load** - dialog with folder picker, batch `RelinkManyCommand`, media bin badge, timeline hatch.
-- Video output carries correct mp4 tags (`hvc1`, `av01`).
-
-### 0.2.0-alpha.1 - 2026-09-29
-
-- **Dockable panel layout** (egui_dock 0.16) with four presets in View -> Layout, persisted across sessions.
-- **Captions translation** via MyMemory - right-click a Captions clip, get a new track in the target language.
-- Preview skips missing sources instead of dying.
-- Speed slider debounced 250 ms; no per-frame respawn.
-- eframe built without AccessKit (egui_dock mid-frame panic workaround).
-
-### 0.1.0-alpha.1 - 2026-09-27
-
-First public alpha.
-
-- Timeline: magnetic, snap, ripple, multi-select, marquee, trim-follow
-- Preview: filtergraph-based, auto-respawn on edits
-- Export: video + audio + xfade sync + caption burn-in, ETA and size estimate
-- Captions: Whisper transcription, progressive reveal, per-clip style
-- AI: Piper narration, YuNet auto-reframe, u2netp background removal
-- Effects: 16 presets, 16 filters, 12 transitions, 8 text styles
-- Audio: fades, volume keyframes, auto-ducking, speed ramps
-- English + Croatian via Fluent
+| Version | Date | Highlights |
+|---|---|---|
+| **0.7.0-beta.1** | 2026-10-01 | **First beta.** Windows installer, crash handler, UI polish pass (design tokens, widget library, start-screen redesign). |
+| 0.6.0-alpha.1 | 2026-09-30 | Settings export/import + cloud-folder sync, user-selectable font, captions motion + effects parity. |
+| 0.5.0-alpha.1 | 2026-09-29 | CLAP plugin hosting, master plugin chain, MCP server, xfade preview drift fix. |
+| 0.4.0-alpha.2 | 2026-09-29 | Transition easing + duration, xfade shifts followers, timeline overlap shading, MacroCommand. |
+| 0.4.0-alpha.1 | 2026-09-28 | Media bin multi-select, long-press batch drag, group move on timeline. |
+| 0.3.0-alpha.1 | 2026-09-28 | Hardware-accelerated export (NVENC / AMF), seek-optimized preview, audio PCM cache. |
+| 0.2.0-alpha.1 | 2026-09-29 | Dockable panel layout, captions translation (MyMemory). |
+| 0.1.0-alpha.1 | 2026-09-27 | First public alpha. |
 
 ---
 
