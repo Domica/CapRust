@@ -9,7 +9,7 @@ use crate::preview_player::PreviewPlayer;
 use crate::theme::tokens::{elev, radius, space};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
-use crate::widgets::{button, section};
+use crate::widgets::{button, empty, section};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
 use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
@@ -781,7 +781,19 @@ impl CapRustApp {
                                 });
                             ui.add_space(space::XL);
                             ui.horizontal(|ui| {
-                                if button::primary(ui, tr("new-button-create")).clicked() {
+                                let can_create = !self.draft.name.trim().is_empty()
+                                    && !self.draft.location.trim().is_empty();
+                                let resp = button::primary_enabled(
+                                    ui,
+                                    can_create,
+                                    tr("new-button-create"),
+                                );
+                                let resp = if can_create {
+                                    resp
+                                } else {
+                                    resp.on_disabled_hover_text(tr("new-button-create-hint"))
+                                };
+                                if resp.clicked() {
                                     self.create_project();
                                 }
                                 if ui.button(tr("new-button-open")).clicked() {
@@ -806,11 +818,7 @@ impl CapRustApp {
                     section::header(ui, tr("new-recent-heading"));
 
                     if self.recent.items.is_empty() {
-                        ui.label(
-                            egui::RichText::new(tr("new-recent-empty"))
-                                .italics()
-                                .color(egui::Color32::from_gray(120)),
-                        );
+                        empty::placeholder(ui, tr("new-recent-empty"));
                     } else {
                         let entries: Vec<RecentProject> = self.recent.items.clone();
                         egui::ScrollArea::vertical()
@@ -821,7 +829,7 @@ impl CapRustApp {
                                     let frame = egui::Frame::group(ui.style())
                                         .inner_margin(space::M)
                                         .fill(ui.visuals().faint_bg_color);
-                                    frame.show(ui, |ui| {
+                                    let card = frame.show(ui, |ui| {
                                         ui.set_width(320.0);
                                         ui.horizontal(|ui| {
                                             // Thumbnail placeholder
@@ -878,6 +886,17 @@ impl CapRustApp {
                                             });
                                         });
                                     });
+                                    if ui.rect_contains_pointer(card.response.rect) {
+                                        ui.painter().rect_stroke(
+                                            card.response.rect,
+                                            radius::cr(radius::SM),
+                                            egui::Stroke::new(
+                                                elev::STROKE_HAIRLINE,
+                                                ui.visuals().selection.bg_fill,
+                                            ),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
                                     ui.add_space(space::XS);
                                 }
                             });

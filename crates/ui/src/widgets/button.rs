@@ -14,6 +14,17 @@ pub fn primary(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
     ui.add(egui::Button::new(text).fill(accent))
 }
 
+/// Primary variant that can be disabled. When `enabled == false`, no
+/// accent fill is applied so the button reads as visually muted; the
+/// caller can chain `.on_disabled_hover_text(...)` on the response.
+pub fn primary_enabled(ui: &mut Ui, enabled: bool, text: impl Into<WidgetText>) -> Response {
+    let mut btn = egui::Button::new(text);
+    if enabled {
+        btn = btn.fill(ui.visuals().selection.bg_fill);
+    }
+    ui.add_enabled(enabled, btn)
+}
+
 /// Default surface button. Use for the neutral action in a pair
 /// (Cancel, Browse, Import).
 pub fn secondary(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
@@ -74,6 +85,14 @@ mod tests {
     fn icon_renders_without_panic() {
         run_ui(|ui| {
             let _ = icon(ui, "X", "Close");
+        });
+    }
+
+    #[test]
+    fn primary_enabled_renders_in_both_states() {
+        run_ui(|ui| {
+            let _ = primary_enabled(ui, true, "Save");
+            let _ = primary_enabled(ui, false, "Save");
         });
     }
 }
