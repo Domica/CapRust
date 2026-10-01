@@ -6,5 +6,6 @@ pub mod panels;
 pub mod preview_player;
 pub mod theme;
 pub mod timeline;
+pub mod widgets;
 
 pub use app::CapRustApp;
