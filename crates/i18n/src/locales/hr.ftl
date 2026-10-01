@@ -57,6 +57,7 @@ new-field-resolution = Bazna rezolucija
 new-field-fps = Broj sličica/s
 new-button-browse = Odaberi…
 new-button-create = Stvori projekt
+new-button-open = Otvori projekt…
 new-button-quit = Izlaz
 new-recent-heading = Nedavni projekti
 new-recent-empty = Još nema nedavnih projekata.

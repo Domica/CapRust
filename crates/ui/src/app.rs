@@ -9,7 +9,7 @@ use crate::preview_player::PreviewPlayer;
 use crate::theme::tokens::{elev, radius, space};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
-use crate::widgets::section;
+use crate::widgets::{button, section};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
 use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
@@ -693,6 +693,17 @@ impl CapRustApp {
         let mut forget_path: Option<String> = None;
         let mut delete_from_disk: Option<String> = None;
 
+        // Drag & drop a .caprust file onto the start screen.
+        ctx.input(|i| {
+            for f in &i.raw.dropped_files {
+                if let Some(p) = &f.path {
+                    if p.extension().is_some_and(|e| e == "caprust") && load_path.is_none() {
+                        load_path = Some(p.to_string_lossy().to_string());
+                    }
+                }
+            }
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(((ui.available_height() - 500.0) / 2.0).max(24.0));
@@ -770,8 +781,16 @@ impl CapRustApp {
                                 });
                             ui.add_space(space::XL);
                             ui.horizontal(|ui| {
-                                if ui.button(tr("new-button-create")).clicked() {
+                                if button::primary(ui, tr("new-button-create")).clicked() {
                                     self.create_project();
+                                }
+                                if ui.button(tr("new-button-open")).clicked() {
+                                    if let Some(f) = rfd::FileDialog::new()
+                                        .add_filter("CapRust Project", &["caprust"])
+                                        .pick_file()
+                                    {
+                                        load_path = Some(f.to_string_lossy().to_string());
+                                    }
                                 }
                                 if ui.button(tr("menu-file-quit")).clicked() {
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);

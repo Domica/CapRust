@@ -57,6 +57,7 @@ new-field-resolution = Base resolution
 new-field-fps = Frame rate
 new-button-browse = Browse…
 new-button-create = Create Project
+new-button-open = Open Project…
 new-button-quit = Quit
 new-recent-heading = Recent Projects
 new-recent-empty = No recent projects yet.
