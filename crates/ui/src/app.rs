@@ -57,11 +57,20 @@ fn default_projects_dir() -> String {
         .unwrap_or_else(|_| ".".into())
 }
 
+/// Severity of a toast. Error toasts get a red accent and read as
+/// failures; Info is the default for confirmations and status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Error,
+}
+
 /// Lightweight transient notification shown in the top-right corner.
 /// Auto-dismisses after `duration`; the user can also dismiss early
 /// via the ✕ button. Multiple toasts stack vertically.
 pub struct Toast {
     pub text: String,
+    pub kind: ToastKind,
     pub created_at: std::time::Instant,
     pub duration: std::time::Duration,
 }
@@ -99,11 +108,24 @@ pub struct AudioCacheState {
 }
 
 impl Toast {
+    /// Info toast: confirmations, status updates.
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            kind: ToastKind::Info,
             created_at: std::time::Instant::now(),
             duration: std::time::Duration::from_secs(4),
+        }
+    }
+
+    /// Error toast: a user-visible failure. Lingers 1.5x longer
+    /// than Info so the user has a chance to read it.
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: ToastKind::Error,
+            created_at: std::time::Instant::now(),
+            duration: std::time::Duration::from_secs(6),
         }
     }
 }
@@ -2691,6 +2713,15 @@ impl CapRustApp {
         self.toasts.push(Toast::new(text));
     }
 
+    /// Push an error toast. Renders with a red accent and stays up
+    /// longer than a plain Info toast (see Toast::error).
+    ///
+    // TODO(directives §18): wired in P4.4 (call-site migration).
+    #[allow(dead_code)]
+    fn toast_error(&mut self, text: impl Into<String>) {
+        self.toasts.push(Toast::error(text));
+    }
+
     /// Render live toasts top-right. Prunes expired entries each frame.
     fn show_toasts(&mut self, ctx: &egui::Context) {
         let now = std::time::Instant::now();
@@ -2711,7 +2742,10 @@ impl CapRustApp {
 
         for (i, t) in self.toasts.iter().enumerate() {
             let id = egui::Id::new(("caprust-toast", i, t.created_at));
-            let accent = self.theme.accent_color();
+            let accent = match t.kind {
+                ToastKind::Info => self.theme.accent_color(),
+                ToastKind::Error => egui::Color32::from_rgb(220, 80, 80),
+            };
             // Slightly brighter than the window fill so the toast
             // reads as elevated against panels of the same hue.
             let toast_fill = ctx.style().visuals.window_fill.linear_multiply(1.9);
