@@ -1,9 +1,13 @@
 //! Timeline toolbar with icon buttons that "press in" when active.
 
 use crate::i18n_helper::tr;
-use crate::theme::tokens::elev;
+use crate::theme::tokens::{elev, radius, text};
 use egui::{Color32, RichText, Ui};
 use egui_phosphor::regular as ph;
+
+/// Toolbar icon-button size. Component-specific: 30x28 fits the
+/// dense timeline strip without crowding adjacent tooltips.
+const ICON_BTN_SIZE: egui::Vec2 = egui::Vec2::new(30.0, 28.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TimelineToolState {
@@ -42,7 +46,7 @@ pub struct TimelineToolEvents {
 }
 
 fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bool) -> bool {
-    let size = egui::vec2(30.0, 28.0);
+    let size = ICON_BTN_SIZE;
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
 
     let bg = if active {
@@ -53,12 +57,12 @@ fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bo
         Color32::from_gray(45)
     };
 
-    ui.painter().rect_filled(rect, 5.0, bg);
+    ui.painter().rect_filled(rect, radius::cr(radius::SM), bg);
 
     if active {
         ui.painter().rect_stroke(
             rect.shrink(1.0),
-            5.0,
+            radius::cr(radius::SM),
             egui::Stroke::new(elev::STROKE_HAIRLINE, Color32::from_gray(20)),
             egui::StrokeKind::Inside,
         );
@@ -76,7 +80,7 @@ fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bo
         rect.center(),
         egui::Align2::CENTER_CENTER,
         icon,
-        egui::FontId::proportional(16.0),
+        egui::FontId::proportional(text::L),
         icon_color,
     );
 
@@ -101,19 +105,19 @@ fn icon_action_colored(
     enabled: bool,
     color: Color32,
 ) -> bool {
-    let size = egui::vec2(30.0, 28.0);
+    let size = ICON_BTN_SIZE;
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let bg = if resp.hovered() && enabled {
         ui.visuals().widgets.hovered.bg_fill
     } else {
         Color32::from_gray(45)
     };
-    ui.painter().rect_filled(rect, 5.0, bg);
+    ui.painter().rect_filled(rect, radius::cr(radius::SM), bg);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         icon,
-        egui::FontId::proportional(16.0),
+        egui::FontId::proportional(text::L),
         if enabled {
             color
         } else {
@@ -132,14 +136,14 @@ fn icon_action_colored(
 /// Like `icon_action`, but returns the `Response` so callers can attach
 /// a context menu. Clicking still yields `true` from `resp.clicked()`.
 fn icon_action_resp(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> egui::Response {
-    let size = egui::vec2(30.0, 28.0);
+    let size = ICON_BTN_SIZE;
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let bg = if resp.hovered() && enabled {
         ui.visuals().widgets.hovered.bg_fill
     } else {
         Color32::from_gray(45)
     };
-    ui.painter().rect_filled(rect, 5.0, bg);
+    ui.painter().rect_filled(rect, radius::cr(radius::SM), bg);
     let icon_color = if !enabled {
         Color32::from_gray(80)
     } else {
@@ -149,7 +153,7 @@ fn icon_action_resp(ui: &mut Ui, icon: &str, tooltip: &str, enabled: bool) -> eg
         rect.center(),
         egui::Align2::CENTER_CENTER,
         icon,
-        egui::FontId::proportional(16.0),
+        egui::FontId::proportional(text::L),
         icon_color,
     );
     if enabled {
