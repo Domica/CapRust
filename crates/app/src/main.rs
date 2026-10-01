@@ -2,6 +2,8 @@
 // TEMP: keep console visible for debugging
 // #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod crash;
+
 use caprust_ui::CapRustApp;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
@@ -33,6 +35,11 @@ fn load_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result<()> {
+    // Install the crash handler first so a panic anywhere below
+    // (tracing init, icon decode, eframe event loop) leaves a
+    // report in %APPDATA%/CapRust/crashes/.
+    crash::install();
+
     // Always log at INFO unless the user overrides via RUST_LOG.
     // Default: info. This ensures job/probe/thumbnail logs are visible
     // even when RUST_LOG is not set.
