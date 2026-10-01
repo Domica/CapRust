@@ -247,7 +247,6 @@ pub fn material_style(ctx: &egui::Context, theme: &crate::theme::Theme) -> egui_
     let accent = theme.accent_color();
     let panel_fill = visuals.panel_fill;
     let hairline = egui::Color32::from_gray(58);
-    let inactive_text = egui::Color32::from_gray(160);
     let hover_text = egui::Color32::from_gray(225);
 
     // Outer surface: slight rounding, 1px hairline border.
@@ -255,37 +254,53 @@ pub fn material_style(ctx: &egui::Context, theme: &crate::theme::Theme) -> egui_
     style.main_surface_border_stroke = egui::Stroke::new(elev::STROKE_HAIRLINE, hairline);
     style.dock_area_padding = None;
 
-    // Tab bar: matches the panel background, no fill, 1px bottom
-    // hairline colour to separate tab strip from body.
-    style.tab_bar.bg_fill = panel_fill;
+    // Tab bar: darker than the panel body so the strip reads as
+    // a separate surface from the content below it.
+    style.tab_bar.bg_fill = panel_fill.gamma_multiply(0.72);
     style.tab_bar.height = 30.0;
     style.tab_bar.corner_radius = egui::CornerRadius::ZERO;
     style.tab_bar.hline_color = hairline;
     style.tab_bar.fill_tab_bar = false;
     style.tab_bar.show_scroll_bar_on_overflow = false;
 
-    // Active tab: accent wash background, accent text.
-    style.tab.active.bg_fill = accent.gamma_multiply(0.22);
-    style.tab.active.text_color = accent;
+    // Active tab: strong accent fill, high-contrast label. Text
+    // color comes from the accent's luminance so any user-chosen
+    // accent keeps a readable label (white on dark accents,
+    // near-black on bright ones).
+    let active_bg = accent;
+    style.tab.active.bg_fill = active_bg;
+    style.tab.active.text_color = crate::theme::Theme::contrast_on(active_bg);
     style.tab.active.outline_color = egui::Color32::TRANSPARENT;
     style.tab.active_with_kb_focus = style.tab.active.clone();
 
-    // Inactive tab: transparent background, muted text.
+    // Inactive tab: transparent background, slightly brighter
+    // muted text so it stands against the darker tab bar.
     style.tab.inactive.bg_fill = egui::Color32::TRANSPARENT;
-    style.tab.inactive.text_color = inactive_text;
+    style.tab.inactive.text_color = egui::Color32::from_gray(185);
     style.tab.inactive.outline_color = egui::Color32::TRANSPARENT;
 
     // Hover: light accent wash, brighter text.
-    style.tab.hovered.bg_fill = accent.gamma_multiply(0.10);
+    style.tab.hovered.bg_fill = accent.gamma_multiply(0.18);
     style.tab.hovered.text_color = hover_text;
     style.tab.hovered.outline_color = egui::Color32::TRANSPARENT;
 
-    // Focused (but not active): same as inactive for the moment,
-    // keyboard focus will not draw a distracting ring on the tab.
-    let inactive_snapshot = style.tab.inactive.clone();
-    style.tab.focused = inactive_snapshot.clone();
-    style.tab.focused_with_kb_focus = inactive_snapshot.clone();
-    style.tab.inactive_with_kb_focus = inactive_snapshot;
+    // Active tab in a zone WITHOUT keyboard focus (e.g. the user
+    // just clicked the timeline): egui_dock applies `tab.focused`
+    // here. Keep the accent background so the user can still tell
+    // which tab is selected; dim it 55% so it reads as "active
+    // but not in focus right now" rather than disappearing into
+    // the tab strip.
+    let dimmed_bg = active_bg.gamma_multiply(0.55);
+    let mut active_dim = style.tab.active.clone();
+    active_dim.bg_fill = dimmed_bg;
+    active_dim.text_color = crate::theme::Theme::contrast_on(dimmed_bg);
+
+    style.tab.focused = active_dim.clone();
+    style.tab.focused_with_kb_focus = active_dim;
+
+    // Inactive tab with keyboard focus: same as plain inactive
+    // so keyboard focus does not draw a distracting ring.
+    style.tab.inactive_with_kb_focus = style.tab.inactive.clone();
 
     // Tab body: same panel background as the rest of the editor.
     style.tab.tab_body.bg_fill = panel_fill;

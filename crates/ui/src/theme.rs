@@ -184,7 +184,7 @@ impl Default for Theme {
 impl Theme {
     /// Perceived-luminance-based text color for a filled background.
     /// Bright accents get dark text, dark accents get white text.
-    fn contrast_on(bg: Color32) -> Color32 {
+    pub fn contrast_on(bg: Color32) -> Color32 {
         let lum = 0.299 * bg.r() as f32 + 0.587 * bg.g() as f32 + 0.114 * bg.b() as f32;
         if lum > 140.0 {
             Color32::from_gray(20)
