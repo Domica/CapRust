@@ -1,7 +1,7 @@
 //! Clip properties panel — Video / Sound / Effects tabs.
 
 use crate::i18n_helper::tr;
-use crate::theme::tokens::space;
+use crate::theme::tokens::{space, text};
 use caprust_core::{Clip, ClipType, ProjectState};
 use egui::Ui;
 use egui_phosphor::regular as ph;
@@ -263,7 +263,7 @@ pub fn show(
             ui.label(tr("props-text-style"));
             egui::ComboBox::from_id_salt("text_style_combo")
                 .selected_text(current_label)
-                .width(180.0)
+                .width(180.0) // model / language combo; component-specific
                 .show_ui(ui, |ui| {
                     for (id, key) in STYLES {
                         let selected = *id == current;
@@ -437,14 +437,14 @@ pub fn show(
                     .small()
                     .color(egui::Color32::from_gray(140)),
             );
-            ui.label(egui::RichText::new(model_id).monospace().size(11.0));
+            ui.label(egui::RichText::new(model_id).monospace().size(text::S));
             ui.separator();
             ui.label(
                 egui::RichText::new("Language")
                     .small()
                     .color(egui::Color32::from_gray(140)),
             );
-            ui.label(egui::RichText::new(language).monospace().size(11.0));
+            ui.label(egui::RichText::new(language).monospace().size(text::S));
         });
 
         let n = segments.len();
@@ -495,7 +495,7 @@ pub fn show(
                 };
                 egui::ComboBox::from_id_salt("cap_pos_combo")
                     .selected_text(label)
-                    .width(140.0)
+                    .width(140.0) // effect/param combo; component-specific
                     .show_ui(ui, |ui| {
                         for (p, key) in [
                             (CaptionPosition::Top, "props-captions-style-position-top"),
@@ -981,7 +981,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             let mut speed = clip.speed;
             let combo = egui::ComboBox::from_id_salt("clip_speed")
                 .selected_text(format!("{speed:.2}×"))
-                .width(120.0);
+                .width(120.0); // speed combo; component-specific
             combo.show_ui(ui, |ui| {
                 for s in [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0] {
                     if ui
@@ -1373,7 +1373,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         ui.label(tr("props-sound-duck-against"));
         egui::ComboBox::from_id_salt("duck_against_combo")
             .selected_text(current_label)
-            .width(200.0)
+            .width(200.0) // font-family combo; component-specific
             .show_ui(ui, |ui| {
                 if ui
                     .selectable_label(clip.duck_against.is_none(), tr("props-sound-duck-none"))
@@ -1417,7 +1417,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         // Local table header
         egui::Grid::new("kf_header")
             .num_columns(4)
-            .spacing([6.0, 4.0])
+            .spacing([space::S, space::XS])
             .show(ui, |ui| {
                 ui.label(
                     egui::RichText::new(tr("props-sound-kf-time"))
@@ -1439,11 +1439,11 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     let mut remove_idx: Option<usize> = None;
     egui::ScrollArea::vertical()
         .id_salt("kf_list")
-        .max_height(180.0)
+        .max_height(180.0) // keyframe list cap; component-specific
         .show(ui, |ui| {
             egui::Grid::new("kf_rows")
                 .num_columns(4)
-                .spacing([6.0, 4.0])
+                .spacing([space::S, space::XS])
                 .show(ui, |ui| {
                     for (i, kf) in kfs.iter_mut().enumerate() {
                         let mut t = kf.t_ms as f64;
@@ -1571,7 +1571,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.label(egui::RichText::new("Transitions").strong());
     egui::Grid::new("clip_transitions")
         .num_columns(3)
-        .spacing([6.0, 4.0])
+        .spacing([space::S, space::XS])
         .show(ui, |ui| {
             ui.label("In");
             ui.label(clip.transition_in.clone().unwrap_or_else(|| "—".into()));
