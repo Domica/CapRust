@@ -4,9 +4,11 @@
 //! so visual changes happen in one place. Never hardcode a color or size
 //! in a panel — reach for a widget here, or add one.
 
+pub mod banner;
 pub mod button;
 pub mod dialog;
 pub mod empty;
+pub mod loading;
 pub mod property;
 pub mod section;
 pub mod toolbar;
