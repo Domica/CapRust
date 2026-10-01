@@ -74,6 +74,134 @@ impl ProjectState {
     ///
     /// Cost: one DefaultHasher pass over every clip. At ~20 clips this
     /// is well under 100 microseconds, negligible at UI frame rates.
+    /// Fix xfade-related inconsistencies in a single pass. Idempotent.
+    ///
+    /// Rules (matches `SetTransitionCommand`'s adjacency math and the
+    /// render planner's `ADJACENCY_TOL_SEC`):
+    ///
+    ///   1. Clip has an xfade `transition_in` but no shift, yet a
+    ///      touching predecessor exists -> the transition was set
+    ///      before the model tracked shifts (old file), or the clip
+    ///      was dragged next to its predecessor after the fact.
+    ///      Compute the shift, move the clip and every later clip on
+    ///      the same track left by that amount, record it.
+    ///   2. Clip has an xfade `transition_in` but no touching
+    ///      predecessor -> the predecessor was deleted or moved to
+    ///      another track. Clear `transition_in` and any stale shift.
+    ///   3. Clip has a nonzero shift but `transition_in` is not an
+    ///      xfade -> clear the shift marker.
+    ///
+    /// Called on project load (migration for older `.caprust` files)
+    /// and after every move / delete command so the model stays in
+    /// step with what the render planner would do.
+    pub fn normalize_xfade_shifts(&mut self) {
+        use crate::clip::is_xfade_transition;
+
+        // Must match media-io::export_graph::XFADE_DUR_SEC.
+        const XFADE_DUR_SEC: f64 = 0.5;
+        // Must match commands::set_effect::ADJACENCY_TOL_MS.
+        const ADJACENCY_TOL_MS: u64 = 200;
+
+        // Pass 1: a clip without an xfade transition_in must not carry
+        // a nonzero shift. This catches stale markers left over from a
+        // transition that was cleared without updating the shift.
+        for c in self.clips.iter_mut() {
+            let is_xfade = c
+                .transition_in
+                .as_deref()
+                .map(is_xfade_transition)
+                .unwrap_or(false);
+            if !is_xfade && c.applied_xfade_shift_ms != 0 {
+                c.applied_xfade_shift_ms = 0;
+            }
+        }
+
+        // Group clip indices per track.
+        let mut by_track: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (i, c) in self.clips.iter().enumerate() {
+            by_track.entry(c.track_index).or_default().push(i);
+        }
+
+        for idxs in by_track.values() {
+            // Sort by start_time, ties broken by id for determinism.
+            let mut sorted = idxs.clone();
+            sorted.sort_by_key(|&i| (self.clips[i].start_time_ms, self.clips[i].id));
+
+            // Snapshot original positions BEFORE any movement so the
+            // shift math uses the pre-normalization start time of
+            // each clip, not a value already moved by an earlier
+            // iteration on this track (which would compound shifts
+            // across a chain).
+            let original_start: Vec<u64> = self.clips.iter().map(|c| c.start_time_ms).collect();
+
+            // Pass 2a: the first clip on a track has no predecessor.
+            // Any xfade transition_in it carries is orphaned.
+            if let Some(&first_i) = sorted.first() {
+                let is_xfade = self.clips[first_i]
+                    .transition_in
+                    .as_deref()
+                    .map(is_xfade_transition)
+                    .unwrap_or(false);
+                if is_xfade {
+                    self.clips[first_i].transition_in = None;
+                    self.clips[first_i].applied_xfade_shift_ms = 0;
+                }
+            }
+
+            // Pass 2b: fix or clear each pair.
+            for k in 1..sorted.len() {
+                let prev_i = sorted[k - 1];
+                let cur_i = sorted[k];
+
+                let is_xfade = self.clips[cur_i]
+                    .transition_in
+                    .as_deref()
+                    .map(is_xfade_transition)
+                    .unwrap_or(false);
+                if !is_xfade {
+                    continue;
+                }
+
+                let prev_end = self.clips[prev_i].start_time_ms + self.clips[prev_i].duration_ms;
+                // Where would the clip sit without any shift?
+                let unshifted_start = original_start[cur_i];
+
+                let touches = prev_end <= unshifted_start
+                    && unshifted_start.saturating_sub(prev_end) <= ADJACENCY_TOL_MS;
+
+                if !touches {
+                    self.clips[cur_i].transition_in = None;
+                    self.clips[cur_i].applied_xfade_shift_ms = 0;
+                    continue;
+                }
+
+                let requested = self.clips[cur_i].transition_duration_ms as f64 / 1000.0;
+                let prev_dur = self.clips[prev_i].duration_ms as f64 / 1000.0;
+                let cur_dur = self.clips[cur_i].duration_ms as f64 / 1000.0;
+                let d = requested
+                    .max(XFADE_DUR_SEC)
+                    .min(prev_dur * 0.5)
+                    .min(cur_dur * 0.5)
+                    .max(0.05);
+                let target_shift = (d * 1000.0).round() as u64;
+
+                // Desired final position = original - target shift.
+                let desired_start = original_start[cur_i].saturating_sub(target_shift);
+                let shift_needed = self.clips[cur_i].start_time_ms as i64 - desired_start as i64;
+
+                if shift_needed != 0 {
+                    for &j in &sorted[k..] {
+                        let new_ms =
+                            (self.clips[j].start_time_ms as i64 - shift_needed).max(0) as u64;
+                        self.clips[j].start_time_ms = new_ms;
+                    }
+                }
+                self.clips[cur_i].applied_xfade_shift_ms = target_shift;
+            }
+        }
+    }
+
     pub fn render_hash(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -691,5 +819,100 @@ impl Default for ExportSettings {
             rate_mode_index: 0,
             bitrate_kbps: 8000,
         }
+    }
+}
+
+#[cfg(test)]
+mod normalize_xfade_tests {
+    use crate::clip::Clip;
+    use crate::project::ProjectState;
+
+    /// Clip with an xfade transition_in and a touching predecessor
+    /// but no recorded shift (the pre-migration state) gets a shift
+    /// applied and moved left, and its followers move with it.
+    #[test]
+    fn fills_in_missing_shift_for_touching_xfade() {
+        let mut s = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let mut b = Clip::new_video("b.mp4", 0, 8000, 8000);
+        let mut c = Clip::new_video("c.mp4", 0, 16000, 8000);
+        b.transition_in = Some("fade".into());
+        b.transition_duration_ms = 500;
+        c.transition_in = Some("fade".into());
+        c.transition_duration_ms = 500;
+        s.clips.push(a);
+        s.clips.push(b);
+        s.clips.push(c);
+
+        s.normalize_xfade_shifts();
+
+        assert_eq!(s.clips[1].start_time_ms, 7500, "b shifted left by 500 ms");
+        assert_eq!(s.clips[1].applied_xfade_shift_ms, 500);
+        assert_eq!(s.clips[2].start_time_ms, 15500, "c followed b");
+    }
+
+    /// Clip with xfade but no touching predecessor gets the transition
+    /// cleared.
+    #[test]
+    fn clears_orphaned_xfade() {
+        let mut s = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let mut b = Clip::new_video("b.mp4", 0, 20000, 8000);
+        b.transition_in = Some("fade".into());
+        s.clips.push(a);
+        s.clips.push(b);
+
+        s.normalize_xfade_shifts();
+
+        assert_eq!(s.clips[1].transition_in, None);
+        assert_eq!(s.clips[1].applied_xfade_shift_ms, 0);
+        assert_eq!(s.clips[1].start_time_ms, 20000, "position unchanged");
+    }
+
+    /// Shift on a clip with no xfade transition_in gets cleared.
+    #[test]
+    fn clears_stale_shift_without_transition() {
+        let mut s = ProjectState::default();
+        let mut a = Clip::new_video("a.mp4", 0, 0, 8000);
+        a.applied_xfade_shift_ms = 500;
+        s.clips.push(a);
+
+        s.normalize_xfade_shifts();
+        assert_eq!(s.clips[0].applied_xfade_shift_ms, 0);
+    }
+
+    /// Running the pass twice produces the same state (idempotent).
+    #[test]
+    fn is_idempotent() {
+        let mut s = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let mut b = Clip::new_video("b.mp4", 0, 8000, 8000);
+        b.transition_in = Some("fade".into());
+        s.clips.push(a);
+        s.clips.push(b);
+
+        s.normalize_xfade_shifts();
+        let first: Vec<u64> = s.clips.iter().map(|c| c.start_time_ms).collect();
+        s.normalize_xfade_shifts();
+        let second: Vec<u64> = s.clips.iter().map(|c| c.start_time_ms).collect();
+        assert_eq!(first, second);
+    }
+
+    /// Cross-track independence: a clip with an xfade whose predecessor
+    /// is on a different track must be cleared, not accidentally
+    /// considered touching.
+    #[test]
+    fn cross_track_predecessor_does_not_count() {
+        let mut s = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let mut b = Clip::new_video("b.mp4", 1, 8000, 8000);
+        b.transition_in = Some("fade".into());
+        s.clips.push(a);
+        s.clips.push(b);
+
+        s.normalize_xfade_shifts();
+
+        assert_eq!(s.clips[1].transition_in, None);
+        assert_eq!(s.clips[1].applied_xfade_shift_ms, 0);
     }
 }

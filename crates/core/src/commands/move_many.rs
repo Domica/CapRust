@@ -41,6 +41,9 @@ impl Command for MoveManyCommand {
                 c.track_index = m.to_track;
             }
         }
+        // Group move can change neighbourhoods for every clip in
+        // the batch; re-derive xfade shifts once at the end.
+        state.normalize_xfade_shifts();
         Ok(())
     }
 

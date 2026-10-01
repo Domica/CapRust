@@ -82,6 +82,9 @@ impl Command for DeleteClipCommand {
             }
             self.removed = Some(removed);
         }
+        // Deleting a clip can orphan its follower's transition_in.
+        // Re-derive xfade shifts so the model matches the render.
+        state.normalize_xfade_shifts();
         Ok(())
     }
 

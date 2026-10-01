@@ -20,7 +20,14 @@ pub fn save_project(state: &ProjectState, path: &Path) -> Result<()> {
 /// Read a project file.
 pub fn load_project(path: &Path) -> Result<ProjectState> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let state: ProjectState = serde_json::from_str(&text).context("parse project JSON")?;
+    let mut state: ProjectState = serde_json::from_str(&text).context("parse project JSON")?;
+    // Migration: older .caprust files (or projects whose clips were
+    // dragged around before the model tracked xfade shifts) may
+    // have transition_in set without the matching
+    // applied_xfade_shift_ms, or vice versa. Fix once on load so the
+    // timeline overlap shading matches what the render planner will
+    // actually do.
+    state.normalize_xfade_shifts();
     Ok(state)
 }
 
