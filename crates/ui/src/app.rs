@@ -709,13 +709,13 @@ impl CapRustApp {
                 ui.vertical(|ui| {
                     ui.set_min_width(520.0);
                     egui::Frame::group(ui.style())
-                        .inner_margin(24.0)
+                        .inner_margin(space::XXL)
                         .show(ui, |ui| {
                             ui.set_width(480.0);
                             section::header(ui, tr("new-title"));
                             egui::Grid::new("new_project_grid")
                                 .num_columns(2)
-                                .spacing([12.0, 10.0])
+                                .spacing([space::L, space::M_PLUS])
                                 .show(ui, |ui| {
                                     ui.label(tr("new-field-name"));
                                     ui.text_edit_singleline(&mut self.draft.name);
@@ -800,7 +800,7 @@ impl CapRustApp {
                             .show(ui, |ui| {
                                 for rp in entries {
                                     let frame = egui::Frame::group(ui.style())
-                                        .inner_margin(8.0)
+                                        .inner_margin(space::M)
                                         .fill(ui.visuals().faint_bg_color);
                                     frame.show(ui, |ui| {
                                         ui.set_width(320.0);
@@ -812,13 +812,13 @@ impl CapRustApp {
                                             );
                                             ui.painter().rect_filled(
                                                 rect,
-                                                4.0,
+                                                radius::cr(radius::SM),
                                                 egui::Color32::from_gray(40),
                                             );
                                             ui.painter().text(
                                                 rect.center(),
                                                 egui::Align2::CENTER_CENTER,
-                                                "🎬",
+                                                ph::FILM_STRIP,
                                                 egui::FontId::proportional(22.0),
                                                 egui::Color32::from_gray(180),
                                             );
@@ -846,7 +846,7 @@ impl CapRustApp {
                                                         forget_path = Some(rp.path.clone());
                                                     }
                                                     if ui
-                                                        .small_button("🗑")
+                                                        .small_button(ph::TRASH)
                                                         .on_hover_text(
                                                             "Delete project file from disk",
                                                         )
