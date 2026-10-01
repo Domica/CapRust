@@ -4908,11 +4908,43 @@ impl CapRustApp {
                                 ppm,
                             );
                             let new_track = self.track_for_y(d.track_index);
+                            let raw_delta = (dx / ppm) as i64;
                             if let Some(cur) = &mut self.clip_drag {
                                 cur.current_ms = snapped;
-                                cur.raw_delta_ms = (dx / ppm) as i64;
+                                cur.raw_delta_ms = raw_delta;
                                 if let Some(t) = new_track {
                                     cur.track_index = t;
+                                }
+                            }
+                            // Live trim feedback (DIRECTIVES 6):
+                            // mutate the clip directly so the user
+                            // sees the clip shrink/grow frame by
+                            // frame. Discarded on DragEnd, which
+                            // restores the originals before running
+                            // SetClipCommand so undo captures the
+                            // pre-drag state.
+                            if let Some(edge) = d.trim_edge {
+                                if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id)
+                                {
+                                    match edge {
+                                        TrimEdge::Left => {
+                                            let ns = (d.origin_ms as i64 + raw_delta).max(0) as u64;
+                                            let nd = (d.origin_duration_ms as i64 - raw_delta)
+                                                .max(100)
+                                                as u64;
+                                            c.start_time_ms = ns;
+                                            c.duration_ms = nd;
+                                        }
+                                        TrimEdge::Right => {
+                                            let mut nd = (d.origin_duration_ms as i64 + raw_delta)
+                                                .max(100)
+                                                as u64;
+                                            if d.source_duration_ms > 0 {
+                                                nd = nd.min(d.source_duration_ms);
+                                            }
+                                            c.duration_ms = nd;
+                                        }
+                                    }
                                 }
                             }
                             // Trim-follow: while trimming an edge
@@ -4956,6 +4988,19 @@ impl CapRustApp {
                             let was_trim = d.trim_edge.is_some();
                             let follow = self.settings.trim_follow;
                             if let Some(edge) = d.trim_edge {
+                                // Restore pre-drag values first so
+                                // SetClipCommand's `before` snapshot
+                                // (used by undo) captures the state
+                                // the user saw before the drag.
+                                // Without this, undo would restore to
+                                // whatever intermediate value the
+                                // live mutation left behind on the
+                                // last frame.
+                                if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id)
+                                {
+                                    c.start_time_ms = d.origin_ms;
+                                    c.duration_ms = d.origin_duration_ms;
+                                }
                                 let dm = d.current_ms - d.origin_ms as i64;
                                 let (ns, nd) = match edge {
                                     TrimEdge::Left => (
