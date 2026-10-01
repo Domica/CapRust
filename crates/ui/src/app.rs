@@ -472,6 +472,14 @@ pub struct ClipDrag {
     pub source_duration_ms: u64,
     /// Original start (for trim left math).
     pub origin_duration_ms: u64,
+    /// Raw pointer delta in ms, unbounded. `current_ms` is clamped
+    /// to >= 0 (so the LEFT trim cannot push the clip before the
+    /// timeline start), which is wrong for the RIGHT trim: a long
+    /// drag past 0 on the timeline shrinks by more than the clip's
+    /// start offset, and using the clamped value caps the trim at
+    /// `origin_ms`. Store the raw delta so the RIGHT trim math can
+    /// use the actual pointer movement.
+    pub raw_delta_ms: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4255,6 +4263,45 @@ impl CapRustApp {
                             if hovered_edge.is_some() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                             }
+                            // Trim edge computed from the PRESS
+                            // position (resp.interact_pointer_pos),
+                            // not the live pointer. drag_started()
+                            // fires after 3-4 px of movement, by
+                            // which point the live pointer has
+                            // already left the 8 px trim zone and
+                            // hovered_edge would be None. The press
+                            // position is stable for the whole drag.
+                            let trim_edge_at_press: Option<TrimEdge> = if pointer_on_clip
+                                && clip_rect.width() > TRIM_ZONE * 3.0
+                            {
+                                // press_origin() is where the current
+                                // press started. interact_pointer_pos()
+                                // returns the LIVE pointer, which is
+                                // already past the trim zone by the
+                                // time drag_started() fires.
+                                let press_pos = ui.input(|i| i.pointer.press_origin());
+                                if let Some(pp) = press_pos {
+                                    let lz = egui::Rect::from_min_size(
+                                        clip_rect.min,
+                                        egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                    );
+                                    let rz = egui::Rect::from_min_size(
+                                        egui::pos2(clip_rect.max.x - TRIM_ZONE, clip_rect.min.y),
+                                        egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                    );
+                                    if lz.contains(pp) {
+                                        Some(TrimEdge::Left)
+                                    } else if rz.contains(pp) {
+                                        Some(TrimEdge::Right)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
                             // Selection and drag are driven by
                             // egui's interaction result, not by
                             // geometric rect containment.
@@ -4270,6 +4317,13 @@ impl CapRustApp {
                                 pending_actions.push(ClipAction::Select(clip_id));
                             }
                             if resp.drag_started() {
+                                tracing::info!(
+                                    "drag_started clip={} pointer_on_clip={} trim_edge_at_press={:?} clip_w={:.1}",
+                                    clip_id,
+                                    pointer_on_clip,
+                                    trim_edge_at_press,
+                                    clip_rect.width(),
+                                );
                                 let track_locked_here = self
                                     .project
                                     .tracks
@@ -4282,7 +4336,7 @@ impl CapRustApp {
                                     }
                                     pending_actions
                                         .push(ClipAction::DragStart(clip_id, idx, start_ms));
-                                    if let Some(e) = hovered_edge {
+                                    if let Some(e) = trim_edge_at_press {
                                         pending_actions
                                             .push(ClipAction::SetTrimEdge(clip_id, Some(e)));
                                     }
@@ -4839,6 +4893,7 @@ impl CapRustApp {
                         trim_edge: None,
                         source_duration_ms: sdr,
                         origin_duration_ms: dur,
+                        raw_delta_ms: 0,
                     });
                 }
                 ClipAction::DragDelta(id, dx, ppm) => {
@@ -4855,6 +4910,7 @@ impl CapRustApp {
                             let new_track = self.track_for_y(d.track_index);
                             if let Some(cur) = &mut self.clip_drag {
                                 cur.current_ms = snapped;
+                                cur.raw_delta_ms = (dx / ppm) as i64;
                                 if let Some(t) = new_track {
                                     cur.track_index = t;
                                 }
@@ -4881,6 +4937,16 @@ impl CapRustApp {
                 }
                 ClipAction::DragEnd(id) => {
                     if let Some(d) = self.clip_drag.take() {
+                        tracing::info!(
+                            "drag_end clip={} trim_edge={:?} dm={} origin_ms={} current_ms={} origin_dur={} source_dur={}",
+                            d.clip_id,
+                            d.trim_edge,
+                            d.current_ms - d.origin_ms as i64,
+                            d.origin_ms,
+                            d.current_ms,
+                            d.origin_duration_ms,
+                            d.source_duration_ms,
+                        );
                         if d.clip_id == id {
                             // Trim-follow: with magnetic ON the
                             // pack slides the clip back into the
@@ -4897,8 +4963,18 @@ impl CapRustApp {
                                         (d.origin_duration_ms as i64 - dm).max(100) as u64,
                                     ),
                                     TrimEdge::Right => {
-                                        let mut nd =
-                                            (d.origin_duration_ms as i64 + dm).max(100) as u64;
+                                        // Use the RAW pointer delta, not
+                                        // the clamped dm. The clamp in
+                                        // DragDelta exists for the LEFT
+                                        // trim (cannot push the clip
+                                        // before the timeline start), but
+                                        // it caps the RIGHT trim at
+                                        // origin_ms of shrinkage when a
+                                        // long drag passes 0 on the
+                                        // timeline.
+                                        let mut nd = (d.origin_duration_ms as i64 + d.raw_delta_ms)
+                                            .max(100)
+                                            as u64;
                                         if d.source_duration_ms > 0 {
                                             nd = nd.min(d.source_duration_ms);
                                         }
