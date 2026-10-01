@@ -17,7 +17,11 @@ use egui::Ui;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
-use crate::widgets::dialog;
+use crate::widgets::{dialog, loading};
+
+/// Width of the progress bar in the download / extract phases.
+/// Component-specific: matches the modal's content width.
+const PROGRESS_W: f32 = 380.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptPhase {
@@ -173,25 +177,37 @@ pub fn show(
             ui.checkbox(&mut state.dont_ask_again, tr("ffmpeg-prompt-dont-ask"));
         }
         PromptPhase::Downloading { done, total } => {
-            ui.label(egui::RichText::new(tr("ffmpeg-prompt-downloading")).strong());
-            ui.add_space(space::XS);
-            let frac = total
-                .map(|t| (done as f32 / t.max(1) as f32).clamp(0.0, 1.0))
-                .unwrap_or(0.0);
-            ui.add(
-                egui::ProgressBar::new(frac)
-                    .show_percentage()
-                    .desired_width(380.0),
-            );
-            let label = match total {
-                Some(t) => format!("{} / {} MiB", done / 1_048_576, t / 1_048_576),
-                None => format!("{} MiB", done / 1_048_576),
-            };
-            ui.label(
-                egui::RichText::new(label)
-                    .small()
-                    .color(egui::Color32::from_gray(150)),
-            );
+            match total {
+                Some(t) => {
+                    ui.label(egui::RichText::new(tr("ffmpeg-prompt-downloading")).strong());
+                    ui.add_space(space::XS);
+                    let frac = (done as f32 / t.max(1) as f32).clamp(0.0, 1.0);
+                    ui.add(
+                        egui::ProgressBar::new(frac)
+                            .show_percentage()
+                            .desired_width(PROGRESS_W),
+                    );
+                    let label = format!("{} / {} MiB", done / 1_048_576, t / 1_048_576);
+                    ui.label(
+                        egui::RichText::new(label)
+                            .small()
+                            .color(egui::Color32::from_gray(150)),
+                    );
+                }
+                None => {
+                    // Server did not report Content-Length; the progress
+                    // bar would sit at 0% and read as frozen. Show a
+                    // spinner instead, plus the running byte count.
+                    loading::spinner_with(ui, tr("ffmpeg-prompt-downloading"));
+                    ui.add_space(space::XS);
+                    let label = format!("{} MiB", done / 1_048_576);
+                    ui.label(
+                        egui::RichText::new(label)
+                            .small()
+                            .color(egui::Color32::from_gray(150)),
+                    );
+                }
+            }
         }
         PromptPhase::Extracting => {
             ui.label(egui::RichText::new(tr("ffmpeg-prompt-extracting")).strong());
@@ -199,7 +215,7 @@ pub fn show(
             ui.add(
                 egui::ProgressBar::new(0.0)
                     .animate(true)
-                    .desired_width(380.0),
+                    .desired_width(PROGRESS_W),
             );
         }
         PromptPhase::Done => {
