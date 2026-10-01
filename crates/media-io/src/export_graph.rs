@@ -217,6 +217,10 @@ pub struct AudioClip {
     pub speed_range: caprust_core::clip::SpeedRampRange,
     /// Linear gain from clip.volume_db.
     pub gain_db: f32,
+    /// Per-track volume in dB (Track.volume_db). Applied after
+    /// gain_db so the clip automation curve drives the source, and
+    /// the track fader scales the result. 0.0 = unity.
+    pub track_gain_db: f32,
     /// Fade-in duration in seconds. 0 = no fade.
     pub fade_in_sec: f64,
     /// Fade-out duration in seconds. 0 = no fade.
@@ -823,6 +827,16 @@ impl RenderPlan {
             } else {
                 format!(",volume={:.4}dB", c.gain_db)
             };
+            // Per-track fader. Applied after the clip stage so the
+            // clip's volume automation drives the source, and the
+            // track scales the resulting signal. Unity = 0 dB =
+            // skip entirely, so projects with no track fader set
+            // produce the same filtergraph as before.
+            let track_gain = if c.track_gain_db.abs() < 0.001 {
+                String::new()
+            } else {
+                format!(",volume={:.4}dB", c.track_gain_db)
+            };
             // afade at the end of the chain so the gain is applied
             // first (fade ramps the already-gained signal).
             let fade_in = if c.fade_in_sec > 0.001 {
@@ -839,7 +853,7 @@ impl RenderPlan {
             fg.push_str(&ramp_preamble);
             // Post-chain: gain, fades. If all are empty, pass
             // through with `anull` so the chain is always valid.
-            let tail = format!("{gain}{fade_in}{fade_out}");
+            let tail = format!("{gain}{track_gain}{fade_in}{fade_out}");
             let tail_clean = tail.trim_start_matches(',');
             let tail_chain = if tail_clean.is_empty() {
                 "anull"
@@ -2608,6 +2622,7 @@ pub fn plan_from_project(
             speed_ease: c.speed_ease,
             speed_range: c.speed_range,
             gain_db: c.volume_db,
+            track_gain_db: track.volume_db,
             fade_in_sec: fi,
             fade_out_sec: fo,
             volume_keyframes: kfs,

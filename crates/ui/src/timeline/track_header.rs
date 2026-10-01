@@ -8,7 +8,7 @@ use egui_phosphor::regular as ph;
 
 pub const HEADER_WIDTH: f32 = 140.0;
 
-fn chip(ui: &mut Ui, icon: &str, tooltip: &str, warning: bool) -> bool {
+fn chip(ui: &mut Ui, icon: &str, tooltip: &str, warning: bool) -> egui::Response {
     let size = Vec2::new(24.0, 18.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     // Chips are the "dark markings" on the pastel header. Always dark
@@ -36,7 +36,7 @@ fn chip(ui: &mut Ui, icon: &str, tooltip: &str, warning: bool) -> bool {
         fg,
     );
 
-    resp.on_hover_text(tooltip).clicked()
+    resp.on_hover_text(tooltip)
 }
 
 pub struct HeaderEvents {
@@ -127,7 +127,9 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f3
                 },
                 &tr("tk-lock"),
                 track.locked,
-            ) {
+            )
+            .clicked()
+            {
                 track.locked = !track.locked;
                 ev.changed = true;
             }
@@ -140,11 +142,13 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f3
                 },
                 &tr("tk-view"),
                 !track.visible,
-            ) {
+            )
+            .clicked()
+            {
                 track.visible = !track.visible;
                 ev.changed = true;
             }
-            if chip(
+            let mute_resp = chip(
                 ui,
                 if track.muted {
                     ph::SPEAKER_SLASH
@@ -153,11 +157,44 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f3
                 },
                 &tr("tk-mute"),
                 track.muted,
-            ) {
+            );
+            if mute_resp.clicked() {
                 track.muted = !track.muted;
                 ev.changed = true;
             }
-            if chip(ui, ph::X, &tr("tk-delete"), false) {
+            // Right-click the mute chip to open the track fader.
+            // Range -60..=+6 dB (unity 0.0), linear in the slider so
+            // the user can see where unity sits. Direct write, not
+            // an undoable command, matching the other header chips.
+            mute_resp.context_menu(|ui| {
+                ui.set_min_width(200.0);
+                ui.label(tr("tk-volume"));
+                let mut v = track.volume_db;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut v, -60.0..=6.0)
+                            .suffix(" dB")
+                            .fixed_decimals(1),
+                    )
+                    .changed()
+                {
+                    track.volume_db = v;
+                    ev.changed = true;
+                }
+                ui.horizontal(|ui| {
+                    if ui.button(tr("tk-volume-reset")).clicked() {
+                        track.volume_db = 0.0;
+                        ev.changed = true;
+                        ui.close_menu();
+                    }
+                    if ui.button(tr("tk-volume-mute")).clicked() {
+                        track.volume_db = -60.0;
+                        ev.changed = true;
+                        ui.close_menu();
+                    }
+                });
+            });
+            if chip(ui, ph::X, &tr("tk-delete"), false).clicked() {
                 ev.delete_requested = true;
             }
         });

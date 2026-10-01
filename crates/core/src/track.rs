@@ -72,6 +72,11 @@ pub struct Track {
     pub pinned: bool,
     /// Overrides `kind.default_height()` if the user resizes.
     pub height: f32,
+    /// Per-track volume in dB. 0.0 = unity, applied on top of every
+    /// clip's own `volume_db`. Range in the UI is -60..=+6 dB.
+    /// Applies to Audio, Narration, and video-embedded audio alike.
+    #[serde(default)]
+    pub volume_db: f32,
 }
 
 impl Track {
@@ -85,6 +90,7 @@ impl Track {
             muted: false,
             pinned: kind.is_pinned_by_default(),
             height: kind.default_height(),
+            volume_db: 0.0,
         }
     }
 }
