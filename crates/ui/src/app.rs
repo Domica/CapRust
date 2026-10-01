@@ -227,6 +227,9 @@ pub struct CapRustApp {
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<Vec<uuid::Uuid>>,
     pub recent: RecentList,
+    /// Cache of decoded recent-project thumbnails, keyed by project
+    /// path. Lazily populated by `recent_thumb_texture`.
+    pub recent_thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
     pub last_pointer: Option<egui::Pos2>,
     /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
@@ -557,6 +560,7 @@ impl CapRustApp {
             ffmpeg_status: ffmpeg_status.clone(),
             last_dnd_payload: None,
             recent,
+            recent_thumb_cache: std::collections::HashMap::new(),
             last_pointer: None,
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
@@ -715,6 +719,54 @@ impl CapRustApp {
     // ---------------------------------------------------------------
     // Start screen
     // ---------------------------------------------------------------
+    /// Return a texture for the recent project's first-media thumbnail,
+    /// or None if none is cached on disk. Loads lazily and stores the
+    /// handle in `recent_thumb_cache` so we do not re-read the JPEG
+    /// every frame.
+    fn recent_thumb_texture(
+        &mut self,
+        ctx: &egui::Context,
+        path: &str,
+        media_id: Option<uuid::Uuid>,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(t) = self.recent_thumb_cache.get(path) {
+            return Some(t.clone());
+        }
+        // The .caprust file lives directly under the project dir, so
+        // parent() gives us the dir that contains cache/.
+        let project_dir = std::path::Path::new(path).parent()?;
+        // Prefer the exact media id; fall back to the first .jpg
+        // in cache/thumbnails/ for old recent entries that predate
+        // the first_media_id field.
+        let jpg = match media_id {
+            Some(id) => {
+                let p = caprust_core::cache::thumbnail_path(project_dir, id);
+                if p.is_file() {
+                    p
+                } else {
+                    first_thumb_in_dir(project_dir)?
+                }
+            }
+            None => first_thumb_in_dir(project_dir)?,
+        };
+        let bytes = std::fs::read(&jpg).ok()?;
+        let img = image::load_from_memory(&bytes).ok()?;
+        let rgba = img.to_rgba8();
+        let size = [rgba.width() as usize, rgba.height() as usize];
+        let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+        let handle = ctx.load_texture(
+            format!(
+                "recent-thumb-{}",
+                jpg.file_name().and_then(|s| s.to_str()).unwrap_or("thumb")
+            ),
+            color_img,
+            egui::TextureOptions::LINEAR,
+        );
+        self.recent_thumb_cache
+            .insert(path.to_string(), handle.clone());
+        Some(handle)
+    }
+
     fn show_start_screen(&mut self, ctx: &egui::Context) {
         let mut load_path: Option<String> = None;
         let mut forget_path: Option<String> = None;
@@ -840,8 +892,8 @@ impl CapRustApp {
 
                 // RIGHT: Recent Projects
                 ui.vertical(|ui| {
-                    ui.set_min_width(320.0);
-                    ui.set_max_width(360.0);
+                    ui.set_min_width(340.0);
+                    ui.set_max_width(380.0);
                     section::header(ui, tr("new-recent-heading"));
 
                     if self.recent.items.is_empty() {
@@ -849,7 +901,7 @@ impl CapRustApp {
                     } else {
                         let entries: Vec<RecentProject> = self.recent.items.clone();
                         egui::ScrollArea::vertical()
-                            .max_height(360.0)
+                            .max_height(500.0)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 for rp in entries {
@@ -858,10 +910,12 @@ impl CapRustApp {
                                         .fill(ui.visuals().faint_bg_color);
                                     let card = frame.show(ui, |ui| {
                                         ui.set_width(320.0);
-                                        ui.horizontal(|ui| {
-                                            // Thumbnail placeholder
+                                        ui.vertical(|ui| {
+                                            // 16:9 thumbnail placeholder, larger than the old
+                                            // 72x54 box so the tile reads as a project card rather
+                                            // than a list row.
                                             let (rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(72.0, 54.0),
+                                                egui::vec2(300.0, 169.0),
                                                 egui::Sense::hover(),
                                             );
                                             ui.painter().rect_filled(
@@ -869,47 +923,95 @@ impl CapRustApp {
                                                 radius::cr(radius::SM),
                                                 egui::Color32::from_gray(40),
                                             );
-                                            ui.painter().text(
-                                                rect.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                ph::FILM_STRIP,
-                                                egui::FontId::proportional(22.0),
-                                                egui::Color32::from_gray(180),
+                                            // Real thumbnail if the project cache holds one for the
+                                            // first media item; otherwise the placeholder icon.
+                                            let tex = self.recent_thumb_texture(
+                                                ui.ctx(),
+                                                &rp.path,
+                                                rp.first_media_id,
+                                            );
+                                            if let Some(tex) = tex {
+                                                let tex_size = tex.size_vec2();
+                                                let scale = (rect.width() / tex_size.x)
+                                                    .max(rect.height() / tex_size.y);
+                                                let draw_size = tex_size * scale;
+                                                let frac_x = (rect.width() / draw_size.x).min(1.0);
+                                                let frac_y = (rect.height() / draw_size.y).min(1.0);
+                                                let uv_min = egui::Pos2::new(
+                                                    (1.0 - frac_x) / 2.0,
+                                                    (1.0 - frac_y) / 2.0,
+                                                );
+                                                let uv_max =
+                                                    egui::Pos2::new(1.0 - uv_min.x, 1.0 - uv_min.y);
+                                                ui.painter().image(
+                                                    tex.id(),
+                                                    rect,
+                                                    egui::Rect::from_min_max(uv_min, uv_max),
+                                                    egui::Color32::WHITE,
+                                                );
+                                            } else {
+                                                ui.painter().text(
+                                                    rect.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    ph::FILM_STRIP,
+                                                    egui::FontId::proportional(48.0),
+                                                    egui::Color32::from_gray(140),
+                                                );
+                                            }
+
+                                            ui.add_space(space::S);
+                                            ui.label(
+                                                egui::RichText::new(&rp.name).strong().size(14.0),
                                             );
 
-                                            ui.vertical(|ui| {
-                                                ui.label(egui::RichText::new(&rp.name).strong());
+                                            // Metadata line 1: duration, clips, age.
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} · {} clips · {}",
+                                                    format_duration(rp.duration_ms),
+                                                    rp.clip_count,
+                                                    format_age(rp.last_opened),
+                                                ))
+                                                .small()
+                                                .color(egui::Color32::from_gray(150)),
+                                            );
+
+                                            // Metadata line 2: resolution · fps, shown only when
+                                            // populated (old entries default to 0 / empty and skip).
+                                            let mut bits: Vec<String> = Vec::new();
+                                            if rp.base_resolution > 0 {
+                                                bits.push(format!("{}p", rp.base_resolution));
+                                            }
+                                            if !rp.frame_rate_label.is_empty() {
+                                                bits.push(format!("{} fps", rp.frame_rate_label));
+                                            }
+                                            if !bits.is_empty() {
                                                 ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "{} · {} clips · {}",
-                                                        format_duration(rp.duration_ms),
-                                                        rp.clip_count,
-                                                        format_age(rp.last_opened),
-                                                    ))
-                                                    .small()
-                                                    .color(egui::Color32::from_gray(150)),
+                                                    egui::RichText::new(bits.join(" · "))
+                                                        .small()
+                                                        .color(egui::Color32::from_gray(120)),
                                                 );
-                                                ui.horizontal(|ui| {
-                                                    if ui
-                                                        .small_button(tr("new-recent-open"))
-                                                        .clicked()
-                                                    {
-                                                        load_path = Some(rp.path.clone());
-                                                    }
-                                                    if ui
-                                                        .small_button(tr("new-recent-forget"))
-                                                        .clicked()
-                                                    {
-                                                        forget_path = Some(rp.path.clone());
-                                                    }
-                                                    if ui
-                                                        .small_button(ph::TRASH)
-                                                        .on_hover_text(tr("new-recent-delete-hint"))
-                                                        .clicked()
-                                                    {
-                                                        delete_from_disk = Some(rp.path.clone());
-                                                    }
-                                                });
+                                            }
+
+                                            ui.add_space(space::XS);
+                                            ui.horizontal(|ui| {
+                                                if ui.small_button(tr("new-recent-open")).clicked()
+                                                {
+                                                    load_path = Some(rp.path.clone());
+                                                }
+                                                if ui
+                                                    .small_button(tr("new-recent-forget"))
+                                                    .clicked()
+                                                {
+                                                    forget_path = Some(rp.path.clone());
+                                                }
+                                                if ui
+                                                    .small_button(ph::TRASH)
+                                                    .on_hover_text(tr("new-recent-delete-hint"))
+                                                    .clicked()
+                                                {
+                                                    delete_from_disk = Some(rp.path.clone());
+                                                }
                                             });
                                         });
                                     });
@@ -7256,6 +7358,22 @@ fn format_duration(ms: u64) -> String {
     } else {
         format!("{m}:{sec:02}")
     }
+}
+
+/// Fallback for old recent entries: first .jpg in
+/// `<project_dir>/cache/thumbnails/`, sorted by filename for
+/// determinism across runs. Returns None when the directory is
+/// missing or empty.
+fn first_thumb_in_dir(project_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = project_dir.join("cache").join("thumbnails");
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jpg"))
+        .collect();
+    entries.sort();
+    entries.into_iter().next()
 }
 
 fn format_age(unix_secs: u64) -> String {

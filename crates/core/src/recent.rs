@@ -17,6 +17,12 @@ pub struct RecentProject {
     /// Frame rate label, e.g. "24.00". Empty on old entries.
     #[serde(default)]
     pub frame_rate_label: String,
+    /// Id of the first media item in the project. Used to look up
+    /// the cached thumbnail JPEG at
+    /// `<project_dir>/cache/thumbnails/<id>.jpg` on the start screen.
+    /// None on old entries; the card falls back to a placeholder icon.
+    #[serde(default)]
+    pub first_media_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -61,6 +67,7 @@ pub fn entry_from(state: &crate::project::ProjectState, path: &str) -> RecentPro
         clip_count: state.clips.len(),
         base_resolution: state.base_resolution,
         frame_rate_label: state.frame_rate.label(),
+        first_media_id: state.media.items.first().map(|m| m.id),
     }
 }
 
@@ -92,6 +99,7 @@ mod tests {
         let rp: RecentProject = serde_json::from_str(json).expect("parse");
         assert_eq!(rp.base_resolution, 0);
         assert!(rp.frame_rate_label.is_empty());
+        assert!(rp.first_media_id.is_none());
     }
 
     #[test]
@@ -104,6 +112,7 @@ mod tests {
             clip_count: 2,
             base_resolution: 1080,
             frame_rate_label: "24.00".into(),
+            first_media_id: None,
         };
         let json = serde_json::to_string(&rp).expect("ser");
         let back: RecentProject = serde_json::from_str(&json).expect("de");
