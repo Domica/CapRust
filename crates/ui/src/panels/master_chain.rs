@@ -11,6 +11,7 @@ use egui_phosphor::regular as ph;
 use uuid::Uuid;
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 
 #[derive(Default)]
 pub struct MasterChainState {}
@@ -43,7 +44,7 @@ pub fn show(
     ui.separator();
 
     if project.master_plugins.is_empty() {
-        ui.add_space(20.0);
+        ui.add_space(space::XXL);
         ui.vertical_centered(|ui| {
             ui.label(
                 RichText::new(tr("master-chain-empty"))

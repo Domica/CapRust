@@ -1,6 +1,7 @@
 //! Media bin: dense grid, thumbnail cache, dynamic columns based on panel width.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::{elev, space};
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -378,7 +379,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     }
 
     if sorted.is_empty() {
-        ui.add_space(20.0);
+        ui.add_space(space::XXL);
         ui.vertical_centered(|ui| {
             ui.label(
                 RichText::new("No media imported yet.")
@@ -502,7 +503,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                 painter.rect_stroke(
                     rect,
                     4.0,
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
+                    egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::from_gray(120)),
                     egui::StrokeKind::Inside,
                 );
                 painter.galley(

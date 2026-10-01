@@ -5,6 +5,7 @@
 //! returned text + voice_id.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 use caprust_core::models::{ModelKind, ModelRegistry};
 use egui::{Align2, Color32, RichText};
 
@@ -63,7 +64,7 @@ pub fn show(
                         .color(Color32::from_gray(180))
                         .italics(),
                 );
-                ui.add_space(8.0);
+                ui.add_space(space::M);
                 if ui.button(tr("ni-cancel")).clicked() {
                     ev.closed = true;
                 }
@@ -88,7 +89,7 @@ pub fn show(
                     });
             });
 
-            ui.add_space(6.0);
+            ui.add_space(space::S);
             ui.label(tr("ni-text-label"));
             egui::ScrollArea::vertical()
                 .max_height(160.0)
@@ -101,7 +102,7 @@ pub fn show(
                     );
                 });
 
-            ui.add_space(6.0);
+            ui.add_space(space::S);
             ui.horizontal(|ui| {
                 let enabled = !state.text.trim().is_empty() && !state.voice_id.is_empty();
                 let synth_btn = egui::Button::new(

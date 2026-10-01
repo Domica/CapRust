@@ -16,6 +16,7 @@ use caprust_core::AppSettings;
 use egui::Ui;
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptPhase {
@@ -122,7 +123,7 @@ pub fn show(
     match state.phase {
         PromptPhase::Choose => {
             ui.label(egui::RichText::new(tr("ffmpeg-prompt-body")).size(12.5));
-            ui.add_space(6.0);
+            ui.add_space(space::S);
 
             ui.label(egui::RichText::new(tr("ffmpeg-prompt-install-dir")).strong());
             ui.horizontal(|ui| {
@@ -143,7 +144,7 @@ pub fn show(
                     .color(egui::Color32::from_gray(150)),
             );
 
-            ui.add_space(10.0);
+            ui.add_space(space::M_PLUS);
             ui.horizontal(|ui| {
                 if ui
                     .button(tr("ffmpeg-prompt-download"))
@@ -166,12 +167,12 @@ pub fn show(
                 });
             });
 
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
             ui.checkbox(&mut state.dont_ask_again, tr("ffmpeg-prompt-dont-ask"));
         }
         PromptPhase::Downloading { done, total } => {
             ui.label(egui::RichText::new(tr("ffmpeg-prompt-downloading")).strong());
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
             let frac = total
                 .map(|t| (done as f32 / t.max(1) as f32).clamp(0.0, 1.0))
                 .unwrap_or(0.0);
@@ -192,7 +193,7 @@ pub fn show(
         }
         PromptPhase::Extracting => {
             ui.label(egui::RichText::new(tr("ffmpeg-prompt-extracting")).strong());
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
             ui.add(
                 egui::ProgressBar::new(0.0)
                     .animate(true)
@@ -205,7 +206,7 @@ pub fn show(
                     .strong()
                     .color(egui::Color32::from_rgb(120, 200, 120)),
             );
-            ui.add_space(6.0);
+            ui.add_space(space::S);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(tr("ffmpeg-prompt-close")).clicked() {
@@ -225,7 +226,7 @@ pub fn show(
                     .small()
                     .color(egui::Color32::from_gray(150)),
             );
-            ui.add_space(6.0);
+            ui.add_space(space::S);
             ui.horizontal(|ui| {
                 if ui.button(tr("ffmpeg-prompt-retry")).clicked() {
                     state.phase = PromptPhase::Choose;

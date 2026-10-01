@@ -1,5 +1,6 @@
 //! Time ruler above the tracks. Draws tick labels + playhead marker.
 
+use crate::theme::tokens::elev;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 /// Height of the ruler in pixels.
@@ -37,7 +38,7 @@ pub fn show(
             Pos2::new(rect.left(), rect.bottom() - 0.5),
             Pos2::new(rect.right(), rect.bottom() - 0.5),
         ],
-        Stroke::new(1.0_f32, Color32::from_gray(50)),
+        Stroke::new(elev::STROKE_HAIRLINE, Color32::from_gray(50)),
     );
 
     let interval_ms = pick_interval(px_per_ms, 70.0);
@@ -63,7 +64,7 @@ pub fn show(
                 Pos2::new(x, rect.bottom() - tick_h),
                 Pos2::new(x, rect.bottom()),
             ],
-            Stroke::new(1.0_f32, tick_color),
+            Stroke::new(elev::STROKE_HAIRLINE, tick_color),
         );
         if tick_h >= 10.0 {
             painter.text(

@@ -12,6 +12,7 @@ use eframe::egui;
 use egui_dock::{DockState, NodeIndex, TabViewer};
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::{elev, radius};
 
 /// One panel that can live anywhere in the dock tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -250,8 +251,8 @@ pub fn material_style(ctx: &egui::Context, theme: &crate::theme::Theme) -> egui_
     let hover_text = egui::Color32::from_gray(225);
 
     // Outer surface: slight rounding, 1px hairline border.
-    style.main_surface_border_rounding = egui::CornerRadius::same(6);
-    style.main_surface_border_stroke = egui::Stroke::new(1.0_f32, hairline);
+    style.main_surface_border_rounding = radius::cr(radius::MD);
+    style.main_surface_border_stroke = egui::Stroke::new(elev::STROKE_HAIRLINE, hairline);
     style.dock_area_padding = None;
 
     // Tab bar: matches the panel background, no fill, 1px bottom

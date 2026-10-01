@@ -1,6 +1,7 @@
 //! Timeline toolbar with icon buttons that "press in" when active.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::elev;
 use egui::{Color32, RichText, Ui};
 use egui_phosphor::regular as ph;
 
@@ -58,7 +59,7 @@ fn icon_toggle(ui: &mut Ui, icon: &str, tooltip: &str, active: bool, enabled: bo
         ui.painter().rect_stroke(
             rect.shrink(1.0),
             5.0,
-            egui::Stroke::new(1.0_f32, Color32::from_gray(20)),
+            egui::Stroke::new(elev::STROKE_HAIRLINE, Color32::from_gray(20)),
             egui::StrokeKind::Inside,
         );
     }

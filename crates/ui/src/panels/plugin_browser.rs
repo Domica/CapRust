@@ -9,6 +9,7 @@ use egui_phosphor::regular as ph;
 use std::path::PathBuf;
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 
 #[derive(Debug, Default)]
 pub struct PluginBrowserState {
@@ -60,14 +61,14 @@ pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) -> PluginBrowserOutput 
     ui.separator();
 
     if state.plugins.is_empty() {
-        ui.add_space(20.0);
+        ui.add_space(space::XXL);
         ui.vertical_centered(|ui| {
             ui.label(
                 RichText::new(tr("plugin-browser-empty"))
                     .italics()
                     .color(Color32::from_gray(140)),
             );
-            ui.add_space(8.0);
+            ui.add_space(space::M);
             for d in &state.scan_dirs {
                 ui.label(
                     RichText::new(d.display().to_string())

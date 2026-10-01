@@ -14,6 +14,7 @@ use caprust_core::commands::relink_many::MissingRef;
 use egui::Ui;
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 
 #[derive(Debug, Clone, Default)]
 pub enum RelinkPhase {
@@ -56,7 +57,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
     match &state.phase {
         RelinkPhase::Choose => {
             ui.label(egui::RichText::new(tr("relink-dialog-body")).size(12.5));
-            ui.add_space(8.0);
+            ui.add_space(space::M);
 
             ui.label(
                 egui::RichText::new(format!(
@@ -92,7 +93,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
                 );
             }
 
-            ui.add_space(10.0);
+            ui.add_space(space::M_PLUS);
             ui.horizontal(|ui| {
                 let locate_label = if state.tried_folder {
                     tr("relink-dialog-retry")
@@ -137,7 +138,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
                 );
             }
 
-            ui.add_space(10.0);
+            ui.add_space(space::M_PLUS);
             ui.horizontal(|ui| {
                 if *still_missing > 0 && ui.button(tr("relink-dialog-retry")).clicked() {
                     ev.locate_folder = true;
@@ -160,7 +161,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
                     .small()
                     .color(egui::Color32::from_gray(180)),
             );
-            ui.add_space(10.0);
+            ui.add_space(space::M_PLUS);
             ui.horizontal(|ui| {
                 if ui.button(tr("relink-dialog-retry")).clicked() {
                     ev.locate_folder = true;

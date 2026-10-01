@@ -7,6 +7,7 @@
 
 use crate::i18n_helper::tr;
 use crate::panels::media_bin::{MediaBinOutput, MediaBinState};
+use crate::theme::tokens::{elev, space};
 use caprust_core::ProjectState;
 use egui::{Color32, RichText, Sense, Ui, Vec2, Vec2 as V2};
 use egui_phosphor::regular as ph;
@@ -593,7 +594,7 @@ pub fn render_tab_content(
             }
         }
         AssetTab::Templates => {
-            ui.add_space(20.0);
+            ui.add_space(space::XXL);
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(tr("asset-templates-hint"))
@@ -633,7 +634,7 @@ fn preset_grid(
         .collect();
 
     if filtered.is_empty() {
-        ui.add_space(20.0);
+        ui.add_space(space::XXL);
         ui.vertical_centered(|ui| {
             ui.label(
                 RichText::new(tr("asset-empty"))
@@ -716,7 +717,7 @@ fn preset_card(ui: &mut Ui, p: &Preset, card_size: f32) -> bool {
     ui.painter().rect_stroke(
         rect,
         6.0,
-        egui::Stroke::new(1.0_f32, border),
+        egui::Stroke::new(elev::STROKE_HAIRLINE, border),
         egui::StrokeKind::Inside,
     );
 

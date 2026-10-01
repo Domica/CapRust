@@ -1,6 +1,7 @@
 //! Export video dialog: Summary, Destination, Output, Quality, Advanced.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
 
@@ -119,14 +120,14 @@ pub fn show(
 
     // --- Summary ---
     ui.label(egui::RichText::new(tr("exp-summary")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.label(format!(
         "{}: {}",
         tr("exp-duration"),
         format_duration(duration_ms)
     ));
     ui.label(format!("{}: {}", tr("exp-clip-count"), clip_count));
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
 
     // --- Destination ---
@@ -143,12 +144,12 @@ pub fn show(
             }
         }
     });
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
 
     // --- Output ---
     ui.label(egui::RichText::new(tr("exp-output")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
 
     ui.horizontal(|ui| {
         ui.label(tr("exp-resolution"));
@@ -186,12 +187,12 @@ pub fn show(
             });
     });
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
 
     // --- Quality ---
     ui.label(egui::RichText::new(tr("exp-quality")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.horizontal(|ui| {
         for q in [QualityTier::Small, QualityTier::Regular, QualityTier::Large] {
             ui.selectable_value(&mut state.quality, q, q.label());
@@ -209,21 +210,21 @@ pub fn show(
     } else {
         format!("~{:.2} GB", size_mb / 1024.0)
     };
-    ui.add_space(2.0);
+    ui.add_space(space::XXS);
     ui.label(
         egui::RichText::new(format!("{}: {size_text}", tr("exp-size-estimate")))
             .small()
             .color(egui::Color32::from_gray(160)),
     );
 
-    ui.add_space(12.0);
+    ui.add_space(space::L);
     ui.separator();
 
     // --- Advanced toggle ---
     ui.checkbox(&mut state.advanced, tr("exp-advanced"));
 
     if state.advanced {
-        ui.add_space(8.0);
+        ui.add_space(space::M);
 
         ui.horizontal(|ui| {
             ui.label(tr("exp-bitrate"));
@@ -251,9 +252,9 @@ pub fn show(
         });
     }
 
-    ui.add_space(16.0);
+    ui.add_space(space::XL);
     ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(space::M);
 
     // --- Export button ---
     let btn = egui::Button::new(
