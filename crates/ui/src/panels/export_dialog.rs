@@ -3,9 +3,10 @@
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
 
+use crate::widgets::section;
+
 pub fn show(ui: &mut Ui) {
-    ui.heading("Export Settings");
-    ui.separator();
+    section::header(ui, "Export Settings");
 
     let mut resolution = ExportResolution::FullHd;
     egui::ComboBox::from_label("Resolution")

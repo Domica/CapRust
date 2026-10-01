@@ -9,6 +9,7 @@ use crate::preview_player::PreviewPlayer;
 use crate::theme::tokens::{elev, radius, space};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
+use crate::widgets::section;
 use caprust_core::commands::delete_clip::DeleteClipCommand;
 use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
@@ -711,8 +712,7 @@ impl CapRustApp {
                         .inner_margin(24.0)
                         .show(ui, |ui| {
                             ui.set_width(480.0);
-                            ui.heading(tr("new-title"));
-                            ui.separator();
+                            section::header(ui, tr("new-title"));
                             egui::Grid::new("new_project_grid")
                                 .num_columns(2)
                                 .spacing([12.0, 10.0])
@@ -784,8 +784,7 @@ impl CapRustApp {
                 ui.vertical(|ui| {
                     ui.set_min_width(320.0);
                     ui.set_max_width(360.0);
-                    ui.heading(tr("new-recent-heading"));
-                    ui.separator();
+                    section::header(ui, tr("new-recent-heading"));
 
                     if self.recent.items.is_empty() {
                         ui.label(
@@ -4864,8 +4863,7 @@ impl CapRustApp {
     }
 
     pub(crate) fn render_properties_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading(tr("props-heading"));
-        ui.separator();
+        section::header(ui, tr("props-heading"));
 
         let selected = self.selected_clips.first().copied();
         crate::panels::clip_properties::show(
