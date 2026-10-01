@@ -1,7 +1,7 @@
 //! Media bin: dense grid, thumbnail cache, dynamic columns based on panel width.
 
 use crate::i18n_helper::tr;
-use crate::theme::tokens::elev;
+use crate::theme::tokens::{elev, radius, space, text};
 use crate::widgets::empty;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
@@ -319,7 +319,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                 tr("media-sort-label"),
                 tr(&format!("media-sort-{}", state.sort.key()))
             ))
-            .width(110.0)
+            .width(110.0) // sort combo; component-specific
             .show_ui(ui, |ui| {
                 for s in MediaSort::all() {
                     ui.selectable_value(&mut state.sort, s, tr(&format!("media-sort-{}", s.key())));
@@ -338,7 +338,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         ui.label(tr("media-filter-label"));
         egui::ComboBox::from_id_salt("media_filter")
             .selected_text(state.filter.label())
-            .width(90.0)
+            .width(90.0) // filter combo; component-specific
             .show_ui(ui, |ui| {
                 for f in MediaFilter::all() {
                     ui.selectable_value(
@@ -402,9 +402,9 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // --- Dynamic column layout ---
     let card_w = state.preview.card_w();
     let thumb_h = state.preview.thumb_h();
-    let h_gap = 6.0;
-    let v_gap = 6.0;
-    let scrollbar_reserve = 16.0;
+    let h_gap = space::S;
+    let v_gap = space::S;
+    let scrollbar_reserve = space::XL;
     let avail = (ui.available_width() - scrollbar_reserve).max(card_w);
 
     // number of columns that fit; at least 1
@@ -488,21 +488,21 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     egui::Order::Tooltip,
                     egui::Id::new("media_drag_badge"),
                 ));
-                let font = egui::FontId::proportional(11.0);
+                let font = egui::FontId::proportional(text::S);
                 let galley = painter.layout_no_wrap(text, font, egui::Color32::WHITE);
-                let pad = 6.0;
+                let pad = space::S;
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(p.x + 12.0, p.y + 12.0),
                     egui::vec2(galley.size().x + pad * 2.0, galley.size().y + pad),
                 );
                 painter.rect_filled(
                     rect,
-                    4.0,
+                    radius::cr(radius::SM),
                     egui::Color32::from_rgba_unmultiplied(30, 30, 40, 220),
                 );
                 painter.rect_stroke(
                     rect,
-                    4.0,
+                    radius::cr(radius::SM),
                     egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::from_gray(120)),
                     egui::StrokeKind::Inside,
                 );
@@ -556,6 +556,8 @@ fn draw_card(
     let mut remove_requested = false;
 
     // Card rect (thumbnail + filename line).
+    // Filename line height. Component-specific: one text::S row
+    // plus a few px of breathing room.
     let line_h = 14.0;
     let total = Vec2::new(card_w, thumb_h + 4.0 + line_h);
     let (rect, resp) = ui.allocate_exact_size(total, Sense::click_and_drag());
@@ -620,14 +622,16 @@ fn draw_card(
         );
     } else {
         let base = cache.color_for(item);
-        ui.painter().rect_filled(thumb_rect, 4.0, base);
+        ui.painter()
+            .rect_filled(thumb_rect, radius::cr(radius::SM), base);
 
         let dark = Color32::from_black_alpha(40);
         let grad_rect = Rect::from_min_max(
             Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
             thumb_rect.max,
         );
-        ui.painter().rect_filled(grad_rect, 4.0, dark);
+        ui.painter()
+            .rect_filled(grad_rect, radius::cr(radius::SM), dark);
 
         let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
         ui.painter().text(
@@ -647,10 +651,14 @@ fn draw_card(
     } else {
         Color32::from_gray(60)
     };
-    let border_w = if is_selected { 2.0_f32 } else { 1.0_f32 };
+    let border_w = if is_selected {
+        2.0_f32
+    } else {
+        elev::STROKE_HAIRLINE
+    };
     ui.painter().rect_stroke(
         thumb_rect,
-        4.0,
+        radius::cr(radius::SM),
         Stroke::new(border_w, border),
         egui::StrokeKind::Inside,
     );
@@ -659,7 +667,7 @@ fn draw_card(
     if item.duration_ms > 0 {
         let label = format_ms(item.duration_ms);
         let text_pos = thumb_rect.right_bottom() - Vec2::new(4.0, 3.0);
-        let font = FontId::monospace(10.0);
+        let font = FontId::monospace(text::XS);
         let galley = ui
             .painter()
             .layout_no_wrap(label.clone(), font.clone(), Color32::WHITE);
@@ -670,6 +678,8 @@ fn draw_card(
             ),
             Vec2::new(galley.size().x + 6.0, galley.size().y + 4.0),
         );
+        // 3.0 is below radius::SM (4.0): small badges read better
+        // with a tighter corner than the card radius.
         ui.painter()
             .rect_filled(bg_rect, 3.0, Color32::from_black_alpha(150));
         ui.painter().galley(
@@ -682,6 +692,7 @@ fn draw_card(
     // Missing badge (bottom-left).
     if !std::path::Path::new(&item.path).exists() {
         let label = tr("media-missing-badge");
+        // 9.0 sits below text::XS (10.0): keeps the badge compact.
         let font = FontId::monospace(9.0);
         let galley = ui
             .painter()
@@ -694,6 +705,7 @@ fn draw_card(
             ),
             Vec2::new(galley.size().x + 2.0 * pad, galley.size().y + 4.0),
         );
+        // Same 3.0 corner as the duration badge; see note above.
         ui.painter()
             .rect_filled(bg_rect, 3.0, Color32::from_rgb(180, 40, 40));
         ui.painter().galley(
@@ -711,7 +723,7 @@ fn draw_card(
         name_pos,
         egui::Align2::LEFT_TOP,
         name,
-        FontId::proportional(11.0),
+        FontId::proportional(text::S),
         Color32::from_gray(210),
     );
 
@@ -720,6 +732,7 @@ fn draw_card(
     // action, because the outer click_and_drag response claims the
     // pointer as soon as it enters the card.
     {
+        // 18 px tap target. Component-specific.
         let btn = 18.0;
         let x_rect = Rect::from_min_size(
             Pos2::new(thumb_rect.right() - btn - 3.0, thumb_rect.top() + 3.0),
@@ -736,11 +749,14 @@ fn draw_card(
             } else {
                 Color32::from_black_alpha(140)
             };
+            // 3.0 matches the duration/missing badge radius.
             ui.painter().rect_filled(x_rect, 3.0, bg);
             ui.painter().text(
                 x_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 ph::X,
+                // 12.0 is between text::S (11) and text::M (13);
+                // pairs well with the 18 px button target.
                 FontId::proportional(12.0),
                 Color32::WHITE,
             );
