@@ -1,6 +1,7 @@
 //! Clip properties panel — Video / Sound / Effects tabs.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 use caprust_core::{Clip, ClipType, ProjectState};
 use egui::Ui;
 use egui_phosphor::regular as ph;
@@ -429,7 +430,7 @@ pub fn show(
         effect,
     } = &clip.clip_type
     {
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("Model")
@@ -447,7 +448,7 @@ pub fn show(
         });
 
         let n = segments.len();
-        ui.add_space(2.0);
+        ui.add_space(space::XXS);
         if n == 0 {
             ui.label(
                 egui::RichText::new("No speech detected. (Empty segments — the clip can be deleted from the timeline.)")
@@ -466,7 +467,7 @@ pub fn show(
                 .color(egui::Color32::from_gray(140)),
         );
         // --- Style editor ---
-        ui.add_space(6.0);
+        ui.add_space(space::S);
         ui.label(egui::RichText::new(tr("props-captions-style-header")).strong());
         {
             use caprust_core::clip::{CaptionPosition, CaptionStyle};
@@ -585,7 +586,7 @@ pub fn show(
         // Same controls as a TextOverlay clip; both variants carry
         // the same fields now. Shared PendingEdit variants route
         // through SetClipCommand, which applies to either kind.
-        ui.add_space(6.0);
+        ui.add_space(space::S);
         {
             use caprust_core::clip::{TextEffect, TextEffectKind, TextMotion};
 
@@ -629,7 +630,7 @@ pub fn show(
             }
 
             // Effect
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
             ui.label(
                 egui::RichText::new(tr("props-text-effect-header"))
                     .strong()
@@ -696,9 +697,9 @@ pub fn show(
             }
         }
 
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
         ui.separator();
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
 
         let clip_id = clip.id;
         let mut local_edits: Vec<PendingEdit> = Vec::new();
@@ -775,9 +776,9 @@ pub fn show(
                         state.caption_edit_buffers.insert(key, buf);
                     }
 
-                    ui.add_space(4.0);
+                    ui.add_space(space::XS);
                     ui.separator();
-                    ui.add_space(4.0);
+                    ui.add_space(space::XS);
                 }
             });
 
@@ -849,7 +850,7 @@ fn speed_range_n(r: &caprust_core::clip::SpeedRampRange) -> u64 {
 fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // --- Main ---
     ui.label(egui::RichText::new(tr("props-video-main")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     // (Rotation / Width / Height fields used to live here. They wrote
     // into local f32 bindings that were dropped every frame, so they
     // never affected the render. Real rotation needs a PNG-overlay
@@ -857,7 +858,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // is already controlled by the motion.scale field in the Text
     // section. Removed to stop showing controls that lie.)
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // Auto-reframe and background removal are video/image features.
@@ -868,7 +869,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     if !is_text_overlay {
         // --- Auto-reframe ---
         ui.label(egui::RichText::new(tr("props-video-auto-reframe")).strong());
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
         ui.label(
             egui::RichText::new(tr("props-auto-reframe-hint"))
                 .small()
@@ -914,12 +915,12 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             });
         });
 
-        ui.add_space(10.0);
+        ui.add_space(space::M_PLUS);
         ui.separator();
 
         // --- Background removal ---
         ui.label(egui::RichText::new(tr("props-video-bg-removal")).strong());
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
         ui.label(
             egui::RichText::new(tr("props-bg-removal-hint"))
                 .small()
@@ -965,13 +966,13 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             });
         });
 
-        ui.add_space(10.0);
+        ui.add_space(space::M_PLUS);
         ui.separator();
     } // !is_text_overlay
 
     // --- Speed ---
     ui.label(egui::RichText::new(tr("props-video-speed")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     egui::Grid::new("clip_speed_base_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
@@ -1016,12 +1017,12 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             ui.end_row();
         });
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // --- Mirror ---
     ui.label(egui::RichText::new(tr("props-video-mirror")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     egui::Grid::new("clip_mirror_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
@@ -1041,12 +1042,12 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             ui.end_row();
         });
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // --- Trim (read-only info) ---
     ui.label(egui::RichText::new(tr("props-video-trim")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.label(
         egui::RichText::new(tr("props-trim-hint"))
             .small()
@@ -1070,12 +1071,12 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.end_row();
         });
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // ---- Speed ramp ----
     ui.label(egui::RichText::new(tr("props-video-speed-ramp")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     egui::Grid::new("clip_speed_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
@@ -1311,7 +1312,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
 fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.label(egui::RichText::new(tr("props-sound-volume")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     ui.horizontal(|ui| {
         let mut vol = clip.volume_db;
         if ui
@@ -1326,7 +1327,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         }
     });
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // ---- Auto-ducking ----
@@ -1334,7 +1335,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // is every other audio-bearing clip in the project; picking one
     // makes this clip drop in level whenever that clip's stream plays.
     ui.label(egui::RichText::new(tr("props-sound-ducking")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     // Collect candidates: any clip that carries audio and is not this
     // clip. We do not filter by track — a narration on A2 can duck a
     // music clip on A1 just as easily.
@@ -1394,12 +1395,12 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             .color(egui::Color32::from_gray(150)),
     );
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // ---- Volume automation (keyframes) ----
     ui.label(egui::RichText::new(tr("props-sound-automation")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
 
     let mut kfs = clip.volume_keyframes.clone();
     let mut changed = false;
@@ -1411,7 +1412,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                 .italics()
                 .color(egui::Color32::from_gray(150)),
         );
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
     } else {
         // Local table header
         egui::Grid::new("kf_header")
@@ -1491,7 +1492,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         }
     }
 
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     let can_add = kfs.len() < max_kfs;
     let add_resp = ui.add_enabled(can_add, egui::Button::new(tr("props-sound-add-kf")));
     if add_resp.clicked() {
@@ -1517,11 +1518,11 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         state.pending.push(PendingEdit::VolumeKeyframes(kfs));
     }
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     ui.label(egui::RichText::new(tr("props-sound-fade")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     let mut fade_in = 0.0_f32;
     let mut fade_out = 0.0_f32;
     egui::Grid::new("clip_fade_grid")
@@ -1544,10 +1545,10 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             ui.end_row();
         });
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
     ui.label(egui::RichText::new(tr("props-sound-processing")).strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
     let mut norm = false;
     let mut denoise = false;
     let mut voice_boost = false;
@@ -1564,7 +1565,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
 fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
-    ui.add_space(6.0);
+    ui.add_space(space::S);
 
     // --- Transitions ---
     ui.label(egui::RichText::new("Transitions").strong());
@@ -1659,12 +1660,12 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
         });
 
-    ui.add_space(10.0);
+    ui.add_space(space::M_PLUS);
     ui.separator();
 
     // --- Applied effects ---
     ui.label(egui::RichText::new("Applied Effects").strong());
-    ui.add_space(4.0);
+    ui.add_space(space::XS);
 
     if clip.effects.is_empty() {
         ui.label(
@@ -1689,7 +1690,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         }
     }
 
-    ui.add_space(8.0);
+    ui.add_space(space::M);
     ui.label(
         egui::RichText::new(tr("props-effects-hint"))
             .small()
