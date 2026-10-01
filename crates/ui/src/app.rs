@@ -6,6 +6,7 @@ use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
+use crate::theme::tokens::{elev, radius, space};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
@@ -695,9 +696,9 @@ impl CapRustApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(((ui.available_height() - 500.0) / 2.0).max(24.0));
                 ui.heading(egui::RichText::new(format!("{} CapRust", ph::FILM_STRIP)).size(34.0));
-                ui.add_space(4.0);
+                ui.add_space(space::XS);
                 ui.label("Social-first video editor");
-                ui.add_space(30.0);
+                ui.add_space(space::XXXL);
             });
             // Two columns: left = New Project form, right = Recent
             ui.horizontal_top(|ui| {
@@ -767,7 +768,7 @@ impl CapRustApp {
                                         });
                                     ui.end_row();
                                 });
-                            ui.add_space(16.0);
+                            ui.add_space(space::XL);
                             ui.horizontal(|ui| {
                                 if ui.button(tr("new-button-create")).clicked() {
                                     self.create_project();
@@ -858,7 +859,7 @@ impl CapRustApp {
                                             });
                                         });
                                     });
-                                    ui.add_space(4.0);
+                                    ui.add_space(space::XS);
                                 }
                             });
                     }
@@ -2577,7 +2578,7 @@ impl CapRustApp {
             .show_separator_line(false)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.add_space(8.0);
+                    ui.add_space(space::M);
                     let n = self.jobs.len();
                     ui.label(
                         egui::RichText::new(format!(
@@ -2622,7 +2623,7 @@ impl CapRustApp {
                                 .monospace()
                                 .color(egui::Color32::from_gray(150)),
                         );
-                        ui.add_space(12.0);
+                        ui.add_space(space::L);
                     }
                     ctx.request_repaint();
                 });
@@ -2676,7 +2677,7 @@ impl CapRustApp {
             // Slightly brighter than the window fill so the toast
             // reads as elevated against panels of the same hue.
             let toast_fill = ctx.style().visuals.window_fill.linear_multiply(1.9);
-            let border = egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.55));
+            let border = egui::Stroke::new(elev::STROKE_HAIRLINE, accent.gamma_multiply(0.55));
             let highlight = accent.gamma_multiply(0.7);
 
             egui::Window::new(format!("caprust-toast-{i}"))
@@ -2691,8 +2692,8 @@ impl CapRustApp {
                     let inner = egui::Frame::new()
                         .fill(toast_fill)
                         .stroke(border)
-                        .corner_radius(egui::CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(12, 10))
+                        .corner_radius(radius::cr(radius::LG))
+                        .inner_margin(egui::Margin::symmetric(space::L as i8, space::M_PLUS as i8))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
@@ -2720,7 +2721,7 @@ impl CapRustApp {
                             egui::pos2(rect.left() + 8.0, rect.top() + 0.5),
                             egui::pos2(rect.right() - 8.0, rect.top() + 0.5),
                         ],
-                        egui::Stroke::new(1.0_f32, highlight),
+                        egui::Stroke::new(elev::STROKE_HAIRLINE, highlight),
                     );
                 });
 
@@ -2761,7 +2762,7 @@ impl CapRustApp {
                                 .strong()
                                 .size(14.0),
                         );
-                        ui.add_space(2.0);
+                        ui.add_space(space::XXS);
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} → {}",
@@ -2770,7 +2771,7 @@ impl CapRustApp {
                             .small()
                             .color(egui::Color32::from_gray(200)),
                         );
-                        ui.add_space(6.0);
+                        ui.add_space(space::S);
                         ui.horizontal(|ui| {
                             let dl = egui::Button::new(
                                 egui::RichText::new(tr("update-toast-download"))
@@ -3089,7 +3090,7 @@ impl CapRustApp {
                             egui::Pos2::new(ruler_rect.left(), ruler_rect.bottom() - 0.5),
                             egui::Pos2::new(ruler_rect.right(), ruler_rect.bottom() - 0.5),
                         ],
-                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
+                        egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::from_gray(50)),
                     );
                     let interval_ms: u64 = {
                         let cands: &[u64] = &[
@@ -3126,7 +3127,10 @@ impl CapRustApp {
                                     egui::Pos2::new(x, ruler_rect.bottom() - th),
                                     egui::Pos2::new(x, ruler_rect.bottom()),
                                 ],
-                                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(90)),
+                                egui::Stroke::new(
+                                    elev::STROKE_HAIRLINE,
+                                    egui::Color32::from_gray(90),
+                                ),
                             );
                             if th >= 10.0 {
                                 let s = t / 1000;
@@ -3198,7 +3202,7 @@ impl CapRustApp {
                                 egui::Pos2::new(lane_rect.left(), lane_rect.bottom() - 0.5),
                                 egui::Pos2::new(lane_rect.right(), lane_rect.bottom() - 0.5),
                             ],
-                            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(35)),
+                            egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::from_gray(35)),
                         );
 
                         let clips_here: Vec<(uuid::Uuid, u64, u64, caprust_core::ClipType, bool)> =
@@ -3597,13 +3601,13 @@ impl CapRustApp {
                                 p.circle_stroke(
                                     h_in_pos,
                                     hr,
-                                    egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                                    egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::BLACK),
                                 );
                                 p.circle_filled(h_out_pos, hr, fill_out);
                                 p.circle_stroke(
                                     h_out_pos,
                                     hr,
-                                    egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                                    egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::BLACK),
                                 );
 
                                 // Cursor affordance.
@@ -4051,7 +4055,7 @@ impl CapRustApp {
                                 p.rect_stroke(
                                     ghost_rect,
                                     4.0,
-                                    egui::Stroke::new(1.0_f32, edge_color),
+                                    egui::Stroke::new(elev::STROKE_HAIRLINE, edge_color),
                                     egui::StrokeKind::Outside,
                                 );
                                 // Emphasised left / right edges
@@ -6012,7 +6016,7 @@ impl CapRustApp {
             }
         }
 
-        ui.add_space(6.0);
+        ui.add_space(space::S);
 
         // ---- Transport bar ----
         let ev = crate::panels::preview_window::show_transport(
@@ -6100,7 +6104,7 @@ impl CapRustApp {
 
                 // Progress section
                 if self.export_in_progress {
-                    ui.add_space(8.0);
+                    ui.add_space(space::M);
                     ui.separator();
                     ui.label(
                         egui::RichText::new("Exporting…")
@@ -6131,7 +6135,7 @@ impl CapRustApp {
 
                 // Finished section
                 if let Some(path) = self.export_finished_path.clone() {
-                    ui.add_space(8.0);
+                    ui.add_space(space::M);
                     ui.separator();
                     ui.label(
                         egui::RichText::new(format!("{} Done: {path}", ph::CHECK))
@@ -6184,7 +6188,7 @@ impl CapRustApp {
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;
                 }
-                ui.add_space(8.0);
+                ui.add_space(space::M);
                 ui.horizontal(|ui| {
                     let ok = egui::Button::new(
                         egui::RichText::new(tr("tk-rename-ok"))
@@ -6296,15 +6300,15 @@ impl CapRustApp {
                         self.model_prompt_tab = active;
                     }
                 });
-                ui.add_space(6.0);
+                ui.add_space(space::S);
                 ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(space::XS);
 
                 ui.label(
                     egui::RichText::new("This action needs a model. Download one, then click Use.")
                         .color(egui::Color32::from_gray(180)),
                 );
-                ui.add_space(6.0);
+                ui.add_space(space::S);
                 ui.separator();
 
                 let tab = self.model_prompt_tab;
@@ -6400,7 +6404,7 @@ impl CapRustApp {
                     });
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(space::M);
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button(tr("mp-cancel")).clicked() {
@@ -7052,14 +7056,14 @@ impl CapRustApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.label(tr("sync-prompt-body"));
-                ui.add_space(6.0);
+                ui.add_space(space::S);
                 ui.label(
                     egui::RichText::new(path.display().to_string())
                         .small()
                         .monospace()
                         .color(egui::Color32::from_gray(150)),
                 );
-                ui.add_space(10.0);
+                ui.add_space(space::M_PLUS);
                 ui.horizontal(|ui| {
                     if ui.button(tr("sync-prompt-load")).clicked() {
                         match caprust_core::settings::AppSettings::load_sync_file(&path) {
