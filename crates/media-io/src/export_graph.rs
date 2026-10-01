@@ -235,6 +235,15 @@ pub struct AudioClip {
     /// Auto-ducking: source clip id whose audio drives this clip's
     /// sidechain. None = no ducking.
     pub duck_against: Option<uuid::Uuid>,
+    /// Apply spectral denoise (ffmpeg `afftdn`) before any gain.
+    pub denoise: bool,
+    /// Apply speech-tuned dynamic range compression (ffmpeg
+    /// `dynaudnorm`). Runs after denoise, before loudnorm.
+    pub voice_boost: bool,
+    /// Apply EBU R128 loudness normalization (ffmpeg `loudnorm`,
+    /// -16 LUFS / -1.5 dBTP / LRA 11). Runs after voice_boost,
+    /// before the user's volume / fades so those remain final.
+    pub normalize: bool,
 }
 
 /// A fully-described render request.
@@ -850,10 +859,32 @@ impl RenderPlan {
             } else {
                 String::new()
             };
+            // Audio processing stages. Order: denoise cleans the
+            // source, voice_boost levels speech, then normalize
+            // hits a target loudness. All three run BEFORE the
+            // user's volume / track fader / fades so those remain
+            // the final say on the clip's loudness envelope.
+            let denoise = if c.denoise {
+                ",afftdn=nf=-25".to_string()
+            } else {
+                String::new()
+            };
+            let voice_boost = if c.voice_boost {
+                ",dynaudnorm=p=0.9:m=10".to_string()
+            } else {
+                String::new()
+            };
+            let normalize = if c.normalize {
+                ",loudnorm=I=-16:TP=-1.5:LRA=11".to_string()
+            } else {
+                String::new()
+            };
             fg.push_str(&ramp_preamble);
-            // Post-chain: gain, fades. If all are empty, pass
-            // through with `anull` so the chain is always valid.
-            let tail = format!("{gain}{track_gain}{fade_in}{fade_out}");
+            // Post-chain: processing, gain, fades. If all are
+            // empty, pass through with `anull` so the chain is
+            // always valid.
+            let tail =
+                format!("{denoise}{voice_boost}{normalize}{gain}{track_gain}{fade_in}{fade_out}");
             let tail_clean = tail.trim_start_matches(',');
             let tail_chain = if tail_clean.is_empty() {
                 "anull"
@@ -2628,6 +2659,9 @@ pub fn plan_from_project(
             volume_keyframes: kfs,
             clip_id: c.id,
             duck_against: c.duck_against,
+            denoise: c.audio_denoise,
+            voice_boost: c.audio_voice_boost,
+            normalize: c.audio_normalize,
         });
     }
 
