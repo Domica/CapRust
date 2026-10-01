@@ -61,8 +61,10 @@ pub fn show(
     });
     ui.separator();
 
+    // Fill the available height of the universal settings window
+    // so tabs of different content lengths do not resize the panel.
     egui::ScrollArea::vertical()
-        .max_height(400.0)
+        .auto_shrink([false, false])
         .show(ui, |ui| match tab {
             SettingsTab::Appearance => show_appearance(ui, theme, settings),
             SettingsTab::Models => {

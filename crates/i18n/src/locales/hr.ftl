@@ -63,7 +63,7 @@ new-button-open = Otvori projekt…
 new-button-quit = Izlaz
 new-recent-heading = Nedavni projekti
 start-projects-heading = Projekti
-start-projects-subtitle = Sve \u0161to ste otvorili na ovom ra\u010dunalu.
+start-projects-subtitle = Sve što ste otvorili na ovom računalu.
 start-version-label = Verzija
 new-recent-empty = Još nema nedavnih projekata.
 new-recent-open = Otvori
@@ -579,7 +579,7 @@ sync-prompt-keep = Zadrži lokalne
 
 set-appearance-font = Font
 set-appearance-font-family = Obitelj
-set-appearance-font-scale = Veli\u010dina
+set-appearance-font-scale = Veličina
 
 missing-media-banner = Neke medijske datoteke nedostaju
-missing-media-relink = Ponovno pove\u017ei\u2026
+missing-media-relink = Ponovno poveži…

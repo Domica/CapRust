@@ -7273,11 +7273,17 @@ impl CapRustApp {
 
     fn show_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
+        // Universal settings window: sized for the tallest tab so the
+        // layout does not jump when the user switches tabs. Pinned to
+        // the screen centre on first open; the user can still drag it.
         egui::Window::new(tr("set-title"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
-            .default_width(520.0)
+            .default_width(640.0)
+            .min_width(640.0)
+            .min_height(700.0)
+            .default_pos(ctx.screen_rect().center())
             .show(ctx, |ui| {
                 let ev = crate::panels::settings_dialog::show(
                     ui,
