@@ -52,6 +52,32 @@ fn appdata_base() -> Option<PathBuf> {
     }
 }
 
+/// True when `path` is a `.clap` file sitting directly in one of `dirs`.
+///
+/// Plugin paths stored in a project file are untrusted: loading one is
+/// native code execution. Only plugins from the scanned directories are
+/// allowed; paths are canonicalized so `..`, symlinks and UNC shares
+/// cannot sneak past the prefix check.
+pub fn is_trusted_plugin_path_in(path: &Path, dirs: &[PathBuf]) -> bool {
+    let Ok(p) = path.canonicalize() else {
+        return false;
+    };
+    if p.extension().and_then(|e| e.to_str()) != Some("clap") {
+        return false;
+    }
+    let Some(parent) = p.parent() else {
+        return false;
+    };
+    dirs.iter()
+        .filter_map(|d| d.canonicalize().ok())
+        .any(|d| d == parent)
+}
+
+/// [`is_trusted_plugin_path_in`] against the default scan directories.
+pub fn is_trusted_plugin_path(path: &Path) -> bool {
+    is_trusted_plugin_path_in(path, &default_scan_dirs())
+}
+
 /// Scan a list of directories. Missing directories are silently skipped.
 pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<PluginInfo> {
     let mut out = Vec::new();
@@ -137,6 +163,34 @@ mod tests {
         std::fs::write(d.join("lib.dll"), b"nope").unwrap();
         assert!(scan_dir(&d).is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn trust_requires_scan_dir_and_clap_extension() {
+        let trusted = tmp_dir("trusted");
+        let other = tmp_dir("other");
+        let ok = trusted.join("a.clap");
+        let wrong_ext = trusted.join("a.dll");
+        let outside = other.join("a.clap");
+        for f in [&ok, &wrong_ext, &outside] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let dirs = vec![trusted.clone()];
+        assert!(is_trusted_plugin_path_in(&ok, &dirs));
+        assert!(!is_trusted_plugin_path_in(&wrong_ext, &dirs));
+        assert!(!is_trusted_plugin_path_in(&outside, &dirs));
+        // `..` traversal back out of the trusted dir resolves outside it.
+        let sneaky = trusted
+            .join("..")
+            .join(other.file_name().unwrap())
+            .join("a.clap");
+        assert!(!is_trusted_plugin_path_in(&sneaky, &dirs));
+        assert!(!is_trusted_plugin_path_in(
+            &trusted.join("missing.clap"),
+            &dirs
+        ));
+        let _ = std::fs::remove_dir_all(&trusted);
+        let _ = std::fs::remove_dir_all(&other);
     }
 
     #[test]

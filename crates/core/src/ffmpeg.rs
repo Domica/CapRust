@@ -22,9 +22,11 @@ use crate::settings::AppSettings;
 
 /// BtbN rolling build. Static GPL binary, everything CapRust uses
 /// (drawtext, xfade, atempo, sidechaincompress, afade, maskedmerge)
-/// is in it. The "latest" tag rotates in place, so we do not pin a
-/// hash; `verify_binary` runs the extracted exe and checks its
-/// `-version` banner as the last integrity gate.
+/// is in it. The "latest" tag rotates in place, so we cannot pin a
+/// hash in source; instead the archive is checked against the
+/// `checksums.sha256` published next to it BEFORE anything is extracted
+/// or executed. This catches corruption and a tampered archive, but not
+/// a compromised release (checksums come from the same origin).
 pub const FFMPEG_URL: &str =
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
 
@@ -164,6 +166,22 @@ fn download_and_extract(
     drop(out);
 
     let _ = tx.send(FfmpegDownloadEvent::Extracting);
+    let name = url.rsplit('/').next().unwrap_or_default();
+    let sums_url = format!(
+        "{}/checksums.sha256",
+        url.rsplit_once('/').map_or(url, |p| p.0)
+    );
+    let sums = ureq::get(&sums_url)
+        .call()
+        .with_context(|| format!("GET {sums_url}"))?
+        .into_string()
+        .context("read checksums")?;
+    let expected =
+        checksum_for(&sums, name).ok_or_else(|| anyhow!("no checksum for {name} in {sums_url}"))?;
+    if let Err(e) = crate::models::download::verify_sha256_file(&zip_path, expected) {
+        let _ = fs::remove_file(&zip_path);
+        return Err(e.context("ffmpeg archive failed verification"));
+    }
 
     // BtbN layout: `<prefix>/bin/{ffmpeg,ffprobe}.exe`. We only need
     // the bin/ files; the -gpl build is static, so no shared DLLs.
@@ -212,6 +230,13 @@ fn download_and_extract(
     Ok(())
 }
 
+/// Find `name` in `sha256sum`-style text (`<hex>  <file>`).
+fn checksum_for<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
+    sums.lines().find_map(|l| {
+        let (hash, file) = l.split_once(char::is_whitespace)?;
+        (file.trim_start_matches(['*', ' ']) == name).then_some(hash)
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +273,15 @@ mod tests {
         assert!(!verify_binary(Path::new("C:\\\\nope\\\\ffmpeg.exe")));
     }
 
+    #[test]
+    fn checksum_for_finds_exact_filename() {
+        let sums = "aaa  ffmpeg-master-latest-win64-gpl-shared.zip\nbbb  ffmpeg-master-latest-win64-gpl.zip\n";
+        assert_eq!(
+            checksum_for(sums, "ffmpeg-master-latest-win64-gpl.zip"),
+            Some("bbb")
+        );
+        assert_eq!(checksum_for(sums, "missing.zip"), None);
+    }
     #[test]
     fn verify_binary_accepts_real_ffmpeg_when_present() {
         let Some(p) = which_in_path("ffmpeg") else {

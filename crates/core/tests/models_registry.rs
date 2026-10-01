@@ -55,3 +55,44 @@ fn registry_has_background_remover_with_url() {
     );
     assert!(bg.url.ends_with(".onnx"), "ONNX model expected: {}", bg.url);
 }
+
+#[test]
+fn every_downloadable_model_pins_a_sha256() {
+    for m in ModelRegistry::default()
+        .models
+        .iter()
+        .filter(|m| !m.url.is_empty())
+    {
+        assert!(
+            m.sha256.len() == 64 && m.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{} must pin a SHA-256",
+            m.id
+        );
+    }
+}
+
+#[test]
+fn merge_distrusts_registry_from_project_file() {
+    let mut r = ModelRegistry::default();
+    // Attacker-controlled snapshot: unknown id with a traversal path and
+    // URL, plus a known id with a swapped URL/hash.
+    let mut evil = r.models[0].clone();
+    evil.id = "..\\..\\evil".into();
+    evil.url = "http://attacker.example/x".into();
+    r.models.push(evil);
+    r.models[0].url = "http://attacker.example/whisper".into();
+    r.models[0].sha256.clear();
+    r.models[0].enabled = true;
+
+    r.merge_missing_defaults();
+
+    let d = ModelRegistry::default();
+    assert_eq!(r.models.len(), d.models.len());
+    assert!(r
+        .models
+        .iter()
+        .all(|m| d.models.iter().any(|x| x.id == m.id)));
+    assert_eq!(r.models[0].url, d.models[0].url);
+    assert_eq!(r.models[0].sha256, d.models[0].sha256);
+    assert!(r.models[0].enabled, "user state survives the merge");
+}

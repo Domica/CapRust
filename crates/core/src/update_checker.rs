@@ -216,6 +216,9 @@ pub fn check(current_version: &str, enabled: bool) -> Result<Option<UpdateInfo>>
         .get("html_url")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("GitHub response missing html_url"))?;
+    if !is_release_url(html_url) {
+        return Err(anyhow!("unexpected release URL: {html_url}"));
+    }
     let published_at = parsed
         .get("published_at")
         .and_then(|v| v.as_str())
@@ -262,6 +265,12 @@ pub fn check(current_version: &str, enabled: bool) -> Result<Option<UpdateInfo>>
     }
 }
 
+/// The URL is handed to the OS browser opener, so only accept pages on
+/// this repo (never `file:`, other hosts, or local paths).
+fn is_release_url(url: &str) -> bool {
+    url.starts_with("https://github.com/Domica/CapRust/")
+}
+
 // ---------------------------------------------------------------------------
 // Minimal semver parser
 // ---------------------------------------------------------------------------
@@ -301,6 +310,18 @@ pub fn parse_version(s: &str) -> Option<Version> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn release_url_must_be_this_repo_over_https() {
+        assert!(is_release_url(
+            "https://github.com/Domica/CapRust/releases/tag/v1.0.0"
+        ));
+        assert!(!is_release_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_release_url("http://github.com/Domica/CapRust/releases"));
+        assert!(!is_release_url("https://github.com/Domica/CapRustEvil/x"));
+        assert!(!is_release_url("https://evil.example/Domica/CapRust/"));
+        assert!(!is_release_url("calc.exe"));
+    }
+
     use super::*;
 
     #[test]

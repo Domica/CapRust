@@ -1103,6 +1103,8 @@ impl RenderPlan {
             args.push(format!("{:.6}", inp.source_start_sec));
             args.push("-t".into());
             args.push(format!("{:.6}", inp.duration_sec));
+            args.push("-protocol_whitelist".into());
+            args.push("file".into());
             args.push("-i".into());
             args.push(inp.path.to_string_lossy().to_string());
         }

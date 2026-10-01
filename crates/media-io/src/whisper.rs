@@ -219,6 +219,8 @@ pub fn extract_16khz_mono_f32(
         args.push("-ss".into());
         args.push(format!("{:.6}", start_ms as f64 / 1000.0));
     }
+    args.push("-protocol_whitelist".into());
+    args.push("file".into());
     args.push("-i".into());
     args.push(source.to_string_lossy().into_owned());
     if dur_ms > 0 {

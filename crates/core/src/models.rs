@@ -117,6 +117,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+                )
+                .with_sha256(
+                    "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
                 ),
                 ModelInfo::new(
                     "whisper-base",
@@ -128,6 +131,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+                )
+                .with_sha256(
+                    "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
                 ),
                 ModelInfo::new(
                     "whisper-small",
@@ -139,6 +145,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+                )
+                .with_sha256(
+                    "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
                 ),
                 ModelInfo::new(
                     "whisper-medium",
@@ -150,6 +159,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+                )
+                .with_sha256(
+                    "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
                 ),
                 // --- Narration (Piper TTS voices) ---
                 ModelInfo::new(
@@ -162,6 +174,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+                )
+                .with_sha256(
+                    "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
                 ),
                 ModelInfo::new(
                     "piper-en-amy",
@@ -173,6 +188,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx",
+                )
+                .with_sha256(
+                    "b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18",
                 ),
                 ModelInfo::new(
                     "piper-hr-ivan",
@@ -197,10 +215,8 @@ impl Default for ModelRegistry {
                 ),
                 // --- Face detection (auto-reframe, Phase P2) ---
                 // YuNet, ~230 KB, Apache 2.0, fixed 320x320 input.
-                // SHA-256 intentionally left empty for now: F1b treats
-                // an empty checksum as "skip verification". Fill it in
-                // once the file is stable in the opencv_zoo repo (see
-                // DIRECTIVES §30 TODO).
+                // SHA-256 is pinned below (hash of the current file on
+                // the mirror; not independently compared to opencv_zoo).
                 ModelInfo::new(
                     "yunet-face",
                     "YuNet face detector",
@@ -224,6 +240,9 @@ impl Default for ModelRegistry {
                     // If this mirror ever disappears, fall back to
                     // SCRFD or another fixed-input face detector.
                     "https://huggingface.co/casual02/model-resnet_custom_v3/resolve/main/face_detection_yunet_2022mar.onnx",
+                )
+                .with_sha256(
+                    "50ef07f702a31741ca46a4c0d947773b64143b9362780237bf0d427d6c79bab7",
                 ),
                 // --- SCRFD-500M (P2c alternative face detector) ---
                 // InsightFace's deployed detector. 640x640 RGB input,
@@ -247,14 +266,15 @@ impl Default for ModelRegistry {
                     // det_500m.onnx in other InsightFace mirrors; the
                     // decoder expects the 9-output layout.
                     "https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/det_500m.onnx",
+                )
+                .with_sha256(
+                    "5e4447f50245bbd7966bd6c0fa52938c61474a04ec7def48753668a9d8b4ea3a",
                 ),
                 // --- Background removal (Phase P3) ---
                 // u2netp, the lightweight variant of U^2-Net. ~4.7 MB,
                 // Apache 2.0. Served from the rembg project releases.
                 // Input 320x320 RGB, output 320x320 single-channel
-                // alpha. SHA-256 intentionally empty for now: F1b
-                // treats empty as skip-verify, and rembg does not
-                // publish a stable per-release hash on that URL.
+                // alpha. SHA-256 pinned below.
                 ModelInfo::new(
                     "u2netp-bg",
                     "u2netp background remover",
@@ -265,6 +285,9 @@ impl Default for ModelRegistry {
                 )
                 .with_url(
                     "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
+                )
+                .with_sha256(
+                    "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
                 ),
             ],
         }
@@ -301,37 +324,31 @@ impl ModelRegistry {
             .collect()
     }
 
-    /// Backfill `url` and `sha256` from the built-in defaults when the
-    /// loaded project's copy is missing them. Older projects carry a
-    /// frozen registry snapshot from the moment they were saved, so a
-    /// URL added later (e.g. for Piper voices in F1b) would never
-    /// reach them. Called on project load.
+    /// Reconcile a loaded registry with the built-in defaults. Called on
+    /// project load and every frame.
     ///
-    /// Also adds any models present in the defaults but missing from
-    /// the loaded registry (new model added in a later release).
+    /// The project file is untrusted input, so the registry it carries is
+    /// not trusted either:
+    ///   * entries whose id is not a built-in model are dropped (their
+    ///     id feeds a filesystem path and their URL a network fetch);
+    ///   * `kind`, `url` and `sha256` are always taken from the defaults,
+    ///     including when the default is empty;
+    ///   * only user state (`enabled`, `status`, `progress`) survives.
+    ///
+    /// Models present in the defaults but missing from the loaded
+    /// registry (added in a later release) are appended.
     pub fn merge_missing_defaults(&mut self) {
         let defaults = ModelRegistry::default();
+        self.models
+            .retain(|m| defaults.models.iter().any(|d| d.id == m.id));
         for d in &defaults.models {
             match self.models.iter_mut().find(|m| m.id == d.id) {
                 Some(m) => {
-                    // Always take the current default URL / SHA-256
-                    // when the default has one. Registry URLs are not
-                    // user-editable, and we have historically shipped
-                    // wrong ones (the YuNet LFS pointer bug). A
-                    // project saved before the fix must follow the
-                    // fix or it will keep downloading a corrupt file
-                    // forever.
-                    if !d.url.is_empty() {
-                        m.url = d.url.clone();
-                    }
-                    if !d.sha256.is_empty() {
-                        m.sha256 = d.sha256.clone();
-                    }
+                    m.kind = d.kind;
+                    m.url = d.url.clone();
+                    m.sha256 = d.sha256.clone();
                 }
-                None => {
-                    // Brand new model in a later build — surface it.
-                    self.models.push(d.clone());
-                }
+                None => self.models.push(d.clone()),
             }
         }
     }
@@ -465,10 +482,7 @@ fn download_impl(
 
     if !expected_sha256.is_empty() {
         let _ = tx.send(DownloadEvent::Verifying);
-        use sha2::{Digest, Sha256};
-        let bytes = std::fs::read(&part_path)?;
-        let hash = Sha256::digest(&bytes);
-        let got: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        let got = download::sha256_file(&part_path)?;
         if !got.eq_ignore_ascii_case(expected_sha256) {
             let _ = std::fs::remove_file(&part_path);
             anyhow::bail!("SHA-256 mismatch: got {got}, expected {expected_sha256}");

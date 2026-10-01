@@ -94,6 +94,30 @@ pub fn download_file(
     Ok(())
 }
 
+/// Streaming SHA-256 of a file, lowercase hex.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let mut f = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf).context("read for sha256")?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex_encode(hasher.finalize().as_slice()))
+}
+
+/// Fail unless `path` hashes to `expected` (case-insensitive hex).
+pub fn verify_sha256_file(path: &Path, expected: &str) -> Result<()> {
+    let got = sha256_file(path)?;
+    if !got.eq_ignore_ascii_case(expected) {
+        return Err(anyhow!("sha256 mismatch: expected {expected}, got {got}"));
+    }
+    Ok(())
+}
+
 /// Delete any leftover `.part` sibling of `dest`, if it exists.
 /// Call this to clean up after a cancelled or failed download.
 pub fn cleanup_partial(dest: &Path) {
