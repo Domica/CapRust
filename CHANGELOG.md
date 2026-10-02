@@ -2,6 +2,30 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.8.2] - 2026-10-02
+
+Audio tail and waveform fixes on top of 0.8.1.
+
+### Fixed
+- **Audio playback stopped at the end of video content** (#12). The
+  render plan's total duration now includes audio and text clips, not
+  just video, so ffmpeg keeps writing PCM past the last video clip
+  and the audio tail plays through to its real end.
+- **Playhead froze and the timeline stopped scrolling** at video EOF.
+  The advance is now driven every frame while playback is active,
+  gated on `play_anchor_set`, not on a fresh preview frame (#12).
+- **Waveform froze at zoom 4x or higher** (#12). The draw loop always
+  started at `peaks[0]` regardless of scroll position; it now slices
+  the peaks array by the visible fraction of the clip, so the
+  waveform scrolls with the clip.
+
+### Changed
+- **Background removal in debug builds** is now usable. tract-onnx,
+  tract-linalg and tract-core get `opt-level = 3` in the dev profile
+  so `cargo run` does not spend minutes per frame on inference.
+  `background_removal::load` logs a debug-build warning so the
+  trade-off is visible (#3).
+
 ## [0.8.1] - 2026-10-02
 
 Maintenance release: three user-facing fixes, two security/correctness
