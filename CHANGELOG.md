@@ -2,6 +2,43 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.8.1] - 2026-10-02
+
+Maintenance release: three user-facing fixes, two security/correctness
+fixes, and an AI-tell docs cleanup. No new features.
+
+### Fixed
+- **CBR bitrate ignored on Advanced export** (#5). The VBR/CBR toggle
+  and bitrate field were never read by the export pipeline:
+  ``build_command`` always emitted ``-crf`` (or ``-cq`` / ``-qp`` for
+  hardware encoders). ``RenderPlan`` now carries ``rate_mode`` and
+  ``bitrate_kbps``; CBR emits ``-b:v`` / ``-maxrate`` / ``-bufsize``
+  on CPU, switches ``-rc cbr`` on NVENC and AMF. Two new unit tests.
+- **JobRunner never refreshed ffmpeg/ffprobe paths** (#6). The worker
+  thread captured paths at construction, so a mid-session install or
+  Settings override was invisible until restart. Jobs now carry their
+  own resolved paths, sourced from ``ffmpeg_status`` at enqueue time.
+- **Timeline thumbnails stayed empty after a cache clear** (#9).
+  ``regen_missing_thumbnails`` enqueued jobs but left ``thumb_done``
+  set, and the ``ThumbDone`` drain loop skipped reload when a stale
+  ``TextureHandle`` was still held. Both fixed; ``backfill_waveforms``
+  had the same flag gap and is fixed too.
+
+### Security
+- **BG-removal mask path bypassed protocol whitelist** (#7). A
+  malicious ``.caprust`` could point ``Clip.bg_removal`` at an
+  absolute path, a ``..`` traversal, or an ffmpeg filter source like
+  ``http://attacker/``. ``movie=`` honors all protocols and
+  ``-protocol_whitelist`` does not apply to filter-level sources.
+  ``resolve_bg_removal_path`` now requires the mask to live directly
+  under ``<project>/cache/masks/`` after canonicalization, with a
+  filename stem matching the clip UUID and a ``.mkv`` extension.
+  Seven new unit tests.
+
+### Changed
+- Replaced em and en dashes with ASCII hyphens in README and
+  CHANGELOG (75 + 9 occurrences). Cosmetic, no content change.
+
 ## [0.8.0] - 2026-10-02
 
 Trim, transitions, audio duration, and theming fixes on top of the
