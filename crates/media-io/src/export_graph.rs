@@ -2062,7 +2062,33 @@ fn resolve_bg_removal_path(
         return None;
     }
     let proj = project.project_path.as_ref()?;
-    let abs = std::path::Path::new(proj).join(rel);
+
+    // Reject absolute paths and traversal components before touching
+    // the filesystem. A malicious .caprust could otherwise point the
+    // mask at any file on disk, or at an ffmpeg filter source like
+    // `http://attacker/`, which `movie=` would happily open (the
+    // `-protocol_whitelist` input option does not apply to
+    // filter-level sources). See issue #7.
+    use std::path::Component;
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path.components().any(|c| {
+            matches!(
+                c,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        })
+    {
+        tracing::warn!(
+            "clip {} bg_removal path is not a safe relative path: {rel}",
+            clip.id
+        );
+        return None;
+    }
+
+    let masks_dir = std::path::Path::new(proj).join("cache").join("masks");
+    let abs = std::path::Path::new(proj).join(rel_path);
+
     if !abs.is_file() {
         tracing::warn!(
             "clip {} bg_removal mask missing on disk: {}",
@@ -2071,6 +2097,55 @@ fn resolve_bg_removal_path(
         );
         return None;
     }
+
+    // Canonicalize and require the mask to live directly inside
+    // <project>/cache/masks/. This defeats `..`, symlinks, and case
+    // tricks that would otherwise let the path escape the cache dir.
+    let canon = match abs.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("clip {} bg_removal canonicalize failed: {e}", clip.id);
+            return None;
+        }
+    };
+    let canon_masks = match masks_dir.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("clip {} masks dir canonicalize failed: {e}", clip.id);
+            return None;
+        }
+    };
+    if canon.parent() != Some(canon_masks.as_path()) {
+        tracing::warn!(
+            "clip {} bg_removal mask resolves outside <project>/cache/masks: {}",
+            clip.id,
+            canon.display()
+        );
+        return None;
+    }
+
+    // The file name must be exactly <clip_id>.mkv. Any other name is
+    // either a stale reference or an attempt to point at an unrelated
+    // file that happens to sit in the cache dir.
+    let expected_stem = clip.id.to_string();
+    let stem_ok = canon.file_stem().and_then(|s| s.to_str()) == Some(expected_stem.as_str());
+    let ext_ok = canon
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("mkv"))
+        .unwrap_or(false);
+    if !stem_ok || !ext_ok {
+        tracing::warn!(
+            "clip {} bg_removal mask must be <clip_id>.mkv, got {}",
+            clip.id,
+            canon.display()
+        );
+        return None;
+    }
+
+    // Return the pre-canonical path so downstream escaping keeps the
+    // user-visible `F:/...` form (canonical on Windows adds a `\\?\`
+    // prefix that would change the ffmpeg argument).
     Some(abs)
 }
 
@@ -3494,6 +3569,105 @@ mod tests {
             std::path::Path::new("ffmpeg"),
             std::path::Path::new("out.mp4"),
         )
+    }
+
+    fn bg_test_project() -> (caprust_core::ProjectState, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("caprust-bg-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("cache").join("masks")).expect("create temp masks dir");
+        let project = caprust_core::ProjectState {
+            project_path: Some(root.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        (project, root)
+    }
+
+    fn bg_test_clip(project: &caprust_core::ProjectState) -> caprust_core::Clip {
+        use caprust_core::TrackKind;
+        let idx = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == TrackKind::Video)
+            .expect("default project has a video track");
+        caprust_core::Clip::new_video("source.mp4", idx, 0, 1000)
+    }
+
+    #[test]
+    fn bg_removal_accepts_valid_mask() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        let mask = root
+            .join("cache")
+            .join("masks")
+            .join(format!("{}.mkv", clip.id));
+        std::fs::write(&mask, b"fake-mask").expect("write mask");
+        clip.bg_removal = Some(format!("cache/masks/{}.mkv", clip.id));
+        let r = resolve_bg_removal_path(&project, &clip);
+        assert!(r.is_some(), "valid mask should resolve: {r:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bg_removal_rejects_absolute_path() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        clip.bg_removal = Some("C:\\Windows\\System32\\config\\SAM".into());
+        assert!(resolve_bg_removal_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bg_removal_rejects_parent_dir_traversal() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        clip.bg_removal = Some("cache/masks/../../etc/passwd".into());
+        assert!(resolve_bg_removal_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bg_removal_rejects_protocol_url() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        clip.bg_removal = Some("http://attacker/mask.mkv".into());
+        assert!(resolve_bg_removal_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bg_removal_rejects_wrong_filename() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        let other = root.join("cache").join("masks").join("not-the-clip-id.mkv");
+        std::fs::write(&other, b"fake").expect("write mask");
+        clip.bg_removal = Some("cache/masks/not-the-clip-id.mkv".into());
+        assert!(resolve_bg_removal_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bg_removal_rejects_wrong_extension() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        let png = root
+            .join("cache")
+            .join("masks")
+            .join(format!("{}.png", clip.id));
+        std::fs::write(&png, b"fake").expect("write png");
+        clip.bg_removal = Some(format!("cache/masks/{}.png", clip.id));
+        assert!(resolve_bg_removal_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bg_removal_rejects_mask_outside_masks_dir() {
+        let (project, root) = bg_test_project();
+        let mut clip = bg_test_clip(&project);
+        // File exists at <proj>/sneaky.mkv, not in cache/masks/.
+        let sneaky = root.join("sneaky.mkv");
+        std::fs::write(&sneaky, b"fake").expect("write sneaky");
+        clip.bg_removal = Some("sneaky.mkv".into());
+        assert!(resolve_bg_removal_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     fn arg_after(args: &[String], key: &str) -> Option<String> {
