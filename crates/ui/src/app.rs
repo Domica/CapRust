@@ -18,6 +18,7 @@ use caprust_core::settings::AppSettings;
 use caprust_core::ClipType;
 use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use caprust_media_io::audio_player::AudioPlayer;
+use caprust_media_io::export::RateMode;
 use caprust_media_io::exporter::ExportEvent;
 use caprust_media_io::preview_render::PreviewRenderer;
 use eframe::egui;
@@ -6206,6 +6207,8 @@ impl CapRustApp {
                         fps_num,
                         fps_den,
                         23,
+                        RateMode::Vbr,
+                        8000,
                         "veryfast",
                         &models_dir,
                         start_from,
@@ -6470,6 +6473,8 @@ impl CapRustApp {
                         fps_num,
                         fps_den,
                         23,
+                        RateMode::Vbr,
+                        8000,
                         "veryfast",
                         &models_dir,
                         playhead,
@@ -7408,6 +7413,8 @@ impl CapRustApp {
             fps_num,
             fps_den,
             crf,
+            self.export_state.rate_mode,
+            self.export_state.bitrate_kbps,
             "veryfast",
             &models_dir,
             0,
@@ -7532,6 +7539,8 @@ impl CapRustApp {
             fps_num,
             fps_den,
             23,
+            RateMode::Vbr,
+            8000,
             "veryfast",
             &models_dir,
             0,

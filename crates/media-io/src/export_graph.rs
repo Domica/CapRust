@@ -16,6 +16,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use crate::export::RateMode;
+
 /// One input file we'll hand to ffmpeg with `-ss` / `-t`.
 #[derive(Debug, Clone)]
 pub struct InputSpec {
@@ -260,6 +262,12 @@ pub struct RenderPlan {
     pub fps_den: i64,
     /// CRF value for libx264/libx265/libsvtav1.
     pub crf: u8,
+    /// Rate-control mode. Vbr uses `crf`; Cbr uses `bitrate_kbps`
+    /// and emits `-b:v` / `-maxrate` / `-bufsize` instead.
+    pub rate_mode: RateMode,
+    /// Target bitrate in kbps for CBR exports. Ignored when
+    /// `rate_mode == RateMode::Vbr`.
+    pub bitrate_kbps: u32,
     pub preset: String,
     pub has_audio: bool,
     /// Clips the planner had to skip because their source file was
@@ -1127,38 +1135,60 @@ impl RenderPlan {
             Enc::H264Cpu | Enc::H265Cpu => {
                 args.push("-preset".into());
                 args.push(self.preset.clone());
-                args.push("-crf".into());
-                args.push(self.crf.to_string());
+                if self.rate_mode == RateMode::Cbr {
+                    push_cbr_args(&mut args, self.bitrate_kbps);
+                } else {
+                    args.push("-crf".into());
+                    args.push(self.crf.to_string());
+                }
             }
             Enc::Av1Cpu => {
                 // libsvtav1 wants an integer preset; 8 is the default
                 // (roughly medium). The string mapping does not apply.
                 args.push("-preset".into());
                 args.push("8".into());
-                args.push("-crf".into());
-                args.push(self.crf.to_string());
+                if self.rate_mode == RateMode::Cbr {
+                    push_cbr_args(&mut args, self.bitrate_kbps);
+                } else {
+                    args.push("-crf".into());
+                    args.push(self.crf.to_string());
+                }
             }
             Enc::H264Nvenc | Enc::H265Nvenc | Enc::Av1Nvenc => {
                 args.push("-preset".into());
                 args.push(nvenc_preset(&self.preset).into());
                 args.push("-tune".into());
                 args.push("hq".into());
-                args.push("-rc".into());
-                args.push("vbr".into());
-                args.push("-cq".into());
-                args.push(self.crf.to_string());
-                args.push("-b:v".into());
-                args.push("0".into());
+                if self.rate_mode == RateMode::Cbr {
+                    args.push("-rc".into());
+                    args.push("cbr".into());
+                    args.push("-b:v".into());
+                    args.push(format!("{}k", self.bitrate_kbps));
+                } else {
+                    args.push("-rc".into());
+                    args.push("vbr".into());
+                    args.push("-cq".into());
+                    args.push(self.crf.to_string());
+                    args.push("-b:v".into());
+                    args.push("0".into());
+                }
             }
             Enc::H264Amf | Enc::H265Amf | Enc::Av1Amf => {
                 args.push("-quality".into());
                 args.push("balanced".into());
-                args.push("-rc".into());
-                args.push("cqp".into());
-                args.push("-qp_i".into());
-                args.push(self.crf.to_string());
-                args.push("-qp_p".into());
-                args.push((self.crf as u32 + 2).min(51).to_string());
+                if self.rate_mode == RateMode::Cbr {
+                    args.push("-rc".into());
+                    args.push("cbr".into());
+                    args.push("-b:v".into());
+                    args.push(format!("{}k", self.bitrate_kbps));
+                } else {
+                    args.push("-rc".into());
+                    args.push("cqp".into());
+                    args.push("-qp_i".into());
+                    args.push(self.crf.to_string());
+                    args.push("-qp_p".into());
+                    args.push((self.crf as u32 + 2).min(51).to_string());
+                }
             }
         }
         if matches!(self.encoder, Enc::H265Cpu | Enc::H265Nvenc | Enc::H265Amf) {
@@ -2076,6 +2106,8 @@ pub fn plan_from_project(
     fps_num: i64,
     fps_den: i64,
     crf: u8,
+    rate_mode: RateMode,
+    bitrate_kbps: u32,
     preset: &str,
     models_dir: &std::path::Path,
     seek_ms: u64,
@@ -2782,6 +2814,8 @@ pub fn plan_from_project(
         fps_num,
         fps_den,
         crf,
+        rate_mode,
+        bitrate_kbps,
         preset: preset.to_string(),
         has_audio,
         encoder,
@@ -2798,6 +2832,18 @@ pub fn plan_from_project(
 /// Map a CPU x264/x265 preset name to the equivalent NVENC preset.
 /// NVENC exposes 7 levels (p1 fastest .. p7 slowest). Unknown names
 /// fall back to p5 (medium).
+/// Emit `-b:v` / `-maxrate` / `-bufsize` for CBR encoding.
+fn push_cbr_args(args: &mut Vec<String>, bitrate_kbps: u32) {
+    let b = format!("{}k", bitrate_kbps);
+    let buf = format!("{}k", bitrate_kbps.saturating_mul(2));
+    args.push("-b:v".into());
+    args.push(b.clone());
+    args.push("-maxrate".into());
+    args.push(b);
+    args.push("-bufsize".into());
+    args.push(buf);
+}
+
 fn nvenc_preset(cpu: &str) -> &'static str {
     match cpu {
         "ultrafast" => "p1",
@@ -2971,6 +3017,8 @@ mod tests {
 
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
             preset: "veryfast".to_string(),
             seek_ms: 0,
             seek_optimized: false,
@@ -3045,6 +3093,8 @@ mod tests {
             30,
             1,
             23,
+            RateMode::Vbr,
+            8000,
             "veryfast",
             std::path::Path::new("."),
             0,
@@ -3138,6 +3188,8 @@ mod tests {
 
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
             preset: "veryfast".to_string(),
             seek_ms: 0,
             seek_optimized: false,
@@ -3379,6 +3431,8 @@ mod tests {
             fps_num: 30,
             fps_den: 1,
             crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
             preset: "veryfast".into(),
             has_audio: false,
             skipped: PlanSkipped::default(),
@@ -3388,7 +3442,11 @@ mod tests {
         }
     }
 
-    fn enc_cmd_for(enc: caprust_core::project::VideoEncoder) -> Vec<String> {
+    fn enc_cmd_for(
+        enc: caprust_core::project::VideoEncoder,
+        rate_mode: RateMode,
+        bitrate_kbps: u32,
+    ) -> Vec<String> {
         let plan = RenderPlan {
             inputs: vec![InputSpec {
                 ffmpeg_index: 0,
@@ -3423,6 +3481,8 @@ mod tests {
             fps_num: 30,
             fps_den: 1,
             crf: 23,
+            rate_mode,
+            bitrate_kbps,
             preset: "veryfast".into(),
             has_audio: false,
             skipped: PlanSkipped::default(),
@@ -3444,7 +3504,7 @@ mod tests {
     #[test]
     fn build_command_cpu_h264_uses_libx264_and_crf() {
         use caprust_core::project::VideoEncoder as Enc;
-        let a = enc_cmd_for(Enc::H264Cpu);
+        let a = enc_cmd_for(Enc::H264Cpu, RateMode::Vbr, 8000);
         assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("libx264"));
         assert_eq!(arg_after(&a, "-crf").as_deref(), Some("23"));
         assert_eq!(arg_after(&a, "-preset").as_deref(), Some("veryfast"));
@@ -3453,9 +3513,28 @@ mod tests {
     }
 
     #[test]
+    fn build_command_cpu_h264_cbr_emits_bitrate_flags() {
+        use caprust_core::project::VideoEncoder as Enc;
+        let a = enc_cmd_for(Enc::H264Cpu, RateMode::Cbr, 6000);
+        assert_eq!(arg_after(&a, "-b:v").as_deref(), Some("6000k"));
+        assert_eq!(arg_after(&a, "-maxrate").as_deref(), Some("6000k"));
+        assert_eq!(arg_after(&a, "-bufsize").as_deref(), Some("12000k"));
+        assert!(arg_after(&a, "-crf").is_none(), "CBR must not emit -crf");
+    }
+
+    #[test]
+    fn build_command_nvenc_h264_cbr_uses_bitrate() {
+        use caprust_core::project::VideoEncoder as Enc;
+        let a = enc_cmd_for(Enc::H264Nvenc, RateMode::Cbr, 8000);
+        assert_eq!(arg_after(&a, "-b:v").as_deref(), Some("8000k"));
+        assert_eq!(arg_after(&a, "-rc").as_deref(), Some("cbr"));
+        assert!(arg_after(&a, "-cq").is_none(), "CBR must not emit -cq");
+    }
+
+    #[test]
     fn build_command_nvenc_h264_uses_cq_and_no_crf() {
         use caprust_core::project::VideoEncoder as Enc;
-        let a = enc_cmd_for(Enc::H264Nvenc);
+        let a = enc_cmd_for(Enc::H264Nvenc, RateMode::Vbr, 8000);
         assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("h264_nvenc"));
         assert_eq!(arg_after(&a, "-cq").as_deref(), Some("23"));
         assert_eq!(arg_after(&a, "-b:v").as_deref(), Some("0"));
@@ -3467,7 +3546,7 @@ mod tests {
     #[test]
     fn build_command_amf_h264_uses_cqp() {
         use caprust_core::project::VideoEncoder as Enc;
-        let a = enc_cmd_for(Enc::H264Amf);
+        let a = enc_cmd_for(Enc::H264Amf, RateMode::Vbr, 8000);
         assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("h264_amf"));
         assert_eq!(arg_after(&a, "-rc").as_deref(), Some("cqp"));
         assert_eq!(arg_after(&a, "-qp_i").as_deref(), Some("23"));
@@ -3478,7 +3557,7 @@ mod tests {
     #[test]
     fn build_command_hevc_nvenc_tags_hvc1() {
         use caprust_core::project::VideoEncoder as Enc;
-        let a = enc_cmd_for(Enc::H265Nvenc);
+        let a = enc_cmd_for(Enc::H265Nvenc, RateMode::Vbr, 8000);
         assert_eq!(arg_after(&a, "-c:v").as_deref(), Some("hevc_nvenc"));
         assert_eq!(arg_after(&a, "-tag:v").as_deref(), Some("hvc1"));
     }
@@ -3519,6 +3598,8 @@ mod tests {
             fps_num: 30,
             fps_den: 1,
             crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
             preset: "veryfast".into(),
             has_audio: false,
 
