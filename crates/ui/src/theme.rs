@@ -74,6 +74,14 @@ pub struct Theme {
     /// Playhead line extent.
     #[serde(default)]
     pub playhead_size: PlayheadSize,
+    /// Overlap shading RGBA used for xfade overlap regions on the
+    /// timeline. Alpha channel is honored. Defaults to a soft purple
+    /// wash strong enough to read the overlap at a glance.
+    #[serde(default = "default_overlap_shading")]
+    pub overlap_shading: [u8; 4],
+    /// Waveform strip color drawn behind audio/video clips. RGB only.
+    #[serde(default = "default_waveform_color")]
+    pub waveform: [u8; 3],
     /// Global UI scale. Multiplies egui's pixels-per-point, which
     /// scales text, buttons, panels, and the window chrome in one
     /// knob. 1.0 is the default look.
@@ -151,6 +159,14 @@ fn default_playhead_color() -> [u8; 3] {
 fn default_track_video() -> [u8; 3] {
     [128, 170, 232]
 }
+fn default_overlap_shading() -> [u8; 4] {
+    // Soft purple wash; alpha 120 is visible but does not drown the
+    // thumbnail below. Tunable in Settings -> Appearance.
+    [180, 140, 240, 120]
+}
+fn default_waveform_color() -> [u8; 3] {
+    [120, 200, 255]
+}
 fn default_track_audio() -> [u8; 3] {
     [128, 200, 148]
 }
@@ -173,6 +189,8 @@ impl Default for Theme {
             track_audio: default_track_audio(),
             track_captions: default_track_captions(),
             track_text: default_track_text(),
+            overlap_shading: default_overlap_shading(),
+            waveform: default_waveform_color(),
             playhead: default_playhead_color(),
             playhead_size: PlayheadSize::default(),
             font_scale: 1.0,
@@ -195,6 +213,21 @@ impl Theme {
 
     pub fn accent_color(&self) -> Color32 {
         Color32::from_rgb(self.accent[0], self.accent[1], self.accent[2])
+    }
+
+    /// Overlap shading as RGBA; alpha is honored.
+    pub fn overlap_shading_color(&self) -> Color32 {
+        Color32::from_rgba_unmultiplied(
+            self.overlap_shading[0],
+            self.overlap_shading[1],
+            self.overlap_shading[2],
+            self.overlap_shading[3],
+        )
+    }
+
+    /// Waveform strip color.
+    pub fn waveform_color(&self) -> Color32 {
+        Color32::from_rgb(self.waveform[0], self.waveform[1], self.waveform[2])
     }
 
     pub fn apply(&self, ctx: &egui::Context) {

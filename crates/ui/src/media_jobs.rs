@@ -194,6 +194,17 @@ impl JobRunner {
                         m.duration_ms = duration_ms;
                         m.probe_done = true;
                     }
+                    // Tighten the growth cap on clips that were dropped
+                    // before the probe finished (source_duration_ms = 0)
+                    // or that still carry a stale cap from an earlier
+                    // probe. Only touches clips that link to this media.
+                    if duration_ms > 0 {
+                        for c in project.clips.iter_mut() {
+                            if c.media_id == Some(media_id) && c.source_duration_ms < duration_ms {
+                                c.source_duration_ms = duration_ms;
+                            }
+                        }
+                    }
                 }
                 JobResult::WaveformDone { media_id } => {
                     tracing::info!("job: WaveformDone for {media_id}");
@@ -802,7 +813,7 @@ pub enum BgRemovalEvent {
 /// Progress event stride: emit every Nth frame. A 30s / 30fps clip is
 /// 900 frames; emitting 900 events would be wasteful. 25 keeps the
 /// progress bar smooth at ~1.2 s per step on typical hardware.
-pub const PROGRESS_STRIDE: usize = 25;
+pub const PROGRESS_STRIDE: usize = 5;
 
 /// Request for a background-removal job. Everything the worker needs
 /// to run end to end, with no back-reference into the project state.
@@ -939,6 +950,7 @@ fn run_bg_removal_inner(
             .map_err(|e| format!("write frame {i}: {e}"))?;
 
         if (i + 1) % PROGRESS_STRIDE == 0 || i + 1 == total {
+            tracing::info!("bg-removal: frame {}/{}", i + 1, total);
             let _ = tx.send(BgRemovalEvent::Progress { done: i + 1, total });
         }
     }

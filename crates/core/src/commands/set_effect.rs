@@ -284,6 +284,12 @@ impl Command for SetTransitionDurationCommand {
         let current_start = clip.start_time_ms;
         let old_shift = clip.applied_xfade_shift_ms;
         let new_duration = self.new_duration_ms;
+        // start_time_ms is already physically shifted left by old_shift.
+        // To find the touching predecessor we must compare against the
+        // clip's natural (unshifted) start, otherwise a predecessor
+        // that ends at the natural start sits AFTER the shifted start
+        // and the lookup silently fails, dropping the xfade.
+        let natural_start = current_start.saturating_add(old_shift);
 
         // New shift mirrors the duration only when an xfade is
         // currently active. Same clamp as the render: half of either
@@ -297,7 +303,7 @@ impl Command for SetTransitionDurationCommand {
                 .filter(|c| c.track_index == track_idx && c.id != self.clip_id)
                 .filter_map(|c| {
                     let end = c.start_time_ms + c.duration_ms;
-                    if end <= current_start && current_start.saturating_sub(end) <= ADJACENCY_TOL_MS
+                    if end <= natural_start && natural_start.saturating_sub(end) <= ADJACENCY_TOL_MS
                     {
                         Some((end, c.duration_ms))
                     } else {

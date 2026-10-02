@@ -1909,7 +1909,10 @@ impl CapRustApp {
                 Ok(crate::media_jobs::BgRemovalEvent::Started { total_frames }) => {
                     tracing::info!("bg-removal: started, {total_frames} frames to process");
                     if let Some(id) = self.bg_removal_job_id {
-                        self.update_job_progress(id, 0.0);
+                        // Stay indeterminate until the first Progress
+                        // event: in debug builds frame 1/N can take
+                        // minutes, and a 0 percent bar reads as stuck.
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
                     }
                 }
                 Ok(crate::media_jobs::BgRemovalEvent::Progress { done, total }) => {
@@ -2874,7 +2877,13 @@ impl CapRustApp {
     /// Update a job's progress (0.0..=1.0). No-op if the id is gone.
     fn update_job_progress(&mut self, id: u64, progress: f32) {
         if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
-            j.progress = progress.clamp(0.0, 1.0);
+            // Negative values opt into the indeterminate bar; anything
+            // else is a percentage and gets clamped to 1.0.
+            j.progress = if progress < 0.0 {
+                BackgroundJob::INDETERMINATE
+            } else {
+                progress.min(1.0)
+            };
         }
     }
 
@@ -3659,7 +3668,22 @@ impl CapRustApp {
                                         .unwrap_or((false, false, None));
                                     let (s, d) = if let Some(drag) = clip_drag_snapshot.as_ref() {
                                         if is_dragged {
-                                            (drag.current_ms.max(0) as u64, c.duration_ms)
+                                            // Trim drags mutate the clip's
+                                            // start_time_ms / duration_ms
+                                            // directly (live feedback). Use
+                                            // those, not drag.current_ms,
+                                            // which tracks the pointer and
+                                            // for a RIGHT trim would
+                                            // visually slide the clip right
+                                            // even though its start is
+                                            // fixed. Body drags use
+                                            // current_ms as the visual
+                                            // position.
+                                            if drag.trim_edge.is_some() {
+                                                (c.start_time_ms, c.duration_ms)
+                                            } else {
+                                                (drag.current_ms.max(0) as u64, c.duration_ms)
+                                            }
                                         } else if in_group {
                                             // Shift by the same delta as
                                             // the dragged clip so the whole
@@ -3839,14 +3863,13 @@ impl CapRustApp {
                                         clip_rect.height(),
                                     ),
                                 );
-                                // Accent wash: strong enough to read
-                                // the overlap, light enough that the
-                                // thumbnail underneath is still
-                                // visible.
+                                // Overlap shading, user-tunable in
+                                // Settings -> Appearance. Alpha is part
+                                // of the theme value.
                                 p.rect_filled(
                                     overlap_rect,
                                     4.0,
-                                    theme_snapshot.accent_color().gamma_multiply(0.35),
+                                    theme_snapshot.overlap_shading_color(),
                                 );
                                 // Thin diagonal hatching for
                                 // unambiguous "this slice is a
@@ -3923,10 +3946,14 @@ impl CapRustApp {
                                         let stride = (peaks.len() / n_bars).max(1);
                                         let center_y = clip_rect.center().y;
                                         let amp = clip_rect.height() * 0.35;
+                                        let wf = theme_snapshot.waveform_color();
                                         let stroke = egui::Stroke::new(
                                             bar_w * 0.75,
                                             egui::Color32::from_rgba_unmultiplied(
-                                                255, 255, 255, 110,
+                                                wf.r(),
+                                                wf.g(),
+                                                wf.b(),
+                                                200,
                                             ),
                                         );
                                         let clip = ui.painter().with_clip_rect(clip_rect);
@@ -4271,36 +4298,46 @@ impl CapRustApp {
                             // already left the 8 px trim zone and
                             // hovered_edge would be None. The press
                             // position is stable for the whole drag.
-                            let trim_edge_at_press: Option<TrimEdge> = if pointer_on_clip
-                                && clip_rect.width() > TRIM_ZONE * 3.0
-                            {
-                                // press_origin() is where the current
-                                // press started. interact_pointer_pos()
-                                // returns the LIVE pointer, which is
-                                // already past the trim zone by the
-                                // time drag_started() fires.
+                            let trim_edge_at_press: Option<TrimEdge> = {
+                                // Test rect containment against the
+                                // PRESS position, not the live pointer.
+                                // drag_started() fires after 3-4 px of
+                                // movement; by then the live pointer
+                                // has already left the clip rect and
+                                // pointer_on_clip would be false,
+                                // demoting the gesture to a body drag.
                                 let press_pos = ui.input(|i| i.pointer.press_origin());
-                                if let Some(pp) = press_pos {
-                                    let lz = egui::Rect::from_min_size(
-                                        clip_rect.min,
-                                        egui::vec2(TRIM_ZONE, clip_rect.height()),
-                                    );
-                                    let rz = egui::Rect::from_min_size(
-                                        egui::pos2(clip_rect.max.x - TRIM_ZONE, clip_rect.min.y),
-                                        egui::vec2(TRIM_ZONE, clip_rect.height()),
-                                    );
-                                    if lz.contains(pp) {
-                                        Some(TrimEdge::Left)
-                                    } else if rz.contains(pp) {
-                                        Some(TrimEdge::Right)
+                                let inside_at_press = press_pos
+                                    .map(|pp| clip_rect.contains(pp))
+                                    .unwrap_or(false);
+                                if inside_at_press
+                                    && clip_rect.width() > TRIM_ZONE * 3.0
+                                {
+                                    if let Some(pp) = press_pos {
+                                        let lz = egui::Rect::from_min_size(
+                                            clip_rect.min,
+                                            egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                        );
+                                        let rz = egui::Rect::from_min_size(
+                                            egui::pos2(
+                                                clip_rect.max.x - TRIM_ZONE,
+                                                clip_rect.min.y,
+                                            ),
+                                            egui::vec2(TRIM_ZONE, clip_rect.height()),
+                                        );
+                                        if lz.contains(pp) {
+                                            Some(TrimEdge::Left)
+                                        } else if rz.contains(pp) {
+                                            Some(TrimEdge::Right)
+                                        } else {
+                                            None
+                                        }
                                     } else {
                                         None
                                     }
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
                             };
                             // Selection and drag are driven by
                             // egui's interaction result, not by
@@ -5478,6 +5515,11 @@ impl CapRustApp {
                     MediaKind::Image => Clip::new_image(&item.path, ti, cursor_ms, dur),
                 };
                 clip.media_id = Some(item.id);
+                // Cap growth at the true source length. When ffprobe has
+                // not finished yet, item.duration_ms is 0: keep the cap
+                // at 0 (unlimited) and let the probe handler tighten it
+                // once the real duration lands.
+                clip.source_duration_ms = item.duration_ms;
                 added.push(clip.id);
                 cursor_ms = cursor_ms.saturating_add(dur);
                 clips.push(clip);
@@ -5527,6 +5569,10 @@ impl CapRustApp {
     fn show_editor_dock(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
+        // Jobs bar sits above the timeline so it is visible from any
+        // panel. In classic mode show_editor_classic calls this; in
+        // docked mode we need our own call or the bar never renders.
+        self.show_jobs_bar(ctx);
 
         // Move the dock state out so the viewer can borrow `self`
         // mutably without aliasing `self.dock_state`.

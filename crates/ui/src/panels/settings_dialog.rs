@@ -211,6 +211,30 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 
     ui.add_space(space::L);
     ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-timeline")).strong());
+    ui.add_space(space::S);
+    egui::Grid::new("timeline_colors_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(tr("set-appearance-overlap"));
+            let mut c = egui::Color32::from_rgba_unmultiplied(
+                theme.overlap_shading[0],
+                theme.overlap_shading[1],
+                theme.overlap_shading[2],
+                theme.overlap_shading[3],
+            );
+            if ui.color_edit_button_srgba(&mut c).changed() {
+                theme.overlap_shading = [c.r(), c.g(), c.b(), c.a()];
+            }
+            ui.end_row();
+            ui.label(tr("set-appearance-waveform"));
+            ui.color_edit_button_srgb(&mut theme.waveform);
+            ui.end_row();
+        });
+
+    ui.add_space(space::L);
+    ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-playhead")).strong());
     ui.add_space(space::S);
     egui::Grid::new("playhead_grid")
