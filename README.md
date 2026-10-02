@@ -71,121 +71,121 @@ A modern video editor focused on **short-form social content**. Built from scrat
 
 | Goal | Status |
 |---|---|
-| Native performance | Yes — Rust + egui (glow backend) |
-| CapCut-style UX | Yes — Dark Material theme, docked panels |
+| Native performance | Yes - Rust + egui (glow backend) |
+| CapCut-style UX | Yes - Dark Material theme, docked panels |
 | Social format presets (9:16, 4:5, 1:1, 16:9) | Yes |
-| Full undo/redo everywhere | Yes — Command pattern |
+| Full undo/redo everywhere | Yes - Command pattern |
 | Multi-track magnetic timeline | Yes |
-| Effects + transitions | Yes — preview + export |
-| Preview = Export filtergraph | Yes — same RenderPlan, no surprises |
-| AI captions + narration | Yes — local Whisper + Piper |
-| Progressive-reveal captions | Yes — whisper token timestamps |
-| Auto-reframe (follow largest face) | Yes — SCRFD primary, YuNet fallback |
-| Background removal | Yes — u2netp, per-clip mask cache |
-| Speed ramps with easing | Yes — 0.1x-10x, ease + range |
-| Auto-ducking | Yes — sidechaincompress |
-| CLAP plugin hosting | Yes — master chain, undoable, local |
-| MCP server for AI clients | Yes — 15 tools, JSON-RPC over stdio |
-| Settings sync (cloud folder) | Yes — Drive, OneDrive, Dropbox, Box, iCloud, Syncthing |
-| Update checker | Yes — GitHub Releases, opt-out |
+| Effects + transitions | Yes - preview + export |
+| Preview = Export filtergraph | Yes - same RenderPlan, no surprises |
+| AI captions + narration | Yes - local Whisper + Piper |
+| Progressive-reveal captions | Yes - whisper token timestamps |
+| Auto-reframe (follow largest face) | Yes - SCRFD primary, YuNet fallback |
+| Background removal | Yes - u2netp, per-clip mask cache |
+| Speed ramps with easing | Yes - 0.1x-10x, ease + range |
+| Auto-ducking | Yes - sidechaincompress |
+| CLAP plugin hosting | Yes - master chain, undoable, local |
+| MCP server for AI clients | Yes - 15 tools, JSON-RPC over stdio |
+| Settings sync (cloud folder) | Yes - Drive, OneDrive, Dropbox, Box, iCloud, Syncthing |
+| Update checker | Yes - GitHub Releases, opt-out |
 | Hardware encoding | Yes (NVENC + AMF, probed at runtime) |
-| Zero-config install | Yes — portable .exe |
+| Zero-config install | Yes - portable .exe |
 
 ---
 
 ## Features
 
 ### Timeline
-- **Magnetic mode** — clips pack end-to-end, ripple delete
-- **Snap to clips** — edges and playhead
-- **Multi-track** — V1/V2, A1/A2, Text, pinned Overlay, Captions
+- **Magnetic mode** - clips pack end-to-end, ripple delete
+- **Snap to clips** - edges and playhead
+- **Multi-track** - V1/V2, A1/A2, Text, pinned Overlay, Captions
 - **Drag and drop** from media library
 - **Cross-track drag**, trim handles, split at playhead
-- **Multi-select** — Ctrl+click, marquee rubber-band. Drag one selected clip to move the entire group in one undoable step.
+- **Multi-select** - Ctrl+click, marquee rubber-band. Drag one selected clip to move the entire group in one undoable step.
 - **Follow playhead** during playback, **trim-follow** option
 - **Pan tool** for horizontal navigation
-- **Per-track chips** — mute, hide, lock, pin (all render-affecting)
+- **Per-track chips** - mute, hide, lock, pin (all render-affecting)
 
 ### Media
 - Import **video** (MP4, MOV, AVI, MKV, WebM), **audio** (MP3, WAV, M4A, FLAC), **images** (PNG, JPG, WebP)
 - Auto **thumbnails** via ffmpeg extraction + per-project cache
-- **Background probe** — duration, resolution, FPS
+- **Background probe** - duration, resolution, FPS
 - **Multi-select** in the bin: Ctrl+click toggles, plain click replaces. Drag a multi-selection onto the timeline to insert every item in sequence.
 - **Missing-media relink** on load. Dialog lists every missing file, folder picker matches by basename, whole batch runs as one undoable `RelinkManyCommand`. Media bin shows a red badge, timeline clips without a source get a red diagonal hatch.
 - **Media bin** with sort (added / name / type), filter (all / video / audio / image), preview size (S / M / L)
 
 ### Effects, Filters and Transitions
-- **16 effect presets** — blur, vignette, glitch, RGB split, B&W, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, zoom pulse
-- **16 color filters** — warm, cool, B&W, sepia, cinematic, vintage, vivid, matte, noir, sunset, ocean, fade, pastel, neon, gold, none
-- **12 transitions** — fade, slide (L/R/U/D), wipe (L/R), zoom (in/out), rotate, blur
-- **8 text styles** — default, bold, subtitle, lower, quote, caption, glow, handwrite
-- **Amount-aware** — every preset scales with the per-clip amount; disabled stages are skipped
+- **16 effect presets** - blur, vignette, glitch, RGB split, B&W, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, zoom pulse
+- **16 color filters** - warm, cool, B&W, sepia, cinematic, vintage, vivid, matte, noir, sunset, ocean, fade, pastel, neon, gold, none
+- **12 transitions** - fade, slide (L/R/U/D), wipe (L/R), zoom (in/out), rotate, blur
+- **8 text styles** - default, bold, subtitle, lower, quote, caption, glow, handwrite
+- **Amount-aware** - every preset scales with the per-clip amount; disabled stages are skipped
 - **Per-clip effects chain** with undo/redo
 
 ### Animations
-- **Zoom pulse** — breathing crop with drifting window
-- **Shake** — deterministic sin/cos camera shake, fixed 8 Hz
-- **Ghost** — motion trails via tmix
-- **Sparkle** — temporal noise with brightness lift
-- **Particle** — softened temporal noise (atmospheric dust/snow)
-- **Lens flare** — warm bloom (colorbalance + curves + gblur)
+- **Zoom pulse** - breathing crop with drifting window
+- **Shake** - deterministic sin/cos camera shake, fixed 8 Hz
+- **Ghost** - motion trails via tmix
+- **Sparkle** - temporal noise with brightness lift
+- **Particle** - softened temporal noise (atmospheric dust/snow)
+- **Lens flare** - warm bloom (colorbalance + curves + gblur)
 
 ### Audio
-- **Fade in/out handles** — drag on the clip's waveform
-- **Volume keyframes** — piecewise-linear dB automation with eval=frame
-- **Auto-ducking** — music ducks under narration via sidechaincompress
-- **Speed ramps** — 0.1x-10x, with easing and range; audio uses a segmented atempo chain that matches the video setpts windows bit-for-bit
-- **Preview audio** — cpal output fed by a ring buffer
+- **Fade in/out handles** - drag on the clip's waveform
+- **Volume keyframes** - piecewise-linear dB automation with eval=frame
+- **Auto-ducking** - music ducks under narration via sidechaincompress
+- **Speed ramps** - 0.1x-10x, with easing and range; audio uses a segmented atempo chain that matches the video setpts windows bit-for-bit
+- **Preview audio** - cpal output fed by a ring buffer
 
 ### AI (all local, no cloud)
-- **Whisper captions** — tiny/base/small/medium; token timestamps power the progressive-reveal render
-- **Piper narration** — en_US (lessac/amy); voices download from Hugging Face
-- **Auto-reframe** — YuNet face detection + keypoint pan, cached per clip
-- **Background removal** — u2netp segmentation, FFV1 mask cache, maskedmerge render stage
-- **DEMO marker** — zero-byte DEMO file in the models dir exercises the caption pipeline without weights
+- **Whisper captions** - tiny/base/small/medium; token timestamps power the progressive-reveal render
+- **Piper narration** - en_US (lessac/amy); voices download from Hugging Face
+- **Auto-reframe** - YuNet face detection + keypoint pan, cached per clip
+- **Background removal** - u2netp segmentation, FFV1 mask cache, maskedmerge render stage
+- **DEMO marker** - zero-byte DEMO file in the models dir exercises the caption pipeline without weights
 
 ### Plugins (CLAP)
 - **Scan** of the two standard CLAP folders on Windows:
   `C:\Program Files\Common Files\CLAP` and `%APPDATA%\CapRust\plugins`
 - **Plugins tab** in the asset browser lists every discovered `.clap` binary with name, vendor, version, and descriptor id
-- **Master chain** — one click adds a plugin to the project's master bus. New **Master dock tab** shows the active chain with per-instance Bypass and Remove
+- **Master chain** - one click adds a plugin to the project's master bus. New **Master dock tab** shows the active chain with per-instance Bypass and Remove
 - **Real audio processing** on the PCM reader thread, between the ffmpeg decode and the cpal ring buffer. Interleaved stereo is deinterleaved, processed by each plugin in turn, reinterleaved
-- **Undoable** — every add / remove / parameter edit goes through the same `UndoStack` as the rest of the app
+- **Undoable** - every add / remove / parameter edit goes through the same `UndoStack` as the rest of the app
 - **Feature-gated** behind `--features clap` so Linux CI without the CLAP SDK still builds
 - **Tested** against u-he ZebraHZ 2.9.4
 
 ### MCP server
-- **Standalone binary** — `caprust-mcp.exe`, line-delimited JSON-RPC 2.0 on stdio
-- **15 tools** — read-only inspection plus mutating operations, all going through `UndoStack`
+- **Standalone binary** - `caprust-mcp.exe`, line-delimited JSON-RPC 2.0 on stdio
+- **15 tools** - read-only inspection plus mutating operations, all going through `UndoStack`
 - **Read-only:** `get_project_summary`, `list_tracks`, `list_clips`, `list_media`
 - **Mutating:** `add_media`, `add_clip_to_timeline`, `move_clip`, `split_clip`, `set_transition`, `set_clip_volume`, `set_clip_speed`, `set_clip_fade`, `undo`, `redo`, `save_project`
-- **No tokio, no rmcp** — 200-line hand-rolled dispatch
+- **No tokio, no rmcp** - 200-line hand-rolled dispatch
 - **Claude Desktop** config template in `docs/mcp.md`
 
 ### Settings
-- **Export / Import as JSON** — File → Settings → Paths → Backup. Versioned `SettingsFile` envelope; a newer format version is refused with a clear message, missing fields are defaulted.
-- **Auto-sync via cloud folder** — point CapRust at a Google Drive, OneDrive, Dropbox, Box, iCloud Drive, Syncthing, or Nextcloud folder. On every save a snapshot is written to `<folder>/caprust-settings.json`. On startup, if the folder holds a newer snapshot, a modal offers Load them / Keep local. CapRust never talks to a cloud API; the client's folder sync is the transport.
-- **User-selectable font family + size** — Settings → Appearance → Font. Families: Default (egui), Segoe UI, Arial, Consolas. Size 0.8–1.5× scales the entire UI. No font files bundled.
+- **Export / Import as JSON** - File → Settings → Paths → Backup. Versioned `SettingsFile` envelope; a newer format version is refused with a clear message, missing fields are defaulted.
+- **Auto-sync via cloud folder** - point CapRust at a Google Drive, OneDrive, Dropbox, Box, iCloud Drive, Syncthing, or Nextcloud folder. On every save a snapshot is written to `<folder>/caprust-settings.json`. On startup, if the folder holds a newer snapshot, a modal offers Load them / Keep local. CapRust never talks to a cloud API; the client's folder sync is the transport.
+- **User-selectable font family + size** - Settings → Appearance → Font. Families: Default (egui), Segoe UI, Arial, Consolas. Size 0.8-1.5× scales the entire UI. No font files bundled.
 
 ### Preview
 - **Real-time preview** through the same filtergraph as export
 - Quality selector: 1/4, 1/2, 1:1
 - Frame-accurate playhead
-- Wall-clock playback timing — immune to UI frame rate
+- Wall-clock playback timing - immune to UI frame rate
 - **Seek-optimized rendering** - the plan shifts every input to its `-ss`/`-t` for the current playhead. A seek into a 3-minute project renders in ~200-500 ms instead of 5-10 s.
 - **Paused seek** re-renders a one-shot frame at the new playhead.
-- **Auto-respawn on edit** — hash-based invalidation catches every mutation
+- **Auto-respawn on edit** - hash-based invalidation catches every mutation
 
 ### Updates
-- **Startup check** — silent GitHub Releases API request, once per 24 h, opt-out in Settings -> Appearance
-- **Toast** — three actions: Download (opens release page), Remind me later (snooze 7 days), Skip this version
-- **No auto-download** — the app only notifies and links
+- **Startup check** - silent GitHub Releases API request, once per 24 h, opt-out in Settings -> Appearance
+- **Toast** - three actions: Download (opens release page), Remind me later (snooze 7 days), Skip this version
+- **No auto-download** - the app only notifies and links
 
 ### Export
-- **Multi-track compositing** — V1 / V2 / Overlay / Text / Captions z-order
+- **Multi-track compositing** - V1 / V2 / Overlay / Text / Captions z-order
 - **xfade transitions** between adjacent clips
 - **Effects rendering** in filtergraph
-- **Caption burn-in** — drawtext with style presets
+- **Caption burn-in** - drawtext with style presets
 - Resolution: 4K, QHD, 1080p, 720p, 21:9, Original, 1.5x, 2x
 - Frame rate: 24, 30, 60, or Original (exact fraction, preserves 29.97)
 - Codec: H.264 / H.265 / AV1 on CPU (libx264 / libx265 / libsvtav1) or hardware (NVENC / AMF). The dialog probes the running ffmpeg build and only offers encoders that open on this machine.
@@ -195,7 +195,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 
 ### Internationalization
 - **English + Croatian** via Fluent
-- Runtime language switching — no restart
+- Runtime language switching - no restart
 
 ### Theming
 - **Dark / Light / Custom**
@@ -214,7 +214,7 @@ Download the latest nightly build:
     gh run download RUN_ID -n caprust-nightly-win64
     .\caprust-app.exe
 
-Or grab it from [Actions — Nightly Build](https://github.com/Domica/CapRust/actions/workflows/nightly.yml).
+Or grab it from [Actions - Nightly Build](https://github.com/Domica/CapRust/actions/workflows/nightly.yml).
 
 ### Build from source
 
@@ -263,12 +263,12 @@ Everything pre-installed: ffmpeg (via apt), ALSA, GTK, X11 libs, cargo-nextest.
 
 ### Design principles
 
-- **Command pattern everywhere** — every mutation is undoable, testable, isolated
-- **Never link libav*** — ffmpeg is always a subprocess
-- **Preview = Export** — same RenderPlan, same filtergraph, no surprises
-- **Wall-clock playhead** — playback timing from Instant, not UI frame count
-- **Thread-local i18n** — FluentBundle is not Sync, use thread_local
-- **Hash-based preview invalidation** — no per-command flags, no forgotten hooks
+- **Command pattern everywhere** - every mutation is undoable, testable, isolated
+- **Never link libav*** - ffmpeg is always a subprocess
+- **Preview = Export** - same RenderPlan, same filtergraph, no surprises
+- **Wall-clock playhead** - playback timing from Instant, not UI frame count
+- **Thread-local i18n** - FluentBundle is not Sync, use thread_local
+- **Hash-based preview invalidation** - no per-command flags, no forgotten hooks
 
 Full details in [DIRECTIVES.md](DIRECTIVES.md).
 
@@ -301,7 +301,7 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | **U1** | Batch undo (`MacroCommand`) + Ctrl+Z / Ctrl+Y | Done |
 | **U2** | Media bin multi-select + long-press batch drag | Done |
 | **I** | CLAP audio plugins | Done |
-| **N** | MCP server — AI-driven editing | Done |
+| **N** | MCP server - AI-driven editing | Done |
 | **K2** | Seamless double-buffer preview | Planned |
 | **Q** | Multi-cam / templates / screen record | Planned |
 
@@ -332,7 +332,7 @@ Some integration tests are #[ignore]d because they need a real model on disk. Ru
 
 Before opening a PR:
 
-1. Read DIRECTIVES.md — the project design rules
+1. Read DIRECTIVES.md - the project design rules
 2. Run locally:
 
        cargo fmt --all
@@ -349,12 +349,12 @@ CapCut is closed-source and phones home. Premiere is a subscription. DaVinci is 
 
 CapRust is:
 
-- **Small** — portable binary
-- **Fast** — native Rust, no Node runtime
-- **Social-first** — 9:16, quick export, TikTok / Reels presets
-- **Local AI** — Whisper, Piper, YuNet, u2netp run on your machine
-- **Open** — MIT, no telemetry
-- **Modern** — Rust 2021, egui, fluent, tract-onnx
+- **Small** - portable binary
+- **Fast** - native Rust, no Node runtime
+- **Social-first** - 9:16, quick export, TikTok / Reels presets
+- **Local AI** - Whisper, Piper, YuNet, u2netp run on your machine
+- **Open** - MIT, no telemetry
+- **Modern** - Rust 2021, egui, fluent, tract-onnx
 
 ---
 
@@ -377,7 +377,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
 
 ---
 

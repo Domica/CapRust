@@ -54,7 +54,7 @@ move, and per-track audio processing all land here.
 - ``PROGRESS_STRIDE`` for background removal 25 to 5. Adds a
   ``frame i/N`` trace line per stride.
 
-## [0.7.0-beta.1] — 2026-10-01
+## [0.7.0-beta.1] - 2026-10-01
 
 First beta of the 0.7 line. A UI polish pass (design tokens,
 widget library, feedback states, start-screen redesign), a crash
@@ -121,7 +121,7 @@ handler, and a Windows installer.
 ### Tests
 - 295 passing, 8 skipped.
 
-## [0.6.0-alpha.1] — 2026-09-30
+## [0.6.0-alpha.1] - 2026-09-30
 
 First alpha of the 0.6 line. Settings portability, user-selectable
 fonts, and captions parity.
@@ -140,7 +140,7 @@ fonts, and captions parity.
   never talks to a cloud API.
 - **User-selectable app font family + size.** Settings → Appearance
   → Font. Families: Default (egui), Segoe UI, Arial, Consolas.
-  Size 0.8–1.5× scales the entire UI via pixels-per-point. No font
+  Size 0.8-1.5× scales the entire UI via pixels-per-point. No font
   files bundled; the system font is read from `%WINDIR%\Fonts`.
 - **Captions motion + procedural effects parity with text
   overlays.** Captions clips now carry `TextMotion` (X/Y/Scale) and
@@ -163,7 +163,7 @@ fonts, and captions parity.
 ### Tests
 - 257 passing, 8 skipped.
 
-## [0.5.0-alpha.1] — 2026-09-29
+## [0.5.0-alpha.1] - 2026-09-29
 
 First alpha of the 0.5 line. CLAP plugin hosting, a standalone MCP
 server, and the xfade preview drift fix that had been outstanding
@@ -198,7 +198,7 @@ since 0.4.
   `set_transition`, `set_clip_volume`, `set_clip_speed`,
   `set_clip_fade`, `undo`, `redo`, `save_project`. Every mutating
   tool goes through `UndoStack`, same as the UI. No tokio, no
-  rmcp — 200-line hand-rolled dispatch.
+  rmcp - 200-line hand-rolled dispatch.
 - **`AddMediaCommand`** in core (was missing for the MCP
   `add_media` tool to satisfy DIRECTIVES 6).
 - **`docs/mcp.md`** with a Claude Desktop config template, tool
@@ -236,7 +236,7 @@ since 0.4.
   commands, CLAP scanner + chain, MCP rpc/server/tools,
   `AddMediaCommand`, xfade clamp, audio shift guards.
 
-## [0.4.0-alpha.2] — 2026-09-29
+## [0.4.0-alpha.2] - 2026-09-29
 
 Second alpha of the 0.4 line. Transitions on the timeline, batch
 undo, and UX polish.
@@ -340,7 +340,7 @@ undo, and UX polish.
 - Preview A/V sync has a residual 100-300 ms lead/lag on some
   hardware. Tunable via `CAPRUST_AV_DELAY_MS`.
 
-## [0.4.0-alpha.1] — 2026-09-28
+## [0.4.0-alpha.1] - 2026-09-28
 
 Fourth public alpha. Editor interaction pass: media bin multi-select,
 group drag on the timeline, and the caption pipeline.
@@ -411,7 +411,7 @@ group drag on the timeline, and the caption pipeline.
 - Preview A/V sync has a residual 100-300 ms lead/lag on some
   hardware. Tunable via `CAPRUST_AV_DELAY_MS`.
 
-## [0.3.0-alpha.1] — 2026-09-28
+## [0.3.0-alpha.1] - 2026-09-28
 
 Third public alpha. Audio pipeline rewritten, seek made usable, and
 hardware encoders wired in.
@@ -487,7 +487,7 @@ hardware encoders wired in.
   hardware. Tunable via `CAPRUST_AV_DELAY_MS`; a UI slider is
   planned.
 
-## [0.2.0-alpha.1] — 2026-09-29
+## [0.2.0-alpha.1] - 2026-09-29
 
 Second public alpha. Feature additions since 0.1.0-alpha.1.
 
@@ -533,7 +533,7 @@ Second public alpha. Feature additions since 0.1.0-alpha.1.
   backend is on the roadmap.
 - The nightly build does not carry AVX-512; older CPUs are safe.
 
-## [0.1.0-alpha.1] — 2026-09-27
+## [0.1.0-alpha.1] - 2026-09-27
 
 First public alpha. Social-first video editor for Windows. Pre-release:
 expect rough edges, broken installations, and one or two missing features.
