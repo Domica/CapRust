@@ -1497,14 +1497,25 @@ impl CapRustApp {
                 .clips
                 .iter()
                 .enumerate()
-                .filter(|(_, c)| c.track_index == t)
+                .filter(|(_, c)| {
+                    c.track_index == t
+                        && !matches!(
+                            c.clip_type,
+                            caprust_core::ClipType::TextOverlay { .. }
+                                | caprust_core::ClipType::Captions { .. }
+                        )
+                })
                 .map(|(i, _)| i)
                 .collect();
             if indices.is_empty() {
                 continue;
             }
             indices.sort_by_key(|&i| self.project.clips[i].start_time_ms);
-            let mut cursor: u64 = 0;
+            // Pack in place: the earliest clip on the track anchors the
+            // sequence, gaps between later clips close. Anchoring at 0
+            // would slide every clip to the timeline start, which is
+            // not what "remove gaps" means (DIRECTIVES 7.4).
+            let mut cursor: u64 = self.project.clips[indices[0]].start_time_ms;
             for &i in &indices {
                 self.project.clips[i].start_time_ms = cursor;
                 cursor += self.project.clips[i].duration_ms;
@@ -1527,6 +1538,11 @@ impl CapRustApp {
                         )
                     })
                     .unwrap_or(false)
+                    && !matches!(
+                        c.clip_type,
+                        caprust_core::ClipType::TextOverlay { .. }
+                            | caprust_core::ClipType::Captions { .. }
+                    )
             })
             .map(|c| {
                 let old = *old_starts.get(&c.id).unwrap_or(&c.start_time_ms) as i64;
@@ -1551,6 +1567,11 @@ impl CapRustApp {
                         )
                     })
                     .unwrap_or(false)
+                    && !matches!(
+                        c.clip_type,
+                        caprust_core::ClipType::TextOverlay { .. }
+                            | caprust_core::ClipType::Captions { .. }
+                    )
             })
             .map(|c| c.id)
             .collect();
@@ -1562,16 +1583,27 @@ impl CapRustApp {
             .clips
             .iter()
             .filter(|c| {
-                self.project
+                // Follower = anything that is not an anchor. Includes
+                // text overlays / captions even on Video or Overlay
+                // tracks: they ride the video clip they overlap or are
+                // closest to, they do not anchor the pack.
+                let on_video_track = self
+                    .project
                     .tracks
                     .get(c.track_index)
                     .map(|t| {
-                        !matches!(
+                        matches!(
                             t.kind,
                             caprust_core::TrackKind::Video | caprust_core::TrackKind::Overlay
                         )
                     })
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                let text_like = matches!(
+                    c.clip_type,
+                    caprust_core::ClipType::TextOverlay { .. }
+                        | caprust_core::ClipType::Captions { .. }
+                );
+                !on_video_track || text_like
             })
             .map(|c| c.id)
             .collect();
@@ -1592,18 +1624,28 @@ impl CapRustApp {
             let Some(&(cs, ce)) = old_spans.get(child) else {
                 continue;
             };
-            let mut best: Option<(u64, uuid::Uuid)> = None;
+            // Score every video clip. Overlap is preferred (positive
+            // score, larger wins). When the follower only touches a
+            // clip at its edge, or sits in a gap right next to it
+            // (which is how Separate Audio and Captions lay out), score
+            // is negative and the closest one wins. This keeps audio /
+            // text / captions in lockstep with the video they are
+            // adjacent to, not only the ones they strictly overlap.
+            let mut best: Option<(i64, uuid::Uuid)> = None;
             for v in &video_clip_ids {
                 let Some(&(vs, ve)) = old_spans.get(v) else {
                     continue;
                 };
                 let ov_start = cs.max(vs);
                 let ov_end = ce.min(ve);
-                if ov_start < ov_end {
-                    let ov = ov_end - ov_start;
-                    if best.is_none_or(|(bo, _)| ov > bo) {
-                        best = Some((ov, *v));
-                    }
+                let score: i64 = if ov_start < ov_end {
+                    (ov_end - ov_start) as i64
+                } else {
+                    let gap = if ce <= vs { vs - ce } else { cs - ve };
+                    -(gap as i64)
+                };
+                if best.is_none_or(|(bs, _)| score > bs) {
+                    best = Some((score, *v));
                 }
             }
             if let Some((_, parent)) = best {
