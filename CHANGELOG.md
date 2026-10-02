@@ -2,6 +2,58 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.8.0] - 2026-10-02
+
+Trim, transitions, audio duration, and theming fixes on top of the
+0.7.0-beta.1 polish pass. Waveform display, reattach-audio, ripple
+move, and per-track audio processing all land here.
+
+### Added
+- **Waveform display** on audio and video clips. Peaks extracted at
+  8 kHz into a 2048-bucket cache at ``<project>/cache/waveforms/`` and
+  drawn as vertical bars under the clip tint.
+- **Per-track volume fader**: right-click the mute chip in the track
+  header. Range -60 to +6 dB with Reset and Mute presets.
+- **Audio processing flags** per clip: ``denoise`` (afftdn),
+  ``voice_boost`` (dynaudnorm), ``normalize`` (loudnorm -16 LUFS).
+  Wire order: denoise, voice_boost, normalize, then user gain,
+  fades, and the track fader.
+- **Reattach audio** (P7). A video whose audio was separated shows
+  "Reattach audio" in the context menu; the detached Audio clip
+  shows "Reattach to video". Symmetric to Separate audio.
+- **Ripple move** toolbar toggle: dragging shifts every later
+  same-track clip by the same delta. Independent of magnetic mode.
+- **Theme colors** for xfade overlap shading (RGBA) and waveform
+  strips (RGB), editable in Settings > Appearance.
+
+### Fixed
+- **Audio import duration** was stuck at the 3000 ms fallback. The
+  clip's ``source_duration_ms`` now mirrors the media item's real
+  length; the probe handler tightens the cap for clips dropped
+  before the probe finished.
+- **Trim grow** past the shrink point was blocked by the same
+  fallback. Growing now caps at the true source duration.
+- **Right-trim visual drift**: the timeline rendered the clip at
+  ``drag.current_ms`` instead of the clip's real start, so growing
+  the right edge looked like a body drag. Now uses the live
+  ``start_time_ms``.
+- **Trim edge detection** used the live pointer position, which is
+  already past the 8 px zone by the time ``drag_started()`` fires.
+  Now uses ``press_origin()``.
+- **Xfade duration change** dropped the transition and shifted the
+  clip right. ``SetTransitionDurationCommand`` looked for a
+  predecessor using the already-shifted start position; now uses
+  the natural start.
+- **Progress bar** for background jobs was invisible in the docked
+  layout. ``show_jobs_bar`` is now called from ``show_editor_dock``
+  too.
+- **Indeterminate progress** on BG removal: the bar stayed at 0%
+  until frame 25 of 72. Now shows a pulse from the ``Started`` event.
+
+### Changed
+- ``PROGRESS_STRIDE`` for background removal 25 to 5. Adds a
+  ``frame i/N`` trace line per stride.
+
 ## [0.7.0-beta.1] — 2026-10-01
 
 First beta of the 0.7 line. A UI polish pass (design tokens,
