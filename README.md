@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.8.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.2-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -22,7 +22,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.8.1-win64-setup.exe`.
+1. Run `CapRust-0.8.2-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -364,7 +364,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
-| **0.8.1** | 2026-10-02 | CBR bitrate honored on Advanced export, JobRunner path refresh, thumbnail regeneration after cache clear, bg-removal mask path validation. |
+| **0.8.2** | 2026-10-02 | Audio tail playback past video EOF, playhead no longer freezes at video end, waveform scroll at 4x+ zoom, BG removal usable in debug builds. |
+| 0.8.1 | 2026-10-02 | CBR bitrate honored on Advanced export, JobRunner path refresh, thumbnail regeneration after cache clear, bg-removal mask path validation. |
 | 0.8.0 | 2026-10-02 | Trim/transition/theme fixes, waveform display, reattach audio, ripple move, per-track audio processing. |
 | 0.7.0-beta.1 | 2026-10-01 | **First beta.** Windows installer, crash handler, UI polish pass (design tokens, widget library, start-screen redesign). |
 | 0.6.0-alpha.1 | 2026-09-30 | Settings export/import + cloud-folder sync, user-selectable font, captions motion + effects parity. |
