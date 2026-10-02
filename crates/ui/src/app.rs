@@ -638,10 +638,7 @@ impl CapRustApp {
             text_overlay_drag: None,
             pending_hash: 0,
             pending_respawn_at: None,
-            job_runner: JobRunner::new(
-                ffmpeg_status.ffmpeg.clone().map(std::path::PathBuf::from),
-                ffmpeg_status.ffprobe.clone().map(std::path::PathBuf::from),
-            ),
+            job_runner: JobRunner::new(),
         }
     }
 
@@ -3307,6 +3304,11 @@ impl CapRustApp {
             let _ = self.job_runner.tx.send(crate::media_jobs::Job::Waveform {
                 media_id: id,
                 path: std::path::PathBuf::from(&path),
+                ffmpeg: self
+                    .ffmpeg_status
+                    .ffmpeg
+                    .clone()
+                    .map(std::path::PathBuf::from),
             });
             enqueued += 1;
         }
@@ -5900,7 +5902,17 @@ impl CapRustApp {
             if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
                 tracing::info!("enqueueing probe for {}", item.path);
                 let item_clone = item.clone();
-                self.job_runner.enqueue(&item_clone);
+                self.job_runner.enqueue(
+                    &item_clone,
+                    self.ffmpeg_status
+                        .ffmpeg
+                        .clone()
+                        .map(std::path::PathBuf::from),
+                    self.ffmpeg_status
+                        .ffprobe
+                        .clone()
+                        .map(std::path::PathBuf::from),
+                );
             }
         }
 
@@ -7347,7 +7359,17 @@ impl CapRustApp {
                 caprust_core::cache::thumbnail_path(std::path::Path::new(&proj_path), item.id);
             if !jpg.is_file() {
                 let item_clone = item.clone();
-                self.job_runner.enqueue(&item_clone);
+                self.job_runner.enqueue(
+                    &item_clone,
+                    self.ffmpeg_status
+                        .ffmpeg
+                        .clone()
+                        .map(std::path::PathBuf::from),
+                    self.ffmpeg_status
+                        .ffprobe
+                        .clone()
+                        .map(std::path::PathBuf::from),
+                );
                 count += 1;
             }
         }

@@ -11,11 +11,17 @@ pub enum Job {
         media_id: uuid::Uuid,
         path: PathBuf,
         kind: MediaKind,
+        ffmpeg: Option<PathBuf>,
+        ffprobe: Option<PathBuf>,
     },
     /// Extract a waveform peak cache for a media item that carries
     /// audio. Writes to a temp .bin; the drain handler copies it
     /// into the project cache once project_path is known.
-    Waveform { media_id: uuid::Uuid, path: PathBuf },
+    Waveform {
+        media_id: uuid::Uuid,
+        path: PathBuf,
+        ffmpeg: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug)]
@@ -42,7 +48,7 @@ pub struct JobRunner {
 }
 
 impl JobRunner {
-    pub fn new(ffmpeg: Option<PathBuf>, ffprobe: Option<PathBuf>) -> Self {
+    pub fn new() -> Self {
         let (tx, rx_job) = channel::<Job>();
         let (tx_result, rx) = channel::<JobResult>();
 
@@ -53,6 +59,8 @@ impl JobRunner {
                         media_id,
                         path,
                         kind,
+                        ffmpeg,
+                        ffprobe,
                     } => {
                         tracing::info!("job: Probe {} ({:?})", path.display(), kind);
                         // 1) probe
@@ -104,7 +112,11 @@ impl JobRunner {
                             }
                         }
                     }
-                    Job::Waveform { media_id, path } => {
+                    Job::Waveform {
+                        media_id,
+                        path,
+                        ffmpeg,
+                    } => {
                         let Some(ffmpeg) = &ffmpeg else {
                             continue;
                         };
@@ -148,13 +160,23 @@ impl JobRunner {
 
         Self { tx, rx }
     }
+}
 
+impl Default for JobRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl JobRunner {
     /// Kick off a probe+thumbnail+waveform job for a media item.
-    pub fn enqueue(&self, item: &MediaItem) {
+    pub fn enqueue(&self, item: &MediaItem, ffmpeg: Option<PathBuf>, ffprobe: Option<PathBuf>) {
         let _ = self.tx.send(Job::Probe {
             media_id: item.id,
             path: PathBuf::from(&item.path),
             kind: item.kind,
+            ffmpeg: ffmpeg.clone(),
+            ffprobe,
         });
         // Waveform for anything that carries audio: Audio files and
         // Video (which may have an embedded audio stream). Images do
@@ -164,6 +186,7 @@ impl JobRunner {
             let _ = self.tx.send(Job::Waveform {
                 media_id: item.id,
                 path: PathBuf::from(&item.path),
+                ffmpeg,
             });
         }
     }
@@ -171,13 +194,14 @@ impl JobRunner {
     /// Enqueue only a waveform job (no probe, no thumbnail). Used
     /// for backfilling older projects whose media items were
     /// imported before the waveform pipeline existed.
-    pub fn enqueue_waveform(&self, item: &MediaItem) {
+    pub fn enqueue_waveform(&self, item: &MediaItem, ffmpeg: Option<PathBuf>) {
         if !matches!(item.kind, MediaKind::Audio | MediaKind::Video) {
             return;
         }
         let _ = self.tx.send(Job::Waveform {
             media_id: item.id,
             path: PathBuf::from(&item.path),
+            ffmpeg,
         });
     }
 
