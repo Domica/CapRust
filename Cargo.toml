@@ -64,3 +64,20 @@ strip = true
 opt-level = "z"
 lto = true
 codegen-units = 1
+
+# tract-onnx inference is 10-50x slower in debug because the
+# tract-linalg SIMD kernels are compiled without optimizations. This
+# makes BG removal unusable from `cargo run` (see issue #3). Opt just
+# these three crates at level 3 so debug builds are usable without
+# slowing down the rest of the workspace (which stays at opt-level 0).
+#
+# Note: this does NOT apply to the release profile; release already
+# optimizes everything with opt-level = "z".
+[profile.dev.package.tract-onnx]
+opt-level = 3
+
+[profile.dev.package.tract-linalg]
+opt-level = 3
+
+[profile.dev.package.tract-core]
+opt-level = 3

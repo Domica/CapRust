@@ -2859,12 +2859,20 @@ pub fn plan_from_project(
         overall_max
     };
 
-    let total_duration_sec = video_duration_sec.max(
-        text_clips
-            .iter()
-            .map(|c| c.timeline_start_sec + c.duration_sec)
-            .fold(0.0_f64, f64::max),
-    );
+    // The plan output must span video, text, AND audio. Audio-only
+    // tails (music longer than the last video clip) otherwise get cut
+    // off: ffmpeg writes PCM only up to total_duration_sec, the audio
+    // player hits EOF, and the tail goes silent even though the
+    // playhead keeps advancing on the wall clock.
+    let audio_end_sec = audio_clips
+        .iter()
+        .map(|c| c.timeline_start_sec + c.duration_sec)
+        .fold(0.0_f64, f64::max);
+    let text_end_sec = text_clips
+        .iter()
+        .map(|c| c.timeline_start_sec + c.duration_sec)
+        .fold(0.0_f64, f64::max);
+    let total_duration_sec = video_duration_sec.max(audio_end_sec).max(text_end_sec);
 
     let has_audio = !audio_clips.is_empty();
 

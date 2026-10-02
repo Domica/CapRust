@@ -3996,7 +3996,6 @@ impl CapRustApp {
                                     if let Some(peaks) = self.waveform_peaks_for(media_id) {
                                         let bar_w = 2.0_f32;
                                         let n_bars = ((clip_rect.width() / bar_w) as usize).max(1);
-                                        let stride = (peaks.len() / n_bars).max(1);
                                         let center_y = clip_rect.center().y;
                                         let amp = clip_rect.height() * 0.35;
                                         let wf = theme_snapshot.waveform_color();
@@ -4009,10 +4008,33 @@ impl CapRustApp {
                                                 200,
                                             ),
                                         );
+                                        // The peaks span the whole clip. When the
+                                        // clip is wider than the viewport we must
+                                        // start drawing at the peak index that
+                                        // corresponds to `clip_rect.left()`, and
+                                        // stop at the one for `clip_rect.right()`,
+                                        // so the waveform slides with the scroll
+                                        // instead of being glued to the viewport.
+                                        let clip_full_left = lane_rect.left() - scroll_x
+                                            + start_ms as f32 * px_per_ms;
+                                        let clip_full_width = (dur_ms as f32 * px_per_ms).max(1.0);
+                                        let left_off = clip_rect.left() - clip_full_left;
+                                        let right_off = clip_rect.right() - clip_full_left;
+                                        let start_frac =
+                                            (left_off / clip_full_width).clamp(0.0, 1.0);
+                                        let end_frac =
+                                            (right_off / clip_full_width).clamp(0.0, 1.0);
+                                        let start_idx =
+                                            (peaks.len() as f32 * start_frac) as usize;
+                                        let end_idx =
+                                            ((peaks.len() as f32 * end_frac).ceil() as usize)
+                                                .min(peaks.len());
+                                        let visible = end_idx.saturating_sub(start_idx).max(1);
+                                        let stride = (visible / n_bars).max(1);
                                         let clip = ui.painter().with_clip_rect(clip_rect);
-                                        let mut i = 0usize;
+                                        let mut i = start_idx;
                                         let mut x = clip_rect.left();
-                                        while i < peaks.len() && x < clip_rect.right() {
+                                        while i < end_idx && x < clip_rect.right() {
                                             let v = peaks[i];
                                             let h = v * amp;
                                             if h >= 0.5 {
@@ -6390,57 +6412,48 @@ impl CapRustApp {
                             );
                         }
                     }
-                    // Advance playhead — audio-master when audio is
-                    // running, wall-clock fallback otherwise (§21).
-                    let wall_ms = self
-                        .playback_started_at
-                        .map(|t0| self.playback_started_ms + t0.elapsed().as_millis() as u64)
-                        .unwrap_or(self.playhead_ms);
-
-                    // Playhead source: the wall clock is the
-                    // reference; the audio sample counter only serves
-                    // to SLOW US DOWN when audio is falling behind.
-                    //
-                    // Why not let audio lead: on Windows WASAPI the
-                    // cpal callback can fire slightly more often than
-                    // the nominal rate. Over 60 s we measured a
-                    // steady +19 ms/s error, i.e. the sample counter
-                    // ran ~1.9% fast. That produced a +1157 ms
-                    // playhead-ahead-of-wall over one minute, which
-                    // is a real, visible desync (video led audio).
-                    //
-                    // Capping at wall_ms eliminates that class of
-                    // drift entirely: if audio is late we freeze the
-                    // playhead (correct), if audio is early we ignore
-                    // it (correct). Sample counter accuracy no longer
-                    // matters for absolute position, only for the
-                    // relative "is audio behind" signal.
-                    let (new_ph, src_tag) = match self.audio_player.as_ref() {
-                        Some(ap) => {
-                            let audio_ms = self.playback_started_ms
-                                + ap.playhead_ms().saturating_sub(self.audio_baseline_ms);
-                            if audio_ms < wall_ms {
-                                (audio_ms, "audio")
-                            } else {
-                                (wall_ms, "wall")
-                            }
-                        }
-                        None => (wall_ms, "wall"),
-                    };
-
-                    let underruns = self.audio_player.as_ref().map_or(0, |ap| ap.underruns());
-                    tracing::debug!(
-                        "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={} underruns={}",
-                        new_ph,
-                        self.audio_player.as_ref().map(|ap| ap.playhead_ms()),
-                        wall_ms,
-                        new_ph as i64 - wall_ms as i64,
-                        src_tag,
-                        underruns
-                    );
-
-                    self.playhead_ms = new_ph;
                 }
+            }
+
+            // Advance playhead every frame while playing, regardless
+            // of whether a preview frame arrived. The video renderer
+            // EOFs when the last video clip ends, but audio may run
+            // longer (m4a tail); without this, the playhead freezes
+            // at video end and the timeline stops scrolling while
+            // cpal keeps playing. (§21: never accumulate dt;
+            // anchor is wall-clock, audio sample counter only slows
+            // us down when audio is behind.)
+            if self.play_anchor_set {
+                let wall_ms = self
+                    .playback_started_at
+                    .map(|t0| self.playback_started_ms + t0.elapsed().as_millis() as u64)
+                    .unwrap_or(self.playhead_ms);
+
+                let (new_ph, src_tag) = match self.audio_player.as_ref() {
+                    Some(ap) => {
+                        let audio_ms = self.playback_started_ms
+                            + ap.playhead_ms().saturating_sub(self.audio_baseline_ms);
+                        if audio_ms < wall_ms {
+                            (audio_ms, "audio")
+                        } else {
+                            (wall_ms, "wall")
+                        }
+                    }
+                    None => (wall_ms, "wall"),
+                };
+
+                let underruns = self.audio_player.as_ref().map_or(0, |ap| ap.underruns());
+                tracing::debug!(
+                    "sync: playhead={}ms audio={:?}ms wall={}ms drift={}ms src={} underruns={}",
+                    new_ph,
+                    self.audio_player.as_ref().map(|ap| ap.playhead_ms()),
+                    wall_ms,
+                    new_ph as i64 - wall_ms as i64,
+                    src_tag,
+                    underruns
+                );
+
+                self.playhead_ms = new_ph;
             }
 
             ctx.request_repaint();

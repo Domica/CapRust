@@ -67,6 +67,14 @@ impl BackgroundRemover {
             .into_runnable()
             .map_err(|e| anyhow!("build runnable plan: {e:?}"))?;
         tracing::info!("background_removal: loaded {}", model_path.display());
+        if cfg!(debug_assertions) {
+            tracing::warn!(
+                "background_removal: running under a debug build. \
+                 tract-onnx is opt-level 3 here (see Cargo.toml [profile.dev.package]), \
+                 but other crates are not; expect slower inference than release. \
+                 Use `cargo build --release` for full-speed BG removal."
+            );
+        }
         Ok(Self { model })
     }
 
