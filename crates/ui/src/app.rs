@@ -3302,6 +3302,14 @@ impl CapRustApp {
                 }
                 continue;
             }
+            // Cache file missing. Clear the stale flag so the UI treats
+            // this item as pending again (thumbnail / waveform strip
+            // draws nothing while `*_done == false`).
+            if done {
+                if let Some(m) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+                    m.waveform_done = false;
+                }
+            }
             let _ = self.job_runner.tx.send(crate::media_jobs::Job::Waveform {
                 media_id: id,
                 path: std::path::PathBuf::from(&path),
@@ -7352,18 +7360,35 @@ impl CapRustApp {
             tracing::warn!("regen skipped: ffmpeg/ffprobe not detected");
             return;
         }
+        // Snapshot the candidate items first: the loop body may reset
+        // `thumb_done` on the same vector, and holding an immutable
+        // borrow across that mutation trips the borrow checker.
+        let items: Vec<(uuid::Uuid, bool, caprust_core::MediaItem)> = self
+            .project
+            .media
+            .items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i.kind,
+                    caprust_core::MediaKind::Video | caprust_core::MediaKind::Image
+                )
+            })
+            .map(|i| (i.id, i.thumb_done, i.clone()))
+            .collect();
+
         let mut count = 0usize;
-        for item in &self.project.media.items {
-            if !matches!(
-                item.kind,
-                caprust_core::MediaKind::Video | caprust_core::MediaKind::Image
-            ) {
-                continue;
-            }
-            let jpg =
-                caprust_core::cache::thumbnail_path(std::path::Path::new(&proj_path), item.id);
+        for (id, was_done, item_clone) in items {
+            let jpg = caprust_core::cache::thumbnail_path(std::path::Path::new(&proj_path), id);
             if !jpg.is_file() {
-                let item_clone = item.clone();
+                // Cache was cleared (or the project moved machines).
+                // Clear the stale flag so any consumer that gates on
+                // `thumb_done` sees the item as pending again.
+                if was_done {
+                    if let Some(m) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+                        m.thumb_done = false;
+                    }
+                }
                 self.job_runner.enqueue(
                     &item_clone,
                     self.ffmpeg_status
@@ -8126,9 +8151,9 @@ impl eframe::App for CapRustApp {
             (self.project.project_path.clone(), thumbs_ready.is_empty())
         {
             for media_id in thumbs_ready {
-                if self.clip_textures.contains_key(&media_id) {
-                    continue;
-                }
+                // Always reload: the on-disk file was just (re)written.
+                // The old TextureHandle would show stale bytes after a
+                // cache clear / regen cycle.
                 let jpg =
                     caprust_core::cache::thumbnail_path(std::path::Path::new(&proj_path), media_id);
                 if let Ok(bytes) = std::fs::read(&jpg) {
