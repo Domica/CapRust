@@ -42,3 +42,6 @@ patch_*.py
 # Installer build output (staging + compiled setups)
 installer/dist/
 installer/staging/
+
+# local debug logs
+*.log

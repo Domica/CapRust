@@ -29,6 +29,7 @@ pub fn decode_frame_rgba(
     let mut child = Command::new(ffmpeg)
         .args(["-v", "error"])
         .args(["-ss", &format!("{at_sec:.3}")])
+        .args(["-protocol_whitelist", "file"])
         .arg("-i")
         .arg(input)
         .args(["-an", "-sn", "-dn"])

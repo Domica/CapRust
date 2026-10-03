@@ -46,6 +46,7 @@ pub fn probe(ffprobe: &Path, input: &Path) -> Result<MediaProbe> {
             "-show_format",
             "-show_streams",
         ])
+        .args(["-protocol_whitelist", "file", "-i"])
         .arg(input)
         .output()
         .with_context(|| format!("spawn ffprobe on {}", input.display()))?;

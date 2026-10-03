@@ -57,6 +57,7 @@ impl FrameStream {
             .args(["-v", "error"])
             .args(["-re"])
             .args(["-ss", &format!("{at_sec:.3}")])
+            .args(["-protocol_whitelist", "file"])
             .arg("-i")
             .arg(input)
             .args(["-an", "-sn", "-dn"])

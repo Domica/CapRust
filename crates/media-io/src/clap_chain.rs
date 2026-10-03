@@ -169,6 +169,17 @@ impl ClapChain {
                 tracing::debug!("CLAP: skipping bypassed plugin {}", d.name);
                 continue;
             }
+            // The path comes from the (untrusted) project file; loading
+            // it is native code execution.
+            if !crate::clap_host::is_trusted_plugin_path(&d.path) {
+                tracing::warn!(
+                    "CLAP: refusing {} ({}): {} is not in a plugin scan directory",
+                    d.name,
+                    d.plugin_id,
+                    d.path.display(),
+                );
+                continue;
+            }
             match LoadedPlugin::load(d, sample_rate, block_frames) {
                 Ok(p) => {
                     tracing::info!(

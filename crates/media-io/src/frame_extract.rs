@@ -89,6 +89,8 @@ pub fn extract_rgb_frames(
         args.push("-ss".into());
         args.push(format!("{t_start_sec:.6}"));
     }
+    args.push("-protocol_whitelist".into());
+    args.push("file".into());
     args.push("-i".into());
     args.push(input.to_string_lossy().into_owned());
     args.push("-t".into());

@@ -20,6 +20,7 @@ pub fn extract_jpeg(
     let status = Command::new(ffmpeg)
         .args(["-y", "-v", "error"])
         .args(["-ss", &format!("{at_sec}")])
+        .args(["-protocol_whitelist", "file"])
         .arg("-i")
         .arg(input)
         .args(["-frames:v", "1", "-vf", &format!("scale={width}:-1")])

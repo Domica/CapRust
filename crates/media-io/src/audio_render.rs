@@ -169,6 +169,8 @@ pub fn spawn_audio_render(
     // path so the ffmpeg_index values in the filtergraph resolve.
     // Images do not contribute audio, so no -loop is needed here.
     for inp in &plan.inputs {
+        args.push("-protocol_whitelist".into());
+        args.push("file".into());
         args.push("-i".into());
         args.push(inp.path.to_string_lossy().to_string());
     }

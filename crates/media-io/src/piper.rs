@@ -69,6 +69,25 @@ impl PiperPlatform {
         }
     }
 
+    /// Expected SHA-256 of the archive for `PIPER_RELEASE_TAG`.
+    pub fn archive_sha256(self) -> Option<&'static str> {
+        match self {
+            Self::LinuxX86_64 => {
+                Some("a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992")
+            }
+            Self::WindowsX64 => {
+                Some("f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea")
+            }
+            Self::MacosAarch64 => {
+                Some("6b1eb03b3735946cb35216e063e7eebcc33a6bbf5dd96ec0217959bf1cdcb0cc")
+            }
+            Self::MacosX64 => {
+                Some("ced85c0a3df13945b1e623b878a48fdc2854d5c485b4b67f62857cf551deaf8b")
+            }
+            Self::Unsupported => None,
+        }
+    }
+
     /// Executable name inside the extracted `piper/` directory.
     pub fn exe_name(self) -> Option<&'static str> {
         match self {
@@ -120,6 +139,15 @@ pub fn ensure_binary(models_dir: &Path) -> Result<PathBuf> {
     std::io::copy(&mut reader, &mut out).context("copy archive")?;
     out.sync_all().context("fsync archive")?;
     drop(out);
+
+    // Verify before extracting or ever executing anything from it.
+    let expected = platform
+        .archive_sha256()
+        .ok_or_else(|| anyhow!("no pinned checksum for {platform:?}"))?;
+    if let Err(e) = caprust_core::models::download::verify_sha256_file(&archive_path, expected) {
+        let _ = std::fs::remove_file(&archive_path);
+        return Err(e.context("piper archive failed verification"));
+    }
 
     // Extract in a temp subdir so we don't have to reason about existing
     // files inside piper_dir. The archives contain a top-level `piper/`
