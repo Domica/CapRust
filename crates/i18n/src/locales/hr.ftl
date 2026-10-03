@@ -517,6 +517,7 @@ translate-toast-failed = Prijevod nije uspio:
 
 set-tab-translation = Prijevod
 set-translation-hint = Koristi se kod prijevoda titlova iz kontekstnog izbornika na timelineu.
+set-translation-privacy = Tekst titlova šalje se usluzi MyMemory (mymemory.translated.net), trećoj strani, kada prevodite. Kontakt email ispod, ako je postavljen, šalje se zajedno s njim.
 set-translation-source = Izvor
 set-translation-target = Odredište
 set-translation-email = Kontakt email

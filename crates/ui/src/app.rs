@@ -7929,8 +7929,8 @@ impl CapRustApp {
     }
 
     /// Load AppSettings from a user-chosen JSON file and replace the
-    /// current one. Re-detects ffmpeg because ffmpeg_path / models_dir
-    /// may have changed. Language is picked up on the next update()
+    /// current one, except the ffmpeg/ffprobe paths, which stay local.
+    /// Re-detects ffmpeg because models_dir may have changed. Language is picked up on the next update()
     /// via caprust_i18n::set_current_lang, theme is separate storage
     /// and untouched.
     fn handle_settings_import(&mut self) {
@@ -7944,7 +7944,7 @@ impl CapRustApp {
 
         match caprust_core::settings::AppSettings::import_from_file(&path) {
             Ok(new_settings) => {
-                self.settings = new_settings;
+                self.settings.replace_from_untrusted(new_settings);
                 self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
                 tracing::info!("settings imported from {}", path.display());
                 self.toast(tr("toast-settings-imported"));
@@ -7986,7 +7986,7 @@ impl CapRustApp {
                     if ui.button(tr("sync-prompt-load")).clicked() {
                         match caprust_core::settings::AppSettings::load_sync_file(&path) {
                             Ok((loaded, loaded_stamp)) => {
-                                self.settings = loaded;
+                                self.settings.replace_from_untrusted(loaded);
                                 self.settings.last_synced_at = Some(loaded_stamp);
                                 self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
                                 self.settings_sync_prompt = None;

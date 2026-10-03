@@ -517,6 +517,7 @@ translate-toast-failed = Translation failed:
 
 set-tab-translation = Translation
 set-translation-hint = Used when you translate captions from the timeline context menu.
+set-translation-privacy = Caption text is sent to MyMemory (mymemory.translated.net), a third-party service, when you translate. The contact email below, if set, is sent with it.
 set-translation-source = Source
 set-translation-target = Target
 set-translation-email = Contact email

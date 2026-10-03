@@ -259,6 +259,16 @@ impl AppSettings {
         Ok((file.settings, file.exported_at))
     }
 
+    /// Replace `self` with settings loaded from an untrusted file (a
+    /// backup import or the sync folder), keeping this machine's
+    /// executable paths. `ffmpeg_path` / `ffprobe_path` name binaries
+    /// we spawn, so a settings file must not be able to choose them.
+    pub fn replace_from_untrusted(&mut self, mut loaded: AppSettings) {
+        loaded.ffmpeg_path = self.ffmpeg_path.take();
+        loaded.ffprobe_path = self.ffprobe_path.take();
+        *self = loaded;
+    }
+
     /// Read a settings snapshot from `path`.
     ///
     /// Returns a fresh `AppSettings`; the caller decides whether to
@@ -398,6 +408,25 @@ mod tests {
         assert_eq!(a.docked_panels, b.docked_panels);
 
         let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn untrusted_replace_keeps_local_executable_paths() {
+        let mut local = AppSettings {
+            ffmpeg_path: Some("/usr/bin/ffmpeg".into()),
+            ffprobe_path: None,
+            ..Default::default()
+        };
+        let loaded = AppSettings {
+            language: "hr".into(),
+            ffmpeg_path: Some("\\\\evil\\share\\ffmpeg.exe".into()),
+            ffprobe_path: Some("/tmp/evil".into()),
+            ..Default::default()
+        };
+        local.replace_from_untrusted(loaded);
+        assert_eq!(local.language, "hr", "other settings are taken");
+        assert_eq!(local.ffmpeg_path.as_deref(), Some("/usr/bin/ffmpeg"));
+        assert_eq!(local.ffprobe_path, None);
     }
 
     #[test]

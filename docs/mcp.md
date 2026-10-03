@@ -33,6 +33,13 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json`:
 Restart Claude Desktop. A copy-paste template lives in
 `docs/claude_desktop_config.json`.
 
+## Trust model
+
+The server runs with your user's permissions and trusts its client.
+`add_media` registers any file your account can read, and
+`save_project` writes to the project path. Only connect clients you
+trust, and do not point a client at a project file you did not create.
+
 ## Tools
 
 Read-only: `get_project_summary`, `list_tracks`, `list_clips`,
