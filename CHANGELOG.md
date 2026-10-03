@@ -2,6 +2,52 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.8.3] - 2026-10-03
+
+Security hardening pass on top of 0.8.2, contributed by @llvm-x86.
+Addresses items 1-5, 7, and the update-URL part of item 6 from #1.
+
+### Security
+- **CLAP plugin path trust** (clap_host). A ``.clap`` path from a
+  project file was dlopen'd unchecked. Now the path must canonicalize
+  inside a scanned plugin directory, have a ``.clap`` extension, and
+  sit directly under that directory.
+- **Piper archive verification** (piper). Per-platform SHA-256 is
+  pinned and verified before extraction; the archive is deleted on
+  failure.
+- **Model registry distrust** (models). ``merge_missing_defaults``
+  now drops unknown entries from project files and always takes
+  ``kind``, ``url`` and ``sha256`` from the built-in defaults,
+  keeping only user state (enabled, status, progress).
+- **SHA-256 pinning for every downloadable model** (models,
+  download). Downloads now verify against a pinned hash before
+  ``.part`` is renamed into place. Streaming hash (64 KB buffer)
+  instead of reading the file into RAM.
+- **FFmpeg archive verification** (ffmpeg). The BtbN archive is
+  checked against the release's published ``checksums.sha256``
+  before extraction. Same-origin, so it catches corruption and
+  archive tampering, not a compromised release.
+- **``-protocol_whitelist file`` on all media-path inputs**
+  (media-io, 11 call sites). Blocks ``http:``, ``concat:`` and
+  similar on user-supplied media paths. ``-i -`` (stdin, mask
+  writer) and lavfi sources are deliberately exempt.
+- **Update checker URL allowlist** (update_checker). Only release
+  URLs under this repo are handed to the OS opener; everything else
+  is rejected.
+- **YuNet URL moved to the official source**. Pinned to opencv_zoo
+  at commit ``c97242c`` with a verified SHA-256 (matches the Git
+  LFS pointer and the file served from ``media.githubusercontent.com``),
+  replacing the unofficial ``casual02`` mirror.
+
+### Changed
+- Removed four committed ``*.log`` files; ``.gitignore`` already
+  ignored them but they predated the rule.
+
+### Open
+- Item 6 from #1 (MCP ``add_media`` path trust, settings-import
+  ``ffmpeg_path``, MyMemory disclosure) is tracked in #13 and not
+  addressed here.
+
 ## [0.8.2] - 2026-10-02
 
 Audio tail and waveform fixes on top of 0.8.1.
