@@ -2,6 +2,29 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.8.4] - 2026-10-03
+
+Security follow-up, contributed by @llvm-x86 (PR #13). Closes #1.
+
+### Security
+- **Settings import and sync-folder load no longer replace local
+  executable paths** (settings, app). A settings backup or a file in
+  the sync folder could previously set ``ffmpeg_path`` /
+  ``ffprobe_path`` to any executable, which the app then runs.
+  ``AppSettings::replace_from_untrusted`` takes everything from the
+  file except those two paths, which stay machine-local. The sync
+  path still requires an explicit user click, so nothing loads
+  automatically.
+- **MyMemory disclosure** (i18n, settings). The Translation settings
+  now state that caption text, and the contact email if set, is sent
+  to MyMemory, a third-party service. The request is HTTPS; the
+  concern was that a third party receives the text.
+- **MCP trust model documented** (docs/mcp.md). ``add_media`` accepts
+  any path the user's account can read, by design. The server trusts
+  its client, so restricting individual tools would not add
+  meaningful protection. A short Trust model section states this
+  explicitly.
+
 ## [0.8.3] - 2026-10-03
 
 Security hardening pass on top of 0.8.2, contributed by @llvm-x86.
