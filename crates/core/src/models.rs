@@ -215,10 +215,8 @@ impl Default for ModelRegistry {
                 ),
                 // --- Face detection (auto-reframe, Phase P2) ---
                 // YuNet, ~230 KB, Apache 2.0, fixed 320x320 input.
-                // SHA-256 is pinned below (hash of the current file on
-                // the mirror; not independently compared to opencv_zoo).
-                // TODO(directives §11): verify against the official
-                // opencv_zoo source, or migrate to another detector.
+                // SHA-256 is pinned below and equals the Git LFS oid in
+                // opencv_zoo's own pointer file for this exact file.
                 ModelInfo::new(
                     "yunet-face",
                     "YuNet face detector",
@@ -237,11 +235,10 @@ impl Default for ModelRegistry {
                     // 640=640 != 320"). 2022mar is the fixed-input
                     // version and parses cleanly.
                     //
-                    // The opencv_zoo repo removed 2022mar from its
-                    // main branch; a Hugging Face mirror hosts it.
-                    // If this mirror ever disappears, fall back to
-                    // SCRFD or another fixed-input face detector.
-                    "https://huggingface.co/casual02/model-resnet_custom_v3/resolve/main/face_detection_yunet_2022mar.onnx",
+                    // The opencv_zoo main branch no longer has 2022mar, so
+                    // this URL pins the last commit that did
+                    // (c97242c); the official repo is the source.
+                    "https://media.githubusercontent.com/media/opencv/opencv_zoo/c97242ce7f2a554e288b50eabd9f5df957e78801/models/face_detection_yunet/face_detection_yunet_2022mar.onnx",
                 )
                 .with_sha256(
                     "50ef07f702a31741ca46a4c0d947773b64143b9362780237bf0d427d6c79bab7",
