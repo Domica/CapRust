@@ -772,6 +772,12 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
     });
 
     ui.add_space(space::L);
+    ui.label(
+        egui::RichText::new(tr("set-translation-privacy"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::XS);
     ui.label(egui::RichText::new(tr("set-translation-email")).strong());
     ui.label(
         egui::RichText::new(tr("set-translation-email-hint"))
