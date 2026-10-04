@@ -73,6 +73,8 @@ pub struct VideoClip {
     /// maskedmerge over a black base. Ignored when auto_reframe is
     /// also set (see resolve_bg_removal_path for the reason).
     pub bg_removal_path: Option<std::path::PathBuf>,
+    /// Chroma key (green screen). None = no keying.
+    pub chroma_key: Option<caprust_core::clip::ChromaKeySpec>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -392,6 +394,13 @@ impl RenderPlan {
                 num = self.fps_num,
                 den = self.fps_den,
             ));
+            if let Some(ck) = &c.chroma_key {
+                fg.push_str(&format!(
+                    ",format=yuva420p,chromakey=color=0x{:02X}{:02X}{:02X}:similarity={:.3}:blend={:.3}",
+                    ck.key_color[0], ck.key_color[1], ck.key_color[2],
+                    ck.similarity, ck.blend,
+                ));
+            }
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
             // Effects like zoom_pulse and shake use
@@ -2346,6 +2355,7 @@ pub fn plan_from_project(
                             .clamp(0.1, 3.0),
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
+                        chroma_key: c.chroma_key,
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -2384,6 +2394,7 @@ pub fn plan_from_project(
                             .clamp(0.1, 3.0),
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
+                        chroma_key: c.chroma_key,
                     });
                 }
                 ClipType::TextOverlay {
@@ -3088,6 +3099,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                chroma_key: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3233,7 +3245,7 @@ mod tests {
         assert!(escape_movie_path(p).is_none());
     }
 
-    fn single_video_plan_with_mask(mask: Option<&str>) -> RenderPlan {
+    pub(crate) fn single_video_plan_with_mask(mask: Option<&str>) -> RenderPlan {
         RenderPlan {
             inputs: vec![InputSpec {
                 ffmpeg_index: 0,
@@ -3259,6 +3271,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: mask.map(std::path::PathBuf::from),
+                chroma_key: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3507,6 +3520,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                chroma_key: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3557,6 +3571,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                chroma_key: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3773,6 +3788,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                chroma_key: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3898,5 +3914,48 @@ mod text_motion_render_tests {
         };
         let opts = build_text_effect_opts(Some(&e));
         assert!(opts.contains("/0.050"), "clamped period: {opts}");
+    }
+}
+
+#[cfg(test)]
+mod chroma_key_filter_tests {
+    use super::*;
+    use crate::export_graph::tests::single_video_plan_with_mask;
+    use caprust_core::clip::ChromaKeySpec;
+
+    fn plan_with_chroma(spec: Option<ChromaKeySpec>) -> RenderPlan {
+        let mut plan = single_video_plan_with_mask(None);
+        plan.video_clips[0].chroma_key = spec;
+        plan
+    }
+
+    #[test]
+    fn chroma_key_emits_filter() {
+        let spec = ChromaKeySpec {
+            key_color: [0, 255, 0],
+            similarity: 0.15,
+            blend: 0.05,
+            spill_suppression: false,
+        };
+        let plan = plan_with_chroma(Some(spec));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("chromakey=color=0x00FF00:similarity=0.150:blend=0.050"),
+            "expected chromakey stage: {fg}"
+        );
+        assert!(
+            fg.contains("format=yuva420p"),
+            "chromakey must be preceded by format=yuva420p: {fg}"
+        );
+    }
+
+    #[test]
+    fn no_chroma_key_no_filter() {
+        let plan = plan_with_chroma(None);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            !fg.contains("chromakey="),
+            "plain plan must not emit chromakey: {fg}"
+        );
     }
 }

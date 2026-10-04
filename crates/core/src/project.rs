@@ -254,6 +254,16 @@ impl ProjectState {
                 k.cy_norm.to_bits().hash(&mut h);
             }
             c.bg_removal.hash(&mut h);
+            match &c.chroma_key {
+                None => 0u8.hash(&mut h),
+                Some(ck) => {
+                    1u8.hash(&mut h);
+                    ck.key_color.hash(&mut h);
+                    ck.similarity.to_bits().hash(&mut h);
+                    ck.blend.to_bits().hash(&mut h);
+                    ck.spill_suppression.hash(&mut h);
+                }
+            }
             // NOTE: c.name and c.media_id intentionally excluded.
         }
 
@@ -918,5 +928,25 @@ mod normalize_xfade_tests {
 
         assert_eq!(s.clips[1].transition_in, None);
         assert_eq!(s.clips[1].applied_xfade_shift_ms, 0);
+    }
+}
+
+#[cfg(test)]
+mod chroma_key_hash_tests {
+    use super::*;
+    use crate::clip::{ChromaKeySpec, Clip};
+
+    #[test]
+    fn render_hash_changes_on_chroma_key_edit() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("test.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+        let h1 = p.render_hash();
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+            c.chroma_key = Some(ChromaKeySpec::default());
+        }
+        let h2 = p.render_hash();
+        assert_ne!(h1, h2, "chroma_key must invalidate the render hash");
     }
 }
