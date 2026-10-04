@@ -119,6 +119,38 @@ pub enum CaptionPosition {
     #[default]
     Bottom,
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ChromaKeySpec {
+    #[serde(default = "default_chroma_key_color")]
+    pub key_color: [u8; 3],
+    #[serde(default = "default_chroma_similarity")]
+    pub similarity: f32,
+    #[serde(default = "default_chroma_blend")]
+    pub blend: f32,
+    #[serde(default)]
+    pub spill_suppression: bool,
+}
+
+fn default_chroma_key_color() -> [u8; 3] {
+    [0, 255, 0]
+}
+fn default_chroma_similarity() -> f32 {
+    0.10
+}
+fn default_chroma_blend() -> f32 {
+    0.10
+}
+
+impl Default for ChromaKeySpec {
+    fn default() -> Self {
+        Self {
+            key_color: default_chroma_key_color(),
+            similarity: default_chroma_similarity(),
+            blend: default_chroma_blend(),
+            spill_suppression: false,
+        }
+    }
+}
 
 /// One word inside a caption segment, with its own timing. Used by
 /// the P1 progressive-reveal render path: the segment is expanded into
@@ -424,6 +456,8 @@ pub struct Clip {
     /// the P3d render graph as an `alphamerge` input.
     #[serde(default)]
     pub bg_removal: Option<String>,
+    #[serde(default)]
+    pub chroma_key: Option<ChromaKeySpec>,
 }
 
 impl Clip {
@@ -464,6 +498,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            chroma_key: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -506,6 +541,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            chroma_key: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -548,6 +584,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -594,6 +631,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -646,6 +684,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -696,6 +735,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -839,5 +879,37 @@ mod text_motion_tests {
         let s = serde_json::to_string(&ct).unwrap();
         let back: ClipType = serde_json::from_str(&s).unwrap();
         assert_eq!(back, ct);
+    }
+}
+
+#[cfg(test)]
+mod chroma_key_tests {
+    use super::*;
+
+    #[test]
+    fn defaults() {
+        let s = ChromaKeySpec::default();
+        assert_eq!(s.key_color, [0, 255, 0]);
+        assert!((s.similarity - 0.10).abs() < 1e-6);
+        assert!((s.blend - 0.10).abs() < 1e-6);
+    }
+
+    #[test]
+    fn serde_round_trip() {
+        let s = ChromaKeySpec {
+            key_color: [10, 200, 30],
+            similarity: 0.25,
+            blend: 0.05,
+            spill_suppression: false,
+        };
+        let j = serde_json::to_string(&s).unwrap();
+        let back: ChromaKeySpec = serde_json::from_str(&j).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn empty_object_is_defaults() {
+        let back: ChromaKeySpec = serde_json::from_str("{}").unwrap();
+        assert_eq!(back.key_color, [0, 255, 0]);
     }
 }

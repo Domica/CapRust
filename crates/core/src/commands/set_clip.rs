@@ -1,6 +1,6 @@
 //! Generic command to edit any subset of clip fields.
 
-use crate::clip::Clip;
+use crate::clip::{ChromaKeySpec, Clip};
 use crate::commands::Command;
 use crate::project::ProjectState;
 use anyhow::Result;
@@ -50,6 +50,7 @@ pub struct SetClipCommand {
     /// Some(Some(p)) = set the mask path. Some(None) = clear it.
     /// None = leave untouched.
     pub bg_removal: Option<Option<String>>,
+    pub chroma_key: Option<Option<ChromaKeySpec>>,
     /// Some(v) = replace the in-transition easing. None = leave
     /// untouched. Easing is only meaningful when `transition_in` is
     /// `Some("fade")`; on other transitions the field is stored but
@@ -92,6 +93,7 @@ impl SetClipCommand {
             speed_range: None,
             auto_reframe: None,
             bg_removal: None,
+            chroma_key: None,
             transition_in_easing: None,
             transition_out_easing: None,
             transition_duration_ms: None,
@@ -233,6 +235,10 @@ impl SetClipCommand {
         self.bg_removal = Some(v);
         self
     }
+    pub fn chroma_key(mut self, v: Option<ChromaKeySpec>) -> Self {
+        self.chroma_key = Some(v);
+        self
+    }
     pub fn speed_range(mut self, v: crate::clip::SpeedRampRange) -> Self {
         self.speed_range = Some(v);
         self
@@ -336,6 +342,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.bg_removal.clone() {
             c.bg_removal = v;
+        }
+        if let Some(v) = self.chroma_key {
+            c.chroma_key = v;
         }
         if let Some(v) = self.transition_in_easing {
             c.transition_in_easing = v;
@@ -551,5 +560,66 @@ mod text_motion_cmd_tests {
         });
         stack.execute(Box::new(cmd), &mut p).unwrap();
         assert_eq!(p.clips[0].clip_type, before.clip_type);
+    }
+}
+
+#[cfg(test)]
+mod chroma_key_cmd_tests {
+    use super::*;
+    use crate::clip::{ChromaKeySpec, Clip};
+    use crate::commands::UndoStack;
+    use crate::project::ProjectState;
+
+    #[test]
+    fn set_clear_undo() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+        let spec = ChromaKeySpec::default();
+        let mut stack = UndoStack::default();
+        stack
+            .execute(
+                Box::new(SetClipCommand::new(id).chroma_key(Some(spec))),
+                &mut p,
+            )
+            .unwrap();
+        assert_eq!(
+            p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
+            Some(spec)
+        );
+        stack
+            .execute(Box::new(SetClipCommand::new(id).chroma_key(None)), &mut p)
+            .unwrap();
+        assert!(p
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .chroma_key
+            .is_none());
+        stack.undo(&mut p).unwrap();
+        assert_eq!(
+            p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
+            Some(spec)
+        );
+    }
+
+    #[test]
+    fn unset_is_noop() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let spec = ChromaKeySpec::default();
+        clip.chroma_key = Some(spec);
+        let id = clip.id;
+        p.add_clip(clip);
+        let mut stack = UndoStack::default();
+        stack
+            .execute(Box::new(SetClipCommand::new(id)), &mut p)
+            .unwrap();
+        assert_eq!(
+            p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
+            Some(spec)
+        );
     }
 }
