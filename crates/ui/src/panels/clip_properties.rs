@@ -97,6 +97,9 @@ pub enum PendingEdit {
     AudioDenoise(bool),
     /// Apply speech-tuned dynamic range compression on this clip.
     AudioVoiceBoost(bool),
+    /// Set or clear the chroma-key spec on the selected clip.
+    /// Some(spec) = enable keying, None = disable.
+    ChromaKey(Option<caprust_core::clip::ChromaKeySpec>),
     /// Set or clear the auto-duck sidechain control clip.
     DuckAgainst(Option<Uuid>),
     /// Replace the auto-reframe keypoints on the clip. Empty Vec =
@@ -980,6 +983,86 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         ui.add_space(space::M_PLUS);
         ui.separator();
     } // !is_text_overlay
+    ui.add_space(space::M_PLUS);
+    ui.separator();
+
+    // --- Chroma key (green screen) ---
+    ui.label(egui::RichText::new(tr("props-video-chroma-key")).strong());
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("props-chroma-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    let chroma_supported = matches!(
+        clip.clip_type,
+        ClipType::Video { .. } | ClipType::Image { .. }
+    );
+    if !chroma_supported {
+        ui.label(
+            egui::RichText::new(tr("props-chroma-not-video"))
+                .small()
+                .color(egui::Color32::from_gray(140)),
+        );
+    } else if let Some(ck) = clip.chroma_key {
+        let mut next = ck;
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(tr("props-chroma-color"));
+            let mut rgb = [
+                next.key_color[0] as f32 / 255.0,
+                next.key_color[1] as f32 / 255.0,
+                next.key_color[2] as f32 / 255.0,
+            ];
+            if ui.color_edit_button_rgb(&mut rgb).changed() {
+                next.key_color = [
+                    (rgb[0] * 255.0).round() as u8,
+                    (rgb[1] * 255.0).round() as u8,
+                    (rgb[2] * 255.0).round() as u8,
+                ];
+                changed = true;
+            }
+        });
+        ui.label(tr("props-chroma-similarity"));
+        if ui
+            .add(egui::Slider::new(&mut next.similarity, 0.01..=0.5).fixed_decimals(3))
+            .changed()
+        {
+            changed = true;
+        }
+        ui.label(tr("props-chroma-blend"));
+        if ui
+            .add(egui::Slider::new(&mut next.blend, 0.0..=0.3).fixed_decimals(3))
+            .changed()
+        {
+            changed = true;
+        }
+        if changed {
+            state.pending.push(PendingEdit::ChromaKey(Some(next)));
+        }
+        if ui.button(tr("props-chroma-clear")).clicked() {
+            state.pending.push(PendingEdit::ChromaKey(None));
+        }
+    } else {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(tr("props-chroma-none"))
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(tr("props-chroma-enable"))
+                    .on_hover_text(tr("props-chroma-enable-hint"))
+                    .clicked()
+                {
+                    state.pending.push(PendingEdit::ChromaKey(Some(
+                        caprust_core::clip::ChromaKeySpec::default(),
+                    )));
+                }
+            });
+        });
+    }
 
     // --- Speed ---
     ui.label(egui::RichText::new(tr("props-video-speed")).strong());

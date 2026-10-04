@@ -5856,6 +5856,11 @@ impl CapRustApp {
                                 .bg_removal(None);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::ChromaKey(v) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .chroma_key(v);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::AutoReframe(kps) => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .auto_reframe(kps);
