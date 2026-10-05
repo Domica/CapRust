@@ -837,27 +837,39 @@ impl RenderPlan {
             // per frame with eval=frame.
             let gain = if !c.volume_keyframes.is_empty() {
                 let kfs = &c.volume_keyframes;
+                // Convert dB to a linear multiplier via pow(10, dB/20).
+                //
+                // The `volume=EXPRdB:eval=frame` form is evaluated once
+                // at filter-config time in every ffmpeg build we tested;
+                // with 2+ keyframes the expression references `t` which
+                // is NAN at init, so the pipeline blocks. Keep the whole
+                // expression in the linear-multiplier domain instead.
+                let lin = |db: f32| format!("pow(10\\,{:.4}/20)", db);
                 let expr = if kfs.len() == 1 {
-                    format!("{:.4}", kfs[0].gain_db)
+                    lin(kfs[0].gain_db)
                 } else {
-                    let mut e = format!("{:.4}", kfs.last().unwrap().gain_db);
+                    let mut e = lin(kfs.last().unwrap().gain_db);
                     for i in (0..kfs.len() - 1).rev() {
                         let a = &kfs[i];
                         let b = &kfs[i + 1];
                         let ta = a.t_ms as f64 / 1000.0;
                         let tb = b.t_ms as f64 / 1000.0;
                         let dt = (tb - ta).max(0.0001);
-                        let seg = format!(
+                        // Linear-in-dB ramp, wrapped in the linear
+                        // conversion so every branch of the outer if
+                        // returns a linear multiplier.
+                        let seg_db = format!(
                             "{:.4}+({:.4})*(t-{:.4})/{:.4}",
                             a.gain_db,
                             b.gain_db - a.gain_db,
                             ta,
                             dt
                         );
+                        let seg = format!("pow(10\\,({})/20)", seg_db);
                         e = format!(
-                            "if(lt(t\\,{ta:.4})\\,{ga:.4}\\,if(lt(t\\,{tb:.4})\\,{seg}\\,{e}))",
+                            "if(lt(t\\,{ta:.4})\\,{ga}\\,if(lt(t\\,{tb:.4})\\,{seg}\\,{e}))",
                             ta = ta,
-                            ga = a.gain_db,
+                            ga = lin(a.gain_db),
                             tb = tb,
                             seg = seg,
                             e = e,
@@ -865,7 +877,7 @@ impl RenderPlan {
                     }
                     e
                 };
-                format!(",volume={expr}dB:eval=frame")
+                format!(",volume={expr}:eval=frame")
             } else if c.gain_db.abs() < 0.001 {
                 String::new()
             } else {
