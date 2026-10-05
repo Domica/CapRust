@@ -238,6 +238,7 @@ impl ProjectState {
             c.flip_v.hash(&mut h);
             c.volume_db.to_bits().hash(&mut h);
             c.source_duration_ms.hash(&mut h);
+            c.source_offset_ms.hash(&mut h);
             c.audio_detached.hash(&mut h);
             c.fade_in_ms.hash(&mut h);
             c.fade_out_ms.hash(&mut h);

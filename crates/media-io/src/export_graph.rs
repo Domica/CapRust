@@ -2321,16 +2321,21 @@ pub fn plan_from_project(
                     if do_input_seek && clip_end <= seek_sec {
                         continue;
                     }
+                    // Where in the source file this clip's visible
+                    // window begins. Set by split-at-playhead; 0 for
+                    // fresh clips. It is a SOURCE-time offset, so it
+                    // stacks with the input seek below.
+                    let base_ss = c.source_offset_ms as f64 / 1000.0;
                     let (input_ss_sec, visible_dur, new_start) = if do_input_seek {
                         if clip_start >= seek_sec {
-                            (0.0, dur_sec, clip_start - seek_sec)
+                            (base_ss, dur_sec, clip_start - seek_sec)
                         } else {
-                            let offset = (seek_sec - clip_start) * c.speed as f64;
+                            let offset = base_ss + (seek_sec - clip_start) * c.speed as f64;
                             let visible = clip_end - seek_sec;
                             (offset, visible, 0.0)
                         }
                     } else {
-                        (0.0, dur_sec, clip_start)
+                        (base_ss, dur_sec, clip_start)
                     };
                     // Drop clips reduced to less than 100 ms by the
                     // seek. ffmpeg's trim can produce zero frames for
@@ -2754,16 +2759,19 @@ pub fn plan_from_project(
         if do_input_seek && clip_end <= seek_sec {
             continue;
         }
+        // Source-time offset stacks with the seek offset. See the
+        // video arm above for the reason.
+        let base_ss = c.source_offset_ms as f64 / 1000.0;
         let (input_ss_sec, visible_dur, new_start) = if do_input_seek {
             if clip_start >= seek_sec {
-                (0.0, dur_sec, clip_start - seek_sec)
+                (base_ss, dur_sec, clip_start - seek_sec)
             } else {
-                let offset = (seek_sec - clip_start) * c.speed as f64;
+                let offset = base_ss + (seek_sec - clip_start) * c.speed as f64;
                 let visible = clip_end - seek_sec;
                 (offset, visible, 0.0)
             }
         } else {
-            (0.0, dur_sec, clip_start)
+            (base_ss, dur_sec, clip_start)
         };
         if do_input_seek && visible_dur < 0.1 {
             continue;
@@ -4096,5 +4104,60 @@ mod audio_stream_guard_tests {
         let mut clip = Clip::new_video("x.mp4", 0, 0, 1000);
         clip.media_id = Some(mid);
         assert!(video_clip_has_audio_source(&p, &clip));
+    }
+}
+
+#[cfg(test)]
+mod source_offset_tests {
+    use super::*;
+    use caprust_core::clip::Clip;
+
+    #[test]
+    fn audio_clip_source_offset_reaches_input_spec() {
+        let tmp = std::env::temp_dir().join("caprust-src-offset-test");
+        std::fs::create_dir_all(&tmp).ok();
+        let path = tmp.join("a.mp3");
+        std::fs::write(&path, b"x").unwrap();
+
+        let mut p = caprust_core::ProjectState::default();
+        let mut clip = Clip::new_audio(&path.to_string_lossy(), 0, 0, 5000);
+        clip.source_offset_ms = 2500;
+        p.add_clip(clip);
+
+        // Need a video track to satisfy plan_from_project's
+        // guard against empty video/text.
+        let vpath = tmp.join("v.mp4");
+        std::fs::write(&vpath, b"x").unwrap();
+        let mut v = Clip::new_video(&vpath.to_string_lossy(), 1, 0, 1000);
+        v.media_id = None;
+        p.add_clip(v);
+
+        let plan = plan_from_project(
+            &p,
+            320,
+            240,
+            30,
+            1,
+            23,
+            RateMode::Vbr,
+            8000,
+            "veryfast",
+            std::path::Path::new("."),
+            0,
+            caprust_core::project::VideoEncoder::H264Cpu,
+        )
+        .expect("plan built");
+        // The audio clip's input spec should have source_start_sec ~= 2.5
+        let input = plan
+            .inputs
+            .iter()
+            .find(|i| i.path.to_string_lossy().ends_with("a.mp3"))
+            .expect("audio input present");
+        assert!(
+            (input.source_start_sec - 2.5).abs() < 0.01,
+            "expected 2.5s offset, got {}",
+            input.source_start_sec,
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

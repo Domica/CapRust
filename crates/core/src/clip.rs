@@ -349,6 +349,14 @@ pub struct Clip {
     /// Original source length. 0 = unlimited (images, text).
     #[serde(default)]
     pub source_duration_ms: u64,
+    /// Offset into the source file where this clip's visible
+    /// window begins, in source milliseconds. 0 = clip starts at
+    /// the beginning of the file. Split-at-playhead sets this on
+    /// the right half so the second half plays from where the
+    /// first stopped, not from 0. `#[serde(default)]` keeps old
+    /// projects loading (everything defaulted to 0).
+    #[serde(default)]
+    pub source_offset_ms: u64,
     /// Links back to the MediaItem this clip was created from, if any.
     #[serde(default)]
     pub media_id: Option<Uuid>,
@@ -487,6 +495,7 @@ impl Clip {
             detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
+            source_offset_ms: 0,
             fade_out_ms: 0,
             audio_normalize: false,
             audio_denoise: false,
@@ -530,6 +539,7 @@ impl Clip {
             detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
+            source_offset_ms: 0,
             fade_out_ms: 0,
             audio_normalize: false,
             audio_denoise: false,
@@ -573,6 +583,7 @@ impl Clip {
             detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
+            source_offset_ms: 0,
             fade_out_ms: 0,
             audio_normalize: false,
             audio_denoise: false,
@@ -620,6 +631,7 @@ impl Clip {
             detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
+            source_offset_ms: 0,
             fade_out_ms: 0,
             audio_normalize: false,
             audio_denoise: false,
@@ -673,6 +685,7 @@ impl Clip {
             detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
+            source_offset_ms: 0,
             fade_out_ms: 0,
             audio_normalize: false,
             audio_denoise: false,
@@ -724,6 +737,7 @@ impl Clip {
             detached_audio_clip_id: None,
             name: None,
             fade_in_ms: 0,
+            source_offset_ms: 0,
             fade_out_ms: 0,
             audio_normalize: false,
             audio_denoise: false,

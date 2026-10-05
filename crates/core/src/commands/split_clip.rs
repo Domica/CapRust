@@ -48,11 +48,15 @@ impl Command for SplitClipCommand {
         // Shrink left
         state.clips[pos].duration_ms = left_dur;
 
-        // Create right
+        // Create right. The right half must NOT restart at source 0;
+        // it continues from where the left half stopped. The offset is
+        // in source-time (independent of speed; speed is applied at
+        // render time on top of the source window).
         let mut right = original.clone();
         right.id = Uuid::new_v4();
         right.start_time_ms = self.at_ms;
         right.duration_ms = right_dur;
+        right.source_offset_ms = original.source_offset_ms + left_dur;
         self.new_id = Some(right.id);
         state.clips.push(right);
 
@@ -73,5 +77,50 @@ impl Command for SplitClipCommand {
 
     fn description(&self) -> String {
         format!("Split at {}ms", self.at_ms)
+    }
+}
+
+#[cfg(test)]
+mod offset_tests {
+    use super::*;
+    use crate::commands::UndoStack;
+
+    #[test]
+    fn right_half_continues_from_left_offset() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_audio("a.mp3", 0, 0, 5000);
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let mut stack = UndoStack::default();
+        stack
+            .execute(Box::new(SplitClipCommand::new(id, 2000)), &mut p)
+            .unwrap();
+
+        let left = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(left.duration_ms, 2000);
+        assert_eq!(left.source_offset_ms, 0);
+
+        let right = p.clips.iter().find(|c| c.id != id).unwrap();
+        assert_eq!(right.start_time_ms, 2000);
+        assert_eq!(right.duration_ms, 3000);
+        assert_eq!(right.source_offset_ms, 2000, "right continues at 2s");
+    }
+
+    #[test]
+    fn split_of_already_offset_clip_stacks() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_audio("a.mp3", 0, 0, 5000);
+        clip.source_offset_ms = 1000;
+        let id = clip.id;
+        p.add_clip(clip);
+
+        let mut stack = UndoStack::default();
+        stack
+            .execute(Box::new(SplitClipCommand::new(id, 2000)), &mut p)
+            .unwrap();
+
+        let right = p.clips.iter().find(|c| c.id != id).unwrap();
+        assert_eq!(right.source_offset_ms, 1000 + 2000);
     }
 }
