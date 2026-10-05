@@ -210,6 +210,50 @@ impl ProjectState {
         }
     }
 
+    /// Re-link clips whose `media_id` points at a media item that
+    /// no longer exists in the media library. Matching is by the
+    /// clip's source `path` against `media.items[].path`. Returns
+    /// the number of clips that were fixed.
+    ///
+    /// The common scenario: the media library was re-imported (or
+    /// re-scanned on a different machine) and the media items got
+    /// fresh UUIDs. Timeline clips still reference the old ids,
+    /// so thumbnails / waveforms / probes look up cache files by
+    /// an id that no longer exists and silently fail.
+    ///
+    /// Runs on project load, before regen/backfill jobs, so those
+    /// passes see the corrected references.
+    pub fn relink_orphan_media_refs(&mut self) -> usize {
+        use std::collections::{HashMap, HashSet};
+        let existing: HashSet<uuid::Uuid> = self.media.items.iter().map(|m| m.id).collect();
+        let by_path: HashMap<&str, uuid::Uuid> = self
+            .media
+            .items
+            .iter()
+            .map(|m| (m.path.as_str(), m.id))
+            .collect();
+        let mut fixed = 0usize;
+        for clip in &mut self.clips {
+            let Some(mid) = clip.media_id else { continue };
+            if existing.contains(&mid) {
+                continue;
+            }
+            let src = match &clip.clip_type {
+                crate::clip::ClipType::Video { path, .. }
+                | crate::clip::ClipType::Audio { path, .. }
+                | crate::clip::ClipType::Image { path, .. } => Some(path.as_str()),
+                _ => None,
+            };
+            let Some(src) = src else { continue };
+            let Some(&new_id) = by_path.get(src) else {
+                continue;
+            };
+            clip.media_id = Some(new_id);
+            fixed += 1;
+        }
+        fixed
+    }
+
     pub fn render_hash(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -999,5 +1043,60 @@ mod multicam_hash_tests {
             .unwrap();
         let h2 = p.render_hash();
         assert_ne!(h1, h2, "active angle change must invalidate preview");
+    }
+}
+
+#[cfg(test)]
+mod relink_orphan_tests {
+    use super::*;
+    use crate::clip::Clip;
+    use crate::media::{MediaItem, MediaKind};
+
+    #[test]
+    fn relinks_clip_by_path_when_media_id_is_stale() {
+        let mut p = ProjectState::default();
+        let path = "F:/x/clip.mp4";
+        // Media item has one UUID...
+        let item = MediaItem::new(path, MediaKind::Video, 0);
+        let real_id = item.id;
+        p.media.items.push(item);
+        // ...but the clip points at a different (stale) one.
+        let mut clip = Clip::new_video(path, 0, 0, 1000);
+        clip.media_id = Some(uuid::Uuid::new_v4());
+        let clip_id = clip.id;
+        p.add_clip(clip);
+
+        let fixed = p.relink_orphan_media_refs();
+        assert_eq!(fixed, 1);
+        let c = p.clips.iter().find(|c| c.id == clip_id).unwrap();
+        assert_eq!(c.media_id, Some(real_id));
+    }
+
+    #[test]
+    fn leaves_valid_media_ids_alone() {
+        let mut p = ProjectState::default();
+        let path = "F:/x/clip.mp4";
+        let item = MediaItem::new(path, MediaKind::Video, 0);
+        let real_id = item.id;
+        p.media.items.push(item);
+        let mut clip = Clip::new_video(path, 0, 0, 1000);
+        clip.media_id = Some(real_id);
+        p.add_clip(clip);
+
+        let fixed = p.relink_orphan_media_refs();
+        assert_eq!(fixed, 0);
+    }
+
+    #[test]
+    fn drops_nothing_if_path_not_in_library() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("F:/missing.mp4", 0, 0, 1000);
+        let ghost = uuid::Uuid::new_v4();
+        clip.media_id = Some(ghost);
+        p.add_clip(clip);
+
+        let fixed = p.relink_orphan_media_refs();
+        assert_eq!(fixed, 0);
+        assert_eq!(p.clips[0].media_id, Some(ghost));
     }
 }

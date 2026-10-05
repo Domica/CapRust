@@ -714,6 +714,15 @@ impl CapRustApp {
                 // that inserted a placeholder whenever a model was picked
                 // in the prompt.
                 self.cleanup_phantom_captions();
+                // Re-link clips whose media_id no longer resolves
+                // to a media item (media library was re-imported →
+                // new UUIDs). Runs before regen/backfill so those
+                // passes see the corrected state and don't skip
+                // cache files that exist under different ids.
+                let relinked = self.project.relink_orphan_media_refs();
+                if relinked > 0 {
+                    tracing::info!("load: relinked {relinked} orphan media refs by path");
+                }
                 // Auto-regenerate thumbnails for older projects or after cache clear.
                 self.regen_missing_thumbnails();
                 // Reset audio cache and start the initial render.
@@ -756,6 +765,36 @@ impl CapRustApp {
     /// `<project>/cache/waveforms/<id>.bin` on first use. Returns
     /// None when the cache file does not exist yet (job in flight
     /// or item has no audio).
+    /// Return the JPEG thumbnail for `media_id` as an egui texture,
+    /// loading it from `<project>/cache/thumbnails/<id>.jpg` on
+    /// first use. Same lazy-load pattern as `waveform_peaks_for`.
+    ///
+    /// Returns `None` when the cache file is not on disk yet
+    /// (thumbnail job in flight, or the media has no thumbnail).
+    fn thumbnail_texture_for(
+        &mut self,
+        ctx: &egui::Context,
+        media_id: uuid::Uuid,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(tex) = self.clip_textures.get(&media_id) {
+            return Some(tex.clone());
+        }
+        let proj_path = self.project.project_path.as_deref()?;
+        let path = caprust_core::cache::thumbnail_path(std::path::Path::new(proj_path), media_id);
+        let bytes = std::fs::read(&path).ok()?;
+        let img = image::load_from_memory(&bytes).ok()?;
+        let rgba = img.to_rgba8();
+        let size = [rgba.width() as usize, rgba.height() as usize];
+        let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+        let handle = ctx.load_texture(
+            format!("clip-{media_id}"),
+            color_img,
+            egui::TextureOptions::LINEAR,
+        );
+        self.clip_textures.insert(media_id, handle.clone());
+        Some(handle)
+    }
+
     fn waveform_peaks_for(&mut self, media_id: uuid::Uuid) -> Option<std::sync::Arc<Vec<f32>>> {
         if let Some(p) = self.waveform_cache.get(&media_id) {
             return Some(p.clone());
@@ -3902,13 +3941,24 @@ impl CapRustApp {
                             }
 
                             // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
-                            let thumb_tex = self
-                                .project
-                                .clips
-                                .iter()
-                                .find(|cc| cc.id == clip_id)
-                                .and_then(|cc| cc.media_id)
-                                .and_then(|mid| self.clip_textures.get(&mid).cloned());
+                            let thumb_tex = {
+                                // Lazy-load from <project>/cache/thumbnails/<id>.jpg
+                                // on first use. ThumbDone only fires during the
+                                // session that generated the JPEG; on a fresh
+                                // project open the file is on disk but the
+                                // texture handle is not in `clip_textures` yet.
+                                // Same pattern as `waveform_peaks_for`.
+                                let mid_opt = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|cc| cc.id == clip_id)
+                                    .and_then(|cc| cc.media_id);
+                                match mid_opt {
+                                    Some(mid) => self.thumbnail_texture_for(ctx, mid),
+                                    None => None,
+                                }
+                            };
 
                             if let Some(tex) = thumb_tex {
                                 let tex_size = tex.size_vec2();
