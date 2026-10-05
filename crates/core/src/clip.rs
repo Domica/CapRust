@@ -323,6 +323,45 @@ pub struct VolumeKeyframe {
     pub gain_db: f32,
 }
 
+/// Sample the volume automation curve at `t_ms` (ms relative to clip
+/// start). Linearly interpolates in the **dB domain** between sorted
+/// keyframes, matching the ffmpeg expression built in
+/// `media-io::export_graph` (`seg_db = a + (b-a)*(t-ta)/dt` then
+/// `pow(10, db/20)`). Do NOT interpolate in the linear gain domain:
+/// the two produce different curves and the timeline overlay would
+/// drift from the exported audio.
+///
+/// Clamps to the first / last keyframe when `t_ms` is outside the
+/// keyframe range. Returns `default_db` when `keyframes` is empty.
+pub fn sample_volume_at(keyframes: &[VolumeKeyframe], default_db: f32, t_ms: i64) -> f32 {
+    if keyframes.is_empty() {
+        return default_db;
+    }
+    let mut sorted: Vec<&VolumeKeyframe> = keyframes.iter().collect();
+    sorted.sort_by_key(|k| k.t_ms);
+    let first = sorted[0];
+    let last = sorted[sorted.len() - 1];
+    if t_ms <= first.t_ms as i64 {
+        return first.gain_db;
+    }
+    if t_ms >= last.t_ms as i64 {
+        return last.gain_db;
+    }
+    for w in sorted.windows(2) {
+        let a = w[0];
+        let b = w[1];
+        if t_ms >= a.t_ms as i64 && t_ms <= b.t_ms as i64 {
+            let span = (b.t_ms - a.t_ms) as f32;
+            if span <= 0.0 {
+                return b.gain_db;
+            }
+            let t = (t_ms - a.t_ms as i64) as f32 / span;
+            return a.gain_db + (b.gain_db - a.gain_db) * t;
+        }
+    }
+    default_db
+}
+
 /// One auto-reframe keypoint: at time `t_ms` relative to the clip
 /// start, the crop rectangle should be centered at
 /// `(cx_norm, cy_norm)`, expressed as a fraction of the available

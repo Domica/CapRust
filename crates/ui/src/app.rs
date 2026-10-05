@@ -166,6 +166,14 @@ impl BackgroundJob {
     }
 }
 
+/// Cached audio-envelope overlay data for one clip.
+/// Invalidated when `ProjectState::render_hash()` changes.
+pub struct EnvelopeCacheEntry {
+    pub hash: u64,
+    pub samples_db: std::sync::Arc<Vec<f32>>,
+    pub duck_zones: std::sync::Arc<Vec<crate::timeline::DuckZone>>,
+}
+
 pub struct CapRustApp {
     pub mode: AppMode,
     pub project: ProjectState,
@@ -242,6 +250,9 @@ pub struct CapRustApp {
     /// lazily from `<project>/cache/waveforms/<id>.bin` the first
     /// time a clip referencing that item needs to draw.
     pub waveform_cache: std::collections::HashMap<uuid::Uuid, std::sync::Arc<Vec<f32>>>,
+    /// Cached per-clip audio envelope samples + duck zones.
+    /// Keyed by clip id, invalidated when `render_hash()` changes.
+    pub envelope_cache: std::collections::HashMap<uuid::Uuid, EnvelopeCacheEntry>,
     pub last_pointer: Option<egui::Pos2>,
     /// Cached track row geometry from the last frame: (top_y, [(track_idx, height)]).
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
@@ -588,6 +599,7 @@ impl CapRustApp {
             recent,
             recent_thumb_cache: std::collections::HashMap::new(),
             waveform_cache: std::collections::HashMap::new(),
+            envelope_cache: std::collections::HashMap::new(),
             last_pointer: None,
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
@@ -829,6 +841,37 @@ impl CapRustApp {
         let arc = std::sync::Arc::new(peaks);
         self.waveform_cache.insert(media_id, arc.clone());
         Some(arc)
+    }
+
+    /// Return cached envelope samples + duck zones for `clip`.
+    /// Recomputes when `ProjectState::render_hash()` changed since the
+    /// last call. Samples are geometry-independent (fractions of the
+    /// clip duration, not pixels), so scroll / zoom do not invalidate
+    /// the cache — only an actual project mutation does.
+    fn envelope_for(
+        &mut self,
+        clip: &caprust_core::Clip,
+        px_per_ms: f32,
+    ) -> (
+        std::sync::Arc<Vec<f32>>,
+        std::sync::Arc<Vec<crate::timeline::DuckZone>>,
+    ) {
+        let hash = self.project.render_hash();
+        if let Some(entry) = self.envelope_cache.get(&clip.id) {
+            if entry.hash == hash {
+                return (entry.samples_db.clone(), entry.duck_zones.clone());
+            }
+        }
+        let samples = crate::timeline::sample_envelope_db(clip);
+        let zones = crate::timeline::compute_duck_zones(clip, &self.project.clips, px_per_ms);
+        let entry = EnvelopeCacheEntry {
+            hash,
+            samples_db: std::sync::Arc::new(samples),
+            duck_zones: std::sync::Arc::new(zones),
+        };
+        let result = (entry.samples_db.clone(), entry.duck_zones.clone());
+        self.envelope_cache.insert(clip.id, entry);
+        result
     }
 
     fn recent_thumb_texture(
@@ -4326,6 +4369,37 @@ impl CapRustApp {
                                     }
                                 }
                             }
+                            // Audio envelope overlay — volume automation
+                            // polyline + ducking zones. Drawn after the
+                            // waveform + fade curves, before the clip
+                            // label so it sits on top of the waveform
+                            // but under the text. See DIRECTIVES §14,
+                            // issue #14.
+                            if carries_audio {
+                                if let Some(clip_data) = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == clip_id)
+                                    .cloned()
+                                {
+                                    let (samples, zones) =
+                                        self.envelope_for(&clip_data, px_per_ms);
+                                    let line_color = theme_snapshot.waveform_color();
+                                    // Per-zone opacity comes from the DuckZone
+                                    // itself (derived from duck_reduction_db).
+                                    let duck_color = line_color;
+                                    crate::timeline::draw_audio_envelope(
+                                        &p,
+                                        clip_rect,
+                                        &samples,
+                                        &zones,
+                                        line_color,
+                                        duck_color,
+                                    );
+                                }
+                            }
+
                             let (label_full, label_short) = {
                                 let full = self
                                     .project
