@@ -223,16 +223,18 @@ impl ProjectState {
     ///
     /// Runs on project load, before regen/backfill jobs, so those
     /// passes see the corrected references.
-    pub fn relink_orphan_media_refs(&mut self) -> usize {
+    /// Returns `(relinked, created)`.
+    pub fn relink_orphan_media_refs(&mut self) -> (usize, usize) {
         use std::collections::{HashMap, HashSet};
         let existing: HashSet<uuid::Uuid> = self.media.items.iter().map(|m| m.id).collect();
-        let by_path: HashMap<&str, uuid::Uuid> = self
+        let by_path: HashMap<String, uuid::Uuid> = self
             .media
             .items
             .iter()
-            .map(|m| (m.path.as_str(), m.id))
+            .map(|m| (m.path.clone(), m.id))
             .collect();
         let mut fixed = 0usize;
+        let mut created = 0usize;
         for clip in &mut self.clips {
             let Some(mid) = clip.media_id else { continue };
             if existing.contains(&mid) {
@@ -245,13 +247,23 @@ impl ProjectState {
                 _ => None,
             };
             let Some(src) = src else { continue };
-            let Some(&new_id) = by_path.get(src) else {
+            if let Some(&new_id) = by_path.get(src) {
+                clip.media_id = Some(new_id);
+                fixed += 1;
                 continue;
+            }
+            let kind = match &clip.clip_type {
+                crate::clip::ClipType::Video { .. } => crate::media::MediaKind::Video,
+                crate::clip::ClipType::Audio { .. } => crate::media::MediaKind::Audio,
+                crate::clip::ClipType::Image { .. } => crate::media::MediaKind::Image,
+                _ => continue,
             };
+            let new_id = self.media.add(src, kind);
             clip.media_id = Some(new_id);
+            created += 1;
             fixed += 1;
         }
-        fixed
+        (fixed, created)
     }
 
     pub fn render_hash(&self) -> u64 {
@@ -1066,7 +1078,7 @@ mod relink_orphan_tests {
         let clip_id = clip.id;
         p.add_clip(clip);
 
-        let fixed = p.relink_orphan_media_refs();
+        let (fixed, _created) = p.relink_orphan_media_refs();
         assert_eq!(fixed, 1);
         let c = p.clips.iter().find(|c| c.id == clip_id).unwrap();
         assert_eq!(c.media_id, Some(real_id));
@@ -1083,20 +1095,37 @@ mod relink_orphan_tests {
         clip.media_id = Some(real_id);
         p.add_clip(clip);
 
-        let fixed = p.relink_orphan_media_refs();
+        let (fixed, _created) = p.relink_orphan_media_refs();
         assert_eq!(fixed, 0);
     }
 
     #[test]
-    fn drops_nothing_if_path_not_in_library() {
+    fn creates_missing_media_item_from_clip_path() {
         let mut p = ProjectState::default();
         let mut clip = Clip::new_video("F:/missing.mp4", 0, 0, 1000);
         let ghost = uuid::Uuid::new_v4();
         clip.media_id = Some(ghost);
         p.add_clip(clip);
 
-        let fixed = p.relink_orphan_media_refs();
-        assert_eq!(fixed, 0);
-        assert_eq!(p.clips[0].media_id, Some(ghost));
+        let (fixed, created) = p.relink_orphan_media_refs();
+        assert_eq!(fixed, 1);
+        assert_eq!(created, 1);
+        let new_id = p.clips[0].media_id.unwrap();
+        assert_ne!(new_id, ghost);
+        assert!(p.media.items.iter().any(|m| m.id == new_id));
+    }
+
+    #[test]
+    fn is_idempotent_across_repeated_loads() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("F:/missing2.mp4", 0, 0, 1000);
+        clip.media_id = Some(uuid::Uuid::new_v4());
+        p.add_clip(clip);
+
+        let (_, c1) = p.relink_orphan_media_refs();
+        assert_eq!(c1, 1);
+        let (fixed2, created2) = p.relink_orphan_media_refs();
+        assert_eq!(fixed2, 0);
+        assert_eq!(created2, 0);
     }
 }

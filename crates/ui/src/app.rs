@@ -719,9 +719,11 @@ impl CapRustApp {
                 // new UUIDs). Runs before regen/backfill so those
                 // passes see the corrected state and don't skip
                 // cache files that exist under different ids.
-                let relinked = self.project.relink_orphan_media_refs();
-                if relinked > 0 {
-                    tracing::info!("load: relinked {relinked} orphan media refs by path");
+                let (relinked, created) = self.project.relink_orphan_media_refs();
+                if relinked > 0 || created > 0 {
+                    tracing::info!(
+                        "load: relinked {relinked} orphan refs, created {created} missing media"
+                    );
                 }
                 // Auto-regenerate thumbnails for older projects or after cache clear.
                 self.regen_missing_thumbnails();

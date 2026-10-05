@@ -227,10 +227,24 @@ impl JobRunner {
                     // before the probe finished (source_duration_ms = 0)
                     // or that still carry a stale cap from an earlier
                     // probe. Only touches clips that link to this media.
+                    //
+                    // Also extend `duration_ms` for clips that were
+                    // placed with the 3 s placeholder: source_duration_ms
+                    // is still 0 in that state, so we can detect them
+                    // safely. Once a clip has any non-zero source cap
+                    // (either this probe set it, or the user trimmed),
+                    // we leave duration_ms alone.
                     if duration_ms > 0 {
                         for c in project.clips.iter_mut() {
-                            if c.media_id == Some(media_id) && c.source_duration_ms < duration_ms {
+                            if c.media_id != Some(media_id) {
+                                continue;
+                            }
+                            let was_placeholder = c.source_duration_ms == 0;
+                            if c.source_duration_ms < duration_ms {
                                 c.source_duration_ms = duration_ms;
+                            }
+                            if was_placeholder && c.duration_ms < duration_ms {
+                                c.duration_ms = duration_ms;
                             }
                         }
                     }
