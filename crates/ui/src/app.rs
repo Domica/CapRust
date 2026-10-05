@@ -725,6 +725,11 @@ impl CapRustApp {
                         "load: relinked {relinked} orphan refs, created {created} missing media"
                     );
                 }
+                // Probe any item whose probe_done is still false. This
+                // catches the freshly-created items from relink above, and
+                // any audio item that was missed because the older
+                // thumbnail regen pass filters to Video|Image only.
+                self.backfill_missing_probes();
                 // Auto-regenerate thumbnails for older projects or after cache clear.
                 self.regen_missing_thumbnails();
                 // Reset audio cache and start the initial render.
@@ -1317,12 +1322,14 @@ impl CapRustApp {
                             // so this is idempotent.
                             self.regen_missing_thumbnails();
                             self.backfill_waveforms();
+                            self.backfill_missing_probes();
                         }
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-file-regen-thumbs")).clicked() {
                         self.regen_missing_thumbnails();
                         self.backfill_waveforms();
+                        self.backfill_missing_probes();
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-file-settings")).clicked() {
@@ -7867,6 +7874,44 @@ impl CapRustApp {
         }
         if count > 0 {
             tracing::info!("regen: enqueued {count} missing thumbnails");
+        }
+    }
+
+    /// Enqueue probe+thumbnail jobs for every media item whose
+    /// `probe_done` flag is still false. Covers items that were
+    /// auto-created on load by `relink_orphan_media_refs` and any
+    /// item whose probe previously failed. Runs alongside the
+    /// waveform backfill and the thumbnail regen.
+    fn backfill_missing_probes(&mut self) {
+        if !self.ffmpeg_status.is_available() {
+            tracing::warn!("probe backfill skipped: ffmpeg/ffprobe not detected");
+            return;
+        }
+        let items: Vec<caprust_core::MediaItem> = self
+            .project
+            .media
+            .items
+            .iter()
+            .filter(|m| !m.probe_done)
+            .cloned()
+            .collect();
+        let mut count = 0usize;
+        for item in items {
+            self.job_runner.enqueue(
+                &item,
+                self.ffmpeg_status
+                    .ffmpeg
+                    .clone()
+                    .map(std::path::PathBuf::from),
+                self.ffmpeg_status
+                    .ffprobe
+                    .clone()
+                    .map(std::path::PathBuf::from),
+            );
+            count += 1;
+        }
+        if count > 0 {
+            tracing::info!("backfill: enqueued {count} probe jobs");
         }
     }
 
