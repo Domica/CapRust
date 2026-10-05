@@ -83,32 +83,50 @@ pub fn compute_duck_zones(
     }]
 }
 
-/// Sample the clip's volume automation at `ENVELOPE_SAMPLES + 1` evenly
-/// spaced fractions of its duration. Returns dB values.
+/// One point of the volume polyline: `(fraction of clip duration, dB)`.
+pub type EnvelopeSample = (f32, f32);
+
+/// Sample the clip's volume automation as `(fraction of clip duration,
+/// dB)` points: `ENVELOPE_SAMPLES + 1` evenly spaced ones, plus one at
+/// every keyframe inside the clip. The keyframe points are what make the
+/// drawn line exact where the curve bends; on a long clip the even
+/// spacing alone is several seconds wide and steps over short ramps.
 ///
 /// Cache the result and invalidate on `ProjectState::render_hash()`
 /// change. The samples are geometry-independent (fractions, not pixels),
 /// so scroll / zoom do not invalidate the cache.
-pub fn sample_envelope_db(clip: &caprust_core::clip::Clip) -> Vec<f32> {
+pub fn sample_envelope_db(clip: &caprust_core::clip::Clip) -> Vec<EnvelopeSample> {
     let dur = clip.duration_ms as i64;
     let n = ENVELOPE_SAMPLES;
-    let mut out = Vec::with_capacity(n + 1);
-    for i in 0..=n {
-        let frac = i as f64 / n as f64;
-        let t_ms = (frac * dur as f64).round() as i64;
-        let db = caprust_core::clip::sample_volume_at(&clip.volume_keyframes, clip.volume_db, t_ms);
-        out.push(db);
-    }
-    out
+    let mut times: Vec<i64> = (0..=n)
+        .map(|i| (i as f64 / n as f64 * dur as f64).round() as i64)
+        .collect();
+    times.extend(
+        clip.volume_keyframes
+            .iter()
+            .map(|k| k.t_ms as i64)
+            .filter(|&t| t > 0 && t < dur),
+    );
+    times.sort_unstable();
+    times.dedup();
+    times
+        .into_iter()
+        .map(|t_ms| {
+            let db =
+                caprust_core::clip::sample_volume_at(&clip.volume_keyframes, clip.volume_db, t_ms);
+            (t_ms as f32 / dur.max(1) as f32, db)
+        })
+        .collect()
 }
 
 /// Draw the automation polyline and duck zones onto `painter`.
 /// Duck zones are drawn first, then the polyline on top.
-/// `samples_db` must have at least 2 entries (see `sample_envelope_db`).
+/// `samples_db` is `(fraction, dB)` pairs with at least 2 entries (see
+/// `sample_envelope_db`).
 pub fn draw_audio_envelope(
     painter: &egui::Painter,
     rect: egui::Rect,
-    samples_db: &[f32],
+    samples_db: &[EnvelopeSample],
     duck_zones: &[DuckZone],
     line_color: egui::Color32,
     duck_zone_color: egui::Color32,
@@ -133,11 +151,10 @@ pub fn draw_audio_envelope(
     if samples_db.len() < 2 {
         return;
     }
-    let n = samples_db.len();
-    let mut points = Vec::with_capacity(n);
-    for (i, db) in samples_db.iter().enumerate() {
-        let x = rect.left() + (i as f32 / (n - 1) as f32) * rect.width();
-        let norm_y = db_to_normalized_y(clamp_db(*db));
+    let mut points = Vec::with_capacity(samples_db.len());
+    for &(frac, db) in samples_db {
+        let x = rect.left() + frac * rect.width();
+        let norm_y = db_to_normalized_y(clamp_db(db));
         let y = rect.bottom() - norm_y * rect.height();
         points.push(egui::pos2(x, y));
     }
@@ -195,5 +212,103 @@ mod overlay_tests {
     fn clamp_db_bounds() {
         assert_eq!(clamp_db(99.0), 12.0);
         assert_eq!(clamp_db(-99.0), -60.0);
+    }
+
+    fn kf(t_ms: u64, gain_db: f32) -> caprust_core::clip::VolumeKeyframe {
+        caprust_core::clip::VolumeKeyframe { t_ms, gain_db }
+    }
+
+    fn clip_with(dur_ms: u64, kfs: Vec<caprust_core::clip::VolumeKeyframe>) -> caprust_core::Clip {
+        let mut c = caprust_core::Clip::new_audio("a.wav", 0, 0, dur_ms);
+        c.volume_keyframes = kfs;
+        c
+    }
+
+    /// dB the drawn polyline shows at `frac` of the clip.
+    fn drawn_db(samples: &[(f32, f32)], frac: f64) -> f64 {
+        let i = samples
+            .windows(2)
+            .position(|w| frac < w[1].0 as f64)
+            .unwrap_or(samples.len() - 2);
+        let (a, b) = (samples[i], samples[i + 1]);
+        let f = (frac - a.0 as f64) / (b.0 - a.0) as f64;
+        a.1 as f64 + (b.1 - a.1) as f64 * f
+    }
+
+    #[test]
+    fn polyline_follows_the_curve_on_a_long_clip() {
+        // A 3 s dip (1 s down, 1 s hold, 1 s up) in a 10 min clip. The even
+        // samples are ~4.7 s apart: one lands at 103.1 s (before the dip)
+        // and one at 107.8 s (on the way back up), so on their own they
+        // step over the hold at -40 dB.
+        let clip = clip_with(
+            600_000,
+            vec![
+                kf(0, 0.0),
+                kf(105_000, 0.0),
+                kf(106_000, -40.0),
+                kf(107_000, -40.0),
+                kf(108_000, 0.0),
+            ],
+        );
+        let s = sample_envelope_db(&clip);
+        let mut worst = 0.0f64;
+        for t in (0..600_000u64).step_by(250) {
+            let truth =
+                caprust_core::clip::sample_volume_at(&clip.volume_keyframes, 0.0, t as i64) as f64;
+            worst = worst.max((drawn_db(&s, t as f64 / 600_000.0) - truth).abs());
+        }
+        assert!(worst < 0.05, "polyline is off the curve by {worst:.2} dB");
+    }
+
+    #[test]
+    fn every_keyframe_inside_the_clip_is_a_vertex() {
+        let clip = clip_with(10_000, vec![kf(1234, -3.0), kf(5678, 6.0), kf(9001, -20.0)]);
+        let s = sample_envelope_db(&clip);
+        for k in &clip.volume_keyframes {
+            let want = (k.t_ms as f32 / 10_000.0, k.gain_db);
+            assert!(s.contains(&want), "missing vertex {want:?}");
+        }
+    }
+
+    #[test]
+    fn keyframes_at_or_beyond_the_clip_edges_add_no_vertices() {
+        let clip = clip_with(10_000, vec![kf(0, -6.0), kf(10_000, 0.0), kf(50_000, 6.0)]);
+        let s = sample_envelope_db(&clip);
+        assert_eq!(s.len(), ENVELOPE_SAMPLES + 1);
+        assert_eq!(s.first().unwrap().0, 0.0);
+        assert_eq!(s.last().unwrap().0, 1.0);
+    }
+
+    #[test]
+    fn fractions_stay_strictly_increasing_with_unsorted_and_duplicate_keyframes() {
+        // 5000 coincides with the middle even sample (i = 64): it must
+        // not produce a second point at the same x.
+        let clip = clip_with(
+            10_000,
+            vec![
+                kf(9000, -6.0),
+                kf(5000, 0.0),
+                kf(5000, -12.0),
+                kf(2000, 3.0),
+            ],
+        );
+        let s = sample_envelope_db(&clip);
+        assert!(s.windows(2).all(|w| w[0].0 < w[1].0));
+        assert!(s.iter().all(|&(x, db)| x.is_finite() && db.is_finite()));
+    }
+
+    #[test]
+    fn no_keyframes_is_flat_at_the_clip_volume() {
+        let mut clip = clip_with(4000, vec![]);
+        clip.volume_db = -9.0;
+        let s = sample_envelope_db(&clip);
+        assert!(s.len() >= 2 && s.iter().all(|&(_, db)| db == -9.0));
+    }
+
+    #[test]
+    fn zero_length_clip_stays_finite() {
+        let s = sample_envelope_db(&clip_with(0, vec![kf(0, -6.0), kf(500, 0.0)]));
+        assert!(s.iter().all(|&(x, db)| x.is_finite() && db.is_finite()));
     }
 }
