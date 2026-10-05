@@ -30,6 +30,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 /// Minimal ffmpeg lookup: PATH only. Good enough for the example.
 fn which_ffmpeg() -> anyhow::Result<PathBuf> {
     let path = std::env::var_os("PATH").ok_or_else(|| anyhow::anyhow!("PATH not set"))?;
