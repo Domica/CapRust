@@ -31,12 +31,13 @@ pub fn clamp_db(db: f32) -> f32 {
     db.clamp(-60.0, 12.0)
 }
 
-/// Shaded region where ducking applies. Pixel offsets from the clip
-/// rect's left edge.
+/// Shaded region where ducking applies, as fractions (0.0..=1.0) of the
+/// clip's duration. Fractions, not pixels: the cache is keyed on
+/// `render_hash()` only, so nothing zoom-dependent may be stored in it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DuckZone {
-    pub x1_px: f32,
-    pub x2_px: f32,
+    pub start_frac: f32,
+    pub end_frac: f32,
     /// Fill opacity for this zone, 0.0..=1.0. Derived from the clip's
     /// `duck_reduction_db` via `duck_zone_opacity`.
     pub opacity: f32,
@@ -56,7 +57,6 @@ fn duck_zone_opacity(reduction_db: f32) -> f32 {
 pub fn compute_duck_zones(
     clip: &caprust_core::clip::Clip,
     all_clips: &[caprust_core::clip::Clip],
-    px_per_ms: f32,
 ) -> Vec<DuckZone> {
     let Some(control_id) = clip.duck_against else {
         return Vec::new();
@@ -73,12 +73,11 @@ pub fn compute_duck_zones(
     if overlap_start >= overlap_end {
         return Vec::new();
     }
-    let x1 = (overlap_start - clip_start) as f32 * px_per_ms;
-    let x2 = (overlap_end - clip_start) as f32 * px_per_ms;
+    let dur = clip.duration_ms.max(1) as f32;
     let opacity = duck_zone_opacity(clip.duck_reduction_db);
     vec![DuckZone {
-        x1_px: x1,
-        x2_px: x2,
+        start_frac: (overlap_start - clip_start) as f32 / dur,
+        end_frac: (overlap_end - clip_start) as f32 / dur,
         opacity,
     }]
 }
@@ -123,10 +122,16 @@ pub fn sample_envelope_db(clip: &caprust_core::clip::Clip) -> Vec<EnvelopeSample
 /// Duck zones are drawn first, then the polyline on top.
 /// `samples_db` is `(fraction, dB)` pairs with at least 2 entries (see
 /// `sample_envelope_db`).
+///
+/// `rect` is the clip's full (unclipped) rect, so a clip scrolled partly
+/// out of view keeps the overlay aligned with the time axis; `visible` is
+/// the part of it that is actually on screen.
 pub fn draw_audio_envelope(
     painter: &egui::Painter,
     rect: egui::Rect,
+    visible: egui::Rect,
     samples_db: &[EnvelopeSample],
+
     duck_zones: &[DuckZone],
     line_color: egui::Color32,
     duck_zone_color: egui::Color32,
@@ -134,12 +139,12 @@ pub fn draw_audio_envelope(
     if rect.width() < 4.0 || rect.height() < 4.0 {
         return;
     }
-    let clipped = painter.with_clip_rect(rect);
+    let clipped = painter.with_clip_rect(visible);
 
     // Duck zones (behind the polyline).
     for z in duck_zones {
-        let left = rect.left() + z.x1_px;
-        let right = rect.left() + z.x2_px;
+        let left = rect.left() + z.start_frac * rect.width();
+        let right = rect.left() + z.end_frac * rect.width();
         let r = egui::Rect::from_min_max(
             egui::pos2(left, rect.top()),
             egui::pos2(right, rect.bottom()),
@@ -310,5 +315,120 @@ mod overlay_tests {
     fn zero_length_clip_stays_finite() {
         let s = sample_envelope_db(&clip_with(0, vec![kf(0, -6.0), kf(500, 0.0)]));
         assert!(s.iter().all(|&(x, db)| x.is_finite() && db.is_finite()));
+    }
+
+    // ---- #25: fraction-based duck zones + full/visible rect ----
+
+    fn audio(start: u64, dur: u64) -> caprust_core::clip::Clip {
+        caprust_core::clip::Clip::new_audio("a.wav", 0, start, dur)
+    }
+
+    fn ducked_by(
+        ctrl: &caprust_core::clip::Clip,
+        start: u64,
+        dur: u64,
+    ) -> caprust_core::clip::Clip {
+        let mut c = audio(start, dur);
+        c.duck_against = Some(ctrl.id);
+        c.duck_reduction_db = -12.0;
+        c
+    }
+
+    #[test]
+    fn duck_zone_is_a_fraction_of_the_clip() {
+        // Clip spans 1000..3000, control 2000..2500 -> the zone covers
+        // 0.5..0.75 of the clip, whatever the zoom.
+        let ctrl = audio(2000, 500);
+        let clip = ducked_by(&ctrl, 1000, 2000);
+        let zones = compute_duck_zones(&clip, &[clip.clone(), ctrl]);
+        assert_eq!(zones.len(), 1);
+        assert!((zones[0].start_frac - 0.5).abs() < 1e-6);
+        assert!((zones[0].end_frac - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn duck_zone_is_clipped_to_the_clip_span() {
+        // Control starts before and ends after the clip.
+        let ctrl = audio(0, 10_000);
+        let clip = ducked_by(&ctrl, 1000, 2000);
+        let zones = compute_duck_zones(&clip, &[clip.clone(), ctrl]);
+        assert_eq!(zones.len(), 1);
+        assert_eq!((zones[0].start_frac, zones[0].end_frac), (0.0, 1.0));
+    }
+
+    #[test]
+    fn no_duck_zone_without_overlap_or_control() {
+        let ctrl = audio(5000, 1000);
+        let clip = ducked_by(&ctrl, 1000, 2000);
+        assert!(compute_duck_zones(&clip, &[clip.clone(), ctrl.clone()]).is_empty());
+        // Touching edges do not overlap.
+        let touching = audio(3000, 1000);
+        let clip = ducked_by(&touching, 1000, 2000);
+        assert!(compute_duck_zones(&clip, &[clip.clone(), touching]).is_empty());
+        // No `duck_against`, and a `duck_against` that no longer exists.
+        let mut clip = audio(1000, 2000);
+        assert!(compute_duck_zones(&clip, &[clip.clone()]).is_empty());
+        clip.duck_against = Some(ctrl.id);
+        assert!(compute_duck_zones(&clip, &[clip.clone()]).is_empty());
+    }
+
+    /// Shapes `draw_audio_envelope` emits for one frame, no GPU involved.
+    fn draw(
+        rect: egui::Rect,
+        visible: egui::Rect,
+        samples: &[EnvelopeSample],
+        zones: &[DuckZone],
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let ctx = egui::Context::default();
+        ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            draw_audio_envelope(
+                &painter,
+                rect,
+                visible,
+                samples,
+                zones,
+                egui::Color32::WHITE,
+                egui::Color32::WHITE,
+            );
+        })
+        .shapes
+    }
+
+    #[test]
+    fn overlay_stays_anchored_to_the_full_clip_rect_when_scrolled() {
+        // Clip is 1000 px wide with its left 400 px scrolled out of view.
+        let full = egui::Rect::from_min_max(egui::pos2(-400.0, 10.0), egui::pos2(600.0, 70.0));
+        let visible = egui::Rect::from_min_max(egui::pos2(0.0, 10.0), egui::pos2(600.0, 70.0));
+        let zones = [DuckZone {
+            start_frac: 0.5,
+            end_frac: 0.75,
+            opacity: 0.3,
+        }];
+        let samples: [EnvelopeSample; 3] = [(0.0, 0.0), (0.5, 0.0), (1.0, -60.0)];
+        let shapes = draw(full, visible, &samples, &zones);
+        assert!(shapes.iter().all(|s| s.clip_rect == visible));
+
+        let zone = shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Rect(r) => Some(r.rect),
+                _ => None,
+            })
+            .expect("duck zone rect");
+        assert_eq!((zone.left(), zone.right()), (100.0, 350.0));
+
+        let line = shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Path(l) => Some(l.points.clone()),
+                _ => None,
+            })
+            .expect("polyline");
+        assert_eq!(line.first().unwrap().x, -400.0);
+        assert_eq!(line.last().unwrap().x, 600.0);
+        // The middle sample sits at the middle of the *full* clip.
+        assert_eq!(line[1].x, 100.0);
+
     }
 }
