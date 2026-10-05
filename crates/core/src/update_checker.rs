@@ -166,6 +166,41 @@ pub fn should_notify(info: &UpdateInfo) -> bool {
     true
 }
 
+/// Pick the newest non-draft release from a `/releases` response.
+/// Returns `(tag_name, html_url, published_at)`. Prerelease entries
+/// are accepted -- CapRust ships every release as a prerelease
+/// until 1.0.
+fn pick_latest_release(body: &str) -> Result<(String, String, String)> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(body).context("parse GitHub releases JSON")?;
+    let releases = parsed
+        .as_array()
+        .ok_or_else(|| anyhow!("GitHub releases response is not an array"))?;
+    let release = releases
+        .iter()
+        .find(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
+        .ok_or_else(|| anyhow!("no non-draft releases found"))?;
+    let tag = release
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("GitHub release missing tag_name"))?
+        .to_string();
+    let html_url = release
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("GitHub release missing html_url"))?
+        .to_string();
+    if !is_release_url(&html_url) {
+        return Err(anyhow!("unexpected release URL: {html_url}"));
+    }
+    let published_at = release
+        .get("published_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok((tag, html_url, published_at))
+}
+
 /// Check GitHub Releases for the latest version.
 ///
 /// Returns `Ok(Some(info))` only if a strictly newer version exists.
@@ -193,7 +228,10 @@ pub fn check(current_version: &str, enabled: bool) -> Result<Option<UpdateInfo>>
         }
     }
 
-    let url = "https://api.github.com/repos/Domica/CapRust/releases/latest";
+    // /releases/latest excludes prereleases, and every CapRust
+    // release is a prerelease until 1.0. Fetch the list and take
+    // the newest non-draft entry instead.
+    let url = "https://api.github.com/repos/Domica/CapRust/releases?per_page=20";
     tracing::debug!("update_checker: GET {url}");
 
     let resp = ureq::get(url)
@@ -205,25 +243,7 @@ pub fn check(current_version: &str, enabled: bool) -> Result<Option<UpdateInfo>>
     let body = resp
         .into_string()
         .context("read GitHub releases response")?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body).context("parse GitHub releases JSON")?;
-
-    let tag = parsed
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("GitHub response missing tag_name"))?;
-    let html_url = parsed
-        .get("html_url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("GitHub response missing html_url"))?;
-    if !is_release_url(html_url) {
-        return Err(anyhow!("unexpected release URL: {html_url}"));
-    }
-    let published_at = parsed
-        .get("published_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let (tag, html_url, published_at) = pick_latest_release(&body)?;
 
     // Tags are typically prefixed with 'v'. Strip it if present.
     let latest = tag.trim_start_matches('v').to_string();
@@ -355,6 +375,42 @@ mod tests {
         assert!(parse_version("1.10.0").unwrap() > parse_version("1.9.0").unwrap());
         // And the inverse must also hold numerically.
         assert!(parse_version("0.2.0").unwrap() < parse_version("0.10.0").unwrap());
+    }
+
+    #[test]
+    fn picks_first_non_draft_from_release_list() {
+        let body = r#"[
+            {"draft": true,  "tag_name": "v9.9.9", "html_url": "https://github.com/Domica/CapRust/releases/tag/v9.9.9"},
+            {"draft": false, "prerelease": true, "tag_name": "v0.9.0", "published_at": "2026-10-05T08:00:00Z", "html_url": "https://github.com/Domica/CapRust/releases/tag/v0.9.0"},
+            {"draft": false, "tag_name": "v0.8.4", "html_url": "https://github.com/Domica/CapRust/releases/tag/v0.8.4"}
+        ]"#;
+        let (tag, url, published) = pick_latest_release(body).unwrap();
+        assert_eq!(tag, "v0.9.0");
+        assert_eq!(url, "https://github.com/Domica/CapRust/releases/tag/v0.9.0");
+        assert_eq!(published, "2026-10-05T08:00:00Z");
+    }
+
+    #[test]
+    fn reject_non_array_response() {
+        let body = r#"{"message":"Not Found"}"#;
+        assert!(pick_latest_release(body).is_err());
+    }
+
+    #[test]
+    fn reject_empty_release_list() {
+        assert!(pick_latest_release("[]").is_err());
+    }
+
+    #[test]
+    fn reject_all_drafts() {
+        let body = r#"[{"draft": true, "tag_name": "v1", "html_url": "https://github.com/Domica/CapRust/releases/tag/v1"}]"#;
+        assert!(pick_latest_release(body).is_err());
+    }
+
+    #[test]
+    fn reject_foreign_release_url() {
+        let body = r#"[{"draft": false, "tag_name": "v1", "html_url": "https://evil.example/x"}]"#;
+        assert!(pick_latest_release(body).is_err());
     }
 
     #[test]
