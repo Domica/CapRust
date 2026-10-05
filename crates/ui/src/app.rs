@@ -862,7 +862,7 @@ impl CapRustApp {
             }
         }
         let samples = crate::timeline::sample_envelope_db(clip);
-        let zones = crate::timeline::compute_duck_zones(clip, &self.project.clips);
+        let zones = crate::timeline::compute_duck_zones(clip, &self.project);
         let entry = EnvelopeCacheEntry {
             hash,
             samples_db: std::sync::Arc::new(samples),
