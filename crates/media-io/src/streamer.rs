@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 
 /// Number of frames we can buffer ahead of the consumer.
@@ -53,7 +53,7 @@ impl FrameStream {
         // 1s of wall clock). Without it, ffmpeg decodes as fast as the CPU
         // can, the 4-frame buffer fills instantly, and the UI sees 10 frames
         // arrive in one render cycle → apparent fast-forward.
-        let mut child = Command::new(ffmpeg)
+        let mut child = crate::silent_cmd::silent_command(ffmpeg)
             .args(["-v", "error"])
             .args(["-re"])
             .args(["-ss", &format!("{at_sec:.3}")])

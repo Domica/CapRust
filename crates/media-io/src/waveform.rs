@@ -12,7 +12,7 @@
 use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Target output sample rate for the decoder. 8 kHz mono is plenty
 /// for a visual waveform: peaks look identical at 8 kHz and 48 kHz,
@@ -24,7 +24,7 @@ const TARGET_RATE: u32 = 8000;
 /// `0.0..=1.0`. Empty files return a zero-filled vector.
 pub fn extract_peaks(ffmpeg: &Path, input: &Path, buckets: usize) -> Result<Vec<f32>> {
     let buckets = buckets.max(1);
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args([
             "-v",
             "error",

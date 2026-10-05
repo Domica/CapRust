@@ -14,7 +14,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,7 +60,7 @@ pub fn record_to_file(
     }
 
     // Raw BGRA on stdin, encoded to yuv420p H.264.
-    let mut child = Command::new(ffmpeg_path)
+    let mut child = crate::silent_command(ffmpeg_path)
         .args([
             "-y",
             "-hide_banner",

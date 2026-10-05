@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Decode one frame as RGBA at the given source time.
 /// Output size is exactly `target_w * target_h * 4` bytes.
@@ -26,7 +26,7 @@ pub fn decode_frame_rgba(
     // Fast input seeking (-ss before -i) + skip audio/subtitle decoding
     // + fast scaler. On a 4K source, 640x270 RGBA goes from ~180ms to
     // ~40-60ms with these flags.
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(["-v", "error"])
         .args(["-ss", &format!("{at_sec:.3}")])
         .args(["-protocol_whitelist", "file"])

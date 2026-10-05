@@ -19,7 +19,7 @@ use crate::export_graph::RenderPlan;
 use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 
 /// Sample rate requested from ffmpeg. Must match `AudioPlayer::play_pcm_file`.
 pub const AUDIO_SAMPLE_RATE: u32 = 48_000;
@@ -192,7 +192,7 @@ pub fn spawn_audio_render(
         target.display()
     );
 
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

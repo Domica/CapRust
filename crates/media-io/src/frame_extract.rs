@@ -8,7 +8,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// One decoded frame: timestamp relative to the extraction window
 /// start, dimensions, and a tightly packed RGB buffer of length
@@ -115,7 +115,7 @@ pub fn extract_rgb_frames(
             .join(" ")
     );
 
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -253,7 +253,7 @@ mod tests {
             std::env::temp_dir().join(format!("caprust-frame-extract-{}.mp4", std::process::id()));
         // 320x240, 10 fps, 0.5 s, h264. ~15 KB. Safe to leave behind
         // if cleanup fails; the next test run overwrites it.
-        let status = std::process::Command::new(&ffmpeg)
+        let status = crate::silent_cmd::silent_command(&ffmpeg)
             .args([
                 "-y",
                 "-hide_banner",

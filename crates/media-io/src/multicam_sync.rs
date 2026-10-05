@@ -13,7 +13,7 @@
 use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc::{channel, Receiver};
 
 /// Envelope sample rate: 100 Hz gives 10 ms resolution, which
@@ -96,7 +96,7 @@ pub fn best_lag(a: &[f32], b: &[f32], max_lag: i64) -> (i64, f64) {
 /// Same invocation pattern as waveform::extract_peaks: protocol
 /// whitelist to file, read stdout to end, s16le.
 pub fn decode_to_mono_s16(ffmpeg: &Path, input: &Path) -> Result<Vec<i16>> {
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(["-v", "error", "-protocol_whitelist", "file", "-i"])
         .arg(input)
         .args([

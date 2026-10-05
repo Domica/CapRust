@@ -15,7 +15,7 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{anyhow, Context, Result};
 use caprust_core::CaptionSegment;
@@ -238,7 +238,7 @@ pub fn extract_16khz_mono_f32(
 
     tracing::debug!("whisper: ffmpeg args: {:?}", args);
 
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -12,7 +12,7 @@ use crate::export_graph::RenderPlan;
 use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -215,7 +215,7 @@ impl PreviewRenderer {
             std::env::temp_dir().join("caprust-last-preview-filtergraph.txt"),
             &fg,
         );
-        let mut child = Command::new(ffmpeg)
+        let mut child = crate::silent_cmd::silent_command(ffmpeg)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

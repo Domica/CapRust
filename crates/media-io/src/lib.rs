@@ -14,6 +14,7 @@ pub mod piper;
 pub mod player;
 pub mod preview_render;
 pub mod scrfd;
+pub mod silent_cmd;
 pub mod streamer;
 pub mod thumbnail;
 pub mod whisper;

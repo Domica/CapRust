@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use std::process::Command;
 
 /// Extract a single frame at `at_sec` from `input` and save as JPEG to `out`.
 /// Returns Ok even if the frame is black; caller decides whether to keep it.
@@ -17,7 +16,7 @@ pub fn extract_jpeg(
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
     }
 
-    let status = Command::new(ffmpeg)
+    let status = crate::silent_cmd::silent_command(ffmpeg)
         .args(["-y", "-v", "error"])
         .args(["-ss", &format!("{at_sec}")])
         .args(["-protocol_whitelist", "file"])

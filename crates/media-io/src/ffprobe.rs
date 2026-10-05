@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct MediaProbe {
@@ -37,7 +36,7 @@ struct FfprobeFormat {
 
 /// Probe a media file. Returns Err if ffprobe missing or file unreadable.
 pub fn probe(ffprobe: &Path, input: &Path) -> Result<MediaProbe> {
-    let output = Command::new(ffprobe)
+    let output = crate::silent_cmd::silent_command(ffprobe)
         .args([
             "-v",
             "error",

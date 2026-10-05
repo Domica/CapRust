@@ -21,7 +21,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -278,7 +278,7 @@ pub fn synthesize(
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
 
-    let mut child = Command::new(piper_bin)
+    let mut child = crate::silent_cmd::silent_command(piper_bin)
         .arg("--model")
         .arg(voice_onnx)
         .arg("--output_file")

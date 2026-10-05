@@ -4,7 +4,7 @@ use crate::export_graph::RenderPlan;
 use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc::{channel, Sender};
 
 #[derive(Debug, Clone)]
@@ -28,7 +28,7 @@ pub fn run_export(
 ) -> Result<()> {
     let args = plan.build_command(ffmpeg, output);
 
-    let mut child = Command::new(ffmpeg)
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -91,15 +91,19 @@ pub fn spawn_export(
 pub fn open_folder(path: &Path) {
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("explorer").arg(path).spawn();
+        let _ = crate::silent_cmd::silent_command("explorer")
+            .arg(path)
+            .spawn();
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("open").arg(path).spawn();
+        let _ = crate::silent_cmd::silent_command("open").arg(path).spawn();
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let _ = Command::new("xdg-open").arg(path).spawn();
+        let _ = crate::silent_cmd::silent_command("xdg-open")
+            .arg(path)
+            .spawn();
     }
 }
 
@@ -107,19 +111,24 @@ pub fn open_folder(path: &Path) {
 pub fn reveal_in_folder(path: &Path) {
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("explorer")
+        let _ = crate::silent_cmd::silent_command("explorer")
             .arg(format!("/select,{}", path.display()))
             .spawn();
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("open").arg("-R").arg(path).spawn();
+        let _ = crate::silent_cmd::silent_command("open")
+            .arg("-R")
+            .arg(path)
+            .spawn();
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         // Fallback: open the containing folder with xdg-open.
         if let Some(parent) = path.parent() {
-            let _ = Command::new("xdg-open").arg(parent).spawn();
+            let _ = crate::silent_cmd::silent_command("xdg-open")
+                .arg(parent)
+                .spawn();
         }
     }
 }

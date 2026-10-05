@@ -43,3 +43,20 @@ pub fn enumerate_monitors() -> Result<Vec<MonitorInfo>> {
 pub fn enumerate_monitors() -> Result<Vec<MonitorInfo>> {
     anyhow::bail!("screen recording is only available on Windows")
 }
+
+/// Spawn helper: same as `Command::new`, but on Windows
+/// release builds the child is spawned with CREATE_NO_WINDOW so
+/// no console window appears. Used by `record.rs` when spawning
+/// the ffmpeg encoder.
+#[cfg(windows)]
+pub fn silent_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let cmd = std::process::Command::new(program);
+    #[cfg(not(debug_assertions))]
+    let cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
+        cmd.creation_flags(0x0800_0000);
+        cmd
+    };
+    cmd
+}
