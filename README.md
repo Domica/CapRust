@@ -9,11 +9,12 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.8.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
+[![M8ven Score](https://m8ven.ai/badge/mcp/domica-caprust-lj9jq5)](https://m8ven.ai/mcp/domica-caprust-lj9jq5?s=readme)
 
 ---
 
@@ -22,7 +23,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.8.4-win64-setup.exe`.
+1. Run `CapRust-0.9.0-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -90,6 +91,9 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Update checker | Yes - GitHub Releases, opt-out |
 | Hardware encoding | Yes (NVENC + AMF, probed at runtime) |
 | Zero-config install | Yes - portable .exe |
+| Chroma key (green screen) | Yes - per-clip |
+| Multi-camera groups | Yes - audio sync, angle switch |
+| Screen recording | Yes - DXGI, cursor overlay |
 
 ---
 
@@ -114,6 +118,11 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Missing-media relink** on load. Dialog lists every missing file, folder picker matches by basename, whole batch runs as one undoable `RelinkManyCommand`. Media bin shows a red badge, timeline clips without a source get a red diagonal hatch.
 - **Media bin** with sort (added / name / type), filter (all / video / audio / image), preview size (S / M / L)
 
+### Multi-camera
+- **Multi-cam groups** - right-click 2+ selected clips -> Create multicam group. The group references the clips by id; no new tracks are created.
+- **Angle switch** - Multicam dock panel has one button per angle. Click to change the active angle; preview and export follow immediately. One undoable step.
+- **Audio sync** - `Sync angles` correlates the RMS envelopes of every angle and writes per-angle offsets through `SetMultiCamSyncCommand`. Auto-aligns multi-cam recordings from any source.
+
 ### Effects, Filters and Transitions
 - **16 effect presets** - blur, vignette, glitch, RGB split, B&W, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, zoom pulse
 - **16 color filters** - warm, cool, B&W, sepia, cinematic, vintage, vivid, matte, noir, sunset, ocean, fade, pastel, neon, gold, none
@@ -121,6 +130,11 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **8 text styles** - default, bold, subtitle, lower, quote, caption, glow, handwrite
 - **Amount-aware** - every preset scales with the per-clip amount; disabled stages are skipped
 - **Per-clip effects chain** with undo/redo
+
+### Chroma key
+- **Green screen removal** - per-clip `ChromaKeySpec` with a color picker, similarity slider, and edge blend slider.
+- **Preview + export** - `chromakey=color=...:similarity=...:blend=...` sits after `format=yuva420p` in Phase 1, so it composes with the existing overlay stack.
+- **Enabled per clip** - Enable / Remove buttons in the Clip Properties panel under a **Chroma key** heading.
 
 ### Animations
 - **Zoom pulse** - breathing crop with drifting window
@@ -175,6 +189,12 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Seek-optimized rendering** - the plan shifts every input to its `-ss`/`-t` for the current playhead. A seek into a 3-minute project renders in ~200-500 ms instead of 5-10 s.
 - **Paused seek** re-renders a one-shot frame at the new playhead.
 - **Auto-respawn on edit** - hash-based invalidation catches every mutation
+
+### Screen recording
+- **DXGI Desktop Duplication** - native Windows screen capture. No OBS or virtual device.
+- **Cursor overlay** - COLOR and MONOCHROME pointer shapes, alpha-blended per frame.
+- **Modal** - File -> Record screen. Monitor picker, duration, fps. Live REC indicator and Stop button in the editor toolbar.
+- **Auto-import** - recordings land in `%APPDATA%\CapRust\recordings\` and appear in the media bin with thumbnail and waveform.
 
 ### Updates
 - **Startup check** - silent GitHub Releases API request, once per 24 h, opt-out in Settings -> Appearance
@@ -303,7 +323,8 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | **I** | CLAP audio plugins | Done |
 | **N** | MCP server - AI-driven editing | Done |
 | **K2** | Seamless double-buffer preview | Planned |
-| **Q** | Multi-cam / templates / screen record | Planned |
+| **Q** | Multi-cam + screen record | Done |
+| **Chroma** | Chroma key (green screen) | Done |
 
 See DIRECTIVES.md section 18 for the full roadmap.
 
@@ -364,7 +385,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
-| **0.8.4** | 2026-10-03 | Settings import/sync keep local ffmpeg paths, MyMemory disclosure, MCP trust model. Closes the security audit. |
+| **0.9.0** | 2026-10-05 | Chroma key, multi-camera groups with audio sync, screen recording with cursor overlay. Video-without-audio export fix. |
+| 0.8.4 | 2026-10-03 | Settings import/sync keep local ffmpeg paths, MyMemory disclosure, MCP trust model. Closes the security audit. |
 | 0.8.3 | 2026-10-03 | Security hardening: CLAP path trust, SHA-256 pinning for Piper and models, ffmpeg checksum verification, protocol whitelist on media inputs. |
 | 0.8.2 | 2026-10-02 | Audio tail playback past video EOF, playhead no longer freezes at video end, waveform scroll at 4x+ zoom, BG removal usable in debug builds. |
 | 0.8.1 | 2026-10-02 | CBR bitrate honored on Advanced export, JobRunner path refresh, thumbnail regeneration after cache clear, bg-removal mask path validation. |

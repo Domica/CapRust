@@ -2,6 +2,51 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.0] - 2026-10-05
+
+Chroma key, multi-camera groups, and screen recording. First
+minor bump since the beta line, so expect rough edges in all
+three.
+
+### Added
+- **Chroma key (green screen)** (core, media-io, ui). Per-clip
+  ``ChromaKeySpec`` with key color, similarity, and edge blend. The
+  filtergraph inserts ``chromakey=color=...:similarity=...:blend=...``
+  after ``format=yuva420p`` in Phase 1 of the base chain, so it
+  composes with the existing overlay stack. Properties panel gets
+  a color picker, two sliders, and Enable / Remove buttons.
+- **Multi-camera groups** (core, media-io, ui). A new
+  ``MultiCamGroup`` references existing timeline clips as camera
+  angles. Right-click any two-or-more selected clips to create a
+  group. The render path suppresses every non-active angle, so
+  switching angle changes preview and export in one undoable
+  step.
+- **Multi-camera audio sync** (media-io). RMS envelope + naive
+  cross-correlation on a 100 Hz envelope finds the per-angle
+  offset. ``Sync angles`` button in the Multicam dock panel;
+  offsets are written through ``SetMultiCamSyncCommand``.
+- **Screen recording** (new ``caprust-screen-record`` crate). DXGI
+  Desktop Duplication, single-frame + continuous capture to H.264
+  mp4 via an ffmpeg stdin pipe. Cursor overlay supports both COLOR
+  and MONOCHROME shapes. Modal in File -> Record screen with
+  monitor picker, duration, and fps; recordings land in
+  ``%APPDATA%\CapRust\recordings\`` and auto-import into the
+  media bin. Isolated from ``core`` and ``media-io`` so the
+  DIRECTIVES 23.1 portability rule stays intact.
+
+### Fixed
+- **Video clips without an audio stream no longer break preview
+  and export.** ``plan_from_project`` assumed every ``ClipType::Video``
+  carried an embedded audio track, so the audio filtergraph
+  emitted ``[N:a]`` references for silent sources and ffmpeg failed
+  at filter-graph binding time. ``MediaItem.has_audio`` now carries
+  the ffprobe result, and the plan skips audio harvest for a
+  source that has none.
+
+### Changed
+- Old ``.caprust`` files load as before: ``Clip.chroma_key`` and
+  ``ProjectState.multicam_groups`` are ``#[serde(default)]``.
+
 ## [0.8.4] - 2026-10-03
 
 Security follow-up, contributed by @llvm-x86 (PR #13). Closes #1.
