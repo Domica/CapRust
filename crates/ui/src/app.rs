@@ -7175,6 +7175,11 @@ impl CapRustApp {
             self.screen_record.stop_flag = None;
             match r {
                 Ok(path) => {
+                    // Auto-import the recording into the media bin so it
+                    // shows up without a second click. Same pipeline as
+                    // the media-bin import button: AddMediaCommand on
+                    // the undo stack, then enqueue probe + thumbnail.
+                    self.import_recording(&path);
                     self.toast(format!("{} {}", tr("screen-record-saved"), path.display()));
                     self.screen_record.error = None;
                 }
@@ -7268,6 +7273,46 @@ impl CapRustApp {
         self.screen_record.result_rx = Some(rx);
         self.screen_record.error = None;
         let _ = Ordering::Relaxed; // silence unused on non-mutating paths
+    }
+
+    #[cfg(windows)]
+    fn import_recording(&mut self, path: &std::path::Path) {
+        use caprust_core::commands::add_media::AddMediaCommand;
+        use caprust_core::MediaKind;
+
+        if !path.is_file() {
+            tracing::warn!("recording file missing: {}", path.display());
+            return;
+        }
+        let path_str = path.to_string_lossy().into_owned();
+        let cmd = AddMediaCommand::new(path_str.clone(), MediaKind::Video);
+        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+            tracing::error!("import recording: {e}");
+            return;
+        }
+
+        let Some(item) = self
+            .project
+            .media
+            .items
+            .iter()
+            .find(|m| m.path == path_str)
+            .cloned()
+        else {
+            return;
+        };
+        self.job_runner.enqueue(
+            &item,
+            self.ffmpeg_status
+                .ffmpeg
+                .clone()
+                .map(std::path::PathBuf::from),
+            self.ffmpeg_status
+                .ffprobe
+                .clone()
+                .map(std::path::PathBuf::from),
+        );
+        tracing::info!("recording imported into media bin: {}", path.display());
     }
 
     /// Modal for renaming the currently-selected track. Opened from
