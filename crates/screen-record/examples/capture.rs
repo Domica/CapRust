@@ -1,8 +1,3 @@
-#![cfg(windows)]
-// Non-Windows CI does not see this file; the crate ships
-// Windows-only capture. Gate the whole example so clippy on
-// Linux skips it.
-
 //! Capture one frame from the primary monitor and save it as PPM.
 //!
 //! Run with:
@@ -16,6 +11,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
+#[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     let t0 = std::time::Instant::now();
     let frame = caprust_screen_record::capture::capture_one_frame(0)?;
@@ -39,4 +35,9 @@ fn main() -> anyhow::Result<()> {
     w.flush()?;
     println!("wrote {}", out.display());
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("capture: Windows only");
 }

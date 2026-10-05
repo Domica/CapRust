@@ -1,7 +1,3 @@
-#![cfg(windows)]
-// Same reason as capture.rs: the DXGI / WASAPI stack is
-// Windows-only, so the whole example compiles out on Linux.
-
 //! Record 5 seconds of the primary monitor to record.mp4.
 //!
 //! Uses `ffmpeg` from PATH. For production the app resolves
@@ -13,6 +9,7 @@ use caprust_screen_record::record::{record_to_file, RecordHandle};
 use std::path::PathBuf;
 use std::time::Duration;
 
+#[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     let ffmpeg = which_ffmpeg()?;
     let out = std::env::current_dir()?.join("record.mp4");
@@ -43,4 +40,9 @@ fn which_ffmpeg() -> anyhow::Result<PathBuf> {
         }
     }
     anyhow::bail!("ffmpeg not found on PATH")
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("record: Windows only");
 }
