@@ -1446,10 +1446,25 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         if !carries_audio {
             continue;
         }
-        let label = c
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("Clip {}", &c.id.to_string()[..8]));
+        // Human-readable label: name if set, else "<kind> clip",
+        // followed by "@ MM:SS (duration)". Avoids the UUID soup the
+        // old version showed when clips had no explicit name.
+        let kind_label = match &c.clip_type {
+            caprust_core::ClipType::Audio { .. } => "Audio",
+            caprust_core::ClipType::Narration { .. } => "Narration",
+            caprust_core::ClipType::Video { .. } => "Video",
+            _ => "Clip",
+        };
+        let name = c.name.clone().unwrap_or_else(|| kind_label.to_string());
+        let start_s = c.start_time_ms / 1000;
+        let dur_s = c.duration_ms / 1000;
+        let label = format!(
+            "{} @ {:02}:{:02} ({:.1}s)",
+            name,
+            start_s / 60,
+            start_s % 60,
+            dur_s as f64,
+        );
         candidates.push((c.id, label));
     }
 
