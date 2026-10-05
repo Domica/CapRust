@@ -45,3 +45,5 @@ installer/staging/
 
 # local debug logs
 *.log
+
+record.mp4
