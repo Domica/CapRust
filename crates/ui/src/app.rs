@@ -4519,6 +4519,22 @@ impl CapRustApp {
                                         .push(ClipAction::Split(clip_id, self.playhead_ms));
                                     ui.close_menu();
                                 }
+                                // --- Create multicam group ---
+                                // Shown only when two or more clips are
+                                // selected: a multicam group is meaningless
+                                // for a single angle. Cloned ids because the
+                                // action queue is drained after the closure.
+                                if self.selected_clips.len() >= 2 {
+                                    let lbl = tr("clip-ctx-create-multicam");
+                                    if ui.button(lbl).clicked() {
+                                        pending_actions.push(
+                                            ClipAction::CreateMultiCamGroup(
+                                                self.selected_clips.clone(),
+                                            ),
+                                        );
+                                        ui.close_menu();
+                                    }
+                                }
                                 // --- Speed submenu ---
                                 ui.menu_button(tr("clip-ctx-speed"), |ui| {
                                     for v in [0.25_f32, 0.5, 1.0, 1.5, 2.0, 4.0] {
@@ -5394,6 +5410,21 @@ impl CapRustApp {
                     } else {
                         tracing::info!("separate audio: created Audio clip from {id}");
                         self.toast(tr("toast-separate-audio-done"));
+                    }
+                }
+                ClipAction::CreateMultiCamGroup(ids) => {
+                    let n = self.project.multicam_groups.len() + 1;
+                    let name = format!("MultiCam {n}");
+                    let cmd =
+                        caprust_core::commands::create_multicam_group::CreateMultiCamGroupCommand::new(
+                            name, ids,
+                        );
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("create multicam group failed: {e}");
+                        self.toast_error(tr("toast-multicam-create-failed"));
+                    } else {
+                        tracing::info!("created multicam group");
+                        self.toast(tr("toast-multicam-created"));
                     }
                 }
                 ClipAction::ReattachAudio(id) => {
@@ -8127,6 +8158,9 @@ enum ClipAction {
     /// configured in Settings, on a new Captions track. Only valid on
     /// Captions clips.
     TranslateCaptions(uuid::Uuid),
+    /// Create a new multicam group from the currently selected
+    /// clips. Only offered when 2+ clips are selected.
+    CreateMultiCamGroup(Vec<uuid::Uuid>),
 }
 
 impl eframe::App for CapRustApp {
