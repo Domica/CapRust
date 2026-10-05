@@ -6,6 +6,7 @@ members = [
     "crates/i18n",
     "crates/app",
     "crates/mcp",
+    "crates/screen-record",
 ]
 resolver = "2"
 
