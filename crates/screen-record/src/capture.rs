@@ -25,6 +25,161 @@ pub struct Frame {
     pub height: u32,
     pub pixels: Vec<u8>,
 }
+/// A live DXGI Desktop Duplication session. Holds the D3D11 device,
+/// immediate context, and duplication for the lifetime of a recording
+/// so the per-frame cost stays low. Drop releases everything.
+pub struct DuplicationSession {
+    context: ID3D11DeviceContext,
+    device: ID3D11Device,
+    duplication: windows::Win32::Graphics::Dxgi::IDXGIOutputDuplication,
+    width: u32,
+    height: u32,
+}
+
+impl DuplicationSession {
+    /// Open a session on the Nth attached output (same ordering as
+    /// `enumerate_monitors`). Does the DXGI warm-up internally.
+    pub fn open(monitor_index: usize) -> Result<Self> {
+        unsafe { Self::open_unsafe(monitor_index) }
+    }
+
+    /// Capture the next frame. Blocks up to `timeout_ms` waiting for
+    /// a desktop change; on timeout returns `Ok(None)` so the caller
+    /// can decide to repeat the last frame.
+    pub fn next_frame(&self, timeout_ms: u32) -> Result<Option<Frame>> {
+        unsafe {
+            let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
+            let mut res: Option<IDXGIResource> = None;
+            match self
+                .duplication
+                .AcquireNextFrame(timeout_ms, &mut info, &mut res)
+            {
+                Ok(()) => {}
+                Err(e) => {
+                    // WAIT_TIMEOUT is a normal outcome on a static
+                    // desktop; anything else is a real error.
+                    let code = e.code().0;
+                    // DXGI_ERROR_WAIT_TIMEOUT = 0x887A0027
+                    if code == 0x887A0027u32 as i32 {
+                        return Ok(None);
+                    }
+                    anyhow::bail!("AcquireNextFrame: {e}");
+                }
+            }
+            let Some(resource) = res else {
+                let _ = self.duplication.ReleaseFrame();
+                return Ok(None);
+            };
+            let texture: ID3D11Texture2D = resource
+                .cast()
+                .map_err(|e| anyhow!("ID3D11Texture2D cast: {e}"))?;
+
+            let mut desc = D3D11_TEXTURE2D_DESC::default();
+            texture.GetDesc(&mut desc);
+
+            let mut staging_desc = desc;
+            staging_desc.Usage = D3D11_USAGE_STAGING;
+            staging_desc.BindFlags = 0;
+            staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+            staging_desc.MiscFlags = 0;
+            let mut staging_opt: Option<ID3D11Texture2D> = None;
+            self.device
+                .CreateTexture2D(&staging_desc, None, Some(&mut staging_opt))
+                .map_err(|e| anyhow!("CreateTexture2D(staging): {e}"))?;
+            let staging = staging_opt.ok_or_else(|| anyhow!("no staging texture"))?;
+
+            self.context.CopyResource(&staging, &texture);
+
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            self.context
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                .map_err(|e| anyhow!("Map(staging): {e}"))?;
+
+            let row_pitch = mapped.RowPitch as usize;
+            let row_bytes = (self.width as usize) * 4;
+            let mut pixels = Vec::with_capacity(row_bytes * self.height as usize);
+            let src = mapped.pData as *const u8;
+            for y in 0..self.height as usize {
+                let row_ptr = src.add(y * row_pitch);
+                let slice = std::slice::from_raw_parts(row_ptr, row_bytes);
+                pixels.extend_from_slice(slice);
+            }
+            self.context.Unmap(&staging, 0);
+            self.duplication
+                .ReleaseFrame()
+                .map_err(|e| anyhow!("ReleaseFrame: {e}"))?;
+
+            Ok(Some(Frame {
+                width: self.width,
+                height: self.height,
+                pixels,
+            }))
+        }
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    unsafe fn open_unsafe(monitor_index: usize) -> Result<Self> {
+        let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
+        let feature_levels = [D3D_FEATURE_LEVEL_11_0];
+        D3D11CreateDevice(
+            None,
+            windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            Some(&feature_levels),
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            Some(&mut context),
+        )
+        .map_err(|e| anyhow!("D3D11CreateDevice: {e}"))?;
+        let device = device.ok_or_else(|| anyhow!("no D3D11 device"))?;
+        let context = context.ok_or_else(|| anyhow!("no D3D11 immediate context"))?;
+
+        let factory: IDXGIFactory1 =
+            CreateDXGIFactory1().map_err(|e| anyhow!("CreateDXGIFactory1: {e}"))?;
+        let target_output = find_output_by_ordinal(&factory, monitor_index)?;
+        let output1: IDXGIOutput1 = target_output
+            .cast()
+            .map_err(|e| anyhow!("IDXGIOutput1 cast: {e}"))?;
+        let duplication = output1
+            .DuplicateOutput(&device)
+            .map_err(|e| anyhow!("DuplicateOutput: {e}"))?;
+
+        // Warm-up: first frames are a black placeholder. Release a few.
+        for _ in 0..3 {
+            let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
+            let mut res: Option<IDXGIResource> = None;
+            if duplication
+                .AcquireNextFrame(200, &mut info, &mut res)
+                .is_ok()
+            {
+                let _ = duplication.ReleaseFrame();
+            }
+        }
+
+        // Query the output dimensions from its DXGI output desc.
+        let desc = target_output.GetDesc()?;
+        let rect = desc.DesktopCoordinates;
+        let width = (rect.right - rect.left).unsigned_abs();
+        let height = (rect.bottom - rect.top).unsigned_abs();
+
+        Ok(Self {
+            context,
+            device,
+            duplication,
+            width,
+            height,
+        })
+    }
+}
 
 /// Capture exactly one frame from monitor `monitor_index` (0-based,
 /// same order as `enumerate_monitors`). Returns a tightly packed

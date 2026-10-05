@@ -16,6 +16,8 @@ mod windows_impl;
 
 #[cfg(windows)]
 pub mod capture;
+#[cfg(windows)]
+pub mod record;
 
 /// One monitor as reported by the OS. Coordinates are the
 /// desktop-relative top-left corner; `width` / `height` are
