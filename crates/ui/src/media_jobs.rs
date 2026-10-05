@@ -29,6 +29,7 @@ pub enum JobResult {
     ProbeDone {
         media_id: uuid::Uuid,
         duration_ms: u64,
+        has_audio: bool,
     },
     ThumbDone {
         media_id: uuid::Uuid,
@@ -69,10 +70,12 @@ impl JobRunner {
                             match caprust_media_io::ffprobe::probe(ffprobe, &path) {
                                 Ok(p) => {
                                     duration_ms = p.duration_ms;
+                                    let has_audio = p.has_audio;
                                     tracing::info!("job: probe ok — {}ms", duration_ms);
                                     let _ = tx_result.send(JobResult::ProbeDone {
                                         media_id,
                                         duration_ms,
+                                        has_audio,
                                     });
                                 }
                                 Err(e) => {
@@ -213,9 +216,11 @@ impl JobRunner {
                 JobResult::ProbeDone {
                     media_id,
                     duration_ms,
+                    has_audio,
                 } => {
                     if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
                         m.duration_ms = duration_ms;
+                        m.has_audio = has_audio;
                         m.probe_done = true;
                     }
                     // Tighten the growth cap on clips that were dropped

@@ -2694,12 +2694,23 @@ pub fn plan_from_project(
                 Some(path)
             }
             ClipType::Video { path, .. } if !c.audio_detached => {
-                if is_audio_track {
-                    audio_track_clip_count += 1;
+                // Respect the probe result. A video whose source has no
+                // audio stream must NOT contribute to the audio filtergraph,
+                // or the plan emits [N:a] references that ffmpeg cannot
+                // resolve and the whole render fails at filter-graph bind
+                // time. Unprobed items (has_audio default = true) keep the
+                // old behaviour so a just-imported clip still works before
+                // the probe job reports back.
+                if !video_clip_has_audio_source(project, c) {
+                    None
                 } else {
-                    audio_from_video = true;
+                    if is_audio_track {
+                        audio_track_clip_count += 1;
+                    } else {
+                        audio_from_video = true;
+                    }
+                    Some(path)
                 }
-                Some(path)
             }
             ClipType::Video { .. } => None,
             ClipType::Narration { .. } => {
@@ -4030,5 +4041,60 @@ mod multicam_plan_tests {
             s.contains(&angle_b),
             "angle A must be suppressed when B is active"
         );
+    }
+}
+
+/// Does the source behind this video clip carry an audio stream we
+/// can harvest? True when unprobed (the field defaults to true so
+/// freshly imported items keep rendering), and true when the probe
+/// said has_audio=true. False only when the probe explicitly
+/// reported no audio stream.
+pub(crate) fn video_clip_has_audio_source(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::Clip,
+) -> bool {
+    clip.media_id
+        .and_then(|mid| project.media.items.iter().find(|m| m.id == mid))
+        .map(|m| m.has_audio)
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod audio_stream_guard_tests {
+    use super::*;
+    use caprust_core::clip::Clip;
+    use caprust_core::media::{MediaItem, MediaKind};
+
+    #[test]
+    fn unprobed_clip_is_treated_as_having_audio() {
+        let p = caprust_core::ProjectState::default();
+        let clip = Clip::new_video("/x.mp4", 0, 0, 1000);
+        assert!(video_clip_has_audio_source(&p, &clip));
+    }
+
+    #[test]
+    fn probe_reports_no_audio() {
+        let mut p = caprust_core::ProjectState::default();
+        let mut m = MediaItem::new("x.mp4", MediaKind::Video, 0);
+        m.probe_done = true;
+        m.has_audio = false;
+        let mid = m.id;
+        p.media.items.push(m);
+        let mut clip = Clip::new_video("x.mp4", 0, 0, 1000);
+        clip.media_id = Some(mid);
+        assert!(!video_clip_has_audio_source(&p, &clip));
+    }
+
+    #[test]
+    fn probe_reports_audio() {
+        let mut p = caprust_core::ProjectState::default();
+        let mut m = MediaItem::new("x.mp4", MediaKind::Video, 0);
+        m.probe_done = true;
+        m.has_audio = true;
+        let mid = m.id;
+        p.media.items.push(m);
+        let mut clip = Clip::new_video("x.mp4", 0, 0, 1000);
+        clip.media_id = Some(mid);
+        assert!(video_clip_has_audio_source(&p, &clip));
     }
 }

@@ -857,6 +857,7 @@ mod sort_filter_tests {
             probe_done: true,
             thumb_done: true,
             waveform_done: false,
+            has_audio: true,
         }
     }
 

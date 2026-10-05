@@ -27,6 +27,10 @@ impl MediaKind {
     }
 }
 
+fn default_has_audio() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaItem {
     pub id: Uuid,
@@ -46,6 +50,13 @@ pub struct MediaItem {
     /// Waveform peak cache status — set true once the .bin is on disk.
     #[serde(default)]
     pub waveform_done: bool,
+    /// True when the source carries at least one audio stream.
+    /// Filled by the probe job from ffprobe::MediaProbe::has_audio.
+    /// Defaults to true so pre-probe items keep their old
+    /// "assume audio exists" behaviour; the flag is corrected
+    /// the moment the probe finishes.
+    #[serde(default = "default_has_audio")]
+    pub has_audio: bool,
 }
 
 impl MediaItem {
@@ -66,6 +77,7 @@ impl MediaItem {
             probe_done: false,
             thumb_done: false,
             waveform_done: false,
+            has_audio: true,
         }
     }
 }
