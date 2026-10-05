@@ -189,6 +189,10 @@ pub struct EffectInstance {
     pub enabled: bool,
 }
 
+fn default_duck_reduction_db() -> f32 {
+    -12.0
+}
+
 fn default_effect_amount() -> f32 {
     1.0
 }
@@ -442,6 +446,12 @@ pub struct Clip {
     /// control speaks. None = no ducking.
     #[serde(default)]
     pub duck_against: Option<Uuid>,
+    /// Target gain reduction in dB when the ducking control
+    /// clip is playing. Negative value (e.g. -12.0 = drop 12 dB).
+    /// Only meaningful when `duck_against` is Some. Clamped at
+    /// render time to [-60, 0].
+    #[serde(default = "default_duck_reduction_db")]
+    pub duck_reduction_db: f32,
     /// Speed ramp end. When Some(x), the clip ramps from `speed` to `x`
     /// across the clip (or a sub-range, see speed_range). None = static
     /// speed (uses `speed`).
@@ -502,6 +512,7 @@ impl Clip {
             audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            duck_reduction_db: -12.0,
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
@@ -546,6 +557,7 @@ impl Clip {
             audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            duck_reduction_db: -12.0,
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
@@ -590,6 +602,7 @@ impl Clip {
             audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            duck_reduction_db: -12.0,
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
@@ -638,6 +651,7 @@ impl Clip {
             audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            duck_reduction_db: -12.0,
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
@@ -692,6 +706,7 @@ impl Clip {
             audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            duck_reduction_db: -12.0,
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),
@@ -744,6 +759,7 @@ impl Clip {
             audio_voice_boost: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
+            duck_reduction_db: -12.0,
             speed_end: None,
             speed_ease: EaseCurve::default(),
             speed_range: SpeedRampRange::default(),

@@ -6112,6 +6112,11 @@ impl CapRustApp {
                                 .duck_against(v);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::DuckReductionDb(v) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .duck_reduction_db(v);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::StartReframe => {
                             self.start_reframe_job(id);
                         }

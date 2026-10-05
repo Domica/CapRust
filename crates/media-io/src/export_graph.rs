@@ -239,6 +239,9 @@ pub struct AudioClip {
     /// Auto-ducking: source clip id whose audio drives this clip's
     /// sidechain. None = no ducking.
     pub duck_against: Option<uuid::Uuid>,
+    /// Target gain reduction in dB when the sidechain is active.
+    /// Negative; clamped to [-60, 0] at render time.
+    pub duck_reduction_db: f32,
     /// Apply spectral denoise (ffmpeg `afftdn`) before any gain.
     pub denoise: bool,
     /// Apply speech-tuned dynamic range compression (ffmpeg
@@ -1021,11 +1024,21 @@ impl RenderPlan {
 
             // asplit the control bus once per consumer.
             let n_consumers = duck_map.len();
+            // Convert target reduction (dB, negative) into a
+            // sidechaincompress ratio. threshold is fixed at -26 dBFS
+            // so any voice signal triggers the duck.
+            // ratio = 2^(-dB/6) gives -6 dB -> 2, -12 dB -> 4, -24 dB -> 16.
+            let duck_ratio = |db: f32| -> f32 {
+                let d = db.clamp(-60.0, 0.0);
+                (2.0_f32).powf(-d / 6.0).clamp(1.5, 40.0)
+            };
+
             if n_consumers == 1 {
                 let (ducked_idx, _) = duck_map.iter().next().map(|(a, b)| (*a, *b)).unwrap();
                 let out = format!("a_ducked{ducked_idx}");
+                let ratio = duck_ratio(self.audio_clips[ducked_idx].duck_reduction_db);
                 fg.push_str(&format!(
-                    "[{ctrl_bus}][a_delayed{ducked_idx}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
+                    "[{ctrl_bus}][a_delayed{ducked_idx}]sidechaincompress=threshold=0.05:ratio={ratio:.2}:attack=20:release=500[{out}];",
                 ));
                 mixed_labels[ducked_idx] = out;
             } else {
@@ -1039,8 +1052,9 @@ impl RenderPlan {
 
                 for (k, (ducked_idx, _)) in duck_map.iter().enumerate() {
                     let out = format!("a_ducked{ducked_idx}");
+                    let ratio = duck_ratio(self.audio_clips[*ducked_idx].duck_reduction_db);
                     fg.push_str(&format!(
-                        "[a_delayed{ducked_idx}][a_ctrl_k{k}]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=500[{out}];",
+                        "[a_delayed{ducked_idx}][a_ctrl_k{k}]sidechaincompress=threshold=0.05:ratio={ratio:.2}:attack=20:release=500[{out}];",
                     ));
                     mixed_labels[*ducked_idx] = out;
                 }
@@ -2832,6 +2846,7 @@ pub fn plan_from_project(
             volume_keyframes: kfs,
             clip_id: c.id,
             duck_against: c.duck_against,
+            duck_reduction_db: c.duck_reduction_db,
             denoise: c.audio_denoise,
             voice_boost: c.audio_voice_boost,
             normalize: c.audio_normalize,

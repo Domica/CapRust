@@ -285,6 +285,7 @@ props-sound-ducking = Auto-ducking
 props-sound-duck-against = Duck against:
 props-sound-duck-none = None
 props-sound-duck-hint = This clip drops in level whenever the chosen clip plays.
+props-sound-duck-reduction = Reduction
 props-sound-automation = Automation
 props-sound-add-kf = + Add at playhead
 props-sound-no-kf = No automation — using static volume

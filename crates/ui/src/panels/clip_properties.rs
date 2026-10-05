@@ -102,6 +102,8 @@ pub enum PendingEdit {
     ChromaKey(Option<caprust_core::clip::ChromaKeySpec>),
     /// Set or clear the auto-duck sidechain control clip.
     DuckAgainst(Option<Uuid>),
+    /// Ducking reduction in dB (negative).
+    DuckReductionDb(f32),
     /// Replace the auto-reframe keypoints on the clip. Empty Vec =
     /// clear the pan path and fall back to source fit.
     AutoReframe(Vec<caprust_core::clip::ReframeKeypoint>),
@@ -1503,6 +1505,22 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             .small()
             .color(egui::Color32::from_gray(150)),
     );
+
+    // Reduction slider: only meaningful with a control clip chosen.
+    if clip.duck_against.is_some() {
+        ui.horizontal(|ui| {
+            ui.label(tr("props-sound-duck-reduction"));
+            let mut db = clip.duck_reduction_db;
+            let resp = ui.add(
+                egui::Slider::new(&mut db, -40.0..=-1.0)
+                    .fixed_decimals(1)
+                    .suffix(" dB"),
+            );
+            if resp.changed() {
+                state.pending.push(PendingEdit::DuckReductionDb(db));
+            }
+        });
+    }
 
     ui.add_space(space::M_PLUS);
     ui.separator();

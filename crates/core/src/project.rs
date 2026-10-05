@@ -310,6 +310,7 @@ impl ProjectState {
             format!("{:?}", c.transition_out_easing).hash(&mut h);
             c.transition_duration_ms.hash(&mut h);
             c.duck_against.hash(&mut h);
+            c.duck_reduction_db.to_bits().hash(&mut h);
             c.speed_end.map(|s| s.to_bits()).hash(&mut h);
             format!("{:?}", c.speed_ease).hash(&mut h);
             format!("{:?}", c.speed_range).hash(&mut h);

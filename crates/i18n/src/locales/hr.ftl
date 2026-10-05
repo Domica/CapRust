@@ -285,6 +285,7 @@ props-sound-ducking = Auto-ducking
 props-sound-duck-against = Stišaj protiv:
 props-sound-duck-none = Ništa
 props-sound-duck-hint = Ovaj isječak se stišava kad odabrani isječak svira.
+props-sound-duck-reduction = Smanjenje
 props-sound-automation = Automatizacija
 props-sound-add-kf = + Dodaj na kazaljku
 props-sound-no-kf = Bez automatizacije — koristi statičnu glasnoću

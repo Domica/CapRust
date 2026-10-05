@@ -39,6 +39,7 @@ pub struct SetClipCommand {
     pub audio_voice_boost: Option<bool>,
     pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
     pub duck_against: Option<Option<Uuid>>,
+    pub duck_reduction_db: Option<f32>,
     /// Some(Some(x)) = ramp from `speed` to `x`.
     /// Some(None) = clear ramp, use static `speed`.
     pub speed_end: Option<Option<f32>>,
@@ -88,6 +89,7 @@ impl SetClipCommand {
             audio_voice_boost: None,
             volume_keyframes: None,
             duck_against: None,
+            duck_reduction_db: None,
             speed_end: None,
             speed_ease: None,
             speed_range: None,
@@ -213,6 +215,11 @@ impl SetClipCommand {
         self.duck_against = Some(v);
         self
     }
+    /// Set the target ducking reduction in dB (negative value).
+    pub fn duck_reduction_db(mut self, v: f32) -> Self {
+        self.duck_reduction_db = Some(v);
+        self
+    }
     /// Enable or disable the speed ramp end. Pass `Some(x)` for a
     /// ramp, `None` for static speed.
     pub fn speed_end(mut self, v: Option<f32>) -> Self {
@@ -327,6 +334,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.duck_against {
             c.duck_against = v;
+        }
+        if let Some(v) = self.duck_reduction_db {
+            c.duck_reduction_db = v.clamp(-60.0, 0.0);
         }
         if let Some(v) = self.speed_end {
             c.speed_end = v;
