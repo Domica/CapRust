@@ -18,6 +18,7 @@ pub mod ripple_move;
 pub mod separate_audio;
 pub mod set_clip;
 pub mod set_effect;
+pub mod set_multicam_sync;
 pub mod set_plugin_param;
 pub mod split_clip;
 pub mod translate_captions;

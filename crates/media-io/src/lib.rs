@@ -18,6 +18,7 @@ pub mod streamer;
 pub mod thumbnail;
 pub mod whisper;
 
+pub mod multicam_sync;
 #[cfg(feature = "ffmpeg")]
 pub mod mux;
 
