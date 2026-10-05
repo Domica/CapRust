@@ -5827,8 +5827,118 @@ impl CapRustApp {
                 self.toast(tr("toast-multicam-removed"));
             }
         }
+
+        if let Some(gid) = out.sync_requested {
+            self.start_multicam_sync(gid);
+        }
+
+        // Drain the sync job each frame. Progress updates the panel
+        // state; terminal states commit the offsets or report a
+        // failure.
+        let mut finished: Option<(uuid::Uuid, Result<Vec<i64>, String>)> = None;
+        if let Some(rx) = &self.multicam.sync_rx {
+            let mut is_done = false;
+            while let Ok(ev) = rx.try_recv() {
+                use caprust_media_io::multicam_sync::SyncEvent;
+                match ev {
+                    SyncEvent::Progress { current, total } => {
+                        self.multicam.sync_progress = Some((current, total));
+                    }
+                    SyncEvent::Done { offsets_ms } => {
+                        let gid = self.multicam.sync_group.unwrap_or_default();
+                        finished = Some((gid, Ok(offsets_ms)));
+                        is_done = true;
+                        break;
+                    }
+                    SyncEvent::Failed(e) => {
+                        let gid = self.multicam.sync_group.unwrap_or_default();
+                        finished = Some((gid, Err(e)));
+                        is_done = true;
+                        break;
+                    }
+                }
+            }
+            if is_done {
+                self.multicam.sync_rx = None;
+                self.multicam.sync_progress = None;
+            }
+        }
+        if let Some((gid, result)) = finished {
+            self.multicam.sync_group = None;
+            match result {
+                Ok(offsets) => {
+                    let cmd =
+                        caprust_core::commands::set_multicam_sync::SetMultiCamSyncCommand::new(
+                            gid, offsets,
+                        );
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("apply multicam sync: {e}");
+                        self.toast_error(tr("toast-multicam-sync-failed"));
+                    } else {
+                        self.toast(tr("toast-multicam-synced"));
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("multicam sync job failed: {e}");
+                    self.toast_error(tr("toast-multicam-sync-failed"));
+                }
+            }
+        }
+
+        // Keep the timer / progress label fresh while a job runs.
+        if self.multicam.is_syncing() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(200));
+        }
     }
 
+    /// Spawn the audio-envelope sync job for a multicam group.
+    /// Collects the source paths of the group's angle clips, hands
+    /// them to media-io::multicam_sync, and stashes the receiver in
+    /// self.multicam.sync_rx for the panel render loop to drain.
+    fn start_multicam_sync(&mut self, group_id: uuid::Uuid) {
+        if self.multicam.is_syncing() {
+            tracing::warn!("multicam sync already running");
+            return;
+        }
+        let Some(group) = self
+            .project
+            .multicam_groups
+            .iter()
+            .find(|g| g.id == group_id)
+        else {
+            return;
+        };
+
+        // Collect source paths in angle order.
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        for cid in &group.angle_clip_ids {
+            let Some(clip) = self.project.clips.iter().find(|c| c.id == *cid) else {
+                tracing::warn!("sync: angle clip {cid} missing from project");
+                return;
+            };
+            let path = match &clip.clip_type {
+                caprust_core::ClipType::Video { path, .. }
+                | caprust_core::ClipType::Audio { path, .. } => path.clone(),
+                _ => {
+                    tracing::warn!("sync: angle clip {cid} has no source file");
+                    return;
+                }
+            };
+            paths.push(std::path::PathBuf::from(path));
+        }
+
+        let Some(ffmpeg) = caprust_core::ffmpeg::find_ffmpeg(&self.settings) else {
+            self.toast_error(tr("toast-multicam-sync-no-ffmpeg"));
+            return;
+        };
+
+        let rx = caprust_media_io::multicam_sync::spawn_multicam_sync(ffmpeg, paths);
+        self.multicam.sync_rx = Some(rx);
+        self.multicam.sync_group = Some(group_id);
+        self.multicam.sync_progress = None;
+        tracing::info!("multicam sync started for group {group_id}");
+    }
     pub(crate) fn render_properties_panel(&mut self, ui: &mut egui::Ui) {
         section::header(ui, tr("props-heading"));
 
