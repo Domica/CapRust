@@ -14,6 +14,9 @@ use anyhow::Result;
 #[cfg(windows)]
 mod windows_impl;
 
+#[cfg(windows)]
+pub mod capture;
+
 /// One monitor as reported by the OS. Coordinates are the
 /// desktop-relative top-left corner; `width` / `height` are
 /// the current pixel resolution in that coordinate space.
