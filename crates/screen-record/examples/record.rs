@@ -1,3 +1,7 @@
+#![cfg(windows)]
+// Same reason as capture.rs: the DXGI / WASAPI stack is
+// Windows-only, so the whole example compiles out on Linux.
+
 //! Record 5 seconds of the primary monitor to record.mp4.
 //!
 //! Uses `ffmpeg` from PATH. For production the app resolves

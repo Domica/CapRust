@@ -1,3 +1,8 @@
+#![cfg(windows)]
+// Non-Windows CI does not see this file; the crate ships
+// Windows-only capture. Gate the whole example so clippy on
+// Linux skips it.
+
 //! Capture one frame from the primary monitor and save it as PPM.
 //!
 //! Run with:
