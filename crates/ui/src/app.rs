@@ -217,6 +217,10 @@ pub struct CapRustApp {
     /// whenever the banner would show and there is nothing missing,
     /// so a future regression re-opens it.
     pub missing_media_dismissed: bool,
+    #[cfg(windows)]
+    pub screen_record: crate::panels::screen_record::ScreenRecordState,
+    #[cfg(windows)]
+    pub screen_record_open: bool,
     /// Dock tree that owns every editor panel. Replaces the fixed
     /// SidePanel / CentralPanel layout. See `crate::dock`.
     pub dock_state: egui_dock::DockState<crate::dock::Tab>,
@@ -562,6 +566,10 @@ impl CapRustApp {
             relink_dialog: Default::default(),
             relink_dialog_open: false,
             missing_media_dismissed: false,
+            #[cfg(windows)]
+            screen_record: crate::panels::screen_record::ScreenRecordState::new_defaults(),
+            #[cfg(windows)]
+            screen_record_open: false,
             dock_state: settings
                 .dock_layout
                 .as_ref()
@@ -1248,6 +1256,11 @@ impl CapRustApp {
                     ui.separator();
                     if ui.button(tr("menu-file-export")).clicked() {
                         self.export_open = true;
+                        ui.close_menu();
+                    }
+                    #[cfg(windows)]
+                    if ui.button(tr("menu-file-record-screen")).clicked() {
+                        self.screen_record_open = true;
                         ui.close_menu();
                     }
                     ui.separator();
@@ -7099,6 +7112,133 @@ impl CapRustApp {
         }
     }
 
+    #[cfg(windows)]
+    fn show_screen_record_modal(&mut self, ctx: &egui::Context) {
+        use crate::panels::screen_record::{show_modal, ScreenRecordAction};
+
+        // Load monitors the first time the modal opens.
+        if !self.screen_record.monitors_loaded {
+            match caprust_screen_record::enumerate_monitors() {
+                Ok(list) => {
+                    self.screen_record.monitors = list;
+                    self.screen_record.monitors_loaded = true;
+                }
+                Err(e) => {
+                    tracing::error!("enumerate monitors: {e}");
+                    self.screen_record.error = Some(e.to_string());
+                    self.screen_record.monitors_loaded = true;
+                }
+            }
+        }
+
+        // Poll an in-flight recording for completion.
+        let mut finished: Option<Result<std::path::PathBuf, String>> = None;
+        if let Some(rx) = &self.screen_record.result_rx {
+            if let Ok(r) = rx.try_recv() {
+                finished = Some(r);
+            }
+        }
+        if let Some(r) = finished {
+            self.screen_record.in_progress = false;
+            self.screen_record.result_rx = None;
+            self.screen_record.stop_flag = None;
+            match r {
+                Ok(path) => {
+                    self.toast(format!("{} {}", tr("screen-record-saved"), path.display()));
+                    self.screen_record.error = None;
+                }
+                Err(e) => {
+                    tracing::error!("screen record failed: {e}");
+                    self.screen_record.error = Some(format!("{} {e}", tr("screen-record-failed")));
+                }
+            }
+        }
+
+        // Poll the in-flight recording so the progress bar
+        // advances. The receiver lives in the state and is
+        // checked above; nothing else to do here but repaint.
+        if self.screen_record.in_progress {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
+        let mut open = self.screen_record_open;
+        let action = show_modal(ctx, &mut self.screen_record, &mut open);
+        self.screen_record_open = open;
+
+        match action {
+            ScreenRecordAction::None => {}
+            ScreenRecordAction::Close => {
+                self.screen_record_open = false;
+                self.screen_record.error = None;
+            }
+            ScreenRecordAction::Stop => {
+                if let Some(flag) = &self.screen_record.stop_flag {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            ScreenRecordAction::Start {
+                monitor,
+                duration_sec,
+                fps,
+            } => {
+                self.start_screen_record(monitor, duration_sec, fps);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn start_screen_record(&mut self, monitor: usize, duration_sec: u32, fps: u32) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc::channel;
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let Some(ffmpeg) = caprust_core::ffmpeg::find_ffmpeg(&self.settings) else {
+            self.screen_record.error = Some(tr("screen-record-no-ffmpeg"));
+            return;
+        };
+
+        let dir = recordings_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.screen_record.error = Some(format!("mkdir: {e}"));
+            return;
+        }
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let out = dir.join(format!("record-{secs}.mp4"));
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_worker = stop.clone();
+        let handle = caprust_screen_record::record::RecordHandle {
+            stop: stop_worker,
+            frames_written: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        };
+        let (tx, rx) = channel();
+        let out_for_worker = out.clone();
+        std::thread::spawn(move || {
+            let r = caprust_screen_record::record::record_to_file(
+                &ffmpeg,
+                monitor,
+                &out_for_worker,
+                Duration::from_secs(duration_sec as u64),
+                fps,
+                handle,
+            )
+            .map(|s| s.output_path)
+            .map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+
+        self.screen_record.in_progress = true;
+        self.screen_record.started_at = Some(std::time::Instant::now());
+        self.screen_record.stop_flag = Some(stop);
+        self.screen_record.result_rx = Some(rx);
+        self.screen_record.error = None;
+        let _ = Ordering::Relaxed; // silence unused on non-mutating paths
+    }
+
     /// Modal for renaming the currently-selected track. Opened from
     /// the track header context menu.
     fn show_track_rename_window(&mut self, ctx: &egui::Context) {
@@ -8414,6 +8554,11 @@ impl eframe::App for CapRustApp {
         if self.export_open {
             self.show_export_window(ctx);
         }
+
+        #[cfg(windows)]
+        if self.screen_record_open {
+            self.show_screen_record_modal(ctx);
+        }
         if self.model_prompt.is_some() {
             self.show_model_prompt_window(ctx);
         }
@@ -8564,4 +8709,12 @@ pub struct TextOverlayDrag {
     /// Scale factors from frame-space to screen-space at drag start.
     pub sx: f32,
     pub sy: f32,
+}
+
+#[cfg(windows)]
+fn recordings_dir() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    base.join("CapRust").join("recordings")
 }

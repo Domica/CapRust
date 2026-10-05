@@ -782,6 +782,7 @@ dependencies = [
  "caprust-core",
  "caprust-i18n",
  "caprust-media-io",
+ "caprust-screen-record",
  "cpal",
  "eframe",
  "egui",

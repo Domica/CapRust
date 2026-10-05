@@ -21,3 +21,6 @@ cpal = { workspace = true }
 ringbuf = { workspace = true }
 uuid = { workspace = true }
 rfd = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+caprust-screen-record = { path = "../screen-record" }

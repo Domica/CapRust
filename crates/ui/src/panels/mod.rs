@@ -10,4 +10,6 @@ pub mod narration_input;
 pub mod plugin_browser;
 pub mod preview_window;
 pub mod relink_dialog;
+#[cfg(windows)]
+pub mod screen_record;
 pub mod settings_dialog;
