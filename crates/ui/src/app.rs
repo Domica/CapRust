@@ -1270,13 +1270,18 @@ impl CapRustApp {
                             // Textures in memory must be dropped too.
                             self.clip_textures.clear();
                             self.media_bin.thumb_cache = Default::default();
-                            // Re-generate in background.
+                            // Re-generate in background. Both passes:
+                            // thumbnails for video/image, waveforms for
+                            // audio/video. Each checks the on-disk cache,
+                            // so this is idempotent.
                             self.regen_missing_thumbnails();
+                            self.backfill_waveforms();
                         }
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-file-regen-thumbs")).clicked() {
                         self.regen_missing_thumbnails();
+                        self.backfill_waveforms();
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-file-settings")).clicked() {
