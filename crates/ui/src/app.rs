@@ -243,6 +243,7 @@ pub struct CapRustApp {
     pub timeline_row_layout: (f32, Vec<(usize, f32)>),
     pub properties: PropertiesState,
     pub master_chain: crate::panels::master_chain::MasterChainState,
+    pub multicam: crate::panels::multicam::MultiCamState,
     pub model_prompt: Option<caprust_core::ModelKind>,
     /// Active tab inside the model prompt window. Lets the user switch
     /// between Caption and Narration model lists without closing and
@@ -583,6 +584,7 @@ impl CapRustApp {
             timeline_row_layout: (0.0, Vec::new()),
             properties: PropertiesState::default(),
             master_chain: Default::default(),
+            multicam: Default::default(),
             model_prompt: None,
             model_prompt_tab: caprust_core::ModelKind::Caption,
             model_download: None,
@@ -5756,6 +5758,29 @@ impl CapRustApp {
                 // Intentionally not undoable yet (follow-up: a proper
                 // SetMasterPluginBypassCommand). Preview still respawns
                 // because render_hash includes `bypassed`.
+            }
+        }
+    }
+    /// Render the multicam groups panel inside a dock zone.
+    pub(crate) fn render_multicam_panel(&mut self, ui: &mut egui::Ui) {
+        let out = crate::panels::multicam::show(ui, &self.project, &mut self.multicam);
+
+        if let Some((gid, angle)) = out.set_active_angle {
+            let cmd =
+                caprust_core::commands::set_active_angle::SetActiveAngleCommand::new(gid, angle);
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::error!("set active angle failed: {e}");
+            }
+        }
+
+        if let Some(gid) = out.remove_group {
+            let cmd =
+                caprust_core::commands::remove_multicam_group::RemoveMultiCamGroupCommand::new(gid);
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::error!("remove multicam group failed: {e}");
+                self.toast_error(tr("toast-multicam-remove-failed"));
+            } else {
+                self.toast(tr("toast-multicam-removed"));
             }
         }
     }

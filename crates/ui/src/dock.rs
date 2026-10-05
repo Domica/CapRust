@@ -30,6 +30,7 @@ pub enum Tab {
     Properties,
     Timeline,
     MasterChain,
+    MultiCam,
 }
 
 impl Tab {
@@ -47,6 +48,7 @@ impl Tab {
             Self::Properties => "props-heading",
             Self::Timeline => "dock-tab-timeline",
             Self::MasterChain => "dock-tab-master",
+            Self::MultiCam => "dock-tab-multicam",
         }
     }
 }
@@ -67,7 +69,7 @@ pub fn default_dock_state() -> DockState<Tab> {
     let [center, _right] = surface.split_right(
         NodeIndex::root(),
         0.78,
-        vec![Tab::Properties, Tab::MasterChain],
+        vec![Tab::Properties, Tab::MasterChain, Tab::MultiCam],
     );
 
     // Center: split vertically into Preview (top) + Timeline (bottom).
@@ -196,6 +198,9 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             }
             Tab::MasterChain => {
                 self.app.render_master_chain_panel(ui);
+            }
+            Tab::MultiCam => {
+                self.app.render_multicam_panel(ui);
             }
             Tab::Properties => {
                 self.app.render_properties_panel(ui);
