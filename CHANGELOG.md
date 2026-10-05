@@ -2,6 +2,54 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.1] - 2026-10-05
+
+Nine bug fixes and two audio UX improvements on top of 0.9.0. All
+reported from real use of the 0.9.0 beta installer.
+
+### Fixed
+- **Split-at-playhead: right half plays from source 0.** A clip
+  split at the playhead restarted at 0:00 of the source file instead
+  of continuing where the left half stopped. The same missing model
+  field broke fade in/out on split halves. ``Clip.source_offset_ms``
+  now carries the source window start and the render plan threads it
+  into ``-ss`` (video) and ``atrim`` (audio).
+- **Volume automation with 2+ keyframes blocked preview.** The
+  ``volume=EXPRdB:eval=frame`` form is evaluated once at filter-config
+  time in every ffmpeg build we tested. With 2+ keyframes the
+  expression references ``t``, which is NAN at init, so the pipeline
+  hung. The expression is now in linear-multiplier form
+  (``pow(10, dB/20)``) so ``eval=frame`` actually runs per frame.
+- **Auto-duck dropdown showed UUIDs.** Labels are now
+  ``<kind> @ MM:SS (Ns)``, or the clip name when set.
+- **FFmpeg subprocess windows stole focus.** Every spawn from
+  media-io and screen-record now goes through a ``silent_command``
+  helper that sets ``CREATE_NO_WINDOW`` on Windows release builds.
+- **Update checker never saw prerelease builds.** It called
+  ``/releases/latest``, which GitHub excludes prereleases from.
+  Switched to ``/releases?per_page=20`` and pick the newest non-draft
+  entry.
+- **Thumbnail strip and waveform missing after project reopen.**
+  Media items re-imported (or moved between machines) got fresh
+  UUIDs while timeline clips kept the old ones. Project load now
+  relinks by clip path and creates a fresh MediaItem for orphan paths.
+- **Audio clip dropped before probe finishes stayed at 3s.** The
+  probe handler now extends ``duration_ms`` on clips whose
+  ``source_duration_ms`` was still 0 (the placeholder state).
+- **Clear cache did not regenerate waveforms.** Both the clear-cache
+  menu and Regenerate thumbnails now run the thumbnail and waveform
+  backfill passes.
+
+### Added
+- **Ducking reduction amount.** Per-clip ``duck_reduction_db``
+  (default -12 dB), mapped to a sidechaincompress ratio via
+  ``2^(-dB/6)``. Slider appears in the Sound tab when a control
+  clip is selected.
+- **File-based logs in release builds.** Every run writes INFO+ to
+  ``%APPDATA%/CapRust/logs/caprust.log.YYYY-MM-DD``; the console is
+  hidden in release, ``CAPRUST_DEBUG=1`` restores stderr. Settings →
+  Appearance → Open logs folder.
+
 ## [0.9.0] - 2026-10-05
 
 Chroma key, multi-camera groups, and screen recording. First
