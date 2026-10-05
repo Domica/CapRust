@@ -6,6 +6,7 @@ pub mod ffmpeg;
 pub mod frame_rate;
 pub mod media;
 pub mod models;
+pub mod multicam;
 pub mod project;
 pub mod project_io;
 pub mod recent;

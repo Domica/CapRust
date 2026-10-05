@@ -21,6 +21,9 @@ pub struct ProjectState {
     /// final mix, not per-clip. See DIRECTIVES 12 and 28.3.
     #[serde(default)]
     pub master_plugins: Vec<crate::plugin::PluginInstance>,
+    /// Multi-camera groups (Faza Q). See crate::multicam.
+    #[serde(default)]
+    pub multicam_groups: Vec<crate::multicam::MultiCamGroup>,
 }
 
 impl Default for ProjectState {
@@ -40,6 +43,7 @@ impl Default for ProjectState {
             models: crate::models::ModelRegistry::default(),
             tracks: crate::track::default_tracks(),
             master_plugins: Vec::new(),
+            multicam_groups: Vec::new(),
         }
     }
 }
