@@ -1403,6 +1403,37 @@ impl CapRustApp {
                     ("⌨ OFF", egui::Color32::from_rgb(220, 120, 80))
                 };
                 ui.label(egui::RichText::new(kb_txt).color(kb_col).strong());
+
+                // Screen recording indicator (Windows only).
+                #[cfg(windows)]
+                {
+                    use std::sync::atomic::Ordering;
+                    if self.screen_record.in_progress {
+                        ui.separator();
+                        let elapsed = self
+                            .screen_record
+                            .started_at
+                            .map(|t| t.elapsed().as_secs())
+                            .unwrap_or(0);
+                        let mm = elapsed / 60;
+                        let ss = elapsed % 60;
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "● REC {mm:02}:{ss:02} ({}/{})",
+                                elapsed, self.screen_record.duration_sec
+                            ))
+                            .color(egui::Color32::from_rgb(220, 60, 60))
+                            .strong(),
+                        );
+                        if ui.button(tr("screen-record-toolbar-stop")).clicked() {
+                            if let Some(flag) = &self.screen_record.stop_flag {
+                                flag.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        // Repaint so the timer advances.
+                        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+                    }
+                }
             });
         });
     }

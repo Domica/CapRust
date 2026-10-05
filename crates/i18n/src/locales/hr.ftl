@@ -17,6 +17,7 @@ screen-record-no-monitors = Nema pronadenih monitora.
 screen-record-monitor = Monitor
 screen-record-duration = Trajanje (s)
 screen-record-fps = Broj slika/s
+screen-record-toolbar-stop = Zaustavi snimanje
 screen-record-start = Pokreni
 screen-record-stop = Zaustavi
 screen-record-close = Zatvori

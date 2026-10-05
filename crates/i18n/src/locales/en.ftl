@@ -17,6 +17,7 @@ screen-record-no-monitors = No monitors found.
 screen-record-monitor = Monitor
 screen-record-duration = Duration (s)
 screen-record-fps = Frame rate
+screen-record-toolbar-stop = Stop recording
 screen-record-start = Start
 screen-record-stop = Stop
 screen-record-close = Close
