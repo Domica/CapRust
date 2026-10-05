@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.2-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -23,7 +23,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.1-win64-setup.exe`.
+1. Run `CapRust-0.9.2-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -385,6 +385,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.2** | 2026-10-05 | Timeline audio envelope overlay: volume automation polyline (dB-domain interp) and duck zones with reduction-scaled opacity. Probe backfill for auto-created media on project load. |
 | **0.9.1** | 2026-10-05 | Nine bug fixes (split offset, volume keyframes, orphan media relink, subprocess focus, update checker, more). Ducking reduction slider, file-based logs. |
 | 0.9.0 | 2026-10-05 | Chroma key, multi-camera groups with audio sync, screen recording with cursor overlay. Video-without-audio export fix. |
 | 0.8.4 | 2026-10-03 | Settings import/sync keep local ffmpeg paths, MyMemory disclosure, MCP trust model. Closes the security audit. |

@@ -2,6 +2,38 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.2] - 2026-10-05
+
+Timeline audio envelope overlay plus a probe-backfill fix. Small
+release; the audio envelope is the headline.
+
+### Added
+- **Timeline audio envelope overlay (#14).** Audio clips now draw an
+  amplitude-style overlay directly on the clip rect, between the
+  waveform strip and the clip label. Two layers share one vertical
+  scale (+12 dB at the top, 0 dB at 60% height, -60 dB at the bottom):
+  - **Volume automation** — a polyline through ``volume_keyframes``,
+    sampled at 128+1 evenly spaced fractions and interpolated in the
+    **dB domain** to match the ffmpeg ``volume`` filter expression
+    built by ``export_graph``. When the clip has no keyframes the
+    overlay draws a flat line at ``volume_db``.
+  - **Ducking zones** — a shaded region wherever the
+    ``duck_against`` control clip overlaps this clip's span. Fill
+    opacity scales with ``duck_reduction_db`` (0.10..0.45), so a
+    deeper duck reads darker in the timeline.
+
+  The overlay is cached per clip and invalidated only when
+  ``ProjectState::render_hash()`` changes, so scroll and zoom do not
+  recompute anything.
+
+### Fixed
+- **Probe backfill for media auto-created on load.** Media items
+  synthesized by ``relink_orphan_media_refs`` at project load start
+  with ``probe_done = false`` and no duration. A new backfill pass
+  (``backfill_missing_probes``) enqueues a probe job for every item
+  whose cache is empty, so durations and thumbnails arrive even when
+  the project was opened on a fresh machine.
+
 ## [0.9.1] - 2026-10-05
 
 Nine bug fixes and two audio UX improvements on top of 0.9.0. All
