@@ -280,6 +280,22 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 
     ui.add_space(space::L);
     ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-logs")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-appearance-logs-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    if ui.button(tr("set-appearance-open-logs")).clicked() {
+        let dir = logs_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if let Err(e) = open::that(&dir) {
+            tracing::warn!("open logs dir: {e}");
+        }
+    }
+
+    ui.add_space(space::L);
+    ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-updates")).strong());
     ui.checkbox(
         &mut settings.check_for_updates,
@@ -810,4 +826,14 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
             .italics()
             .color(egui::Color32::from_gray(130)),
     );
+}
+
+/// Where the app writes its log files. Duplicated from the app
+/// crate so the Settings dialog can open the folder without
+/// depending on the binary.
+fn logs_dir() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".into());
+    std::path::Path::new(&base).join("CapRust").join("logs")
 }

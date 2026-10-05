@@ -47,6 +47,7 @@ blake3 = "1"
 parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # Face detection (auto-reframe, Phase P2).
 # tract-onnx 0.23 is pure Rust (no libonnxruntime dependency). It
