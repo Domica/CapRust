@@ -5,8 +5,11 @@
 //!
 //!   cargo run -p caprust-screen-record --example record
 
+#[cfg(windows)]
 use caprust_screen_record::record::{record_to_file, RecordHandle};
+#[cfg(windows)]
 use std::path::PathBuf;
+#[cfg(windows)]
 use std::time::Duration;
 
 #[cfg(windows)]

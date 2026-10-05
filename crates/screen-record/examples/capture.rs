@@ -8,7 +8,9 @@
 //! dependency, so this proves the DXGI path end to end without
 //! pulling `image` into the crate.
 
+#[cfg(windows)]
 use std::fs::File;
+#[cfg(windows)]
 use std::io::{BufWriter, Write};
 
 #[cfg(windows)]
