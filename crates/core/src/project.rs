@@ -216,6 +216,16 @@ impl ProjectState {
         let mut h = DefaultHasher::new();
 
         self.clips.len().hash(&mut h);
+        self.multicam_groups.len().hash(&mut h);
+        for g in &self.multicam_groups {
+            g.id.hash(&mut h);
+            g.active_angle.hash(&mut h);
+            g.angle_clip_ids.len().hash(&mut h);
+            for id in &g.angle_clip_ids {
+                id.hash(&mut h);
+            }
+            g.sync_offsets_ms.hash(&mut h);
+        }
         for c in &self.clips {
             c.id.hash(&mut h);
             c.track_index.hash(&mut h);
@@ -952,5 +962,41 @@ mod chroma_key_hash_tests {
         }
         let h2 = p.render_hash();
         assert_ne!(h1, h2, "chroma_key must invalidate the render hash");
+    }
+}
+
+#[cfg(test)]
+mod multicam_hash_tests {
+    use super::*;
+    use crate::clip::Clip;
+    use crate::commands::create_multicam_group::CreateMultiCamGroupCommand;
+    use crate::commands::set_active_angle::SetActiveAngleCommand;
+    use crate::commands::UndoStack;
+
+    fn project_with_group() -> (ProjectState, uuid::Uuid) {
+        let mut p = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 1000);
+        let b = Clip::new_video("b.mp4", 1, 0, 1000);
+        let aid = a.id;
+        let bid = b.id;
+        p.add_clip(a);
+        p.add_clip(b);
+        let cmd = CreateMultiCamGroupCommand::new("cam", vec![aid, bid]);
+        let gid = cmd.group_id();
+        let mut stack = UndoStack::default();
+        stack.execute(Box::new(cmd), &mut p).unwrap();
+        (p, gid)
+    }
+
+    #[test]
+    fn hash_changes_on_active_angle_edit() {
+        let (mut p, gid) = project_with_group();
+        let h1 = p.render_hash();
+        let mut stack = UndoStack::default();
+        stack
+            .execute(Box::new(SetActiveAngleCommand::new(gid, 1)), &mut p)
+            .unwrap();
+        let h2 = p.render_hash();
+        assert_ne!(h1, h2, "active angle change must invalidate preview");
     }
 }

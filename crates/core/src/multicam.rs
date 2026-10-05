@@ -19,6 +19,12 @@ pub struct MultiCamGroup {
     /// The clips live on whatever tracks the user placed them on;
     /// the group does not own their layout.
     pub angle_clip_ids: Vec<Uuid>,
+    /// Index into `angle_clip_ids` of the angle the render
+    /// path currently uses. Non-active angles are suppressed
+    /// at plan time. Defaults to 0 so old files render as
+    /// before (all angles present, first wins z-order ties).
+    #[serde(default)]
+    pub active_angle: usize,
     /// Per-angle offset in milliseconds relative to angle[0].
     /// Empty = no sync applied yet (PR 2 fills it).
     #[serde(default)]
@@ -31,12 +37,18 @@ impl MultiCamGroup {
             id: Uuid::new_v4(),
             name: name.into(),
             angle_clip_ids,
+            active_angle: 0,
             sync_offsets_ms: Vec::new(),
         }
     }
 
     pub fn angle_count(&self) -> usize {
         self.angle_clip_ids.len()
+    }
+    /// Clip id of the currently active angle, if the index is in
+    /// bounds. Returns None when the group has no clips yet.
+    pub fn active_clip_id(&self) -> Option<Uuid> {
+        self.angle_clip_ids.get(self.active_angle).copied()
     }
 }
 

@@ -2281,6 +2281,7 @@ pub fn plan_from_project(
     }
 
     // Z-order index assigned to each clip as we walk tracks bottom-up.
+    let multicam_suppressed = multicam_suppressed_ids(project);
     for (z, &t_idx) in video_track_order.iter().enumerate() {
         // The eye chip on the track header toggles `visible`. Hidden
         // tracks are excluded from the render entirely — clips on them
@@ -2298,6 +2299,9 @@ pub fn plan_from_project(
         clips.sort_by_key(|c| c.start_time_ms);
 
         for c in clips {
+            if multicam_suppressed.contains(&c.id) {
+                continue;
+            }
             if let Some(path) = clip_source_path(&c.clip_type) {
                 if !std::path::Path::new(path).is_file() {
                     tracing::warn!(
@@ -3956,6 +3960,75 @@ mod chroma_key_filter_tests {
         assert!(
             !fg.contains("chromakey="),
             "plain plan must not emit chromakey: {fg}"
+        );
+    }
+}
+
+/// Clips that must not contribute to the render because they belong
+/// to a multicam group as a non-active angle. Pure; called once at
+/// the top of plan_from_project.
+pub(crate) fn multicam_suppressed_ids(
+    project: &caprust_core::ProjectState,
+) -> std::collections::HashSet<uuid::Uuid> {
+    project
+        .multicam_groups
+        .iter()
+        .flat_map(|g| {
+            let active = g.active_angle;
+            g.angle_clip_ids
+                .iter()
+                .enumerate()
+                .filter(move |(i, _)| *i != active)
+                .map(|(_, id)| *id)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod multicam_plan_tests {
+    use super::*;
+    use caprust_core::clip::Clip;
+    use caprust_core::commands::create_multicam_group::CreateMultiCamGroupCommand;
+    use caprust_core::commands::set_active_angle::SetActiveAngleCommand;
+    use caprust_core::commands::UndoStack;
+
+    fn project_with_group() -> (caprust_core::ProjectState, uuid::Uuid) {
+        let mut p = caprust_core::ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 1000);
+        let b = Clip::new_video("b.mp4", 1, 0, 1000);
+        let aid = a.id;
+        let bid = b.id;
+        p.add_clip(a);
+        p.add_clip(b);
+        let cmd = CreateMultiCamGroupCommand::new("cam", vec![aid, bid]);
+        let gid = cmd.group_id();
+        let mut stack = UndoStack::default();
+        stack.execute(Box::new(cmd), &mut p).unwrap();
+        (p, gid)
+    }
+
+    #[test]
+    fn default_active_angle_suppresses_others() {
+        let (p, _gid) = project_with_group();
+        let s = multicam_suppressed_ids(&p);
+        assert_eq!(s.len(), 1, "one angle (B) is inactive by default");
+        let b = p.multicam_groups[0].angle_clip_ids[1];
+        assert!(s.contains(&b), "B is the non-active angle");
+    }
+
+    #[test]
+    fn inactive_angle_is_suppressed() {
+        let (mut p, gid) = project_with_group();
+        let angle_b = p.multicam_groups[0].angle_clip_ids[0];
+        let mut stack = UndoStack::default();
+        stack
+            .execute(Box::new(SetActiveAngleCommand::new(gid, 1)), &mut p)
+            .unwrap();
+        let s = multicam_suppressed_ids(&p);
+        assert_eq!(s.len(), 1);
+        assert!(
+            s.contains(&angle_b),
+            "angle A must be suppressed when B is active"
         );
     }
 }

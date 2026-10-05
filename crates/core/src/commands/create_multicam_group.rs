@@ -50,6 +50,7 @@ impl Command for CreateMultiCamGroupCommand {
             id: self.group_id,
             name: self.name.clone(),
             angle_clip_ids: self.angle_clip_ids.clone(),
+            active_angle: 0,
             sync_offsets_ms: Vec::new(),
         };
         let idx = state.multicam_groups.len();
