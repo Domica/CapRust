@@ -3678,7 +3678,10 @@ impl CapRustApp {
         // Time/px
         let total_ms = self.total_duration_ms();
         let content_ms = (total_ms + 20_000).max(30_000);
-        let viewport_w = (ui.available_width() - header_w).max(120.0);
+        // The horizontal layout adds item_spacing between the header
+        // and lane columns; without subtracting it the lanes overflow
+        // by a few px and the right edge clips.
+        let viewport_w = (ui.available_width() - header_w - ui.spacing().item_spacing.x).max(120.0);
         let px_per_ms = (viewport_w * 0.9 * self.timeline_zoom) / content_ms as f32;
         let px_per_ms = px_per_ms.max(0.002);
         let content_width = (content_ms as f32 * px_per_ms).max(viewport_w);
