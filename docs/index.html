@@ -28,7 +28,7 @@
 
 <header class="hero">
   <div class="container">
-    <div class="badge">v0.9.5 — panel polish + reverse fix</div>
+    <div class="badge">v0.9.6 — disabled states + error toasts</div>
     <h1>Video editing.<br>Without the drag.</h1>
     <p class="tagline">
       A native Windows video editor for short-form creators.
@@ -146,9 +146,9 @@
 <section id="download" class="download">
   <div class="container">
     <h2>Download CapRust</h2>
-    <p>v0.9.5 polishes the controls: switch, segmented control, and chip widgets replace raw checkboxes and selectable values across Settings, the media bin, clip properties, the model prompt, and multicam. Reverse now actually renders in preview and export, and is capped at 60 seconds. Everything from 0.9.4 is included.</p>
+    <p>v0.9.6 adds disabled states for chip, switch and segmented control, surfaces save/load/export/undo/redo failures as error toasts, and finishes the button-widget sweep across every panel. Everything from 0.9.5 is included.</p>
     <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
-      ↓&nbsp; Download v0.9.5 for Windows
+      ↓&nbsp; Download v0.9.6 for Windows
     </a>
     <p class="verify">
       SHA-256 for each release is on the
@@ -207,7 +207,7 @@
       <details>
         <summary>It says "beta" — is it stable?</summary>
         <div class="answer">
-          v0.9.5 polishes the controls with switch, segmented control, and chip widgets, and makes Reverse render in preview and export. Everything from 0.9.0 through 0.9.3 is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
+          v0.9.6 adds disabled widget states and error toasts for save, load, export, undo and redo. Everything from 0.9.0 through 0.9.5 is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
           audio effects, CLAP hosting and the MCP server are all in. Expect
           rough edges; a crash handler writes a report to
           <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and

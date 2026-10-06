@@ -2,6 +2,25 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.6] — 2026-10-06
+
+### Added
+
+- **Disabled states for chip, switch and segmented_control.** New
+  `*_enabled` variants dim to 40% alpha, use hover-only hit-testing
+  and a `NotAllowed` cursor when disabled; the existing widgets are
+  thin wrappers passing `enabled = true`. Button rows across
+  Settings, the media bin and six more panels now use the `primary`
+  / `secondary` / `ghost` / `icon` variants instead of raw
+  `ui.button`, per the widget policy. No behaviour change.
+
+### Fixed
+
+- **Save, load, export, undo and redo failures now surface error
+  toasts.** They previously died in the application log; a red toast
+  now names the failure next to the log line. Adds `toast-*-failed`
+  keys in English and Croatian.
+
 ## [0.9.5] — 2026-10-06
 
 ### Changed
