@@ -115,14 +115,17 @@ pub fn reveal_in_folder(path: &Path) {
         // missing or relative, so resolve to something real first.
         let target = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         if target.is_file() {
-            // NOTE: /select and the path must be SEPARATE args. The glued
-            // form `/select,C:\dir with spaces\f.mp4` gets quoted as one
-            // argv element and Explorer fails to parse it, falling back
-            // to Documents.
-            let _ = crate::silent_cmd::silent_command("explorer")
-                .arg("/select")
-                .arg(&target)
-                .spawn();
+            // NOTE: Explorer parses its own command line, so Rust's argv
+            // quoting does not apply. The only form that survives paths
+            // with spaces is /select,"<path>" (quotes around the path
+            // only), passed literally via raw_arg. Both the glued whole-
+            // quoted form and separate args fall back to Documents.
+            {
+                use std::os::windows::process::CommandExt;
+                let mut cmd = crate::silent_cmd::silent_command("explorer");
+                cmd.raw_arg(format!("/select,\"{}\"", target.display()));
+                let _ = cmd.spawn();
+            }
         } else if let Some(parent) = target.parent().filter(|p| p.is_dir()) {
             tracing::warn!("reveal: {} missing, opening parent", target.display());
             let _ = crate::silent_cmd::silent_command("explorer")
