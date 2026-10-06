@@ -2,6 +2,8 @@
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::{space, text};
+use crate::widgets::chip;
+use crate::widgets::switch;
 use caprust_core::{Clip, ClipType, ProjectState};
 use egui::Ui;
 use egui_phosphor::regular as ph;
@@ -283,7 +285,7 @@ pub fn show(
                 .show_ui(ui, |ui| {
                     for (id, key) in STYLES {
                         let selected = *id == current;
-                        if ui.selectable_label(selected, tr(key)).clicked() && !selected {
+                        if chip::chip(ui, tr(key), selected).clicked() && !selected {
                             state
                                 .pending
                                 .push(PendingEdit::TextStyle((*id).to_string()));
@@ -368,9 +370,7 @@ pub fn show(
                 .selected_text(current_label)
                 .width(180.0)
                 .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(cur_effect.is_none(), tr("props-text-effect-none"))
-                        .clicked()
+                    if chip::chip(ui, tr("props-text-effect-none"), cur_effect.is_none()).clicked()
                         && cur_effect.is_some()
                     {
                         pending_effect = Some(None);
@@ -381,7 +381,7 @@ pub fn show(
                         (TextEffectKind::ColorCycle, "props-text-effect-color-cycle"),
                     ] {
                         let selected = cur_effect.map(|e| e.kind) == Some(k);
-                        if ui.selectable_label(selected, tr(key)).clicked() && !selected {
+                        if chip::chip(ui, tr(key), selected).clicked() && !selected {
                             let mut base = cur_effect.unwrap_or(TextEffect {
                                 kind: k,
                                 period: 1.0,
@@ -525,7 +525,7 @@ pub fn show(
                             ),
                         ] {
                             let sel = cs.position == p;
-                            if ui.selectable_label(sel, tr(key)).clicked() && !sel {
+                            if chip::chip(ui, tr(key), sel).clicked() && !sel {
                                 cs.position = p;
                                 changed = true;
                             }
@@ -580,9 +580,9 @@ pub fn show(
             });
 
             ui.horizontal(|ui| {
-                changed |= ui
-                    .checkbox(&mut cs.bg_enabled, tr("props-captions-style-bg"))
-                    .changed();
+                changed |=
+                    switch::switch_labeled(ui, &mut cs.bg_enabled, tr("props-captions-style-bg"))
+                        .changed();
             });
             if cs.bg_enabled {
                 ui.horizontal(|ui| {
@@ -675,7 +675,7 @@ pub fn show(
                             ),
                         ] {
                             let sel = effect.as_ref().map(|e| e.kind) == kind;
-                            if ui.selectable_label(sel, tr(key)).clicked() && !sel {
+                            if chip::chip(ui, tr(key), sel).clicked() && !sel {
                                 new_effect = kind.map(|k| TextEffect {
                                     kind: k,
                                     period: effect.as_ref().map(|e| e.period).unwrap_or(1.0),
@@ -1107,7 +1107,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
             ui.label(tr("props-field-reverse"));
             let mut rev = clip.reversed;
-            if ui.checkbox(&mut rev, "").changed() {
+            if switch::switch(ui, &mut rev).changed() {
                 state.pending.push(PendingEdit::Reverse(rev));
             }
             ui.end_row();
@@ -1125,14 +1125,14 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         .show(ui, |ui| {
             ui.label(tr("props-mirror-h"));
             let mut h = clip.flip_h;
-            if ui.checkbox(&mut h, "").changed() {
+            if switch::switch(ui, &mut h).changed() {
                 state.pending.push(PendingEdit::FlipH(h));
             }
             ui.end_row();
 
             ui.label(tr("props-mirror-v"));
             let mut v = clip.flip_v;
-            if ui.checkbox(&mut v, "").changed() {
+            if switch::switch(ui, &mut v).changed() {
                 state.pending.push(PendingEdit::FlipV(v));
             }
             ui.end_row();
@@ -1195,7 +1195,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             let mut ramp_enabled = clip.speed_end.is_some();
             ui.label(tr("props-field-speed-end"));
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut ramp_enabled, "").changed() {
+                if switch::switch(ui, &mut ramp_enabled).changed() {
                     if ramp_enabled {
                         // Default the ramp end to the current speed,
                         // then the user drags it in the direction they
@@ -1242,7 +1242,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                             caprust_core::clip::EaseCurve::EaseInOut,
                         ] {
                             let selected = clip.speed_ease == e;
-                            if ui.selectable_label(selected, ease_label(e)).clicked() && !selected {
+                            if chip::chip(ui, ease_label(e), selected).clicked() && !selected {
                                 state.pending.push(PendingEdit::SpeedEase(e));
                             }
                         }
@@ -1265,29 +1265,21 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                         caprust_core::clip::SpeedRampRange::LastN(_)
                     );
 
-                    if ui
-                        .selectable_label(is_whole, tr("props-speed-range-whole"))
-                        .clicked()
+                    if chip::chip(ui, tr("props-speed-range-whole"), is_whole).clicked()
                         && !is_whole
                     {
                         state.pending.push(PendingEdit::SpeedRange(
                             caprust_core::clip::SpeedRampRange::WholeClip,
                         ));
                     }
-                    if ui
-                        .selectable_label(is_first, tr("props-speed-range-first"))
-                        .clicked()
+                    if chip::chip(ui, tr("props-speed-range-first"), is_first).clicked()
                         && !is_first
                     {
                         state.pending.push(PendingEdit::SpeedRange(
                             caprust_core::clip::SpeedRampRange::FirstN(current_n),
                         ));
                     }
-                    if ui
-                        .selectable_label(is_last, tr("props-speed-range-last"))
-                        .clicked()
-                        && !is_last
-                    {
+                    if chip::chip(ui, tr("props-speed-range-last"), is_last).clicked() && !is_last {
                         state.pending.push(PendingEdit::SpeedRange(
                             caprust_core::clip::SpeedRampRange::LastN(current_n),
                         ));
@@ -1396,7 +1388,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                 && clip.speed_end == *end_v
                 && clip.speed_ease == *e
                 && clip.speed_range == *r;
-            if ui.selectable_label(selected, *label).clicked() && !selected {
+            if chip::chip(ui, *label, selected).clicked() && !selected {
                 state.pending.push(PendingEdit::Speed(*start_v));
                 state.pending.push(PendingEdit::SpeedEnd(*end_v));
                 state.pending.push(PendingEdit::SpeedEase(*e));
@@ -1486,15 +1478,14 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             .selected_text(current_label)
             .width(200.0) // font-family combo; component-specific
             .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(clip.duck_against.is_none(), tr("props-sound-duck-none"))
+                if chip::chip(ui, tr("props-sound-duck-none"), clip.duck_against.is_none())
                     .clicked()
                 {
                     state.pending.push(PendingEdit::DuckAgainst(None));
                 }
                 for (id, label) in &candidates {
                     let selected = clip.duck_against == Some(*id);
-                    if ui.selectable_label(selected, label).clicked() && !selected {
+                    if chip::chip(ui, label, selected).clicked() && !selected {
                         state.pending.push(PendingEdit::DuckAgainst(Some(*id)));
                     }
                 }
@@ -1694,24 +1685,15 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // the signal), then voice boost (raises quiet parts), then
     // loudnorm last (targets a final integrated loudness).
     let mut norm = clip.audio_normalize;
-    if ui
-        .checkbox(&mut norm, tr("props-sound-normalize"))
-        .changed()
-    {
+    if switch::switch_labeled(ui, &mut norm, tr("props-sound-normalize")).changed() {
         state.pending.push(PendingEdit::AudioNormalize(norm));
     }
     let mut denoise = clip.audio_denoise;
-    if ui
-        .checkbox(&mut denoise, tr("props-sound-denoise"))
-        .changed()
-    {
+    if switch::switch_labeled(ui, &mut denoise, tr("props-sound-denoise")).changed() {
         state.pending.push(PendingEdit::AudioDenoise(denoise));
     }
     let mut voice_boost = clip.audio_voice_boost;
-    if ui
-        .checkbox(&mut voice_boost, tr("props-sound-boost"))
-        .changed()
-    {
+    if switch::switch_labeled(ui, &mut voice_boost, tr("props-sound-boost")).changed() {
         state
             .pending
             .push(PendingEdit::AudioVoiceBoost(voice_boost));
@@ -1753,9 +1735,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                                 caprust_core::clip::EaseCurve::EaseInOut,
                             ] {
                                 let selected = clip.transition_in_easing == e;
-                                if ui.selectable_label(selected, ease_label(e)).clicked()
-                                    && !selected
-                                {
+                                if chip::chip(ui, ease_label(e), selected).clicked() && !selected {
                                     state.pending.push(PendingEdit::TransitionInEasing(e));
                                 }
                             }
@@ -1802,9 +1782,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                                 caprust_core::clip::EaseCurve::EaseInOut,
                             ] {
                                 let selected = clip.transition_out_easing == e;
-                                if ui.selectable_label(selected, ease_label(e)).clicked()
-                                    && !selected
-                                {
+                                if chip::chip(ui, ease_label(e), selected).clicked() && !selected {
                                     state.pending.push(PendingEdit::TransitionOutEasing(e));
                                 }
                             }

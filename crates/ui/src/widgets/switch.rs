@@ -55,6 +55,18 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     response
 }
 
+/// Switch with a trailing label. Use when the switch is the only
+/// interactive element on the row; for label-left layouts render the
+/// label yourself and call `switch`.
+pub fn switch_labeled(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> Response {
+    ui.horizontal(|ui| {
+        let r = switch(ui, on);
+        ui.label(label);
+        r
+    })
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
