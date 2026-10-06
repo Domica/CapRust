@@ -13,5 +13,7 @@ pub mod empty;
 pub mod loading;
 pub mod property;
 pub mod section;
+pub mod segmented_control;
 pub mod switch;
 pub mod toolbar;
+pub mod tooltip_rich;
