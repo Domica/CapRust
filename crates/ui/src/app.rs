@@ -3719,7 +3719,7 @@ impl CapRustApp {
                     for &idx in &order {
                         let mut track = updated_tracks[idx].clone();
                         let row_h = track.height;
-                        ui.allocate_ui_with_layout(
+                        let h_resp = ui.allocate_ui_with_layout(
                             egui::vec2(header_w, row_h),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
@@ -3757,6 +3757,46 @@ impl CapRustApp {
                                 }
                             },
                         );
+                        // Row-height drag divider: bottom 4px of the header
+                        // row. Lanes read the same row_h, so both columns
+                        // stay in sync without layout changes. Direct write
+                        // like the header chips (not undoable).
+                        let div_rect = egui::Rect::from_min_size(
+                            egui::pos2(
+                                h_resp.response.rect.left(),
+                                h_resp.response.rect.bottom() - 4.0,
+                            ),
+                            egui::vec2(header_w, 4.0),
+                        );
+                        let div = ui.interact(
+                            div_rect,
+                            egui::Id::new(("track_height_div", idx)),
+                            egui::Sense::drag(),
+                        );
+                        if div.hovered() || div.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        }
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(div_rect.left(), div_rect.bottom() - 0.5),
+                                egui::pos2(div_rect.right(), div_rect.bottom() - 0.5),
+                            ],
+                            egui::Stroke::new(
+                                1.0,
+                                if div.hovered() || div.dragged() {
+                                    egui::Color32::from_gray(120)
+                                } else {
+                                    egui::Color32::from_gray(45)
+                                },
+                            ),
+                        );
+                        if div.dragged() {
+                            let dy = div.drag_delta().y;
+                            if dy != 0.0 {
+                                track.height = (row_h + dy).clamp(40.0, 160.0);
+                                header_changed = true;
+                            }
+                        }
                         updated_tracks[idx] = track;
                     }
                 },
