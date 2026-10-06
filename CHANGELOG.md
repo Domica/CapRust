@@ -2,7 +2,7 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
-## [Unreleased]
+## [0.9.4] — 2026-10-06
 
 ### Added
 
