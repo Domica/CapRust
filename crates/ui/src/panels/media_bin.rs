@@ -3,6 +3,7 @@
 use crate::i18n_helper::tr;
 use crate::theme::tokens::{elev, radius, space, text};
 use crate::widgets::empty;
+use crate::widgets::segmented_control;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -350,8 +351,14 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             });
         ui.separator();
         ui.label(tr("media-size-label"));
-        for sz in [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large] {
-            ui.selectable_value(&mut state.preview, sz, sz.label());
+        let all = [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large];
+        let labels: Vec<_> = all.iter().map(|s| s.label()).collect();
+        let selected = all.iter().position(|s| *s == state.preview).unwrap_or(1);
+        let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+        if let Some(i) = clicked {
+            if i != selected {
+                state.preview = all[i];
+            }
         }
     });
 
