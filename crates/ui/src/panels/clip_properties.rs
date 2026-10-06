@@ -814,15 +814,23 @@ pub fn show(
 
     // --- Tabs ---
     ui.horizontal(|ui| {
-        if !clip_is_audio {
-            ui.selectable_value(&mut state.tab, PropertiesTab::Video, tr("props-tab-video"));
+        if !clip_is_audio
+            && chip::chip(ui, tr("props-tab-video"), state.tab == PropertiesTab::Video).clicked()
+        {
+            state.tab = PropertiesTab::Video;
         }
-        ui.selectable_value(&mut state.tab, PropertiesTab::Sound, tr("props-tab-sound"));
-        ui.selectable_value(
-            &mut state.tab,
-            PropertiesTab::Effects,
+        if chip::chip(ui, tr("props-tab-sound"), state.tab == PropertiesTab::Sound).clicked() {
+            state.tab = PropertiesTab::Sound;
+        }
+        if chip::chip(
+            ui,
             tr("props-tab-effects"),
-        );
+            state.tab == PropertiesTab::Effects,
+        )
+        .clicked()
+        {
+            state.tab = PropertiesTab::Effects;
+        }
     });
     ui.separator();
 
