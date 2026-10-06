@@ -2,7 +2,7 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
-## [Unreleased]
+## [0.9.5] — 2026-10-06
 
 ### Changed
 
@@ -14,6 +14,18 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
   View -> Sort / Size stay `selectable_label` (egui idiom).
   `export_window` advanced stays a `checkbox`: it is a disclosure,
   not a state flag.
+
+### Fixed
+
+- **Clip.reversed now renders.** The flag was stored, hashed into
+  `render_hash()`, and toggled by `SetClipCommand` since it was added,
+  but never reached the render plan or the filtergraph, so toggling
+  Reverse produced identical output in preview and export. Now emits
+  `,reverse` after `trim=duration=N` (video) and `,areverse` at the
+  head of the post-speed tail (audio). The Reverse toggle is disabled
+  above `REVERSE_MAX_SEC = 60.0` seconds with an explanatory tooltip,
+  since ffmpeg's `reverse` filter buffers the whole trimmed window in
+  RAM before emitting frame 0. Closes #29.
 
 ## [0.9.4] — 2026-10-06
 
