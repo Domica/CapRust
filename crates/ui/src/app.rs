@@ -3864,10 +3864,14 @@ impl CapRustApp {
                     for &idx in &order {
                         let track = &updated_tracks[idx];
                         let row_h = track.height;
-                        let (lane_rect, _) = ui.allocate_exact_size(
+                        let (lane_rect, lane_resp) = ui.allocate_exact_size(
                             egui::vec2(viewport_w, row_h),
                             egui::Sense::hover(),
                         );
+                        if pan_mode {
+                            let _ = lane_resp
+                                .on_hover_cursor(egui::CursorIcon::Grab);
+                        }
                         if top_y_opt.is_none() {
                             top_y_opt = Some(lane_rect.top());
                         }
@@ -5083,9 +5087,12 @@ impl CapRustApp {
                             m.current = pp;
                         }
 
-                        // Cancel on Esc.
+                        // Cancel on Esc; with no marquee active it also
+                        // exits pan mode (the sticky hand-tool trap: every
+                        // left-drag pans while it is on).
                         if esc {
                             self.marquee = None;
+                            self.timeline_tools.pan_mode = false;
                         }
 
                         // Finalize on release.
