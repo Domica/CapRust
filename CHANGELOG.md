@@ -2,6 +2,29 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.7] — 2026-10-06
+
+### Fixed
+
+- **Export 'Open folder' now opens the output folder.** An empty or
+  relative destination used to resolve who-knows-where, and even a
+  correct path fell back to Documents: Explorer parses its own
+  command line, so `/select` and the path go literally via `raw_arg`.
+  The output dir is ensured up front (toast + abort otherwise), and a
+  missing file falls back to its parent dir.
+- **Timeline pan and layout fixes.** `Esc` exits the sticky pan tool
+  (Grab cursor shows while it is on), wheel/touchpad scroll pans only
+  while hovering the timeline, track rows are resizable by dragging
+  the header divider (40–160px, saved per project), and the lane
+  viewport no longer overflows by item spacing.
+
+### Changed
+
+- **Export finish actions use button widgets and i18n.** Open folder
+  is `primary` and Dismiss is `secondary` with new `exp-open-folder`
+  / `exp-dismiss` keys (en + hr); removes the last hardcoded English
+  strings in the export flow.
+
 ## [0.9.6] — 2026-10-06
 
 ### Added
