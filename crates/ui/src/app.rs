@@ -6,7 +6,7 @@ use crate::panels::export_window::ExportState;
 use crate::panels::media_bin::{MediaBinState, PreviewSize};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
-use crate::theme::tokens::{elev, radius, space, text};
+use crate::theme::tokens::{anim, elev, radius, space, text};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
 use crate::widgets::{button, empty, section, segmented_control};
@@ -127,6 +127,55 @@ impl Toast {
             kind: ToastKind::Error,
             created_at: std::time::Instant::now(),
             duration: std::time::Duration::from_secs(6),
+        }
+    }
+
+    /// Animation state at `now`: `(alpha, slide_dx)`.
+    ///
+    /// `alpha` ramps 0..1 over `anim::FAST` at the start and 1..0 over
+    /// `anim::SLOW` before the toast expires. `slide_dx` is a horizontal
+    /// offset that starts at `space::M` and eases to 0 as the toast
+    /// fades in.
+    pub fn anim_at(&self, now: std::time::Instant) -> (f32, f32) {
+        let t = now.duration_since(self.created_at).as_secs_f32();
+        let life = self.duration.as_secs_f32();
+        let fade_in = (t / anim::FAST).clamp(0.0, 1.0);
+        let fade_out = ((life - t) / anim::SLOW).clamp(0.0, 1.0);
+        let alpha = fade_in.min(fade_out);
+        let dx = (1.0 - ease_out_cubic(fade_in)) * space::M;
+        (alpha, dx)
+    }
+}
+
+/// Cubic ease-out: fast start, slow end. `t` clamped to `0.0..=1.0`.
+fn ease_out_cubic(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let inv = 1.0 - t;
+    1.0 - inv * inv * inv
+}
+
+#[cfg(test)]
+mod toast_anim_tests {
+    use super::ease_out_cubic;
+
+    #[test]
+    fn ease_out_cubic_endpoints() {
+        assert!((ease_out_cubic(0.0) - 0.0).abs() < f32::EPSILON);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ease_out_cubic_midpoint() {
+        assert!((ease_out_cubic(0.5) - 0.875).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ease_out_cubic_monotonic() {
+        let mut prev = ease_out_cubic(0.0);
+        for i in 1..=10 {
+            let v = ease_out_cubic(i as f32 / 10.0);
+            assert!(v >= prev, "not monotonic at {i}: {prev} -> {v}");
+            prev = v;
         }
     }
 }
@@ -3188,15 +3237,22 @@ impl CapRustApp {
 
         for (i, t) in self.toasts.iter().enumerate() {
             let id = egui::Id::new(("caprust-toast", i, t.created_at));
+            let (alpha, dx) = t.anim_at(now);
             let accent = match t.kind {
                 ToastKind::Info => self.theme.accent_color(),
                 ToastKind::Error => egui::Color32::from_rgb(220, 80, 80),
             };
             // Slightly brighter than the window fill so the toast
             // reads as elevated against panels of the same hue.
-            let toast_fill = ctx.style().visuals.window_fill.linear_multiply(1.9);
-            let border = egui::Stroke::new(elev::STROKE_HAIRLINE, accent.gamma_multiply(0.55));
-            let highlight = accent.gamma_multiply(0.7);
+            let toast_fill = ctx
+                .style()
+                .visuals
+                .window_fill
+                .linear_multiply(1.9)
+                .gamma_multiply(alpha);
+            let border =
+                egui::Stroke::new(elev::STROKE_HAIRLINE, accent.gamma_multiply(0.55 * alpha));
+            let highlight = accent.gamma_multiply(0.7 * alpha);
 
             egui::Window::new(format!("caprust-toast-{i}"))
                 .id(id)
@@ -3204,7 +3260,7 @@ impl CapRustApp {
                 .collapsible(false)
                 .title_bar(false)
                 .frame(egui::Frame::NONE)
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, y))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0 + dx, y))
                 .default_width(320.0)
                 .show(ctx, |ui| {
                     let inner = egui::Frame::new()
@@ -3217,7 +3273,7 @@ impl CapRustApp {
                                 ui.label(
                                     egui::RichText::new(&t.text)
                                         .size(13.0)
-                                        .color(egui::Color32::from_gray(235)),
+                                        .color(egui::Color32::from_gray(235).gamma_multiply(alpha)),
                                 );
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
