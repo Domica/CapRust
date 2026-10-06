@@ -56,14 +56,20 @@ fn duck_zone_opacity(reduction_db: f32) -> f32 {
 
 pub fn compute_duck_zones(
     clip: &caprust_core::clip::Clip,
-    all_clips: &[caprust_core::clip::Clip],
+    project: &caprust_core::ProjectState,
 ) -> Vec<DuckZone> {
     let Some(control_id) = clip.duck_against else {
         return Vec::new();
     };
-    let Some(control) = all_clips.iter().find(|c| c.id == control_id) else {
+    let Some(control) = project.clips.iter().find(|c| c.id == control_id) else {
         return Vec::new();
     };
+    if control.id == clip.id
+        || !contributes_audio(project, clip)
+        || !contributes_audio(project, control)
+    {
+        return Vec::new();
+    }
     let clip_start = clip.start_time_ms as i64;
     let clip_end = clip_start + clip.duration_ms as i64;
     let ctrl_start = control.start_time_ms as i64;
@@ -89,8 +95,7 @@ pub type EnvelopeSample = (f32, f32);
 /// dB)` points: `ENVELOPE_SAMPLES + 1` evenly spaced ones, plus one at
 /// every keyframe inside the clip. The keyframe points are what make the
 /// drawn line exact where the curve bends; on a long clip the even
-/// spacing alone is several seconds wide and steps over short ramps.
-///
+/// spacing alone is several seconds wide and steps over short ramps.///
 /// Cache the result and invalidate on `ProjectState::render_hash()`
 /// change. The samples are geometry-independent (fractions, not pixels),
 /// so scroll / zoom do not invalidate the cache.
@@ -116,6 +121,34 @@ pub fn sample_envelope_db(clip: &caprust_core::clip::Clip) -> Vec<EnvelopeSample
             (t_ms as f32 / dur.max(1) as f32, db)
         })
         .collect()
+}
+
+/// Whether the export mixes this clip's audio at all. It only builds a
+/// sidechain between two clips that both pass this gate, so a zone drawn
+/// for anything else would promise ducking that never happens. Mirrors
+/// the harvest loop in `caprust_media_io::export_graph::plan_from_project`
+/// (the test below keeps the two in step). Not modelled: a missing source
+/// file, and the video probe flag (`has_audio`) is not part of
+/// `render_hash()`, so a cached zone can lag a probe result by one edit.
+fn contributes_audio(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::clip::Clip,
+) -> bool {
+    use caprust_core::ClipType;
+    if project.tracks.get(clip.track_index).is_none_or(|t| t.muted) {
+        return false;
+    }
+    match clip.clip_type {
+        ClipType::Audio { .. } | ClipType::Narration { .. } => true,
+        ClipType::Video { .. } => {
+            !clip.audio_detached
+                && clip
+                    .media_id
+                    .and_then(|id| project.media.items.iter().find(|m| m.id == id))
+                    .is_none_or(|m| m.has_audio)
+        }
+        _ => false,
+    }
 }
 
 /// Draw the automation polyline and duck zones onto `painter`.
@@ -172,6 +205,8 @@ pub fn draw_audio_envelope(
 #[cfg(test)]
 mod overlay_tests {
     use super::*;
+    use caprust_core::clip::Clip;
+    use caprust_core::{MediaKind, ProjectState, Track, TrackKind};
 
     #[test]
     fn zero_db_is_sixty_percent() {
@@ -334,13 +369,24 @@ mod overlay_tests {
         c
     }
 
+    fn project_with(clips: &[Clip]) -> ProjectState {
+        let mut p = ProjectState::default();
+        for c in clips {
+            while p.tracks.len() <= c.track_index {
+                p.tracks.push(Track::new("t", TrackKind::Audio));
+            }
+            p.add_clip(c.clone());
+        }
+        p
+    }
+
     #[test]
     fn duck_zone_is_a_fraction_of_the_clip() {
         // Clip spans 1000..3000, control 2000..2500 -> the zone covers
         // 0.5..0.75 of the clip, whatever the zoom.
         let ctrl = audio(2000, 500);
         let clip = ducked_by(&ctrl, 1000, 2000);
-        let zones = compute_duck_zones(&clip, &[clip.clone(), ctrl]);
+        let zones = compute_duck_zones(&clip, &project_with(&[clip.clone(), ctrl]));
         assert_eq!(zones.len(), 1);
         assert!((zones[0].start_frac - 0.5).abs() < 1e-6);
         assert!((zones[0].end_frac - 0.75).abs() < 1e-6);
@@ -351,7 +397,7 @@ mod overlay_tests {
         // Control starts before and ends after the clip.
         let ctrl = audio(0, 10_000);
         let clip = ducked_by(&ctrl, 1000, 2000);
-        let zones = compute_duck_zones(&clip, &[clip.clone(), ctrl]);
+        let zones = compute_duck_zones(&clip, &project_with(&[clip.clone(), ctrl]));
         assert_eq!(zones.len(), 1);
         assert_eq!((zones[0].start_frac, zones[0].end_frac), (0.0, 1.0));
     }
@@ -360,16 +406,16 @@ mod overlay_tests {
     fn no_duck_zone_without_overlap_or_control() {
         let ctrl = audio(5000, 1000);
         let clip = ducked_by(&ctrl, 1000, 2000);
-        assert!(compute_duck_zones(&clip, &[clip.clone(), ctrl.clone()]).is_empty());
+        assert!(compute_duck_zones(&clip, &project_with(&[clip.clone(), ctrl.clone()])).is_empty());
         // Touching edges do not overlap.
         let touching = audio(3000, 1000);
         let clip = ducked_by(&touching, 1000, 2000);
-        assert!(compute_duck_zones(&clip, &[clip.clone(), touching]).is_empty());
+        assert!(compute_duck_zones(&clip, &project_with(&[clip.clone(), touching])).is_empty());
         // No `duck_against`, and a `duck_against` that no longer exists.
         let mut clip = audio(1000, 2000);
-        assert!(compute_duck_zones(&clip, &[clip.clone()]).is_empty());
+        assert!(compute_duck_zones(&clip, &project_with(&[clip.clone()])).is_empty());
         clip.duck_against = Some(ctrl.id);
-        assert!(compute_duck_zones(&clip, &[clip.clone()]).is_empty());
+        assert!(compute_duck_zones(&clip, &project_with(&[clip.clone()])).is_empty());
     }
 
     /// Shapes `draw_audio_envelope` emits for one frame, no GPU involved.
@@ -429,6 +475,112 @@ mod overlay_tests {
         assert_eq!(line.last().unwrap().x, 600.0);
         // The middle sample sits at the middle of the *full* clip.
         assert_eq!(line[1].x, 100.0);
+    }
 
+    // ---- #26: export-gate tests ----
+
+    /// Does the real export wire a sidechain for `project`?
+    fn export_ducks(project: &ProjectState, dir: &std::path::Path) -> bool {
+        let plan = caprust_media_io::export_graph::plan_from_project(
+            project,
+            320,
+            240,
+            30,
+            1,
+            23,
+            caprust_media_io::export::RateMode::Vbr,
+            8000,
+            "veryfast",
+            dir,
+            0,
+            caprust_core::project::VideoEncoder::H264Cpu,
+        )
+        .expect("plan");
+        plan.build_audio_only_filtergraph()
+            .unwrap()
+            .is_some_and(|g| g.contains("sidechaincompress"))
+    }
+
+    /// The overlay must show a duck zone exactly where the export builds
+    /// a sidechain. Each case starts from a valid setup (music on A1
+    /// ducked against an overlapping clip on A2) and breaks one thing.
+    #[test]
+    fn duck_zone_matches_what_the_export_ducks() {
+        let dir = std::env::temp_dir().join(format!("caprust_duck_zone_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        type Tweak = fn(&mut ProjectState, &mut Clip, &mut Clip, &str);
+        let cases: Vec<(&str, bool, Tweak)> = vec![
+            ("audio control", true, |_, _, _, _| {}),
+            ("control is the clip itself", false, |_, m, _, _| {
+                m.duck_against = Some(m.id);
+            }),
+            ("control track muted", false, |p, _, _, _| {
+                p.tracks[5].muted = true;
+            }),
+            ("ducked clip track muted", false, |p, _, _, _| {
+                p.tracks[3].muted = true;
+            }),
+            ("video control with audio", true, |_, _, c, f| {
+                let id = c.id;
+                *c = Clip::new_video(f, 1, 1000, 2000);
+                c.id = id;
+            }),
+            ("video control, audio detached", false, |_, _, c, f| {
+                let id = c.id;
+                *c = Clip::new_video(f, 1, 1000, 2000);
+                c.id = id;
+                c.audio_detached = true;
+            }),
+            (
+                "video control, probe found no audio",
+                false,
+                |p, _, c, f| {
+                    let id = c.id;
+                    *c = Clip::new_video(f, 1, 1000, 2000);
+                    c.id = id;
+                    let mid = p.media.add(f, MediaKind::Video);
+                    p.media
+                        .items
+                        .iter_mut()
+                        .find(|m| m.id == mid)
+                        .unwrap()
+                        .has_audio = false;
+                    c.media_id = Some(mid);
+                },
+            ),
+            ("control has no audio (text)", false, |_, _, c, _| {
+                let id = c.id;
+                *c = Clip::new_text("t", 0, 1000, 2000, false);
+                c.id = id;
+            }),
+        ];
+        let mut bad: Vec<String> = Vec::new();
+        for (label, expect, tweak) in cases {
+            let mut project = ProjectState::default();
+            project.tracks.push(Track::new("A2", TrackKind::Audio));
+            // Keeps the planner happy (it wants a video or text clip).
+            project.add_clip(Clip::new_text("x", 0, 0, 10_000, false));
+            let mut music = Clip::new_audio(&file("music.wav"), 3, 0, 4000);
+            let mut ctrl = Clip::new_audio(&file("ctrl.wav"), 5, 1000, 2000);
+            music.duck_against = Some(ctrl.id);
+            tweak(&mut project, &mut music, &mut ctrl, &file("ctrl.mp4"));
+            project.add_clip(music.clone());
+            project.add_clip(ctrl);
+
+            let zone = !compute_duck_zones(&music, &project).is_empty();
+            let ducks = export_ducks(&project, &dir);
+            // Guards the case table itself: the export must do what we say.
+            assert_eq!(ducks, expect, "{label}: export disagrees with the case");
+            if zone != ducks {
+                bad.push(format!("{label}: zone={zone}, export sidechain={ducks}"));
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(bad.is_empty(), "overlay disagrees with export:\n{bad:#?}");
     }
 }
