@@ -133,45 +133,6 @@ pub fn resolve_export_output(
     dir.join(format!("{}.mp4", project_name.replace(' ', "_")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn fallback() -> PathBuf {
-        std::env::temp_dir()
-    }
-
-    #[test]
-    fn empty_destination_uses_fallback() {
-        let out = resolve_export_output("", "My Project", &fallback());
-        assert_eq!(out, fallback().join("My_Project.mp4"));
-    }
-
-    #[test]
-    fn absolute_destination_is_kept() {
-        let dest = fallback().join("Out").to_string_lossy().into_owned();
-        let out = resolve_export_output(&dest, "A B", &fallback());
-        assert_eq!(out, fallback().join("Out").join("A_B.mp4"));
-    }
-
-    #[test]
-    fn relative_destination_joins_fallback() {
-        let out = resolve_export_output("renders", "A", &fallback());
-        assert_eq!(out, fallback().join("renders").join("A.mp4"));
-    }
-
-    #[test]
-    fn result_is_never_relative() {
-        for dest in ["", "  ", "rel/dir"] {
-            let out = resolve_export_output(dest, "P", &fallback());
-            assert!(out.is_absolute(), "{dest:?} produced relative {out:?}");
-        }
-        let abs = fallback().to_string_lossy().into_owned();
-        let out = resolve_export_output(&abs, "P", &fallback());
-        assert!(out.is_absolute());
-    }
-}
-
 /// Returns true if the user clicked Export.
 pub fn show(
     ui: &mut Ui,
@@ -347,5 +308,44 @@ fn format_duration(ms: u64) -> String {
         format!("{h:02}:{m:02}:{s:02}")
     } else {
         format!("{m:02}:{s:02}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fallback() -> PathBuf {
+        std::env::temp_dir()
+    }
+
+    #[test]
+    fn empty_destination_uses_fallback() {
+        let out = resolve_export_output("", "My Project", &fallback());
+        assert_eq!(out, fallback().join("My_Project.mp4"));
+    }
+
+    #[test]
+    fn absolute_destination_is_kept() {
+        let dest = fallback().join("Out").to_string_lossy().into_owned();
+        let out = resolve_export_output(&dest, "A B", &fallback());
+        assert_eq!(out, fallback().join("Out").join("A_B.mp4"));
+    }
+
+    #[test]
+    fn relative_destination_joins_fallback() {
+        let out = resolve_export_output("renders", "A", &fallback());
+        assert_eq!(out, fallback().join("renders").join("A.mp4"));
+    }
+
+    #[test]
+    fn result_is_never_relative() {
+        for dest in ["", "  ", "rel/dir"] {
+            let out = resolve_export_output(dest, "P", &fallback());
+            assert!(out.is_absolute(), "{dest:?} produced relative {out:?}");
+        }
+        let abs = fallback().to_string_lossy().into_owned();
+        let out = resolve_export_output(&abs, "P", &fallback());
+        assert!(out.is_absolute());
     }
 }
