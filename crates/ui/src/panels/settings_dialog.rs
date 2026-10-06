@@ -3,6 +3,7 @@
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
+use crate::widgets::switch;
 use caprust_core::models::{ModelKind, ModelStatus};
 use caprust_core::{detect_ffmpeg, AppSettings, FfmpegStatus, ModelRegistry};
 use egui::Ui;
@@ -297,7 +298,8 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
     ui.add_space(space::L);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-updates")).strong());
-    ui.checkbox(
+    switch::switch_labeled(
+        ui,
         &mut settings.check_for_updates,
         tr("set-appearance-check-updates"),
     );
@@ -420,7 +422,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
                             );
                         }
                         ModelStatus::Ready => {
-                            ui.checkbox(&mut m.enabled, tr("set-models-enabled"));
+                            switch::switch_labeled(ui, &mut m.enabled, tr("set-models-enabled"));
                         }
                         ModelStatus::Error => {
                             ui.label(
@@ -443,7 +445,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
 fn show_shortcuts(ui: &mut Ui, enable_shortcuts: &mut bool) {
     ui.label(egui::RichText::new(tr("set-shortcuts-heading")).strong());
     ui.add_space(space::S);
-    ui.checkbox(enable_shortcuts, tr("set-shortcuts-enable"));
+    switch::switch_labeled(ui, enable_shortcuts, tr("set-shortcuts-enable"));
     ui.add_space(space::M_PLUS);
 
     egui::Grid::new("kbd_shortcuts")

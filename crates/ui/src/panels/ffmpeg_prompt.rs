@@ -17,6 +17,7 @@ use egui::Ui;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::switch;
 use crate::widgets::{dialog, loading};
 
 /// Width of the progress bar in the download / extract phases.
@@ -174,7 +175,7 @@ pub fn show(
             }
 
             ui.add_space(space::XS);
-            ui.checkbox(&mut state.dont_ask_again, tr("ffmpeg-prompt-dont-ask"));
+            switch::switch_labeled(ui, &mut state.dont_ask_again, tr("ffmpeg-prompt-dont-ask"));
         }
         PromptPhase::Downloading { done, total } => {
             match total {
