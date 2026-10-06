@@ -2,6 +2,36 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+
+- **Widget library (P2).** Five new reusable primitives under
+  `crates/ui/src/widgets/`, every one routing its dimensions through
+  `theme::tokens`: `chip` (compact selectable pill), `switch` (animated
+  boolean toggle), `badge` (colored status pill), `segmented_control`
+  (horizontal one-of-N selector), `tooltip_rich` / `tooltip_body`
+  (two-line tooltip with wrapped body). Each ships with a
+  renders-without-panic test.
+
+### Changed
+
+- **Design tokens sweep finished (P1).** Removed the last hardcoded
+  `add_space` values from `crates/ui/src/panels/`; `grep -rnE
+  "add_space\([0-9]" crates/ui/src/panels/` now returns nothing. All
+  spacing, radii, typography and elevation come from
+  `crate::theme::tokens`.
+
+### Fixed
+
+- **Audio ducking with a single ducked clip** (#28). The
+  `sidechaincompress` filter takes `[main][sidechain]`; the
+  single-consumer branch of `build_audio_chain` emitted
+  `[control][ducked]`, so with exactly one ducked clip the voice was
+  attenuated under the music instead of the other way round. The
+  multi-consumer branch was already correct. Regression tests cover
+  both branches.
+
 ## [0.9.3] — 2026-10-06
 
 ### Fixed — Timeline overlay follow-ups (#14)
