@@ -851,7 +851,6 @@ impl CapRustApp {
     fn envelope_for(
         &mut self,
         clip: &caprust_core::Clip,
-        px_per_ms: f32,
     ) -> (
         std::sync::Arc<Vec<crate::timeline::EnvelopeSample>>,
         std::sync::Arc<Vec<crate::timeline::DuckZone>>,
@@ -863,7 +862,7 @@ impl CapRustApp {
             }
         }
         let samples = crate::timeline::sample_envelope_db(clip);
-        let zones = crate::timeline::compute_duck_zones(clip, &self.project.clips, px_per_ms);
+        let zones = crate::timeline::compute_duck_zones(clip, &self.project.clips);
         let entry = EnvelopeCacheEntry {
             hash,
             samples_db: std::sync::Arc::new(samples),
@@ -4383,14 +4382,14 @@ impl CapRustApp {
                                     .find(|c| c.id == clip_id)
                                     .cloned()
                                 {
-                                    let (samples, zones) =
-                                        self.envelope_for(&clip_data, px_per_ms);
+                                    let (samples, zones) = self.envelope_for(&clip_data);
                                     let line_color = theme_snapshot.waveform_color();
                                     // Per-zone opacity comes from the DuckZone
                                     // itself (derived from duck_reduction_db).
                                     let duck_color = line_color;
                                     crate::timeline::draw_audio_envelope(
                                         &p,
+                                        full_rect,
                                         clip_rect,
                                         &samples,
                                         &zones,
