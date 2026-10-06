@@ -1,6 +1,7 @@
 //! Screen recording modal (Faza Q). Windows only.
 
 use crate::i18n_helper::tr;
+use crate::theme::tokens::space;
 use caprust_screen_record::MonitorInfo;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -109,12 +110,12 @@ pub fn show_modal(
                 );
             });
 
-            ui.add_space(8.0);
+            ui.add_space(space::M);
             ui.separator();
 
             if let Some(err) = &state.error {
                 ui.colored_label(egui::Color32::from_rgb(220, 80, 80), err);
-                ui.add_space(4.0);
+                ui.add_space(space::XS);
             }
 
             ui.horizontal(|ui| {
@@ -144,7 +145,7 @@ fn show_in_progress(ui: &mut egui::Ui, state: &ScreenRecordState, action: &mut S
     ui.label(tr("screen-record-recording"));
     ui.add(egui::ProgressBar::new(frac).show_percentage());
     ui.label(format!("{:.1} / {} s", elapsed, state.duration_sec));
-    ui.add_space(8.0);
+    ui.add_space(space::M);
     if ui.button(tr("screen-record-stop")).clicked() {
         *action = ScreenRecordAction::Stop;
     }
