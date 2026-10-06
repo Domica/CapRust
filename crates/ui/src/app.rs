@@ -3707,7 +3707,7 @@ impl CapRustApp {
         }
 
         let theme_snapshot = self.theme.clone();
-        ui.horizontal_top(|ui| {
+        let tl_resp = ui.horizontal_top(|ui| {
             // LEFT: headers
             ui.allocate_ui_with_layout(
                 egui::vec2(header_w, full_h),
@@ -5180,8 +5180,15 @@ impl CapRustApp {
             );
         });
 
+        // Wheel/touchpad scroll pans only while hovering the timeline
+        // itself; unguarded it stole scrolls from every other panel and
+        // made the whole lane stack slide under the pointer.
         let sd = ctx.input(|i| i.raw_scroll_delta);
-        if sd.y.abs() > 0.0 || sd.x.abs() > 0.0 {
+        let over_timeline = ctx
+            .input(|i| i.pointer.hover_pos())
+            .map(|p| tl_resp.response.rect.contains(p))
+            .unwrap_or(false);
+        if over_timeline && (sd.y.abs() > 0.0 || sd.x.abs() > 0.0) {
             let d = if sd.x.abs() > sd.y.abs() { sd.x } else { sd.y };
             self.timeline_scroll_x = (self.timeline_scroll_x - d).clamp(0.0, max_scroll);
         }
