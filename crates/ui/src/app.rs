@@ -170,7 +170,7 @@ impl BackgroundJob {
 /// Invalidated when `ProjectState::render_hash()` changes.
 pub struct EnvelopeCacheEntry {
     pub hash: u64,
-    pub samples_db: std::sync::Arc<Vec<f32>>,
+    pub samples_db: std::sync::Arc<Vec<crate::timeline::EnvelopeSample>>,
     pub duck_zones: std::sync::Arc<Vec<crate::timeline::DuckZone>>,
 }
 
@@ -853,7 +853,7 @@ impl CapRustApp {
         clip: &caprust_core::Clip,
         px_per_ms: f32,
     ) -> (
-        std::sync::Arc<Vec<f32>>,
+        std::sync::Arc<Vec<crate::timeline::EnvelopeSample>>,
         std::sync::Arc<Vec<crate::timeline::DuckZone>>,
     ) {
         let hash = self.project.render_hash();
