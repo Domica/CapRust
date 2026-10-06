@@ -24,6 +24,17 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ### Fixed
 
+- **Mirror H / Mirror V now render in preview and export.** The
+  `flip_h` / `flip_v` flags have been stored on `Clip`, hashed into
+  `render_hash()`, and toggled by the UI since they were added, but the
+  render plan's `VideoClip` never carried them and the filtergraph
+  never emitted `hflip` / `vflip`. Both preview and export produced
+  identical output regardless of the toggle. The flags are now plumbed
+  through and emitted between `setpts` and `trim`, so the mirror
+  applies before any crop or scale pans over the frame. Five
+  regression tests cover each combination and the filter ordering.
+  (`Clip.reversed` has the same class of bug; tracked separately.)
+
 - **Audio ducking with a single ducked clip** (#28). The
   `sidechaincompress` filter takes `[main][sidechain]`; the
   single-consumer branch of `build_audio_chain` emitted
