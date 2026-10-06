@@ -2,6 +2,36 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.3] — 2026-10-06
+
+### Fixed — Timeline overlay follow-ups (#14)
+
+- **Polyline vertices on every keyframe.** The audio envelope polyline
+  now places a vertex on every `volume_keyframe`, not only on the 129
+  evenly-spaced samples. On long clips the even spacing alone is several
+  seconds wide, so short ramps and dips were smoothed over. Interpolation
+  between keyframes stays linear in the dB domain, matching the export.
+- **Overlay anchored during zoom and scroll.** Duck zones are stored as
+  fractions of the clip duration instead of pixel offsets, so the cache
+  (keyed on `render_hash()`) no longer goes stale after a zoom change.
+  The overlay is laid out against the full clip rect and clipped by the
+  painter to the visible portion; a clip scrolled partly out of view
+  keeps its zone and polyline aligned with the time axis.
+- **Duck zones match what the export wires.** The overlay only draws a
+  zone when the export actually builds a sidechain between the two
+  clips. A zone is suppressed when the control is the clip itself, either
+  track is muted, the control is a video with `audio_detached`, the video
+  probe found no audio, or the control clip type carries no audio. An
+  integration test compares the overlay against the real
+  `plan_from_project` filtergraph.
+
+### Known issues
+
+- `build_audio_chain` may emit sidechain inputs in the wrong order
+  (`[ctrl][ducked]` instead of `[ducked][ctrl]`). Reported in #28;
+  not confirmed through a full export yet.
+
+
 ## [0.9.2] - 2026-10-05
 
 Timeline audio envelope overlay plus a probe-backfill fix. Small
