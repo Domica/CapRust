@@ -6,27 +6,43 @@ use egui::{Color32, Response, Sense, Ui, Vec2};
 /// Toggle switch. A click flips `*on` in place and marks the returned
 /// `Response` as changed, so callers can react with `.changed()`.
 pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
-    let desired = Vec2::new(36.0, 20.0);
-    let (rect, mut response) = ui.allocate_exact_size(desired, Sense::click());
+    switch_enabled(ui, on, true)
+}
 
-    if response.clicked() {
+/// Switch with explicit enabled state.
+///
+/// When `enabled == false` the switch is dimmed to 40% alpha, uses
+/// `Sense::hover()` so the click never reaches it, the cursor is
+/// `NotAllowed`, and `*on` is not flipped even if a click is somehow
+/// delivered. `switch` is a thin wrapper that passes `enabled = true`.
+pub fn switch_enabled(ui: &mut Ui, on: &mut bool, enabled: bool) -> Response {
+    let desired = Vec2::new(36.0, 20.0);
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, mut response) = ui.allocate_exact_size(desired, sense);
+
+    if enabled && response.clicked() {
         *on = !*on;
         response.mark_changed();
     }
-    response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response = response.on_hover_cursor(if enabled {
+        egui::CursorIcon::PointingHand
+    } else {
+        egui::CursorIcon::NotAllowed
+    });
 
     if ui.is_rect_visible(rect) {
         let t = ui
             .ctx()
             .animate_bool_with_time(response.id, *on, anim::NORMAL);
+        let alpha: f32 = if enabled { 1.0 } else { 0.4 };
 
         let visuals = ui.visuals();
         let track_bg = if *on {
-            visuals.selection.bg_fill
-        } else if response.hovered() {
-            visuals.widgets.hovered.bg_fill
+            visuals.selection.bg_fill.gamma_multiply(alpha)
+        } else if enabled && response.hovered() {
+            visuals.widgets.hovered.bg_fill.gamma_multiply(alpha)
         } else {
-            visuals.widgets.inactive.bg_fill
+            visuals.widgets.inactive.bg_fill.gamma_multiply(alpha)
         };
         let track_stroke = if *on {
             egui::Stroke::NONE
@@ -45,9 +61,9 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
         let knob_center = egui::pos2(knob_x, rect.center().y);
 
         let knob_color = if *on {
-            Color32::WHITE
+            Color32::WHITE.gamma_multiply(alpha)
         } else {
-            visuals.strong_text_color()
+            visuals.strong_text_color().gamma_multiply(alpha)
         };
         ui.painter().circle_filled(knob_center, knob_r, knob_color);
     }
@@ -94,5 +110,33 @@ mod tests {
             });
         });
         assert!(!on, "no input should not flip the switch");
+    }
+
+    #[test]
+    fn disabled_does_not_flip_state() {
+        let ctx = egui::Context::default();
+        let mut on = true;
+        let mut off = false;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let r = switch_enabled(ui, &mut on, false);
+                assert!(!r.clicked(), "disabled switch must not be clickable");
+                let r = switch_enabled(ui, &mut off, false);
+                assert!(!r.clicked(), "disabled switch must not be clickable");
+            });
+        });
+        assert!(on, "disabled switch must not flip true -> false");
+        assert!(!off, "disabled switch must not flip false -> true");
+    }
+
+    #[test]
+    fn enabled_renders_without_panic() {
+        let ctx = egui::Context::default();
+        let mut on = true;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let _ = switch_enabled(ui, &mut on, true);
+            });
+        });
     }
 }

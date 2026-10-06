@@ -15,8 +15,24 @@ pub fn segmented_control(
     labels: &[impl Into<WidgetText> + Clone],
     selected: usize,
 ) -> (Response, Option<usize>) {
+    segmented_control_enabled(ui, labels, selected, true)
+}
+
+/// One-of-N selector with explicit enabled state.
+///
+/// When `enabled == false` the control is dimmed to 40% alpha, uses
+/// `Sense::hover()` so no segment can be clicked (`clicked` is always
+/// `None`), and the cursor is `NotAllowed`. `segmented_control` is a
+/// thin wrapper that passes `enabled = true`.
+pub fn segmented_control_enabled(
+    ui: &mut Ui,
+    labels: &[impl Into<WidgetText> + Clone],
+    selected: usize,
+    enabled: bool,
+) -> (Response, Option<usize>) {
     let font = egui::FontId::proportional(text::S);
     let visuals = ui.visuals().clone();
+    let alpha: f32 = if enabled { 1.0 } else { 0.4 };
 
     // Measure every segment so the control is uniform height and each
     // segment is wide enough for its label.
@@ -41,8 +57,13 @@ pub fn segmented_control(
     let total_w: f32 = seg_ws.iter().sum();
     let desired = Vec2::new(total_w, seg_h);
 
-    let (rect, response) = ui.allocate_exact_size(desired, Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(desired, sense);
+    let response = response.on_hover_cursor(if enabled {
+        egui::CursorIcon::PointingHand
+    } else {
+        egui::CursorIcon::NotAllowed
+    });
 
     // Background track
     if ui.is_rect_visible(rect) {
@@ -50,7 +71,7 @@ pub fn segmented_control(
         ui.painter().rect(
             rect,
             cr,
-            visuals.widgets.inactive.bg_fill,
+            visuals.widgets.inactive.bg_fill.gamma_multiply(alpha),
             Stroke::NONE,
             StrokeKind::Inside,
         );
@@ -58,7 +79,7 @@ pub fn segmented_control(
 
     // Hit test on click
     let mut clicked = None;
-    if response.clicked() {
+    if enabled && response.clicked() {
         if let Some(pos) = response.interact_pointer_pos() {
             let mut x = rect.left();
             for (i, w) in seg_ws.iter().enumerate() {
@@ -83,7 +104,7 @@ pub fn segmented_control(
                 ui.painter().rect(
                     seg_rect.shrink(1.0),
                     cr_inner,
-                    visuals.selection.bg_fill,
+                    visuals.selection.bg_fill.gamma_multiply(alpha),
                     Stroke::NONE,
                     StrokeKind::Inside,
                 );
@@ -92,7 +113,8 @@ pub fn segmented_control(
                 visuals.strong_text_color()
             } else {
                 visuals.text_color()
-            };
+            }
+            .gamma_multiply(alpha);
             let text_pos = seg_rect.center() - galley.size() / 2.0;
             ui.painter().galley(text_pos, galley.clone(), fg);
             x += *w;
@@ -127,6 +149,31 @@ mod tests {
                 let labels: [&str; 0] = [];
                 let (_r, clicked) = segmented_control(ui, &labels, 0);
                 assert!(clicked.is_none());
+            });
+        });
+    }
+
+    #[test]
+    fn disabled_returns_no_click() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let labels = ["One", "Two", "Three"];
+                let (r, clicked) = segmented_control_enabled(ui, &labels, 0, false);
+                assert!(!r.clicked(), "disabled control must not be clickable");
+                assert!(clicked.is_none(), "disabled control must not select");
+            });
+        });
+    }
+
+    #[test]
+    fn enabled_renders_without_panic() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let labels = ["One", "Two", "Three"];
+                let (_r, clicked) = segmented_control_enabled(ui, &labels, 1, true);
+                assert!(clicked.is_none(), "no input should not click a segment");
             });
         });
     }
