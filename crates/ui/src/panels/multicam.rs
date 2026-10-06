@@ -12,6 +12,7 @@ use std::sync::mpsc::Receiver;
 use uuid::Uuid;
 
 use crate::i18n_helper::tr;
+use crate::widgets::chip;
 use crate::widgets::empty;
 
 /// Events the sync job posts to the UI. Mirrors
@@ -101,7 +102,7 @@ pub fn show(ui: &mut Ui, project: &ProjectState, state: &mut MultiCamState) -> M
                         for (i, _clip_id) in g.angle_clip_ids.iter().enumerate() {
                             let label = format!("{} {}", tr("multicam-angle"), i + 1);
                             let is_active = i == g.active_angle;
-                            if ui.selectable_label(is_active, label).clicked() && !is_active {
+                            if chip::chip(ui, label, is_active).clicked() && !is_active {
                                 out.set_active_angle = Some((g.id, i));
                             }
                         }
