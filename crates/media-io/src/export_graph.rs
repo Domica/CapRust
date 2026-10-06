@@ -1038,7 +1038,7 @@ impl RenderPlan {
                 let out = format!("a_ducked{ducked_idx}");
                 let ratio = duck_ratio(self.audio_clips[ducked_idx].duck_reduction_db);
                 fg.push_str(&format!(
-                    "[{ctrl_bus}][a_delayed{ducked_idx}]sidechaincompress=threshold=0.05:ratio={ratio:.2}:attack=20:release=500[{out}];",
+                    "[a_delayed{ducked_idx}][{ctrl_bus}]sidechaincompress=threshold=0.05:ratio={ratio:.2}:attack=20:release=500[{out}];",
                 ));
                 mixed_labels[ducked_idx] = out;
             } else {
@@ -4186,5 +4186,113 @@ mod source_offset_tests {
             input.source_start_sec,
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+}
+
+#[cfg(test)]
+mod ducking_sidechain_tests {
+    use super::*;
+    use caprust_core::clip::Clip;
+
+    /// Build a project with `n_ducked` music clips, each ducked against
+    /// the same voice control clip, and return the audio-only filtergraph.
+    fn graph_with_ducks(n_ducked: usize) -> String {
+        let tmp = std::env::temp_dir().join(format!("caprust-duck-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).ok();
+        let music = tmp.join("music.mp3");
+        let voice = tmp.join("voice.mp3");
+        std::fs::write(&music, b"x").unwrap();
+        std::fs::write(&voice, b"x").unwrap();
+
+        let mut p = caprust_core::ProjectState::default();
+        let ctrl = Clip::new_audio(&voice.to_string_lossy(), 0, 0, 2000);
+        let ctrl_id = ctrl.id;
+        p.add_clip(ctrl);
+        for i in 0..n_ducked {
+            let mut m = Clip::new_audio(&music.to_string_lossy(), 0, (i as u64 + 1) * 3000, 2000);
+            m.duck_against = Some(ctrl_id);
+            m.duck_reduction_db = -12.0;
+            p.add_clip(m);
+        }
+        // The planner requires at least one video or text clip.
+        let vpath = tmp.join("v.mp4");
+        std::fs::write(&vpath, b"x").unwrap();
+        let mut v = Clip::new_video(&vpath.to_string_lossy(), 1, 0, 1000);
+        v.media_id = None;
+        p.add_clip(v);
+
+        let plan = plan_from_project(
+            &p,
+            320,
+            240,
+            30,
+            1,
+            23,
+            RateMode::Vbr,
+            8000,
+            "veryfast",
+            std::path::Path::new("."),
+            0,
+            caprust_core::project::VideoEncoder::H264Cpu,
+        )
+        .expect("plan");
+
+        let graph = plan
+            .build_audio_only_filtergraph()
+            .expect("audio graph build")
+            .expect("audio graph present");
+        std::fs::remove_dir_all(&tmp).ok();
+        graph
+    }
+
+    fn sidechain_fragments(graph: &str) -> Vec<&str> {
+        graph
+            .split(';')
+            .filter(|s| s.contains("sidechaincompress"))
+            .collect()
+    }
+
+    /// ffmpeg's `sidechaincompress` takes [main][sidechain]. The main
+    /// signal is the clip that gets ducked; the sidechain is the
+    /// control bus (voice). #28 caught the single-consumer branch with
+    /// the two inputs swapped, which made the voice duck against the
+    /// music instead of the other way round.
+    #[test]
+    fn single_ducked_clip_puts_the_ducked_clip_as_main_input() {
+        let g = graph_with_ducks(1);
+        let frags = sidechain_fragments(&g);
+        assert_eq!(
+            frags.len(),
+            1,
+            "expected one duck; got:
+{g}"
+        );
+        let frag = frags[0];
+        let a_delayed = frag.find("a_delayed").expect("a_delayed in fragment");
+        let a_ctrl = frag.find("a_ctrl").expect("a_ctrl in fragment");
+        assert!(
+            a_delayed < a_ctrl,
+            "ducked clip must be the first (main) input to sidechaincompress; got: {frag}"
+        );
+    }
+
+    #[test]
+    fn multi_ducked_consumer_puts_each_ducked_clip_as_main_input() {
+        let g = graph_with_ducks(2);
+        let frags = sidechain_fragments(&g);
+        assert_eq!(
+            frags.len(),
+            2,
+            "expected two ducks; got:
+{g}"
+        );
+        for frag in frags {
+            let a_delayed = frag.find("a_delayed").expect("a_delayed");
+            let a_ctrl = frag.find("a_ctrl").expect("a_ctrl");
+            assert!(
+                a_delayed < a_ctrl,
+                "ducked clip must be first input; got: {frag}"
+            );
+        }
     }
 }
