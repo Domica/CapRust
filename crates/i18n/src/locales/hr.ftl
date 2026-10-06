@@ -624,6 +624,7 @@ master-chain-bypass = Zaobiđi
 set-backup-heading = Sigurnosna kopija
 set-backup-hint = Izvezi postavke u datoteku i uvezi ih na drugom racunalu.
 set-backup-export = Izvezi postavke…
+set-backup-sync-clear = Očisti sync mapu
 set-backup-import = Uvezi postavke…
 toast-settings-exported = Postavke izvezene
 toast-settings-imported = Postavke uvezene

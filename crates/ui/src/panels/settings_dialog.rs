@@ -3,6 +3,8 @@
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
+use crate::widgets::button;
+use crate::widgets::chip;
 use crate::widgets::segmented_control;
 use crate::widgets::switch;
 use caprust_core::models::{ModelKind, ModelStatus};
@@ -186,7 +188,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
                 .fixed_decimals(2)
                 .suffix("\u{00d7}"),
         );
-        if ui.button("1.0").clicked() {
+        if button::ghost(ui, "1.0").clicked() {
             theme.font_scale = 1.0;
         }
     });
@@ -291,7 +293,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 
     ui.add_space(space::L);
     ui.separator();
-    if ui.button(tr("set-appearance-reset")).clicked() {
+    if button::ghost(ui, tr("set-appearance-reset")).clicked() {
         *theme = Theme::default();
     }
 
@@ -303,7 +305,7 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             .small()
             .color(egui::Color32::from_gray(150)),
     );
-    if ui.button(tr("set-appearance-open-logs")).clicked() {
+    if button::secondary(ui, tr("set-appearance-open-logs")).clicked() {
         let dir = logs_dir();
         let _ = std::fs::create_dir_all(&dir);
         if let Err(e) = open::that(&dir) {
@@ -420,7 +422,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| match m.status {
                         ModelStatus::NotDownloaded => {
-                            if ui.button(tr("set-models-download")).clicked() {
+                            if button::primary(ui, tr("set-models-download")).clicked() {
                                 // Only report the click. Flipping status
                                 // here used to leave the button gone and
                                 // a fake 0% progress bar behind, because
@@ -536,7 +538,7 @@ fn show_paths(
                 .desired_width(360.0)
                 .hint_text("Where AI models are stored…"),
         );
-        if ui.button(tr("new-button-browse")).clicked() {
+        if button::secondary(ui, tr("new-button-browse")).clicked() {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 settings.models_dir = dir.to_string_lossy().to_string();
             }
@@ -570,7 +572,7 @@ fn show_paths(
                 {
                     settings.ffmpeg_path = if p.trim().is_empty() { None } else { Some(p) };
                 }
-                if ui.button(tr("new-button-browse")).clicked() {
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                         settings.ffmpeg_path = Some(f.to_string_lossy().to_string());
                     }
@@ -591,7 +593,7 @@ fn show_paths(
                 {
                     settings.ffprobe_path = if p.trim().is_empty() { None } else { Some(p) };
                 }
-                if ui.button(tr("new-button-browse")).clicked() {
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                         settings.ffprobe_path = Some(f.to_string_lossy().to_string());
                     }
@@ -602,7 +604,7 @@ fn show_paths(
 
     ui.add_space(space::M);
     ui.horizontal(|ui| {
-        if ui.button(tr("set-paths-detect")).clicked() {
+        if button::secondary(ui, tr("set-paths-detect")).clicked() {
             *status = detect_ffmpeg(settings);
         }
         ui.separator();
@@ -665,12 +667,14 @@ fn show_paths(
         {
             settings.sync_folder = if f.trim().is_empty() { None } else { Some(f) };
         }
-        if ui.button(tr("new-button-browse")).clicked() {
+        if button::secondary(ui, tr("new-button-browse")).clicked() {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 settings.sync_folder = Some(dir.to_string_lossy().to_string());
             }
         }
-        if settings.sync_folder.is_some() && ui.button(egui_phosphor::regular::X).clicked() {
+        if settings.sync_folder.is_some()
+            && button::icon(ui, egui_phosphor::regular::X, &tr("set-backup-sync-clear")).clicked()
+        {
             settings.sync_folder = None;
         }
     });
@@ -697,10 +701,10 @@ fn show_paths(
     );
     ui.add_space(space::S);
     ui.horizontal(|ui| {
-        if ui.button(tr("set-backup-export")).clicked() {
+        if button::primary(ui, tr("set-backup-export")).clicked() {
             ev.export_requested = true;
         }
-        if ui.button(tr("set-backup-import")).clicked() {
+        if button::secondary(ui, tr("set-backup-import")).clicked() {
             ev.import_requested = true;
         }
     });
@@ -727,7 +731,7 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
         } else {
             tr("set-audio-mute")
         };
-        if ui.button(mute_label).clicked() {
+        if chip::chip(ui, mute_label, settings.muted).clicked() {
             settings.muted = !settings.muted;
         }
 

@@ -624,6 +624,7 @@ master-chain-bypass = Bypass
 set-backup-heading = Backup
 set-backup-hint = Export your settings to a file and import them on another machine.
 set-backup-export = Export settings…
+set-backup-sync-clear = Clear sync folder
 set-backup-import = Import settings…
 toast-settings-exported = Settings exported
 toast-settings-imported = Settings imported
