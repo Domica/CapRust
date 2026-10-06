@@ -748,7 +748,10 @@ impl CapRustApp {
                 self.recent.push(entry);
                 tracing::info!("Saved project to {}", path.display());
             }
-            Err(e) => tracing::error!("Save failed: {e}"),
+            Err(e) => {
+                tracing::error!("Save failed: {e}");
+                self.toast_error(format!("{}: {e}", tr("toast-save-failed")));
+            }
         }
     }
 
@@ -809,7 +812,10 @@ impl CapRustApp {
                 // waveform pipeline existed. Enqueue what is missing.
                 self.backfill_waveforms();
             }
-            Err(e) => tracing::error!("Load failed: {e}"),
+            Err(e) => {
+                tracing::error!("Load failed: {e}");
+                self.toast_error(format!("{}: {e}", tr("toast-load-failed")));
+            }
         }
     }
 
@@ -8154,6 +8160,7 @@ impl CapRustApp {
                 }
                 ExportEvent::Failed(msg) => {
                     tracing::error!("export failed: {msg}");
+                    self.toast_error(format!("{}: {msg}", tr("toast-export-failed")));
                     if let Some(id) = self.export_job_id.take() {
                         self.finish_job(id);
                     }
@@ -8912,16 +8919,19 @@ impl eframe::App for CapRustApp {
                     egui::Key::Z if ctrl && !shift => {
                         if let Err(e) = self.undo_stack.undo(&mut self.project) {
                             tracing::error!("undo failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-undo-failed")));
                         }
                     }
                     egui::Key::Z if ctrl && shift => {
                         if let Err(e) = self.undo_stack.redo(&mut self.project) {
                             tracing::error!("redo failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-redo-failed")));
                         }
                     }
                     egui::Key::Y if ctrl => {
                         if let Err(e) = self.undo_stack.redo(&mut self.project) {
                             tracing::error!("redo failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-redo-failed")));
                         }
                     }
                     _ => {}
