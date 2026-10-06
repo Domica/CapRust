@@ -6,6 +6,7 @@
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::button;
 use caprust_core::models::{ModelKind, ModelRegistry};
 use egui::{Align2, Color32, RichText};
 
@@ -65,7 +66,7 @@ pub fn show(
                         .italics(),
                 );
                 ui.add_space(space::M);
-                if ui.button(tr("ni-cancel")).clicked() {
+                if button::secondary(ui, tr("ni-cancel")).clicked() {
                     ev.closed = true;
                 }
                 return;

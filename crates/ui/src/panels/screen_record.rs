@@ -2,6 +2,7 @@
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::button;
 use caprust_screen_record::MonitorInfo;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -68,7 +69,7 @@ pub fn show_modal(
             }
             if state.monitors.is_empty() {
                 ui.label(tr("screen-record-no-monitors"));
-                if ui.button(tr("screen-record-close")).clicked() {
+                if button::secondary(ui, tr("screen-record-close")).clicked() {
                     action = ScreenRecordAction::Close;
                 }
                 return;
@@ -119,14 +120,14 @@ pub fn show_modal(
             }
 
             ui.horizontal(|ui| {
-                if ui.button(tr("screen-record-start")).clicked() {
+                if button::primary(ui, tr("screen-record-start")).clicked() {
                     action = ScreenRecordAction::Start {
                         monitor: state.selected_monitor,
                         duration_sec: state.duration_sec,
                         fps: state.fps,
                     };
                 }
-                if ui.button(tr("screen-record-close")).clicked() {
+                if button::secondary(ui, tr("screen-record-close")).clicked() {
                     action = ScreenRecordAction::Close;
                 }
             });
@@ -146,7 +147,7 @@ fn show_in_progress(ui: &mut egui::Ui, state: &ScreenRecordState, action: &mut S
     ui.add(egui::ProgressBar::new(frac).show_percentage());
     ui.label(format!("{:.1} / {} s", elapsed, state.duration_sec));
     ui.add_space(space::M);
-    if ui.button(tr("screen-record-stop")).clicked() {
+    if button::primary(ui, tr("screen-record-stop")).clicked() {
         *action = ScreenRecordAction::Stop;
     }
 }

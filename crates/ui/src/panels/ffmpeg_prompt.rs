@@ -17,6 +17,7 @@ use egui::Ui;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::button;
 use crate::widgets::switch;
 use crate::widgets::{dialog, loading};
 
@@ -138,7 +139,7 @@ pub fn show(
                         .desired_width(340.0)
                         .hint_text("%APPDATA%\\CapRust\\ffmpeg"),
                 );
-                if ui.button(tr("new-button-browse")).clicked() {
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         state.install_dir = dir.to_string_lossy().to_string();
                     }
@@ -245,7 +246,7 @@ pub fn show(
             if dialog::footer_close(
                 ui,
                 |ui| {
-                    if ui.button(tr("ffmpeg-prompt-retry")).clicked() {
+                    if button::primary(ui, tr("ffmpeg-prompt-retry")).clicked() {
                         state.phase = PromptPhase::Choose;
                     }
                 },

@@ -15,6 +15,7 @@ use egui::Ui;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::button;
 use crate::widgets::dialog;
 
 #[derive(Debug, Clone, Default)]
@@ -143,7 +144,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
             if dialog::footer_close(
                 ui,
                 |ui| {
-                    if still > 0 && ui.button(tr("relink-dialog-retry")).clicked() {
+                    if still > 0 && button::primary(ui, tr("relink-dialog-retry")).clicked() {
                         ev.locate_folder = true;
                     }
                 },
@@ -168,7 +169,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
             if dialog::footer_close(
                 ui,
                 |ui| {
-                    if ui.button(tr("relink-dialog-retry")).clicked() {
+                    if button::primary(ui, tr("relink-dialog-retry")).clicked() {
                         ev.locate_folder = true;
                     }
                 },

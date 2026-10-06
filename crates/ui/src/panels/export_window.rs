@@ -2,6 +2,7 @@
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::button;
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
 
@@ -138,7 +139,7 @@ pub fn show(
                 .desired_width(280.0)
                 .hint_text("Folder…"),
         );
-        if ui.button(tr("exp-browse")).clicked() {
+        if button::secondary(ui, tr("exp-browse")).clicked() {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 state.destination = dir.to_string_lossy().to_string();
             }

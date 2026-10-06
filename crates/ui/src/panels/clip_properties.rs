@@ -2,6 +2,7 @@
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::{space, text};
+use crate::widgets::button;
 use crate::widgets::chip;
 use crate::widgets::switch;
 use caprust_core::{Clip, ClipType, ProjectState};
@@ -1050,7 +1051,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         if changed {
             state.pending.push(PendingEdit::ChromaKey(Some(next)));
         }
-        if ui.button(tr("props-chroma-clear")).clicked() {
+        if button::ghost(ui, tr("props-chroma-clear")).clicked() {
             state.pending.push(PendingEdit::ChromaKey(None));
         }
     } else {

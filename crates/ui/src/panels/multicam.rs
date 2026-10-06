@@ -12,6 +12,7 @@ use std::sync::mpsc::Receiver;
 use uuid::Uuid;
 
 use crate::i18n_helper::tr;
+use crate::widgets::button;
 use crate::widgets::chip;
 use crate::widgets::empty;
 
@@ -87,7 +88,7 @@ pub fn show(ui: &mut Ui, project: &ProjectState, state: &mut MultiCamState) -> M
                             );
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(tr("multicam-remove")).clicked() {
+                            if button::secondary(ui, tr("multicam-remove")).clicked() {
                                 out.remove_group = Some(g.id);
                             }
                             let sync_enabled = !syncing;
