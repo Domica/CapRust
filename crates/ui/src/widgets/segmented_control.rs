@@ -57,7 +57,11 @@ pub fn segmented_control_enabled(
     let total_w: f32 = seg_ws.iter().sum();
     let desired = Vec2::new(total_w, seg_h);
 
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
     let (rect, response) = ui.allocate_exact_size(desired, sense);
     let response = response.on_hover_cursor(if enabled {
         egui::CursorIcon::PointingHand

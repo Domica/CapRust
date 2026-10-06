@@ -47,7 +47,11 @@ pub fn chip_enabled(
         galley.size().y.max(16.0) + pad_y * 2.0,
     );
 
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
     let (rect, response) = ui.allocate_exact_size(desired, sense);
     let response = response.on_hover_cursor(if enabled {
         egui::CursorIcon::PointingHand

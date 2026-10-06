@@ -17,7 +17,11 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
 /// delivered. `switch` is a thin wrapper that passes `enabled = true`.
 pub fn switch_enabled(ui: &mut Ui, on: &mut bool, enabled: bool) -> Response {
     let desired = Vec2::new(36.0, 20.0);
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
     let (rect, mut response) = ui.allocate_exact_size(desired, sense);
 
     if enabled && response.clicked() {
