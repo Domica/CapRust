@@ -273,6 +273,7 @@ props-field-height = Height
 props-field-speed = Speed
 props-field-custom = Custom
 props-field-reverse = Reverse
+props-field-reverse-too-long = Reverse is limited to 60-second clips. Longer clips would need more memory than the editor can safely buffer.
 props-mirror-h = Mirror horizontally
 props-mirror-v = Mirror vertically
 props-field-start = Start

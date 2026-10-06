@@ -273,6 +273,7 @@ props-field-height = Visina
 props-field-speed = Brzina
 props-field-custom = Prilagođeno
 props-field-reverse = Obrnuto
+props-field-reverse-too-long = Obrnuto je ograničeno na klipove do 60 sekundi. Dulji klipovi zahtijevaju više memorije nego što editor može sigurno baferirati.
 props-mirror-h = Zrcali vodoravno
 props-mirror-v = Zrcali okomito
 props-field-start = Početak

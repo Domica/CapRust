@@ -1115,8 +1115,15 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
             ui.label(tr("props-field-reverse"));
             let mut rev = clip.reversed;
-            if switch::switch(ui, &mut rev).changed() {
+            let too_long = (clip.duration_ms as f64 / 1000.0) > caprust_core::clip::REVERSE_MAX_SEC;
+            let resp = ui
+                .add_enabled_ui(!too_long, |ui| switch::switch(ui, &mut rev))
+                .inner;
+            if resp.changed() {
                 state.pending.push(PendingEdit::Reverse(rev));
+            }
+            if too_long {
+                let _ = resp.on_hover_text(tr("props-field-reverse-too-long"));
             }
             ui.end_row();
         });

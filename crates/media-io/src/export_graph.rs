@@ -48,6 +48,9 @@ pub struct VideoClip {
     pub flip_h: bool,
     /// Vertical mirror. Emits `vflip` in the base chain.
     pub flip_v: bool,
+    /// Full-clip reverse. Emits `reverse` after trim, so the
+    /// buffer is bounded to duration_sec, not the source length.
+    pub reversed: bool,
     /// Higher z renders on top. V1 = 0, V2 = 1, Overlay = last.
     pub z_order: u32,
     /// Image sources need `-loop 1` on their input.
@@ -223,6 +226,9 @@ pub struct AudioClip {
     /// Where inside the clip the ramp lives. Must match the source
     /// clip's speed_range for the same reason as speed_ease above.
     pub speed_range: caprust_core::clip::SpeedRampRange,
+    /// Full-clip reverse. Emits `areverse` after the speed chain,
+    /// matching the video `reverse` after `trim`.
+    pub reversed: bool,
     /// Linear gain from clip.volume_db.
     pub gain_db: f32,
     /// Per-track volume in dB (Track.volume_db). Applied after
@@ -400,13 +406,20 @@ impl RenderPlan {
                 (false, false) => "",
             };
 
+            // Reverse. Unlike flip, `reverse` buffers the whole
+            // trimmed window before emitting frame 0, so it sits
+            // AFTER trim. trim already bounded the window to
+            // duration_sec, keeping the buffer to the clip length
+            // rather than the whole source. See REVERSE_MAX_SEC.
+            let reverse_chain = if c.reversed { ",reverse" } else { "" };
+
             // setpts BEFORE trim: when `-ss` is on the input and the
             // ffmpeg build does not reset PTS, frame PTS starts at the
             // seek offset. Resetting first makes `trim=duration` see a
             // 0-based window and actually select frames. Same result
             // for the no-seek case (first PTS is already 0).
             fg.push_str(&format!(
-                "{in_label}{setpts}{flip_chain},trim=duration={dur:.6},{fit_chain},fps={num}/{den}",
+                "{in_label}{setpts}{flip_chain},trim=duration={dur:.6}{reverse_chain},{fit_chain},fps={num}/{den}",
                 dur = c.duration_sec,
                 num = self.fps_num,
                 den = self.fps_den,
@@ -947,8 +960,14 @@ impl RenderPlan {
             // Post-chain: processing, gain, fades. If all are
             // empty, pass through with `anull` so the chain is
             // always valid.
-            let tail =
-                format!("{denoise}{voice_boost}{normalize}{gain}{track_gain}{fade_in}{fade_out}");
+            // Reverse. Runs after the speed chain so it operates on
+            // the windowed, speed-adjusted signal. Time-based
+            // processing below (volume keyframes, fades) then sees
+            // the reversed timeline, matching what the user hears.
+            let reverse_prefix = if c.reversed { ",areverse" } else { "" };
+            let tail = format!(
+                "{reverse_prefix}{denoise}{voice_boost}{normalize}{gain}{track_gain}{fade_in}{fade_out}"
+            );
             let tail_clean = tail.trim_start_matches(',');
             let tail_chain = if tail_clean.is_empty() {
                 "anull"
@@ -2395,6 +2414,7 @@ pub fn plan_from_project(
                         speed_range: c.speed_range,
                         flip_h: c.flip_h,
                         flip_v: c.flip_v,
+                        reversed: c.reversed,
                         z_order: z,
                         is_image: false,
                         effects: c.effects.clone(),
@@ -2436,6 +2456,7 @@ pub fn plan_from_project(
                         speed_range: c.speed_range,
                         flip_h: c.flip_h,
                         flip_v: c.flip_v,
+                        reversed: c.reversed,
                         z_order: z,
                         is_image: true,
                         effects: c.effects.clone(),
@@ -2857,6 +2878,7 @@ pub fn plan_from_project(
             speed_end: c.speed_end,
             speed_ease: c.speed_ease,
             speed_range: c.speed_range,
+            reversed: c.reversed,
             gain_db: c.volume_db,
             track_gain_db: track.volume_db,
             fade_in_sec: fi,
@@ -3159,6 +3181,7 @@ mod tests {
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 flip_h: false,
                 flip_v: false,
+                reversed: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3333,6 +3356,7 @@ mod tests {
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 flip_h: false,
                 flip_v: false,
+                reversed: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3584,6 +3608,7 @@ mod tests {
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 flip_h: false,
                 flip_v: false,
+                reversed: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3637,6 +3662,7 @@ mod tests {
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 flip_h: false,
                 flip_v: false,
+                reversed: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3856,6 +3882,7 @@ mod tests {
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 flip_h: false,
                 flip_v: false,
+                reversed: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -4347,6 +4374,7 @@ mod flip_filtergraph_tests {
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
                 flip_h,
                 flip_v,
+                reversed: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -4415,5 +4443,134 @@ mod flip_filtergraph_tests {
         let hflip = fg.find(",hflip,").expect("hflip present");
         let trim = fg.find(",trim=").expect("trim present");
         assert!(setpts < hflip && hflip < trim, "order wrong: {fg}");
+    }
+}
+
+#[cfg(test)]
+mod reverse_filtergraph_tests {
+    use super::*;
+
+    fn base_plan_video(reversed: bool) -> RenderPlan {
+        RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: std::path::PathBuf::from("/x.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 2.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 2.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
+                reversed,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: None,
+                transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
+                auto_reframe: Vec::new(),
+                bg_removal_path: None,
+                chroma_key: None,
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 2.0,
+            width: 320,
+            height: 240,
+            fps_num: 30,
+            fps_den: 1,
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
+            preset: "veryfast".into(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
+            seek_ms: 0,
+            seek_optimized: false,
+        }
+    }
+
+    fn base_plan_audio(reversed: bool) -> RenderPlan {
+        let mut plan = base_plan_video(false);
+        plan.has_audio = true;
+        plan.audio_clips = vec![AudioClip {
+            input_index: 0,
+            timeline_start_sec: 0.0,
+            duration_sec: 2.0,
+            speed: 1.0,
+            speed_end: None,
+            speed_ease: caprust_core::clip::EaseCurve::Linear,
+            speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+            reversed,
+            gain_db: 0.0,
+            track_gain_db: 0.0,
+            fade_in_sec: 0.0,
+            fade_out_sec: 0.0,
+            volume_keyframes: Vec::new(),
+            clip_id: uuid::Uuid::nil(),
+            duck_against: None,
+            duck_reduction_db: 0.0,
+            denoise: false,
+            voice_boost: false,
+            normalize: false,
+        }];
+        plan
+    }
+
+    #[test]
+    fn no_reverse_means_no_filter() {
+        let (fg, _, _) = base_plan_video(false).build_filtergraph().unwrap();
+        assert!(!fg.contains(",reverse,"), "no reverse -> no filter: {fg}");
+    }
+
+    #[test]
+    fn reversed_video_emits_reverse() {
+        let (fg, _, _) = base_plan_video(true).build_filtergraph().unwrap();
+        assert!(fg.contains(",reverse,"), "reversed -> reverse: {fg}");
+    }
+
+    #[test]
+    fn reverse_sits_after_trim_before_fps() {
+        let (fg, _, _) = base_plan_video(true).build_filtergraph().unwrap();
+        let trim = fg.find(",trim=").expect("trim present");
+        let reverse = fg.find(",reverse,").expect("reverse present");
+        let fps = fg.find(",fps=").expect("fps present");
+        assert!(trim < reverse, "reverse must follow trim: {fg}");
+        assert!(reverse < fps, "reverse must precede fps: {fg}");
+    }
+
+    #[test]
+    fn reversed_audio_emits_areverse() {
+        let (fg, _, _) = base_plan_audio(true).build_filtergraph().unwrap();
+        // areverse is the first filter after the pre-gain label, so it
+        // has no comma before it.
+        assert!(
+            fg.contains("]areverse["),
+            "reversed audio -> areverse: {fg}"
+        );
+    }
+
+    #[test]
+    fn audio_reverse_sits_after_atrim() {
+        let (fg, _, _) = base_plan_audio(true).build_filtergraph().unwrap();
+        let atrim = fg.find(",atrim=").expect("atrim present");
+        let areverse = fg.find("]areverse[").expect("areverse present");
+        assert!(atrim < areverse, "areverse must follow atrim: {fg}");
+    }
+
+    #[test]
+    fn no_reverse_audio_means_no_areverse() {
+        let (fg, _, _) = base_plan_audio(false).build_filtergraph().unwrap();
+        assert!(!fg.contains("areverse"), "no reverse -> no areverse: {fg}");
     }
 }

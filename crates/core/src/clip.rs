@@ -982,3 +982,10 @@ mod chroma_key_tests {
         assert_eq!(back.key_color, [0, 255, 0]);
     }
 }
+
+/// Maximum clip duration (seconds) for which Reverse is enabled in
+/// the UI. Above this, the ffmpeg `reverse` filter buffers the
+/// whole trimmed window in RAM before emitting frame 0, and peak
+/// memory on 1080p30 approaches 6 GB at 60 s. Enforced in
+/// clip_properties; the render layer accepts any duration.
+pub const REVERSE_MAX_SEC: f64 = 60.0;
