@@ -2,6 +2,19 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [Unreleased]
+
+### Changed
+
+- **Panel polish (P3-all).** Boolean checkboxes in Settings and the
+  FFmpeg prompt become `switch`. Settings theme mode and playhead
+  size, media bin preview size, clip properties tabs, model prompt
+  tabs, and multicam angle pickers become `segmented_control` or
+  `chip`, matching the widget library added in 0.9.4. Menu items in
+  View -> Sort / Size stay `selectable_label` (egui idiom).
+  `export_window` advanced stays a `checkbox`: it is a disclosure,
+  not a state flag.
+
 ## [0.9.4] — 2026-10-06
 
 ### Added
