@@ -155,15 +155,13 @@ pub fn show(
             if dialog::footer_close(
                 ui,
                 |ui| {
-                    if ui
-                        .button(tr("ffmpeg-prompt-download"))
+                    if button::primary(ui, tr("ffmpeg-prompt-download"))
                         .on_hover_text(tr("ffmpeg-prompt-download-hint"))
                         .clicked()
                     {
                         ev.start_download = true;
                     }
-                    if ui
-                        .button(tr("ffmpeg-prompt-browse"))
+                    if button::secondary(ui, tr("ffmpeg-prompt-browse"))
                         .on_hover_text(tr("ffmpeg-prompt-browse-hint"))
                         .clicked()
                     {

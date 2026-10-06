@@ -11,6 +11,7 @@ use egui_phosphor::regular as ph;
 use uuid::Uuid;
 
 use crate::i18n_helper::tr;
+use crate::widgets::button;
 use crate::widgets::empty;
 
 #[derive(Default)]
@@ -59,11 +60,7 @@ pub fn show(
                             ui.label(RichText::new(&inst.plugin_id).small().monospace().weak());
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            if ui
-                                .button(ph::X)
-                                .on_hover_text(tr("master-chain-remove"))
-                                .clicked()
-                            {
+                            if button::icon(ui, ph::X, &tr("master-chain-remove")).clicked() {
                                 out.remove_instance = Some(inst.id);
                             }
                             let mut bypassed = inst.bypassed;

@@ -105,8 +105,7 @@ pub fn show(ui: &mut Ui, state: &mut RelinkDialogState) -> RelinkDialogEvents {
             if dialog::footer_close(
                 ui,
                 |ui| {
-                    if ui
-                        .button(locate_label)
+                    if button::primary(ui, locate_label)
                         .on_hover_text(tr("relink-dialog-locate-hint"))
                         .clicked()
                     {

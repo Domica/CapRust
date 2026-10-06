@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
+use crate::widgets::button;
 use crate::widgets::empty;
 
 #[derive(Debug, Default)]
@@ -50,11 +51,7 @@ pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) -> PluginBrowserOutput 
     ui.horizontal(|ui| {
         ui.label(RichText::new(tr("plugin-browser-heading")).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(ph::ARROWS_CLOCKWISE)
-                .on_hover_text(tr("plugin-browser-refresh"))
-                .clicked()
-            {
+            if button::icon(ui, ph::ARROWS_CLOCKWISE, &tr("plugin-browser-refresh")).clicked() {
                 state.rescan();
             }
         });
@@ -97,11 +94,7 @@ pub fn show(ui: &mut Ui, state: &mut PluginBrowserState) -> PluginBrowserOutput 
                             ui.label(RichText::new(p.id.as_str()).small().monospace().weak());
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            if ui
-                                .button(ph::PLUS)
-                                .on_hover_text(tr("plugin-browser-add"))
-                                .clicked()
-                            {
+                            if button::icon(ui, ph::PLUS, &tr("plugin-browser-add")).clicked() {
                                 out.add_requested = Some(p.clone());
                             }
                         });

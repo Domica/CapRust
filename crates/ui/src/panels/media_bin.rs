@@ -328,10 +328,12 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             });
         // Sort direction toggle
         let dir_icon = state.sort_dir.icon();
-        if ui
-            .button(dir_icon)
-            .on_hover_text(tr(&format!("media-sort-dir-{}", state.sort_dir.key())))
-            .clicked()
+        if button::icon(
+            ui,
+            dir_icon,
+            &tr(&format!("media-sort-dir-{}", state.sort_dir.key())),
+        )
+        .clicked()
         {
             state.sort_dir = state.sort_dir.flipped();
         }

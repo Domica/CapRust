@@ -921,16 +921,14 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if n > 0
-                    && ui
-                        .button(tr("props-auto-reframe-clear"))
+                    && button::ghost(ui, tr("props-auto-reframe-clear"))
                         .on_hover_text(tr("props-auto-reframe-clear-hint"))
                         .clicked()
                 {
                     state.pending.push(PendingEdit::AutoReframe(Vec::new()));
                 }
                 ui.add_enabled_ui(can_run, |ui| {
-                    if ui
-                        .button(tr("props-auto-reframe-run"))
+                    if button::primary(ui, tr("props-auto-reframe-run"))
                         .on_hover_text(tr("props-auto-reframe-run-hint"))
                         .clicked()
                     {
@@ -972,16 +970,14 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if has_mask
-                    && ui
-                        .button(tr("props-bg-removal-clear"))
+                    && button::ghost(ui, tr("props-bg-removal-clear"))
                         .on_hover_text(tr("props-bg-removal-clear-hint"))
                         .clicked()
                 {
                     state.pending.push(PendingEdit::ClearBgRemoval);
                 }
                 ui.add_enabled_ui(can_run, |ui| {
-                    if ui
-                        .button(tr("props-bg-removal-run"))
+                    if button::primary(ui, tr("props-bg-removal-run"))
                         .on_hover_text(tr("props-bg-removal-run-hint"))
                         .clicked()
                     {
@@ -1062,8 +1058,7 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                     .color(egui::Color32::from_gray(140)),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(tr("props-chroma-enable"))
+                if button::primary(ui, tr("props-chroma-enable"))
                     .on_hover_text(tr("props-chroma-enable-hint"))
                     .clicked()
                 {
