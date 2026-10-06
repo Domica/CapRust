@@ -5,6 +5,7 @@ use crate::theme::tokens::space;
 use crate::widgets::button;
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QualityTier {
@@ -101,11 +102,74 @@ impl Default for ExportState {
     }
 }
 
-fn default_videos_dir() -> String {
+pub(crate) fn default_videos_dir() -> String {
     std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map(|h| format!("{h}/Videos"))
         .unwrap_or_else(|_| ".".into())
+}
+
+/// Resolve the export output file: `<destination>/<project-name>.mp4`.
+///
+/// An empty destination falls back to `fallback_dir`; a relative one is
+/// joined onto it, so the result is never relative — a relative output
+/// is what used to make Explorer fall back to Documents on reveal.
+pub fn resolve_export_output(
+    destination: &str,
+    project_name: &str,
+    fallback_dir: &Path,
+) -> PathBuf {
+    let trimmed = destination.trim();
+    let dir = if trimmed.is_empty() {
+        fallback_dir.to_path_buf()
+    } else {
+        let p = PathBuf::from(trimmed);
+        if p.is_absolute() {
+            p
+        } else {
+            fallback_dir.join(p)
+        }
+    };
+    dir.join(format!("{}.mp4", project_name.replace(' ', "_")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fallback() -> PathBuf {
+        std::env::temp_dir()
+    }
+
+    #[test]
+    fn empty_destination_uses_fallback() {
+        let out = resolve_export_output("", "My Project", &fallback());
+        assert_eq!(out, fallback().join("My_Project.mp4"));
+    }
+
+    #[test]
+    fn absolute_destination_is_kept() {
+        let dest = fallback().join("Out").to_string_lossy().into_owned();
+        let out = resolve_export_output(&dest, "A B", &fallback());
+        assert_eq!(out, fallback().join("Out").join("A_B.mp4"));
+    }
+
+    #[test]
+    fn relative_destination_joins_fallback() {
+        let out = resolve_export_output("renders", "A", &fallback());
+        assert_eq!(out, fallback().join("renders").join("A.mp4"));
+    }
+
+    #[test]
+    fn result_is_never_relative() {
+        for dest in ["", "  ", "rel/dir"] {
+            let out = resolve_export_output(dest, "P", &fallback());
+            assert!(out.is_absolute(), "{dest:?} produced relative {out:?}");
+        }
+        let abs = fallback().to_string_lossy().into_owned();
+        let out = resolve_export_output(&abs, "P", &fallback());
+        assert!(out.is_absolute());
+    }
 }
 
 /// Returns true if the user clicked Export.

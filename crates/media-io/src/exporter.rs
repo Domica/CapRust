@@ -111,9 +111,21 @@ pub fn open_folder(path: &Path) {
 pub fn reveal_in_folder(path: &Path) {
     #[cfg(target_os = "windows")]
     {
-        let _ = crate::silent_cmd::silent_command("explorer")
-            .arg(format!("/select,{}", path.display()))
-            .spawn();
+        // Explorer falls back to Documents when the /select target is
+        // missing or relative, so resolve to something real first.
+        let target = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        if target.is_file() {
+            let _ = crate::silent_cmd::silent_command("explorer")
+                .arg(format!("/select,{}", target.display()))
+                .spawn();
+        } else if let Some(parent) = target.parent().filter(|p| p.is_dir()) {
+            tracing::warn!("reveal: {} missing, opening parent", target.display());
+            let _ = crate::silent_cmd::silent_command("explorer")
+                .arg(parent)
+                .spawn();
+        } else {
+            tracing::warn!("reveal: nothing to open for {}", target.display());
+        }
     }
     #[cfg(target_os = "macos")]
     {

@@ -8095,9 +8095,20 @@ impl CapRustApp {
             }
         };
 
-        // Output path: <destination>/<project-name>.mp4
-        let mut out = std::path::PathBuf::from(&self.export_state.destination);
-        out.push(format!("{}.mp4", self.project.name.replace(' ', "_")));
+        // Output path: <destination>/<project-name>.mp4, never relative
+        // (a relative output made Explorer fall back to Documents on reveal).
+        let out = crate::panels::export_window::resolve_export_output(
+            &self.export_state.destination,
+            &self.project.name,
+            std::path::Path::new(&crate::panels::export_window::default_videos_dir()),
+        );
+        if let Some(parent) = out.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::error!("export: cannot create output dir {}: {e}", parent.display());
+                self.toast_error(format!("{}: {e}", tr("toast-export-failed")));
+                return;
+            }
+        }
 
         tracing::info!(
             "starting export: {} → {} ({}x{} @ {}/{})",
