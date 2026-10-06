@@ -3,6 +3,7 @@
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
+use crate::widgets::segmented_control;
 use crate::widgets::switch;
 use caprust_core::models::{ModelKind, ModelStatus};
 use caprust_core::{detect_ffmpeg, AppSettings, FfmpegStatus, ModelRegistry};
@@ -122,8 +123,14 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 
     ui.horizontal(|ui| {
         ui.label(tr("set-appearance-mode"));
-        for m in ThemeMode::all() {
-            ui.selectable_value(&mut theme.mode, m, m.label());
+        let all = ThemeMode::all();
+        let labels: Vec<_> = all.iter().map(|m| m.label()).collect();
+        let selected = all.iter().position(|m| *m == theme.mode).unwrap_or(0);
+        let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+        if let Some(i) = clicked {
+            if i != selected {
+                theme.mode = all[i];
+            }
         }
     });
 
@@ -247,8 +254,17 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             ui.end_row();
             ui.label(tr("set-appearance-playhead-size"));
             ui.horizontal(|ui| {
-                for s in crate::theme::PlayheadSize::all() {
-                    ui.selectable_value(&mut theme.playhead_size, s, tr(s.label_key()));
+                let all = crate::theme::PlayheadSize::all();
+                let labels: Vec<_> = all.iter().map(|s| tr(s.label_key())).collect();
+                let selected = all
+                    .iter()
+                    .position(|s| *s == theme.playhead_size)
+                    .unwrap_or(0);
+                let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+                if let Some(i) = clicked {
+                    if i != selected {
+                        theme.playhead_size = all[i];
+                    }
                 }
             });
             ui.end_row();
