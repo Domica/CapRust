@@ -28,7 +28,7 @@
 
 <header class="hero">
   <div class="container">
-    <div class="badge">v0.9.2 — timeline audio envelope</div>
+    <div class="badge">v0.9.3 — timeline overlay follow-ups</div>
     <h1>Video editing.<br>Without the drag.</h1>
     <p class="tagline">
       A native Windows video editor for short-form creators.
@@ -146,9 +146,9 @@
 <section id="download" class="download">
   <div class="container">
     <h2>Download CapRust</h2>
-    <p>v0.9.2 adds a timeline audio envelope overlay: a volume automation polyline through your keyframes plus shaded ducking zones, drawn directly on audio clips. It also fixes probe backfill for media auto-created on project load. Everything from 0.9.1 is included: split offsets, subprocess focus, orphan media relink, and a ducking reduction slider.</p>
+    <p>v0.9.3 polishes the timeline audio envelope introduced in 0.9.2: the polyline now bends on every volume keyframe, ducking zones stay anchored through zoom and scroll, and shaded zones only appear where the export actually wires a sidechain. Everything from 0.9.2 is included - the envelope overlay and the probe-backfill fix on project load.</p>
     <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
-      ↓&nbsp; Download v0.9.2 for Windows
+      ↓&nbsp; Download v0.9.3 for Windows
     </a>
     <p class="verify">
       SHA-256 for each release is on the
@@ -207,7 +207,7 @@
       <details>
         <summary>It says "beta" — is it stable?</summary>
         <div class="answer">
-          v0.9.1 is a bug fix sweep on top of 0.9.0: split offsets, volume automation, orphan media relink, subprocess focus, and more. Timeline, preview, export, captions,
+          v0.9.3 polishes the timeline audio envelope overlay with polyline accuracy, zoom/scroll anchoring, and export-matching duck zones. Everything from 0.9.0 through 0.9.2 is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
           audio effects, CLAP hosting and the MCP server are all in. Expect
           rough edges; a crash handler writes a report to
           <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and
