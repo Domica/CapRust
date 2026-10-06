@@ -331,6 +331,8 @@ exp-advanced = Advanced options
 exp-bitrate = Bitrate mode
 exp-color-range = Color range
 exp-button =  Export
+exp-open-folder = Open folder
+exp-dismiss = Dismiss
 
 # Settings dialog
 set-title = Settings

@@ -7499,13 +7499,12 @@ impl CapRustApp {
                         egui::RichText::new(format!("{} Done: {path}", ph::CHECK))
                             .color(egui::Color32::from_rgb(120, 220, 120)),
                     );
-                    if ui
-                        .button(format!("{} Open folder", ph::FOLDER_OPEN))
+                    if button::primary(ui, format!("{} {}", ph::FOLDER_OPEN, tr("exp-open-folder")))
                         .clicked()
                     {
                         caprust_media_io::exporter::reveal_in_folder(std::path::Path::new(&path));
                     }
-                    if ui.button("Dismiss").clicked() {
+                    if button::secondary(ui, tr("exp-dismiss")).clicked() {
                         self.export_finished_path = None;
                     }
                 }

@@ -331,6 +331,8 @@ exp-advanced = Napredne opcije
 exp-bitrate = Bitrate mode
 exp-color-range = Raspon boja
 exp-button =  Izvezi
+exp-open-folder = Otvori mapu
+exp-dismiss = Odbaci
 
 # Settings dialog
 set-title = Postavke
