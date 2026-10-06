@@ -3775,6 +3775,9 @@ impl CapRustApp {
                         );
                         if div.hovered() || div.dragged() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        } else if pan_mode {
+                            let _ = h_resp.response
+                                .on_hover_cursor(egui::CursorIcon::Grab);
                         }
                         ui.painter().line_segment(
                             [
