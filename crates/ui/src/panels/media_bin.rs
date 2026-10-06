@@ -2,6 +2,7 @@
 
 use crate::i18n_helper::tr;
 use crate::theme::tokens::{elev, radius, space, text};
+use crate::widgets::button;
 use crate::widgets::empty;
 use crate::widgets::segmented_control;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
@@ -287,18 +288,17 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // horizontal_wrapped so a narrow dock zone reflows to two rows
     // instead of clipping the trailing buttons.
     ui.horizontal_wrapped(|ui| {
-        if ui.button(tr("media-import-clips")).clicked() {
+        if button::secondary(ui, tr("media-import-clips")).clicked() {
             newly_imported.extend(import_with(project, VIDEO_EXTS, "Video"));
         }
-        if ui.button(tr("media-import-music")).clicked() {
+        if button::secondary(ui, tr("media-import-music")).clicked() {
             newly_imported.extend(import_with(project, AUDIO_EXTS, "Audio"));
         }
-        if ui.button(tr("media-import-images")).clicked() {
+        if button::secondary(ui, tr("media-import-images")).clicked() {
             newly_imported.extend(import_with(project, IMAGE_EXTS, "Image"));
         }
         ui.separator();
-        if ui
-            .button(tr("media-clear-all"))
+        if button::ghost(ui, tr("media-clear-all"))
             .on_hover_text(tr("media-clear-all-tooltip"))
             .clicked()
         {
@@ -777,7 +777,7 @@ fn draw_card(
 
     // Right-click menu.
     resp.context_menu(|ui| {
-        if ui.button(tr("media-remove-one")).clicked() {
+        if button::secondary(ui, tr("media-remove-one")).clicked() {
             remove_requested = true;
             ui.close_menu();
         }
