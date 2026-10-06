@@ -9,7 +9,7 @@ use crate::preview_player::PreviewPlayer;
 use crate::theme::tokens::{elev, radius, space, text};
 use crate::theme::Theme;
 use crate::timeline::{TimelineToolEvents, TimelineToolState};
-use crate::widgets::{button, empty, section};
+use crate::widgets::{button, empty, section, segmented_control};
 use caprust_core::commands::delete_clip::DeleteClipCommand;
 use caprust_core::commands::move_clip::MoveClipCommand;
 use caprust_core::commands::split_clip::SplitClipCommand;
@@ -7686,23 +7686,21 @@ impl CapRustApp {
                 // unreachable from the UI once a tie occurred.
                 ui.horizontal(|ui| {
                     let mut active = self.model_prompt_tab;
-                    if ui
-                        .selectable_label(
-                            active == caprust_core::ModelKind::Caption,
-                            tr("mp-tab-captions"),
-                        )
-                        .clicked()
-                    {
-                        active = caprust_core::ModelKind::Caption;
-                    }
-                    if ui
-                        .selectable_label(
-                            active == caprust_core::ModelKind::Narration,
-                            tr("mp-tab-narration"),
-                        )
-                        .clicked()
-                    {
-                        active = caprust_core::ModelKind::Narration;
+                    let labels = [tr("mp-tab-captions"), tr("mp-tab-narration")];
+                    let selected = if active == caprust_core::ModelKind::Caption {
+                        0
+                    } else {
+                        1
+                    };
+                    let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+                    if let Some(i) = clicked {
+                        if i != selected {
+                            active = if i == 0 {
+                                caprust_core::ModelKind::Caption
+                            } else {
+                                caprust_core::ModelKind::Narration
+                            };
+                        }
                     }
                     if active != self.model_prompt_tab {
                         self.model_prompt_tab = active;
