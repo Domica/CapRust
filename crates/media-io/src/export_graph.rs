@@ -44,6 +44,10 @@ pub struct VideoClip {
     pub speed_ease: caprust_core::clip::EaseCurve,
     /// Where inside the clip the ramp lives.
     pub speed_range: caprust_core::clip::SpeedRampRange,
+    /// Horizontal mirror. Emits `hflip` in the base chain.
+    pub flip_h: bool,
+    /// Vertical mirror. Emits `vflip` in the base chain.
+    pub flip_v: bool,
     /// Higher z renders on top. V1 = 0, V2 = 1, Overlay = last.
     pub z_order: u32,
     /// Image sources need `-loop 1` on their input.
@@ -386,13 +390,23 @@ impl RenderPlan {
                 v_out.clone()
             };
 
+            // Mirror. hflip/vflip change pixels but not dimensions,
+            // so they slot in between setpts and trim: the original
+            // frame is mirrored before any crop/scale pans over it.
+            let flip_chain = match (c.flip_h, c.flip_v) {
+                (true, true) => ",hflip,vflip",
+                (true, false) => ",hflip",
+                (false, true) => ",vflip",
+                (false, false) => "",
+            };
+
             // setpts BEFORE trim: when `-ss` is on the input and the
             // ffmpeg build does not reset PTS, frame PTS starts at the
             // seek offset. Resetting first makes `trim=duration` see a
             // 0-based window and actually select frames. Same result
             // for the no-seek case (first PTS is already 0).
             fg.push_str(&format!(
-                "{in_label}{setpts},trim=duration={dur:.6},{fit_chain},fps={num}/{den}",
+                "{in_label}{setpts}{flip_chain},trim=duration={dur:.6},{fit_chain},fps={num}/{den}",
                 dur = c.duration_sec,
                 num = self.fps_num,
                 den = self.fps_den,
@@ -2379,6 +2393,8 @@ pub fn plan_from_project(
                         speed_end: c.speed_end,
                         speed_ease: c.speed_ease,
                         speed_range: c.speed_range,
+                        flip_h: c.flip_h,
+                        flip_v: c.flip_v,
                         z_order: z,
                         is_image: false,
                         effects: c.effects.clone(),
@@ -2418,6 +2434,8 @@ pub fn plan_from_project(
                         speed_end: c.speed_end,
                         speed_ease: c.speed_ease,
                         speed_range: c.speed_range,
+                        flip_h: c.flip_h,
+                        flip_v: c.flip_v,
                         z_order: z,
                         is_image: true,
                         effects: c.effects.clone(),
@@ -3139,6 +3157,8 @@ mod tests {
                 speed_end: None,
                 speed_ease: caprust_core::clip::EaseCurve::Linear,
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3311,6 +3331,8 @@ mod tests {
                 speed_end: None,
                 speed_ease: caprust_core::clip::EaseCurve::Linear,
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3560,6 +3582,8 @@ mod tests {
                 speed_end: None,
                 speed_ease: caprust_core::clip::EaseCurve::Linear,
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3611,6 +3635,8 @@ mod tests {
                 speed_end: None,
                 speed_ease: caprust_core::clip::EaseCurve::Linear,
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -3828,6 +3854,8 @@ mod tests {
                 speed_end: None,
                 speed_ease: caprust_core::clip::EaseCurve::Linear,
                 speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
                 z_order: 0,
                 is_image: false,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
@@ -4294,5 +4322,98 @@ mod ducking_sidechain_tests {
                 "ducked clip must be first input; got: {frag}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod flip_filtergraph_tests {
+    use super::*;
+
+    fn base_plan(flip_h: bool, flip_v: bool) -> RenderPlan {
+        RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: std::path::PathBuf::from("/x.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 2.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 2.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h,
+                flip_v,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: None,
+                transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
+                auto_reframe: Vec::new(),
+                bg_removal_path: None,
+                chroma_key: None,
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 2.0,
+            width: 320,
+            height: 240,
+            fps_num: 30,
+            fps_den: 1,
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
+            preset: "veryfast".into(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
+            seek_ms: 0,
+            seek_optimized: false,
+        }
+    }
+
+    #[test]
+    fn no_flip_means_no_filter() {
+        let (fg, _, _) = base_plan(false, false).build_filtergraph().unwrap();
+        assert!(!fg.contains("hflip"), "no flip_h -> no hflip: {fg}");
+        assert!(!fg.contains("vflip"), "no flip_v -> no vflip: {fg}");
+    }
+
+    #[test]
+    fn flip_h_emits_hflip_only() {
+        let (fg, _, _) = base_plan(true, false).build_filtergraph().unwrap();
+        assert!(fg.contains(",hflip,"), "flip_h -> hflip: {fg}");
+        assert!(!fg.contains(",vflip,"), "flip_h only -> no vflip: {fg}");
+    }
+
+    #[test]
+    fn flip_v_emits_vflip_only() {
+        let (fg, _, _) = base_plan(false, true).build_filtergraph().unwrap();
+        assert!(fg.contains(",vflip,"), "flip_v -> vflip: {fg}");
+        assert!(!fg.contains(",hflip,"), "flip_v only -> no hflip: {fg}");
+    }
+
+    #[test]
+    fn both_flips_emit_both_filters() {
+        let (fg, _, _) = base_plan(true, true).build_filtergraph().unwrap();
+        assert!(
+            fg.contains(",hflip,vflip,"),
+            "both flips -> hflip,vflip: {fg}"
+        );
+    }
+
+    #[test]
+    fn flip_chain_sits_between_setpts_and_trim() {
+        let (fg, _, _) = base_plan(true, false).build_filtergraph().unwrap();
+        let setpts = fg.find("setpts=").expect("setpts present");
+        let hflip = fg.find(",hflip,").expect("hflip present");
+        let trim = fg.find(",trim=").expect("trim present");
+        assert!(setpts < hflip && hflip < trim, "order wrong: {fg}");
     }
 }
