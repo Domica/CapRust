@@ -6619,6 +6619,9 @@ impl CapRustApp {
             }
         }
 
+        if out.media.skipped_duplicates > 0 {
+            self.toast(tr("media-import-duplicates-skipped"));
+        }
         // Enqueue background probe + thumbnail jobs for new imports.
         for id in out.media.newly_imported {
             if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {

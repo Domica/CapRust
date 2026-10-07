@@ -124,6 +124,7 @@ media-empty-title = No media imported yet.
 media-remove-one = Remove from library
 media-clear-all = 🗑 Clear all
 media-clear-all-tooltip = Remove all media from the library (files on disk are kept)
+media-import-duplicates-skipped = Already imported files were skipped.
 media-regen-thumbs = Regenerate thumbnails
 media-empty-hint = Click Clips / Music / Images above.
 media-count = { $count } item(s) in library

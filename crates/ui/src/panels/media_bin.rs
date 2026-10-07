@@ -279,23 +279,31 @@ pub struct MediaBinOutput {
     pub dragging: Option<Uuid>,
     pub newly_imported: Vec<Uuid>,
     pub remove_requested: Vec<Uuid>,
+    pub skipped_duplicates: usize,
 }
 
 pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> MediaBinOutput {
     // --- Import buttons ---
     let mut newly_imported: Vec<Uuid> = Vec::new();
+    let mut skipped_duplicates: usize = 0;
     let mut clear_all = false;
     // horizontal_wrapped so a narrow dock zone reflows to two rows
     // instead of clipping the trailing buttons.
     ui.horizontal_wrapped(|ui| {
         if button::secondary(ui, tr("media-import-clips")).clicked() {
-            newly_imported.extend(import_with(project, VIDEO_EXTS, "Video"));
+            let (ids, dup) = import_with(project, VIDEO_EXTS, "Video");
+            newly_imported.extend(ids);
+            skipped_duplicates += dup;
         }
         if button::secondary(ui, tr("media-import-music")).clicked() {
-            newly_imported.extend(import_with(project, AUDIO_EXTS, "Audio"));
+            let (ids, dup) = import_with(project, AUDIO_EXTS, "Audio");
+            newly_imported.extend(ids);
+            skipped_duplicates += dup;
         }
         if button::secondary(ui, tr("media-import-images")).clicked() {
-            newly_imported.extend(import_with(project, IMAGE_EXTS, "Image"));
+            let (ids, dup) = import_with(project, IMAGE_EXTS, "Image");
+            newly_imported.extend(ids);
+            skipped_duplicates += dup;
         }
         ui.separator();
         if button::ghost(ui, tr("media-clear-all"))
@@ -405,6 +413,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             dragging: None,
             newly_imported,
             remove_requested: Vec::new(),
+            skipped_duplicates,
         };
     }
 
@@ -528,6 +537,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
         dragging,
         newly_imported,
         remove_requested,
+        skipped_duplicates,
     }
 }
 
@@ -832,8 +842,9 @@ fn human_size(bytes: u64) -> String {
 // Import helpers
 // ---------------------------------------------------------------------------
 
-fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> Vec<Uuid> {
+fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> (Vec<Uuid>, usize) {
     let mut new_ids = Vec::new();
+    let mut skipped = 0;
     if let Some(paths) = rfd::FileDialog::new()
         .add_filter(label, exts)
         .add_filter("All files", &["*"])
@@ -841,12 +852,16 @@ fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> Vec<Uu
     {
         for p in paths {
             let s = p.to_string_lossy().to_string();
+            if project.media.find_by_path(&s).is_some() {
+                skipped += 1;
+                continue;
+            }
             let kind = guess_kind(&s).unwrap_or(MediaKind::Video);
             let id = project.media.add(&s, kind);
             new_ids.push(id);
         }
     }
-    new_ids
+    (new_ids, skipped)
 }
 
 #[cfg(test)]

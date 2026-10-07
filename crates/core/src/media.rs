@@ -100,6 +100,22 @@ impl MediaLibrary {
     pub fn remove(&mut self, id: Uuid) {
         self.items.retain(|m| m.id != id);
     }
+
+    /// Find an item by path, case- and separator-insensitive, so
+    /// re-importing the same file does not duplicate the library.
+    pub fn find_by_path(&self, path: &str) -> Option<Uuid> {
+        let norm = normalize_import_path(path);
+        self.items
+            .iter()
+            .find(|m| normalize_import_path(&m.path) == norm)
+            .map(|m| m.id)
+    }
+}
+
+/// Lowercase + forward slashes: the same file picked twice (or via
+/// differently-cased browsing) maps to one key.
+fn normalize_import_path(path: &str) -> String {
+    path.replace('\\', "/").to_lowercase()
 }
 
 /// Guess kind from extension.
@@ -119,3 +135,16 @@ pub fn guess_kind(path: &str) -> Option<MediaKind> {
 pub const VIDEO_EXTS: &[&str] = &["mp4", "mov", "avi", "mkv", "webm", "m4v", "wmv", "flv"];
 pub const AUDIO_EXTS: &[&str] = &["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"];
 pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"];
+
+#[cfg(test)]
+mod media_dedup_tests {
+    use super::*;
+
+    #[test]
+    fn find_by_path_ignores_case_and_separators() {
+        let mut lib = MediaLibrary::default();
+        let id = lib.add("C:/Music/Song.mp3", MediaKind::Audio);
+        assert_eq!(lib.find_by_path("c:\\music\\song.MP3"), Some(id));
+        assert_eq!(lib.find_by_path("C:/other.mp3"), None);
+    }
+}

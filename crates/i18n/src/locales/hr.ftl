@@ -124,6 +124,7 @@ media-empty-title = Još nema uvezenih medija.
 media-remove-one = Ukloni iz knjižnice
 media-clear-all = 🗑 Očisti sve
 media-clear-all-tooltip = Ukloni sve medije iz knjižnice (datoteke na disku ostaju)
+media-import-duplicates-skipped = Već uvezene datoteke su preskočene.
 media-regen-thumbs = Ponovno generiraj sličice
 media-empty-hint = Klikni Isječci / Glazba / Slike iznad.
 media-count = { $count } stavki u knjižnici
