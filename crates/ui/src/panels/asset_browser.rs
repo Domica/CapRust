@@ -10,7 +10,7 @@ use crate::panels::media_bin::{MediaBinOutput, MediaBinState};
 use crate::theme::tokens::elev;
 use crate::widgets::empty;
 use caprust_core::ProjectState;
-use egui::{Color32, RichText, Sense, Ui, Vec2, Vec2 as V2};
+use egui::{Color32, CursorIcon, RichText, Sense, Ui, Vec2, Vec2 as V2};
 use egui_phosphor::regular as ph;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -84,15 +84,48 @@ impl AssetTab {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PresetCardSize {
+    #[default]
+    Small,
+    Medium,
+    Large,
+}
+
+impl PresetCardSize {
+    pub fn px(self) -> f32 {
+        match self {
+            Self::Small => 72.0,
+            Self::Medium => 96.0,
+            Self::Large => 128.0,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Small => "S",
+            Self::Medium => "M",
+            Self::Large => "L",
+        }
+    }
+    pub fn all() -> [Self; 3] {
+        [Self::Small, Self::Medium, Self::Large]
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct AssetBrowserState {
     pub active: AssetTab,
     pub search: String,
-    pub card_size: f32,
+    /// Card size S/M/L (affects all preset tabs).
+    pub card_size: PresetCardSize,
     /// Selected Transitions left-column category ("all" = no filter).
     pub transition_cat: String,
     /// Selected Effects left-column category ("all" = no filter).
     pub effect_cat: String,
+    /// Selected Filters left-column category ("all" = no filter).
+    pub filter_cat: String,
+    /// Left sidebar width in pixels (persisted per session).
+    pub sidebar_width: f32,
     pub plugin_browser: crate::panels::plugin_browser::PluginBrowserState,
 }
 
@@ -101,9 +134,11 @@ impl AssetBrowserState {
         Self {
             active: AssetTab::Media,
             search: String::new(),
+            card_size: PresetCardSize::Medium,
             transition_cat: "all".to_string(),
             effect_cat: "all".to_string(),
-            card_size: 96.0,
+            filter_cat: "all".to_string(),
+            sidebar_width: 104.0,
             plugin_browser: Default::default(),
         }
     }
@@ -643,16 +678,17 @@ const EFFECT_CATS: &[(&str, &str)] = &[
     ("adjust", "asset-cat-adjust"),
 ];
 
-/// Map a preset id to its left-column category. Transition and effect
-/// id namespaces do not overlap, so one function covers both tabs.
-/// Unknown ids (filters, text styles) fall into "style"; those tabs
-/// do not filter by category, so the value never surfaces.
+/// Map a preset id to its left-column category. Transition, effect,
+/// and filter id namespaces do not overlap, so one function covers
+/// all three tabs.
 fn preset_category(id: &str) -> &'static str {
     match id {
+        // Transitions
         "slide_l" | "slide_r" | "slide_u" | "slide_d" => "slide",
         "wipe_l" | "wipe_r" | "wipe_u" | "wipe_d" => "wipe",
         "zoom_in" | "zoom_out" => "zoom",
         "smooth_l" | "smooth_r" | "smooth_u" | "smooth_d" => "smooth",
+        // Effects
         "negative" | "rgb_split" | "flash" | "light_leak" | "lens_flare" | "old_film" | "vhs" => {
             "color"
         }
@@ -660,9 +696,20 @@ fn preset_category(id: &str) -> &'static str {
         "grain" | "sketch" | "sparkle" | "particle" => "texture",
         "shake" | "zoom_pulse" | "ghost" => "motion",
         "blur" | "sharpen" | "vignette" | "glow" => "adjust",
+        // Filters
+        "warm" | "cool" | "sunset" | "gold" | "ocean" | "cinematic" | "vivid" => "color",
+        "bw" | "noir" | "sepia" | "vintage" | "matte" | "pastel" | "neon" => "style",
+        "fade" => "style",
         _ => "style",
     }
 }
+
+/// (category id, FTL label key) for the Filters left column.
+const FILTER_CATS: &[(&str, &str)] = &[
+    ("all", "asset-cat-all"),
+    ("color", "asset-cat-color"),
+    ("style", "asset-cat-style"),
+];
 
 // ---------------------------------------------------------------------------
 // Entry
@@ -742,8 +789,10 @@ pub fn render_tab_content(
                 TRANSITION_CATS,
                 "trans_cats",
                 &mut state.transition_cat,
-                state.card_size,
+                state.card_size.px(),
                 &state.search,
+                state.sidebar_width,
+                &mut state.card_size,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Transitions));
@@ -756,34 +805,45 @@ pub fn render_tab_content(
                 EFFECT_CATS,
                 "effect_cats",
                 &mut state.effect_cat,
-                state.card_size,
+                state.card_size.px(),
                 &state.search,
+                state.sidebar_width,
+                &mut state.card_size,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Effects));
             }
         }
         AssetTab::Filters => {
-            let clicked = preset_grid(
+            let clicked = categorized_grid(
                 ui,
                 FILTERS,
-                state.card_size,
+                FILTER_CATS,
+                "filter_cats",
+                &mut state.filter_cat,
+                state.card_size.px(),
                 &state.search,
-                None,
-                f32::INFINITY,
+                state.sidebar_width,
+                &mut state.card_size,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Filters));
             }
         }
         AssetTab::Text => {
-            let clicked = preset_grid(
+            // Text styles use a single "all" category but still get the
+            // S/M/L size picker and resizable sidebar.
+            const TEXT_CATS: &[(&str, &str)] = &[("all", "asset-cat-all")];
+            let clicked = categorized_grid(
                 ui,
                 TEXT_STYLES,
-                state.card_size,
+                TEXT_CATS,
+                "text_cats",
+                &mut "all".to_string(), // dummy, not used for text
+                state.card_size.px(),
                 &state.search,
-                None,
-                f32::INFINITY,
+                state.sidebar_width,
+                &mut state.card_size,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Text));
@@ -803,38 +863,66 @@ pub fn render_tab_content(
 }
 
 /// Left-column category filter with the preset grid on the right.
-/// Used by the Transitions and Effects tabs. Returns the id of a card
-/// that was clicked, if any.
+/// Used by the Transitions, Effects, and Filters tabs. Returns the id
+/// of a card that was clicked, if any.
+#[allow(clippy::too_many_arguments)]
 fn categorized_grid(
     ui: &mut Ui,
     presets: &[Preset],
     cats: &[(&str, &str)],
     salt: &str,
     selected: &mut String,
-    card_size: f32,
+    _card_size: f32,
     search: &str,
+    sidebar_width: f32,
+    card_size_state: &mut PresetCardSize,
 ) -> Option<&'static str> {
     // Capture the height before entering the horizontal layout:
     // available_height() reads 0 inside one (§5), and both columns
     // need an explicit bound for their scroll areas.
     let h = ui.available_height();
     let mut clicked: Option<&'static str> = None;
+    let mut sidebar_w = sidebar_width;
     ui.horizontal_top(|ui| {
-        egui::ScrollArea::vertical()
+        // Left sidebar: category list + size picker
+        let _sidebar_resp = egui::ScrollArea::vertical()
             .id_salt(salt)
             .max_height(h)
             .auto_shrink([true, false])
             .show(ui, |ui| {
-                ui.set_width(104.0);
+                ui.set_min_width(80.0);
+                ui.set_max_width(200.0);
+                ui.set_width(sidebar_w);
                 ui.vertical(|ui| {
+                    // Size picker (S/M/L) — above categories
+                    ui.horizontal(|ui| {
+                        for sz in PresetCardSize::all() {
+                            let _resp = ui.selectable_value(card_size_state, sz, sz.label());
+                        }
+                    });
+                    ui.separator();
                     for (id, key) in cats {
                         ui.selectable_value(selected, (*id).to_string(), tr(key));
                     }
                 });
             });
+        // Drag handle to resize sidebar
+        let sep_resp = ui.allocate_response(Vec2::new(4.0, h), Sense::drag());
+        if sep_resp.dragged() {
+            sidebar_w = (sidebar_w + sep_resp.drag_delta().x).clamp(80.0, 200.0);
+        }
+        sep_resp.on_hover_cursor(CursorIcon::ResizeHorizontal);
         ui.separator();
+        // Right: preset grid
         ui.vertical(|ui| {
-            clicked = preset_grid(ui, presets, card_size, search, Some(selected.as_str()), h);
+            clicked = preset_grid(
+                ui,
+                presets,
+                card_size_state.px(),
+                search,
+                Some(selected.as_str()),
+                h,
+            );
         });
     });
     clicked

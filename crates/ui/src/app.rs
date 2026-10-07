@@ -2722,6 +2722,15 @@ impl CapRustApp {
             self.toast_error(tr("toast-frame-failed"));
             return;
         };
+        // Verify ffmpeg exists and is executable before spawning worker.
+        if !std::path::Path::new(&ffmpeg).is_file() {
+            tracing::error!("save_frame: ffmpeg path is not a file: {}", ffmpeg);
+            self.toast_error(format!(
+                "{}: ffmpeg not found at path",
+                tr("toast-frame-failed")
+            ));
+            return;
+        }
         let playhead = self.playhead_ms;
         let stamp = crate::panels::preview_window::format_ms(playhead).replace([':', '.'], "-");
         let default_name = format!("caprust-frame-{stamp}.png");
@@ -2746,6 +2755,7 @@ impl CapRustApp {
         let fps_f = fps_num as f64 / fps_den.max(1) as f64;
         let models_dir = self.settings.effective_models_dir();
         let project = self.project.clone();
+        let ffmpeg_path = ffmpeg; // move into closure
         let (tx, rx) = std::sync::mpsc::channel();
         self.save_frame_rx = Some(rx);
         std::thread::Builder::new()
@@ -2768,13 +2778,13 @@ impl CapRustApp {
                     )
                     .map_err(|e| format!("plan: {e:#}"))?;
                     caprust_media_io::preview_render::render_single_frame(
-                        std::path::Path::new(&ffmpeg),
+                        std::path::Path::new(&ffmpeg_path),
                         &plan,
                         playhead,
                         &path,
                         fps_f,
                     )
-                    .map_err(|e| format!("{e:#}"))?;
+                    .map_err(|e| format!("render: {e:#}"))?;
                     Ok(path)
                 })();
                 let _ = tx.send(out);
