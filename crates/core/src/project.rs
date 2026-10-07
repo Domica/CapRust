@@ -24,6 +24,10 @@ pub struct ProjectState {
     /// Multi-camera groups (Faza Q). See crate::multicam.
     #[serde(default)]
     pub multicam_groups: Vec<crate::multicam::MultiCamGroup>,
+    /// Beat grids per media id (beat-sync v1). Analysis metadata only,
+    /// deliberately NOT part of render_hash.
+    #[serde(default)]
+    pub beat_grids: std::collections::HashMap<uuid::Uuid, crate::beat::BeatEntry>,
 }
 
 impl Default for ProjectState {
@@ -44,6 +48,7 @@ impl Default for ProjectState {
             tracks: crate::track::default_tracks(),
             master_plugins: Vec::new(),
             multicam_groups: Vec::new(),
+            beat_grids: Default::default(),
         }
     }
 }

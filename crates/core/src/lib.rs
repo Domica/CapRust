@@ -1,4 +1,5 @@
 pub mod aspect_ratio;
+pub mod beat;
 pub mod cache;
 pub mod clip;
 pub mod commands;

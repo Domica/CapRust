@@ -10,12 +10,25 @@
 //! beat detection needs time resolution (~8 ms), buckets are far too
 //! coarse.
 
+use serde::{Deserialize, Serialize};
+
 /// Detected beat grid. `bpm == 0.0` with empty `beats_ms` means no
 /// usable onsets (silence / too few transients).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BeatGrid {
     pub bpm: f32,
     pub beats_ms: Vec<u64>,
+}
+
+/// Beat analysis stored per media item (see
+/// `ProjectState::beat_grids`). `source_*` fingerprint the file the
+/// grid was computed from; a mismatch means recompute.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BeatEntry {
+    pub bpm: f32,
+    pub beats_ms: Vec<u64>,
+    pub source_len_bytes: u64,
+    pub source_mtime_secs: u64,
 }
 
 const FRAME: usize = 256;
