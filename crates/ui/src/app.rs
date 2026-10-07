@@ -194,6 +194,10 @@ pub enum JobKind {
     BgRemoval,
     /// Beat analysis: onset-flux BPM + markers for an audio clip.
     Beat,
+    /// Stabilization pass 1 (vidstabdetect): measures camera motion
+    /// over the clip's source window, transforms file written into
+    /// the project cache.
+    Stab,
 }
 
 /// One in-flight background job. `progress` < 0.0 means indeterminate
@@ -364,6 +368,15 @@ pub struct CapRustApp {
     /// write it into the clip without recomputing or consulting the
     /// filesystem.
     pub bg_removal_rel_path: Option<String>,
+    /// Receiver for an in-flight stabilization detect job.
+    /// Emits Started / Progress / Finished / Failed events.
+    pub stab_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::StabEvent>>,
+    /// Job id for the stabilization bar entry.
+    pub stab_job_id: Option<u64>,
+    /// Relative transforms path (e.g. "cache/stab/<clip>.trf") for the
+    /// in-flight stab job. Stored here so the drain can write it into
+    /// the clip without recomputing.
+    pub stab_rel_path: Option<String>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -676,6 +689,9 @@ impl CapRustApp {
             beat_rx: None,
             beat_job_id: None,
             bg_removal_rel_path: None,
+            stab_rx: None,
+            stab_job_id: None,
+            stab_rel_path: None,
             narration_input: Default::default(),
             update_available: None,
             toasts: Vec::new(),
@@ -2499,6 +2515,194 @@ impl CapRustApp {
         self.bg_removal_rel_path = Some(rel);
         self.toast(tr("toast-bg-removal-started"));
         tracing::info!("bg-removal: job spawned for clip {clip_id}");
+    }
+
+    /// Kick off a stabilization detect job (vidstab pass 1) for the
+    /// given clip. Requires ffmpeg with the vidstab filters and a
+    /// saved project (so the transforms cache has somewhere to live).
+    /// When a transforms file is already cached, it is applied
+    /// directly with no job. Only plain Video clips at 1.0x speed:
+    /// reversed or re-timed clips would measure the wrong motion.
+    fn start_stab_job(&mut self, clip_id: uuid::Uuid) {
+        if self.stab_rx.is_some() {
+            self.toast(tr("toast-stab-busy"));
+            return;
+        }
+        let Some(project_path) = self.project.project_path.clone() else {
+            self.toast(tr("toast-stab-needs-project"));
+            return;
+        };
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-stab-needs-video"));
+                return;
+            }
+        };
+        if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
+            self.toast(tr("toast-stab-unsupported"));
+            return;
+        }
+        let duration_ms = clip.duration_ms;
+        if duration_ms == 0 {
+            self.toast(tr("toast-stab-needs-video"));
+            return;
+        }
+        // Speed is 1.0 here (checked above), so the timeline duration
+        // equals the source window length.
+        let t_start_ms = clip.source_offset_ms;
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-stab-needs-ffmpeg"));
+            return;
+        };
+
+        let rel = format!("cache/stab/{clip_id}.trf");
+        let abs = caprust_core::cache::stab_path(std::path::Path::new(&project_path), clip_id);
+        // Cached transforms from an earlier run apply instantly.
+        if caprust_core::cache::stab_exists(std::path::Path::new(&project_path), clip_id) {
+            let cmd =
+                caprust_core::commands::set_clip::SetClipCommand::new(clip_id).stab_trf(Some(rel));
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::error!("stab: apply cached failed: {e}");
+                self.toast_error(format!("{}: {e}", tr("toast-stab-failed")));
+            } else {
+                tracing::info!("stab: clip {clip_id} transforms applied from cache");
+                self.toast(tr("toast-stab-done"));
+            }
+            return;
+        }
+
+        let fps = {
+            let fr = &self.project.frame_rate;
+            if fr.den == 0 {
+                30.0
+            } else {
+                fr.num as f64 / fr.den as f64
+            }
+        };
+        let req = crate::media_jobs::StabRequest {
+            clip_id,
+            source_path,
+            t_start_ms,
+            duration_ms,
+            fps,
+            trf_output: abs,
+        };
+        let rx = crate::media_jobs::spawn_stab_job(std::path::PathBuf::from(ffmpeg), req);
+        let job_id = self.begin_job(JobKind::Stab, tr("job-stab"));
+        self.stab_job_id = Some(job_id);
+        self.stab_rx = Some(rx);
+        // Remember the relative path so drain can store it in the clip
+        // without recomputing. Keyed on the job id because at most one
+        // job runs at a time and clip_id is recoverable from Finished.
+        self.stab_rel_path = Some(rel);
+        self.toast(tr("toast-stab-started"));
+        tracing::info!("stab: job spawned for clip {clip_id}");
+    }
+
+    /// Poll the in-flight stab detect job. On success, write the
+    /// transforms path into the clip through SetClipCommand (undoable,
+    /// and it flips render_hash so the preview respawns stabilized).
+    /// On failure, toast and clear state.
+    fn drain_stab_job(&mut self) {
+        // Take the receiver so we can process every queued event and
+        // put it back only while the stream is still live. Same shape
+        // as drain_bg_removal_job.
+        let Some(rx) = self.stab_rx.take() else {
+            return;
+        };
+        let mut still_live = true;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::media_jobs::StabEvent::Started { total_frames }) => {
+                    tracing::info!("stab: started, {total_frames} frames to analyze");
+                    if let Some(id) = self.stab_job_id {
+                        // Stay indeterminate until the first Progress
+                        // event: a 0 percent bar reads as stuck.
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+                    }
+                }
+                Ok(crate::media_jobs::StabEvent::Progress { done, total }) => {
+                    let p = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    };
+                    if let Some(id) = self.stab_job_id {
+                        self.update_job_progress(id, p);
+                    }
+                }
+                Ok(crate::media_jobs::StabEvent::Finished {
+                    clip_id,
+                    trf_path,
+                    frame_count,
+                }) => {
+                    let rel = self.stab_rel_path.take();
+                    let stored = match rel {
+                        Some(r) => Some(r),
+                        None => {
+                            // Fallback: derive from the absolute path
+                            // relative to the project dir. Should not
+                            // happen, but a missing key would silently
+                            // drop the transforms and waste the job.
+                            let proj = self.project.project_path.clone();
+                            proj.and_then(|p| {
+                                trf_path
+                                    .strip_prefix(&p)
+                                    .ok()
+                                    .map(|r| r.to_string_lossy().into_owned())
+                            })
+                        }
+                    };
+                    if let Some(rel) = stored {
+                        let cmd = caprust_core::commands::set_clip::SetClipCommand::new(clip_id)
+                            .stab_trf(Some(rel));
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("stab: apply failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-stab-failed")));
+                        } else {
+                            tracing::info!(
+                                "stab: clip {} transforms applied ({frame_count} frames)",
+                                clip_id
+                            );
+                            self.toast(tr("toast-stab-done"));
+                        }
+                    } else {
+                        tracing::warn!("stab: finished but no relative path available");
+                        self.toast_error(tr("toast-stab-failed"));
+                    }
+                    if let Some(id) = self.stab_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::StabEvent::Failed(msg)) => {
+                    tracing::error!("stab: job failed: {msg}");
+                    self.toast_error(format!("{}: {msg}", tr("toast-stab-failed")));
+                    if let Some(id) = self.stab_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.stab_rel_path = None;
+                    still_live = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("stab: receiver disconnected unexpectedly");
+                    if let Some(id) = self.stab_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.stab_rel_path = None;
+                    still_live = false;
+                    break;
+                }
+            }
+        }
+        if still_live {
+            self.stab_rx = Some(rx);
+        }
     }
 
     /// Poll the in-flight reframe job. On success, write the keypoints
@@ -6587,6 +6791,14 @@ impl CapRustApp {
                         PendingEdit::StartBgRemoval => {
                             self.start_bg_removal_job(id);
                         }
+                        PendingEdit::StartStab => {
+                            self.start_stab_job(id);
+                        }
+                        PendingEdit::ClearStab => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .stab_trf(None);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::ClearBgRemoval => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .bg_removal(None);
@@ -9174,6 +9386,7 @@ impl eframe::App for CapRustApp {
         self.drain_reframe_job();
         self.drain_beat_job();
         self.drain_bg_removal_job();
+        self.drain_stab_job();
         self.poll_audio_cache();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 

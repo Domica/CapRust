@@ -80,6 +80,13 @@ pub struct VideoClip {
     /// maskedmerge over a black base. Ignored when auto_reframe is
     /// also set (see resolve_bg_removal_path for the reason).
     pub bg_removal_path: Option<std::path::PathBuf>,
+    /// Absolute path to the per-clip vidstab transforms file
+    /// (stabilization pass 1). None = render as-is. Some = the base
+    /// chain gets a `vidstabtransform` right after reverse, on the
+    /// full input resolution. Ignored for reversed clips and speed
+    /// ramps, whose frames no longer match the measured transforms
+    /// (see resolve_stab_path for the reason).
+    pub stab_trf: Option<std::path::PathBuf>,
     /// Chroma key (green screen). None = no keying.
     pub chroma_key: Option<caprust_core::clip::ChromaKeySpec>,
 }
@@ -487,13 +494,32 @@ impl RenderPlan {
             // rather than the whole source. See REVERSE_MAX_SEC.
             let reverse_chain = if c.reversed { ",reverse" } else { "" };
 
+            // Stabilization (pass 2). vidstabtransform runs on the
+            // full input resolution, right after reverse and before
+            // any crop/scale, so the stored transforms align with the
+            // frames they were measured on. With crop=keep + optzoom
+            // the output keeps the input dimensions, so the fit chain
+            // downstream needs no adjustment. Empty when no transforms
+            // file resolved for this clip.
+            let stab_chain = c
+                .stab_trf
+                .as_deref()
+                .and_then(escape_movie_path)
+                .map(|trf| {
+                    format!(
+                        ",vidstabtransform=input={trf}:smoothing={}:crop=keep:optzoom=1",
+                        STAB_SMOOTHING_FRAMES
+                    )
+                })
+                .unwrap_or_default();
+
             // setpts BEFORE trim: when `-ss` is on the input and the
             // ffmpeg build does not reset PTS, frame PTS starts at the
             // seek offset. Resetting first makes `trim=duration` see a
             // 0-based window and actually select frames. Same result
             // for the no-seek case (first PTS is already 0).
             fg.push_str(&format!(
-                "{in_label}{setpts}{flip_chain},trim=duration={dur:.6}{reverse_chain},{fit_chain},fps={num}/{den}",
+                "{in_label}{setpts}{flip_chain},trim=duration={dur:.6}{reverse_chain}{stab_chain},{fit_chain},fps={num}/{den}",
                 dur = c.duration_sec,
                 num = self.fps_num,
                 den = self.fps_den,
@@ -1378,6 +1404,11 @@ pub const ADJACENCY_TOL_SEC: f64 = 0.05;
 /// Fixed crossfade duration for MVP. Clamped down to half of the
 /// shorter adjacent clip so very short clips still get a transition.
 pub const XFADE_DUR_SEC: f64 = 0.5;
+
+/// vidstabtransform smoothing (in frames) for stabilized clips.
+/// Higher = smoother at the cost of more zoom-in to hide the frame
+/// borders. 30 is a middle ground for handheld footage at 24-30 fps.
+pub const STAB_SMOOTHING_FRAMES: u32 = 30;
 
 /// True if `id` is a transition we know how to hand to xfade.
 pub fn is_xfade_id(id: &str) -> bool {
@@ -2321,6 +2352,118 @@ fn resolve_bg_removal_path(
     Some(abs)
 }
 
+/// Resolve the vidstab transforms file for a clip. Same safety rules
+/// as `resolve_bg_removal_path`: the stored path is relative to the
+/// project directory (e.g. "cache/stab/<clip>.trf") and must
+/// canonicalize to exactly `<project>/cache/stab/<clip_id>.trf`.
+///
+/// Returns None when:
+///   * the clip has no stab_trf set;
+///   * the clip is reversed or has a non-1.0 speed (static or ramp):
+///     the stored transforms were measured against the original frame
+///     order and rate, so they would stabilize the wrong motion;
+///   * the project has no project_path (unsaved);
+///   * the transforms file is missing on disk.
+///
+/// Unlike bg-removal, auto-reframe is NOT a conflict: the reframe
+/// crop pans over already-stabilized frames, which is exactly what
+/// the user wants.
+fn resolve_stab_path(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::Clip,
+) -> Option<std::path::PathBuf> {
+    let rel = clip.stab_trf.as_ref()?;
+    if clip.reversed {
+        tracing::warn!(
+            "clip {} is reversed; skipping stabilization (transforms would not align)",
+            clip.id
+        );
+        return None;
+    }
+    if (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
+        tracing::warn!(
+            "clip {} has non-1.0 speed; skipping stabilization (transforms would not align)",
+            clip.id
+        );
+        return None;
+    }
+    let proj = project.project_path.as_ref()?;
+
+    // Same traversal guard as resolve_bg_removal_path: reject
+    // absolute paths and `..` components before touching the
+    // filesystem (see issue #7).
+    use std::path::Component;
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path.components().any(|c| {
+            matches!(
+                c,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        })
+    {
+        tracing::warn!(
+            "clip {} stab_trf path is not a safe relative path: {rel}",
+            clip.id
+        );
+        return None;
+    }
+
+    let stab_dir = std::path::Path::new(proj).join("cache").join("stab");
+    let abs = std::path::Path::new(proj).join(rel_path);
+
+    if !abs.is_file() {
+        tracing::warn!(
+            "clip {} stab transforms missing on disk: {}",
+            clip.id,
+            abs.display()
+        );
+        return None;
+    }
+
+    let canon = match abs.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("clip {} stab canonicalize failed: {e}", clip.id);
+            return None;
+        }
+    };
+    let canon_stab = match stab_dir.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("clip {} stab dir canonicalize failed: {e}", clip.id);
+            return None;
+        }
+    };
+    if canon.parent() != Some(canon_stab.as_path()) {
+        tracing::warn!(
+            "clip {} stab transforms resolve outside <project>/cache/stab: {}",
+            clip.id,
+            canon.display()
+        );
+        return None;
+    }
+
+    // The file name must be exactly <clip_id>.trf.
+    let expected_stem = clip.id.to_string();
+    let stem_ok = canon.file_stem().and_then(|s| s.to_str()) == Some(expected_stem.as_str());
+    let ext_ok = canon
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("trf"))
+        .unwrap_or(false);
+    if !stem_ok || !ext_ok {
+        tracing::warn!(
+            "clip {} stab transforms must be <clip_id>.trf, got {}",
+            clip.id,
+            canon.display()
+        );
+        return None;
+    }
+
+    Some(abs)
+}
+
 // plan_from_project has one argument per render dimension the caller
 // knows about. Bundling them into a struct would just move the same
 // fields behind one more layer. The signature is stable; leave it.
@@ -2528,6 +2671,7 @@ pub fn plan_from_project(
                             .clamp(0.1, 3.0),
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
+                        stab_trf: resolve_stab_path(project, c),
                         chroma_key: c.chroma_key,
                     });
                 }
@@ -2570,6 +2714,7 @@ pub fn plan_from_project(
                             .clamp(0.1, 3.0),
                         auto_reframe: c.auto_reframe.clone(),
                         bg_removal_path: resolve_bg_removal_path(project, c),
+                        stab_trf: resolve_stab_path(project, c),
                         chroma_key: c.chroma_key,
                     });
                 }
@@ -3315,6 +3460,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -3490,6 +3636,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: mask.map(std::path::PathBuf::from),
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -3797,6 +3944,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -3851,6 +3999,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -4071,6 +4220,7 @@ mod tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -4563,6 +4713,7 @@ mod flip_filtergraph_tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -4657,6 +4808,7 @@ mod reverse_filtergraph_tests {
                 transition_duration_sec: 0.35,
                 auto_reframe: Vec::new(),
                 bg_removal_path: None,
+                stab_trf: None,
                 chroma_key: None,
             }],
             audio_clips: vec![],
@@ -4802,5 +4954,156 @@ mod reverse_filtergraph_tests {
         assert!((v[1].timeline_start_sec - 1.0).abs() < 1e-9);
         assert!((v[1].duration_sec - 1.0).abs() < 1e-9);
         assert!((v[2].timeline_start_sec - 0.9).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod stab_tests {
+    use super::*;
+
+    fn stab_test_project() -> (caprust_core::ProjectState, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("caprust-stab-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("cache").join("stab")).expect("create temp stab dir");
+        let project = caprust_core::ProjectState {
+            project_path: Some(root.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        (project, root)
+    }
+
+    fn stab_test_clip(project: &caprust_core::ProjectState) -> caprust_core::Clip {
+        use caprust_core::TrackKind;
+        let idx = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == TrackKind::Video)
+            .expect("default project has a video track");
+        caprust_core::Clip::new_video("source.mp4", idx, 0, 1000)
+    }
+
+    fn write_trf(root: &std::path::Path, clip: &caprust_core::Clip) {
+        let trf = root
+            .join("cache")
+            .join("stab")
+            .join(format!("{}.trf", clip.id));
+        std::fs::write(&trf, b"fake-transforms").expect("write trf");
+    }
+
+    #[test]
+    fn stab_accepts_valid_trf() {
+        let (project, root) = stab_test_project();
+        let mut clip = stab_test_clip(&project);
+        write_trf(&root, &clip);
+        clip.stab_trf = Some(format!("cache/stab/{}.trf", clip.id));
+        let r = resolve_stab_path(&project, &clip);
+        assert!(r.is_some(), "valid trf should resolve: {r:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn stab_rejects_absolute_and_traversal() {
+        let (project, root) = stab_test_project();
+        let mut clip = stab_test_clip(&project);
+        clip.stab_trf = Some("C:\\Windows\\System32\\config\\SAM".into());
+        assert!(resolve_stab_path(&project, &clip).is_none());
+        clip.stab_trf = Some("../other.trf".into());
+        assert!(resolve_stab_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn stab_skips_reversed_and_speed() {
+        let (project, root) = stab_test_project();
+        let mut clip = stab_test_clip(&project);
+        write_trf(&root, &clip);
+        clip.stab_trf = Some(format!("cache/stab/{}.trf", clip.id));
+        clip.reversed = true;
+        assert!(resolve_stab_path(&project, &clip).is_none());
+        clip.reversed = false;
+        clip.speed = 2.0;
+        assert!(resolve_stab_path(&project, &clip).is_none());
+        clip.speed = 1.0;
+        clip.speed_end = Some(2.0);
+        assert!(resolve_stab_path(&project, &clip).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn plan_with_stab(stab: Option<std::path::PathBuf>) -> RenderPlan {
+        RenderPlan {
+            inputs: vec![InputSpec {
+                ffmpeg_index: 0,
+                path: PathBuf::from("a.mp4"),
+                source_start_sec: 0.0,
+                duration_sec: 2.0,
+            }],
+            video_clips: vec![VideoClip {
+                input_index: 0,
+                timeline_start_sec: 0.0,
+                duration_sec: 2.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
+                reversed: false,
+                z_order: 0,
+                is_image: false,
+                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
+                transition_in: None,
+                transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.35,
+                auto_reframe: Vec::new(),
+                bg_removal_path: None,
+                stab_trf: stab,
+                chroma_key: None,
+            }],
+            audio_clips: vec![],
+            text_clips: vec![],
+            total_duration_sec: 2.0,
+            width: 320,
+            height: 240,
+            fps_num: 30,
+            fps_den: 1,
+            crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
+            preset: "veryfast".into(),
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
+            seek_ms: 0,
+            seek_optimized: false,
+        }
+    }
+
+    #[test]
+    fn stab_chain_emitted_after_reverse_before_fit() {
+        let plan = plan_with_stab(Some(std::path::PathBuf::from("x.trf")));
+        let (fg, _, _) = plan.build_filtergraph().expect("fg");
+        assert!(
+            fg.contains("vidstabtransform=input='x.trf':smoothing=30:crop=keep:optzoom=1"),
+            "expected stab stage with smoothing: {fg}"
+        );
+        let stab_pos = fg.find("vidstabtransform").expect("stab in graph");
+        let fit_pos = fg
+            .find("force_original_aspect_ratio")
+            .expect("fit chain in graph");
+        assert!(
+            stab_pos < fit_pos,
+            "stab must run before the fit crop/scale: {fg}"
+        );
+    }
+
+    #[test]
+    fn no_stab_chain_without_trf() {
+        let plan = plan_with_stab(None);
+        let (fg, _, _) = plan.build_filtergraph().expect("fg");
+        assert!(
+            !fg.contains("vidstabtransform"),
+            "no stab stage without transforms: {fg}"
+        );
     }
 }

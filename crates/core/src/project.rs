@@ -331,6 +331,7 @@ impl ProjectState {
                 k.cy_norm.to_bits().hash(&mut h);
             }
             c.bg_removal.hash(&mut h);
+            c.stab_trf.hash(&mut h);
             match &c.chroma_key {
                 None => 0u8.hash(&mut h),
                 Some(ck) => {

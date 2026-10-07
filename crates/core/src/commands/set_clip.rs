@@ -55,6 +55,9 @@ pub struct SetClipCommand {
     /// Some(Some(p)) = set the mask path. Some(None) = clear it.
     /// None = leave untouched.
     pub bg_removal: Option<Option<String>>,
+    /// Some(Some(p)) = set the stab transforms path. Some(None) =
+    /// clear it. None = leave untouched.
+    pub stab_trf: Option<Option<String>>,
     pub chroma_key: Option<Option<ChromaKeySpec>>,
     /// Some(v) = replace the in-transition easing. None = leave
     /// untouched. Easing is only meaningful when `transition_in` is
@@ -103,6 +106,7 @@ impl SetClipCommand {
             speed_range: None,
             auto_reframe: None,
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             transition_in_easing: None,
             transition_out_easing: None,
@@ -266,6 +270,11 @@ impl SetClipCommand {
         self.bg_removal = Some(v);
         self
     }
+    /// Set or clear the stabilization transforms path.
+    pub fn stab_trf(mut self, v: Option<String>) -> Self {
+        self.stab_trf = Some(v);
+        self
+    }
     pub fn chroma_key(mut self, v: Option<ChromaKeySpec>) -> Self {
         self.chroma_key = Some(v);
         self
@@ -388,6 +397,21 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.bg_removal.clone() {
             c.bg_removal = v;
+        }
+        if let Some(v) = self.stab_trf.clone() {
+            c.stab_trf = v;
+        }
+        // The transforms file reflects the clip's source window. Any
+        // edit that moves that window invalidates it, so the graph
+        // never applies stale stabilization. (The command that writes
+        // stab_trf itself touches none of these fields.)
+        if self.duration_ms.is_some()
+            || self.speed.is_some()
+            || self.speed_end.is_some()
+            || self.speed_range.is_some()
+            || self.reversed.is_some()
+        {
+            c.stab_trf = None;
         }
         if let Some(v) = self.chroma_key {
             c.chroma_key = v;
@@ -667,5 +691,83 @@ mod chroma_key_cmd_tests {
             p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
             Some(spec)
         );
+    }
+}
+
+#[cfg(test)]
+mod stab_trf_cmd_tests {
+    use super::*;
+    use crate::clip::Clip;
+    use crate::commands::UndoStack;
+    use crate::project::ProjectState;
+
+    #[test]
+    fn set_clear_undo() {
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        let id = clip.id;
+        p.add_clip(clip);
+        let mut stack = UndoStack::default();
+        let rel = "cache/stab/x.trf".to_string();
+        stack
+            .execute(
+                Box::new(SetClipCommand::new(id).stab_trf(Some(rel.clone()))),
+                &mut p,
+            )
+            .unwrap();
+        assert_eq!(
+            p.clips.iter().find(|c| c.id == id).unwrap().stab_trf,
+            Some(rel)
+        );
+        stack
+            .execute(Box::new(SetClipCommand::new(id).stab_trf(None)), &mut p)
+            .unwrap();
+        assert!(p
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .stab_trf
+            .is_none());
+        stack.undo(&mut p).unwrap();
+        assert!(p
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .stab_trf
+            .is_some());
+    }
+
+    #[test]
+    fn trim_and_speed_invalidate_but_timeline_move_does_not() {
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("a.mp4", 0, 0, 1000);
+        clip.stab_trf = Some("cache/stab/x.trf".into());
+        let id = clip.id;
+        p.add_clip(clip);
+        let mut stack = UndoStack::default();
+        // Timeline move: source window unchanged, transforms stay.
+        stack
+            .execute(Box::new(SetClipCommand::new(id).start_time_ms(500)), &mut p)
+            .unwrap();
+        assert!(p
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .stab_trf
+            .is_some());
+        // Trim: source window moved, transforms are stale.
+        stack
+            .execute(Box::new(SetClipCommand::new(id).duration_ms(800)), &mut p)
+            .unwrap();
+        assert!(p
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .stab_trf
+            .is_none());
     }
 }

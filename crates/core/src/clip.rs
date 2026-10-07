@@ -616,6 +616,15 @@ pub struct Clip {
     /// the P3d render graph as an `alphamerge` input.
     #[serde(default)]
     pub bg_removal: Option<String>,
+    /// Path to the per-clip vidstab transforms file (stabilization
+    /// pass 1). Relative to the project directory, e.g.
+    /// "cache/stab/<clip_id>.trf". None = no stabilization.
+    /// Written by the stab detect job, consumed by the render graph
+    /// as `vidstabtransform=input=...`. Cleared whenever the source
+    /// window changes (trim/speed/reverse), because the stored
+    /// transforms would no longer align.
+    #[serde(default)]
+    pub stab_trf: Option<String>,
     #[serde(default)]
     pub chroma_key: Option<ChromaKeySpec>,
 }
@@ -664,6 +673,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             source_duration_ms: dur_ms,
             media_id: None,
@@ -713,6 +723,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             source_duration_ms: dur_ms,
             media_id: None,
@@ -762,6 +773,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
@@ -815,6 +827,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
@@ -874,6 +887,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             source_duration_ms: 0,
             media_id: None,
@@ -931,6 +945,7 @@ impl Clip {
             speed_range: SpeedRampRange::default(),
             auto_reframe: Vec::new(),
             bg_removal: None,
+            stab_trf: None,
             chroma_key: None,
             source_duration_ms: 0,
             media_id: None,

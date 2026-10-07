@@ -1165,3 +1165,201 @@ fn spawn_mask_writer(
         frame_bytes: (w as usize) * (h as usize),
     })
 }
+
+// ---------------------------------------------------------------------------
+// Stabilization pass 1 (vidstabdetect)
+// ---------------------------------------------------------------------------
+
+/// Progress event stride for the detect pass: detect runs at 20-50x
+/// realtime, so per-frame events would spam the channel. 30 keeps the
+/// bar smooth without repaint pressure.
+pub const STAB_PROGRESS_STRIDE: usize = 30;
+
+/// Request for a stabilization detect job. Everything the worker needs
+/// to run end to end, with no back-reference into the project state.
+/// The source window must be the clip's own window at 1.0x speed; the
+/// caller guarantees speed == 1.0 and !reversed (transforms measured
+/// otherwise would not align with the rendered frames).
+#[derive(Debug)]
+pub struct StabRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: PathBuf,
+    /// Source-time offset where the clip's visible window begins.
+    pub t_start_ms: u64,
+    /// Source-time length to analyze.
+    pub duration_ms: u64,
+    /// Project frame rate, used only to estimate total frames for the
+    /// progress bar.
+    pub fps: f64,
+    /// Where to write the .trf file. Resolved by the caller via
+    /// `caprust_core::cache::stab_path`.
+    pub trf_output: PathBuf,
+}
+
+/// Progress events emitted by a stabilization detect job. Same shape
+/// as `BgRemovalEvent`: the worker sends these over an mpsc channel,
+/// the UI drains them per frame.
+#[derive(Debug)]
+pub enum StabEvent {
+    /// Emitted before spawning ffmpeg.
+    Started { total_frames: usize },
+    /// Emitted every STAB_PROGRESS_STRIDE frames.
+    Progress { done: usize, total: usize },
+    /// Terminal success. `trf_path` is the transforms file on disk.
+    Finished {
+        clip_id: uuid::Uuid,
+        trf_path: PathBuf,
+        frame_count: usize,
+    },
+    /// Terminal failure. `reason` is a user-readable string.
+    Failed(String),
+}
+
+/// Spawn a background thread that runs `vidstabdetect` over the
+/// clip's source window and writes the transforms file. Returns
+/// immediately with a receiver. `ffmpeg` must be a valid path to a
+/// build with the vidstab filters (our BtbN GPL build has both).
+pub fn spawn_stab_job(ffmpeg: PathBuf, req: StabRequest) -> std::sync::mpsc::Receiver<StabEvent> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("caprust-stab-detect".into())
+        .spawn(move || {
+            run_stab_job(&ffmpeg, &req, &tx);
+        })
+        .expect("spawn stab-detect thread");
+    rx
+}
+
+fn run_stab_job(
+    ffmpeg: &std::path::Path,
+    req: &StabRequest,
+    tx: &std::sync::mpsc::Sender<StabEvent>,
+) {
+    if let Err(reason) = run_stab_inner(ffmpeg, req, tx) {
+        tracing::error!("stab-detect: {reason}");
+        let _ = tx.send(StabEvent::Failed(reason));
+    }
+}
+
+/// Escape a path for use as a `vidstabdetect=result=` /
+/// `vidstabtransform=input=` filter option: forward slashes, the
+/// drive colon backslash-escaped, the whole thing single-quoted.
+/// Verified live against the gyan.dev essentials build:
+/// `result='C\:/.../x.trf'`. Returns None when the path contains a
+/// single quote, which no quoting survives.
+fn escape_vidstab_path(path: &std::path::Path) -> Option<String> {
+    let s = path.to_string_lossy();
+    if s.contains('\'') {
+        return None;
+    }
+    let fwd = s.replace('\\', "/");
+    Some(format!("'{}'", fwd.replace(':', "\\:")))
+}
+
+fn run_stab_inner(
+    ffmpeg: &std::path::Path,
+    req: &StabRequest,
+    tx: &std::sync::mpsc::Sender<StabEvent>,
+) -> Result<(), String> {
+    if req.duration_ms == 0 {
+        return Err("clip has zero duration".into());
+    }
+    let result = escape_vidstab_path(&req.trf_output)
+        .ok_or_else(|| "trf path cannot be quoted".to_string())?;
+    if let Some(parent) = req.trf_output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create stab cache dir: {e}"))?;
+    }
+    let start_sec = req.t_start_ms as f64 / 1000.0;
+    let dur_sec = req.duration_ms as f64 / 1000.0;
+    let total = (req.fps * dur_sec).ceil().max(1.0) as usize;
+    let _ = tx.send(StabEvent::Started {
+        total_frames: total,
+    });
+
+    let mut child = std::process::Command::new(ffmpeg)
+        .arg("-hide_banner")
+        .arg("-ss")
+        .arg(format!("{start_sec:.3}"))
+        .arg("-i")
+        .arg(&req.source_path)
+        .arg("-t")
+        .arg(format!("{dur_sec:.3}"))
+        .arg("-vf")
+        .arg(format!("vidstabdetect=result={result}"))
+        .arg("-an")
+        .arg("-f")
+        .arg("null")
+        .arg("-")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg vidstabdetect: {e}"))?;
+
+    // Parse `frame= 123` progress out of the stats stream. Stats lines
+    // end with \r, trailers with \n, so split on both.
+    let mut done = 0usize;
+    let mut emitted = 0usize;
+    if let Some(stderr) = child.stderr.take() {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stderr);
+        for seg in reader.split(b'\r') {
+            let Ok(bytes) = seg else { break };
+            let text = String::from_utf8_lossy(&bytes);
+            for line in text.split('\n') {
+                if let Some(rest) = line.trim().strip_prefix("frame=") {
+                    if let Ok(n) = rest.trim().parse::<usize>() {
+                        done = n;
+                        if done.saturating_sub(emitted) >= STAB_PROGRESS_STRIDE || done >= total {
+                            emitted = done;
+                            let _ = tx.send(StabEvent::Progress { done, total });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("wait vidstabdetect: {e}"))?;
+    if !status.success() {
+        return Err(format!("vidstabdetect exited with {status}"));
+    }
+    let len = std::fs::metadata(&req.trf_output)
+        .map(|m| m.len())
+        .map_err(|e| format!("trf file missing after detect: {e}"))?;
+    if len == 0 {
+        return Err("vidstabdetect wrote an empty transforms file".into());
+    }
+    let _ = tx.send(StabEvent::Finished {
+        clip_id: req.clip_id,
+        trf_path: req.trf_output.clone(),
+        frame_count: done.max(1),
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod stab_job_tests {
+    use super::escape_vidstab_path;
+
+    #[test]
+    fn escape_uses_forward_slashes_and_escaped_colon() {
+        let p = std::path::Path::new("C:\\proj\\cache\\stab\\x.trf");
+        assert_eq!(
+            escape_vidstab_path(p).as_deref(),
+            Some("'C\\:/proj/cache/stab/x.trf'")
+        );
+    }
+
+    #[test]
+    fn escape_rejects_single_quote() {
+        let p = std::path::Path::new("/tmp/a'b.trf");
+        assert!(escape_vidstab_path(p).is_none());
+    }
+
+    #[test]
+    fn escape_leaves_unix_paths_quoted() {
+        let p = std::path::Path::new("/tmp/x.trf");
+        assert_eq!(escape_vidstab_path(p).as_deref(), Some("'/tmp/x.trf'"));
+    }
+}

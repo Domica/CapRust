@@ -55,6 +55,27 @@ pub fn mask_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
     p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
 }
 
+/// Path: <project>/cache/stab/<clip_id>.trf
+///
+/// One vidstab transforms file per clip, written by the stabilization
+/// detect job (pass 1) and consumed by the render graph as
+/// `vidstabtransform=input=...` (pass 2). Keyed by clip id, not media
+/// id: the transforms reflect the clip's own source window, so two
+/// clips sharing a source still get their own files. A plain text
+/// file (per-frame transform list), typically tens of KB.
+pub fn stab_path(project_path: &Path, clip_id: uuid::Uuid) -> std::path::PathBuf {
+    project_path
+        .join("cache")
+        .join("stab")
+        .join(format!("{clip_id}.trf"))
+}
+
+/// Best-effort: does a non-empty transforms file already exist?
+pub fn stab_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
+    let p = stab_path(project_path, clip_id);
+    p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+}
+
 pub fn clear_cache(project_path: &Path) -> Result<usize> {
     let cache_dir = project_path.join("cache");
     if !cache_dir.exists() {
@@ -139,5 +160,17 @@ mod tests {
         let pb = mask_path(std::path::Path::new("/p"), b);
         assert_ne!(pa, pb);
         assert!(pa.to_string_lossy().contains(&a.to_string()));
+    }
+
+    #[test]
+    fn stab_path_is_under_cache_stab() {
+        let id = uuid::Uuid::new_v4();
+        let p = stab_path(std::path::Path::new("/proj"), id);
+        let s = p.to_string_lossy();
+        assert!(s.contains("cache"), "path missing cache/: {s}");
+        assert!(s.contains("stab"), "path missing stab/: {s}");
+        assert!(s.ends_with(".trf"), "path should end in .trf: {s}");
+        assert!(s.contains(&id.to_string()));
+        assert!(!stab_exists(std::path::Path::new("/proj"), id));
     }
 }

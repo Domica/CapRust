@@ -134,6 +134,13 @@ pub enum PendingEdit {
     /// Dispatcher resolves the clip id from the selection and hands
     /// it to start_bg_removal_job.
     StartBgRemoval,
+    /// Start a stabilization detect job for the currently-selected
+    /// clip. Dispatcher resolves the clip id and hands it to
+    /// start_stab_job (instant-apply when transforms are cached).
+    StartStab,
+    /// Clear the stabilization transforms path. The .trf file itself
+    /// stays in cache, so re-running applies instantly.
+    ClearStab,
     /// Enable or disable the speed ramp end. Some(x) = ramp to x.
     SpeedEnd(Option<f32>),
     /// Set the easing curve of the speed ramp.
@@ -994,6 +1001,53 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                         .clicked()
                     {
                         state.pending.push(PendingEdit::StartBgRemoval);
+                    }
+                });
+            });
+        });
+
+        ui.add_space(space::M_PLUS);
+        ui.separator();
+
+        // --- Stabilization (vidstab, 2-pass) ---
+        // Video-only: still images have no camera motion to remove.
+        ui.label(egui::RichText::new(tr("props-video-stabilization")).strong());
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new(tr("props-stab-hint"))
+                .small()
+                .color(egui::Color32::from_gray(150)),
+        );
+        ui.horizontal(|ui| {
+            let can_run = matches!(clip.clip_type, ClipType::Video { .. });
+            let has_trf = clip.stab_trf.is_some();
+            if has_trf {
+                ui.label(
+                    egui::RichText::new(tr("props-stab-done"))
+                        .small()
+                        .color(egui::Color32::from_gray(200)),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(tr("props-stab-none"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if has_trf
+                    && button::ghost(ui, tr("props-stab-clear"))
+                        .on_hover_text(tr("props-stab-clear-hint"))
+                        .clicked()
+                {
+                    state.pending.push(PendingEdit::ClearStab);
+                }
+                ui.add_enabled_ui(can_run, |ui| {
+                    if button::primary(ui, tr("props-stab-run"))
+                        .on_hover_text(tr("props-stab-run-hint"))
+                        .clicked()
+                    {
+                        state.pending.push(PendingEdit::StartStab);
                     }
                 });
             });
