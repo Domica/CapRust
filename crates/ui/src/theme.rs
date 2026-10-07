@@ -279,6 +279,10 @@ impl Theme {
 
         v.widgets.hovered.bg_fill = accent.gamma_multiply(0.4);
         v.widgets.active.bg_fill = accent.gamma_multiply(0.6);
+        // Open menu buttons (egui fills them from widgets.open): same
+        // accent language, otherwise the open state is invisible.
+        v.widgets.open.weak_bg_fill = accent.gamma_multiply(0.45);
+        v.widgets.open.bg_stroke = Stroke::new(1.0_f32, accent.gamma_multiply(0.8));
 
         let border = darken(v.window_fill, 0.85);
         v.window_stroke = Stroke::new(1.0_f32, border);

@@ -1407,7 +1407,12 @@ impl CapRustApp {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button(tr("menu-file-open")).clicked() {
+                    let open_lbl = if self.settings.enable_shortcuts {
+                        format!("{}  (Ctrl+O)", tr("menu-file-open"))
+                    } else {
+                        tr("menu-file-open")
+                    };
+                    if ui.button(open_lbl).clicked() {
                         if let Some(f) = rfd::FileDialog::new()
                             .add_filter("CapRust Project", &["caprust"])
                             .pick_file()
@@ -1417,7 +1422,12 @@ impl CapRustApp {
                         }
                         ui.close_menu();
                     }
-                    if ui.button(tr("menu-file-save")).clicked() {
+                    let save_lbl = if self.settings.enable_shortcuts {
+                        format!("{}  (Ctrl+S)", tr("menu-file-save"))
+                    } else {
+                        tr("menu-file-save")
+                    };
+                    if ui.button(save_lbl).clicked() {
                         self.save_project_to_disk();
                         ui.close_menu();
                     }
@@ -1511,23 +1521,38 @@ impl CapRustApp {
 
                 ui.menu_button(tr("menu-edit"), |ui| {
                     let can_undo = self.undo_stack.can_undo();
+                    let undo_lbl = if self.settings.enable_shortcuts {
+                        format!("{}  (Ctrl+Z)", tr("menu-edit-undo"))
+                    } else {
+                        tr("menu-edit-undo")
+                    };
                     if ui
-                        .add_enabled(can_undo, egui::Button::new(tr("menu-edit-undo")))
+                        .add_enabled(can_undo, egui::Button::new(undo_lbl))
                         .clicked()
                     {
                         let _ = self.undo_stack.undo(&mut self.project);
                         ui.close_menu();
                     }
                     let can_redo = self.undo_stack.can_redo();
+                    let redo_lbl = if self.settings.enable_shortcuts {
+                        format!("{}  (Ctrl+Y)", tr("menu-edit-redo"))
+                    } else {
+                        tr("menu-edit-redo")
+                    };
                     if ui
-                        .add_enabled(can_redo, egui::Button::new(tr("menu-edit-redo")))
+                        .add_enabled(can_redo, egui::Button::new(redo_lbl))
                         .clicked()
                     {
                         let _ = self.undo_stack.redo(&mut self.project);
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button(tr("menu-edit-split")).clicked() {
+                    let split_lbl = if self.settings.enable_shortcuts {
+                        format!("{}  (S)", tr("menu-edit-split"))
+                    } else {
+                        tr("menu-edit-split")
+                    };
+                    if ui.button(split_lbl).clicked() {
                         let at = self.playhead_ms;
                         for id in self.selected_clips.clone() {
                             let cmd = SplitClipCommand::new(id, at);
@@ -1535,7 +1560,12 @@ impl CapRustApp {
                         }
                         ui.close_menu();
                     }
-                    if ui.button(tr("menu-edit-delete")).clicked() {
+                    let del_lbl = if self.settings.enable_shortcuts {
+                        format!("{}  (Del)", tr("menu-edit-delete"))
+                    } else {
+                        tr("menu-edit-delete")
+                    };
+                    if ui.button(del_lbl).clicked() {
                         for id in self.selected_clips.clone() {
                             let cmd = DeleteClipCommand::new(id, false);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
@@ -9207,6 +9237,18 @@ impl eframe::App for CapRustApp {
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                         self.selected_clips.clear();
+                    }
+                    egui::Key::S if ctrl => {
+                        self.save_project_to_disk();
+                    }
+                    egui::Key::O if ctrl => {
+                        if let Some(f) = rfd::FileDialog::new()
+                            .add_filter("CapRust Project", &["caprust"])
+                            .pick_file()
+                        {
+                            let p = f.to_string_lossy().to_string();
+                            self.load_project_from(&p);
+                        }
                     }
                     egui::Key::S if !ctrl => {
                         let at = self.playhead_ms;
