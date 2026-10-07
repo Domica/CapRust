@@ -708,6 +708,60 @@ pub struct ReframeResult {
     pub frames_with_face: usize,
 }
 
+/// Beat analysis request: which stored grid to (re)compute and from
+/// which file. `key` is the media id (or clip id fallback) under
+/// which the grid is stored in `ProjectState::beat_grids`.
+pub struct BeatRequest {
+    pub key: uuid::Uuid,
+    pub source_path: std::path::PathBuf,
+}
+
+/// Result of a beat analysis job, including the file fingerprint the
+/// grid was computed from (stale grids are recomputed on demand).
+#[derive(Debug)]
+pub struct BeatResult {
+    pub key: uuid::Uuid,
+    pub bpm: f32,
+    pub beats_ms: Vec<u64>,
+    pub len_bytes: u64,
+    pub mtime_secs: u64,
+}
+
+/// Spawn a beat analysis job: decode the source to 8 kHz mono and run
+/// onset-flux detection. Single result message; `ffmpeg` must exist —
+/// caller verifies availability.
+pub fn spawn_beat_job(
+    ffmpeg: std::path::PathBuf,
+    req: BeatRequest,
+) -> std::sync::mpsc::Receiver<Result<BeatResult, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = run_beat_job(&ffmpeg, &req);
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn run_beat_job(ffmpeg: &std::path::Path, req: &BeatRequest) -> Result<BeatResult, String> {
+    let samples = caprust_media_io::waveform::decode_mono_s16(ffmpeg, &req.source_path, 8000)
+        .map_err(|e| e.to_string())?;
+    let meta = std::fs::metadata(&req.source_path).map_err(|e| e.to_string())?;
+    let mtime_secs = meta
+        .modified()
+        .map_err(|e| e.to_string())?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let grid = caprust_core::beat::detect_beats(&samples, 8000);
+    Ok(BeatResult {
+        key: req.key,
+        bpm: grid.bpm,
+        beats_ms: grid.beats_ms,
+        len_bytes: meta.len(),
+        mtime_secs,
+    })
+}
+
 /// Spawn a background thread that runs the full auto-reframe pipeline:
 /// probe the source for its native dimensions, extract sampled RGB
 /// frames, run YuNet on each, and compute a keypoint path.

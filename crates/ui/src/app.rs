@@ -192,6 +192,8 @@ pub enum JobKind {
     /// Background removal (Phase P3c): per-frame u2netp inference,
     /// mask written as FFV1 MKV into the project cache.
     BgRemoval,
+    /// Beat analysis: onset-flux BPM + markers for an audio clip.
+    Beat,
 }
 
 /// One in-flight background job. `progress` < 0.0 means indeterminate
@@ -353,6 +355,10 @@ pub struct CapRustApp {
     pub bg_removal_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::BgRemovalEvent>>,
     /// Job id for the background-removal bar entry.
     pub bg_removal_job_id: Option<u64>,
+    /// Receiver for an in-flight beat analysis. Single result message.
+    pub beat_rx: Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::BeatResult, String>>>,
+    /// Job id for the beat bar entry.
+    pub beat_job_id: Option<u64>,
     /// Relative mask path (e.g. "cache/masks/<clip>.mkv") for the
     /// in-flight background-removal job. Stored here so the drain can
     /// write it into the clip without recomputing or consulting the
@@ -667,6 +673,8 @@ impl CapRustApp {
             reframe_job_id: None,
             bg_removal_rx: None,
             bg_removal_job_id: None,
+            beat_rx: None,
+            beat_job_id: None,
             bg_removal_rel_path: None,
             narration_input: Default::default(),
             update_available: None,
@@ -2095,6 +2103,35 @@ impl CapRustApp {
         None
     }
 
+    fn start_beat_job(&mut self, clip_id: uuid::Uuid) {
+        if self.beat_rx.is_some() {
+            self.toast(tr("toast-beat-busy"));
+            return;
+        }
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::clip::ClipType::Audio { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-beat-needs-audio"));
+                return;
+            }
+        };
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-beat-needs-ffmpeg"));
+            return;
+        };
+        let key = clip.media_id.unwrap_or(clip.id);
+        let req = crate::media_jobs::BeatRequest { key, source_path };
+        let rx = crate::media_jobs::spawn_beat_job(std::path::PathBuf::from(ffmpeg), req);
+        let job_id = self.begin_job(JobKind::Beat, tr("job-beat"));
+        self.beat_job_id = Some(job_id);
+        self.beat_rx = Some(rx);
+        self.toast(tr("toast-beat-started"));
+        tracing::info!("beat: job spawned for clip {clip_id}");
+    }
+
     fn start_reframe_job(&mut self, clip_id: uuid::Uuid) {
         if self.reframe_rx.is_some() {
             self.toast(tr("toast-reframe-busy"));
@@ -2423,6 +2460,56 @@ impl CapRustApp {
                     self.finish_job(id);
                 }
                 self.reframe_rx = None;
+            }
+        }
+    }
+
+    fn drain_beat_job(&mut self) {
+        let Some(rx) = self.beat_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                if result.bpm <= 0.0 || result.beats_ms.is_empty() {
+                    tracing::warn!("beat: no usable onsets");
+                    self.toast(tr("toast-beat-no-beats"));
+                } else {
+                    self.project.beat_grids.insert(
+                        result.key,
+                        caprust_core::beat::BeatEntry {
+                            bpm: result.bpm,
+                            beats_ms: result.beats_ms.clone(),
+                            source_len_bytes: result.len_bytes,
+                            source_mtime_secs: result.mtime_secs,
+                        },
+                    );
+                    tracing::info!(
+                        "beat: {:.1} BPM, {} markers",
+                        result.bpm,
+                        result.beats_ms.len()
+                    );
+                    self.toast(format!("{}: {:.0} BPM", tr("toast-beat-done"), result.bpm));
+                }
+                if let Some(id) = self.beat_job_id.take() {
+                    self.finish_job(id);
+                }
+                self.beat_rx = None;
+            }
+            Ok(Err(msg)) => {
+                tracing::error!("beat: job failed: {msg}");
+                self.toast_error(format!("{}: {msg}", tr("toast-beat-failed")));
+                if let Some(id) = self.beat_job_id.take() {
+                    self.finish_job(id);
+                }
+                self.beat_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::warn!("beat: receiver disconnected unexpectedly");
+                if let Some(id) = self.beat_job_id.take() {
+                    self.finish_job(id);
+                }
+                self.beat_rx = None;
             }
         }
     }
@@ -6359,6 +6446,9 @@ impl CapRustApp {
                         PendingEdit::StartReframe => {
                             self.start_reframe_job(id);
                         }
+                        PendingEdit::StartBeatAnalysis => {
+                            self.start_beat_job(id);
+                        }
                         PendingEdit::StartBgRemoval => {
                             self.start_bg_removal_job(id);
                         }
@@ -8917,6 +9007,7 @@ impl eframe::App for CapRustApp {
         self.drain_caption_job();
         self.drain_narration_job();
         self.drain_reframe_job();
+        self.drain_beat_job();
         self.drain_bg_removal_job();
         self.poll_audio_cache();
         let thumbs_ready = self.job_runner.drain(&mut self.project);

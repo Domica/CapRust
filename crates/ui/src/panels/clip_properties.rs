@@ -123,6 +123,10 @@ pub enum PendingEdit {
     /// and hands it to start_reframe_job. No payload because the
     /// result arrives asynchronously through reframe_rx.
     StartReframe,
+    /// Start a beat analysis for the currently-selected audio clip.
+    /// The dispatcher resolves the clip id from the selection, like
+    /// StartReframe.
+    StartBeatAnalysis,
     /// Clear the background-removal mask path. The mask file itself
     /// stays in cache until the user clears the project cache.
     ClearBgRemoval,
@@ -1732,6 +1736,10 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     let mut chipmunk = clip.audio_chipmunk;
     if switch::switch_labeled(ui, &mut chipmunk, tr("props-sound-chipmunk")).changed() {
         state.pending.push(PendingEdit::AudioChipmunk(chipmunk));
+    }
+    ui.add_space(space::XS);
+    if button::secondary(ui, tr("props-sound-beats")).clicked() {
+        state.pending.push(PendingEdit::StartBeatAnalysis);
     }
 }
 

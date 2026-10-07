@@ -19,11 +19,10 @@ use std::process::Stdio;
 /// and the decode is ~6x faster.
 const TARGET_RATE: u32 = 8000;
 
-/// Extract peaks by running ffmpeg on `input` and bucketing the
-/// decoded samples into `buckets` slots. Returns `buckets` values in
-/// `0.0..=1.0`. Empty files return a zero-filled vector.
-pub fn extract_peaks(ffmpeg: &Path, input: &Path, buckets: usize) -> Result<Vec<f32>> {
-    let buckets = buckets.max(1);
+/// Decode to mono s16le PCM samples at `rate` Hz via ffmpeg.
+/// Shared by the waveform peak extractor and beat analysis so both
+/// see identical samples.
+pub fn decode_mono_s16(ffmpeg: &Path, input: &Path, rate: u32) -> Result<Vec<i16>> {
     let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args([
             "-v",
@@ -40,7 +39,7 @@ pub fn extract_peaks(ffmpeg: &Path, input: &Path, buckets: usize) -> Result<Vec<
             "-ac",
             "1",
             "-ar",
-            &TARGET_RATE.to_string(),
+            &rate.to_string(),
             "-f",
             "s16le",
             "-",
@@ -73,11 +72,18 @@ pub fn extract_peaks(ffmpeg: &Path, input: &Path, buckets: usize) -> Result<Vec<
     }
 
     // Interpret pcm as little-endian i16.
-    let samples: Vec<i16> = pcm
+    Ok(pcm
         .chunks_exact(2)
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
-        .collect();
+        .collect())
+}
 
+/// Extract peaks by running ffmpeg on `input` and bucketing the
+/// decoded samples into `buckets` slots. Returns `buckets` values in
+/// `0.0..=1.0`. Empty files return a zero-filled vector.
+pub fn extract_peaks(ffmpeg: &Path, input: &Path, buckets: usize) -> Result<Vec<f32>> {
+    let buckets = buckets.max(1);
+    let samples = decode_mono_s16(ffmpeg, input, TARGET_RATE)?;
     Ok(peaks_from_samples(&samples, buckets))
 }
 
