@@ -1675,12 +1675,6 @@ impl CapRustApp {
     fn show_toolbar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button(format!("{} Add Text", ph::PLUS)).clicked() {
-                    let clip = Clip::new_text("Hello!", 0, self.playhead_ms, 3000, false);
-                    let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                }
-                ui.separator();
                 ui.label(format!(
                     "Clips: {} | Media: {} | Tracks: {} | {} | {}",
                     self.project.clips.len(),
