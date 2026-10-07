@@ -1462,12 +1462,29 @@ impl CapRustApp {
                     }
                     ui.separator();
                     if ui.button(tr("menu-edit-split")).clicked() {
+                        let at = self.playhead_ms;
+                        for id in self.selected_clips.clone() {
+                            let cmd = SplitClipCommand::new(id, at);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-edit-delete")).clicked() {
+                        for id in self.selected_clips.clone() {
+                            let cmd = DeleteClipCommand::new(id, false);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
+                        self.selected_clips.clear();
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-edit-ripple-delete")).clicked() {
+                        for id in self.selected_clips.clone() {
+                            let cmd = caprust_core::commands::delete_clip::DeleteClipCommand::new(
+                                id, true,
+                            );
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
+                        self.selected_clips.clear();
                         ui.close_menu();
                     }
                 });
