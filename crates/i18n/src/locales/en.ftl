@@ -174,6 +174,7 @@ toast-separate-audio-failed = Could not separate audio
 toast-save-failed = Could not save project
 toast-load-failed = Could not load project
 toast-export-failed = Export failed
+toast-disk-full = Disk full — free up space and retry.
 toast-undo-failed = Undo failed
 toast-redo-failed = Redo failed
 toast-caption-added = Captions added

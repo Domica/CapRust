@@ -7059,6 +7059,9 @@ impl CapRustApp {
                                 }
                                 Err(e) => {
                                     tracing::error!("preview renderer spawn failed: {e}");
+                                    if e.to_string().contains("disk full") {
+                                        self.toast_error(tr("toast-disk-full"));
+                                    }
                                 }
                             }
                         }
@@ -7278,6 +7281,9 @@ impl CapRustApp {
                                 }
                                 Err(e) => {
                                     tracing::warn!("preview: paused spawn failed: {e}");
+                                    if e.to_string().contains("disk full") {
+                                        self.toast_error(tr("toast-disk-full"));
+                                    }
                                 }
                             }
                         }
@@ -8464,6 +8470,18 @@ impl CapRustApp {
             fps_den,
         );
 
+        let out_dir = out
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(std::env::temp_dir);
+        if matches!(
+            caprust_media_io::disk::free_bytes(&out_dir),
+            Some(free) if free < caprust_media_io::disk::EXPORT_MIN_FREE_BYTES
+        ) {
+            tracing::error!("export: disk full, aborting before ffmpeg spawn");
+            self.toast_error(tr("toast-disk-full"));
+            return;
+        }
         let rx =
             caprust_media_io::exporter::spawn_export(std::path::PathBuf::from(ffmpeg), plan, out);
         let job_id = self.begin_job(JobKind::Export, tr("job-export"));
@@ -8585,6 +8603,15 @@ impl CapRustApp {
         };
 
         let path = caprust_media_io::audio_render::cache_path(hash);
+        if let Some(parent) = path.parent() {
+            if matches!(
+                caprust_media_io::disk::free_bytes(parent),
+                Some(free) if free < caprust_media_io::disk::AUDIO_CACHE_MIN_FREE_BYTES
+            ) {
+                tracing::warn!("audio cache: disk full, skipping render");
+                return;
+            }
+        }
         match caprust_media_io::audio_render::spawn_audio_render(
             std::path::Path::new(&ffmpeg),
             &plan,

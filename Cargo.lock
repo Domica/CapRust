@@ -764,6 +764,7 @@ dependencies = [
  "ureq",
  "uuid",
  "whisper-rs",
+ "windows 0.58.0",
  "zip",
 ]
 

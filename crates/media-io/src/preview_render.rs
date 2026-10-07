@@ -92,6 +92,12 @@ impl PreviewRenderer {
         height: u32,
         fps: f64,
     ) -> Result<Self> {
+        if matches!(
+            crate::disk::free_bytes(&std::env::temp_dir()),
+            Some(free) if free < crate::disk::PREVIEW_MIN_FREE_BYTES
+        ) {
+            anyhow::bail!("disk full: temp dir has less than 256 MiB free");
+        }
         let w = width.max(2) & !1;
         let h = height.max(2) & !1;
         let fps = if fps > 1.0 { fps } else { 30.0 };

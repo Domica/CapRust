@@ -53,6 +53,25 @@ fn main() -> eframe::Result<()> {
     let _ = std::fs::create_dir_all(&logs_dir);
     prune_old_logs(&logs_dir, LOG_RETENTION_DAYS);
 
+    // Best-effort removal of orphaned preview temp files (crash
+    // leftovers). Pattern-guarded to our own names only; the audio
+    // cache (-cache-) lives in the project dir, never here.
+    {
+        let dir = std::env::temp_dir();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let ours = name.starts_with("caprust-audio-")
+                    && name.ends_with(".pcm")
+                    && !name.contains("-cache-")
+                    || name.starts_with("caprust-last-preview-");
+                if ours {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
     let file_appender = tracing_appender::rolling::daily(&logs_dir, "caprust.log");
     let (non_blocking, log_guard) = tracing_appender::non_blocking(file_appender);
 

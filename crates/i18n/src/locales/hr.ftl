@@ -174,6 +174,7 @@ toast-separate-audio-failed = Nije moguće odvojiti zvuk
 toast-save-failed = Spremanje projekta nije uspjelo
 toast-load-failed = U\u010ditavanje projekta nije uspjelo
 toast-export-failed = Izvoz nije uspio
+toast-disk-full = Disk je pun — oslobodite prostor i pokušajte ponovno.
 toast-undo-failed = Poni\u0161tavanje nije uspjelo
 toast-redo-failed = Ponavljanje nije uspjelo
 toast-caption-added = Titlovi dodani
