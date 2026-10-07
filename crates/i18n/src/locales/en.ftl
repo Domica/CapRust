@@ -462,6 +462,10 @@ asset-effect-particle = Particle
 asset-effect-sparkle = Sparkle
 asset-effect-ghost = Ghost
 asset-effect-lens_flare = Lens Flare
+asset-effect-negative = Negative
+asset-effect-pixelate = Pixelate
+asset-effect-sketch = Sketch
+asset-effect-sharpen = Sharpen
 
 # Filters
 asset-filter-none = None

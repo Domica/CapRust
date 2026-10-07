@@ -1646,6 +1646,19 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             )
         }
 
+        "negative" => ",negate".into(),
+        "sketch" => ",edgedetect=mode=colormix".into(),
+        "sharpen" => format!(
+            ",unsharp=5:5:{:.2}:5:5:0.0",
+            (0.5 * amount).clamp(0.0, 2.0)
+        ),
+        "pixelate" => {
+            let b = ((2.0 + 6.0 * amount).round() as i32).clamp(2, 16);
+            format!(
+                ",scale=iw/{b}:ih/{b}:flags=neighbor,scale={b}*iw:{b}*ih:flags=neighbor"
+            )
+        },
+
         _ => return None,
     };
     Some(frag)
@@ -3562,6 +3575,25 @@ mod tests {
         );
         assert!(lf.contains("curves="), "lens_flare should lift highlights");
         assert!(lf.contains("gblur="), "lens_flare should bloom via gblur");
+    }
+
+    #[test]
+    fn new_static_effects_emit_expected_filters() {
+        let n = build_one_effect("negative", 1.0).expect("negative chain");
+        assert!(n.contains("negate"), "negative should invert via negate");
+        let s = build_one_effect("sketch", 1.0).expect("sketch chain");
+        assert!(s.contains("edgedetect"), "sketch should detect edges");
+        let sh = build_one_effect("sharpen", 1.0).expect("sharpen chain");
+        assert!(sh.contains("unsharp="), "sharpen should use unsharp");
+        let p = build_one_effect("pixelate", 1.0).expect("pixelate chain");
+        assert!(
+            p.contains("flags=neighbor"),
+            "pixelate should mosaic via neighbor scaling"
+        );
+        assert!(
+            build_one_effect("nope", 1.0).is_none(),
+            "unknown id stays None"
+        );
     }
 
     #[test]

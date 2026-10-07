@@ -462,6 +462,10 @@ asset-effect-particle = Čestice
 asset-effect-sparkle = Iskre
 asset-effect-ghost = Duh
 asset-effect-lens_flare = Odbljesak
+asset-effect-negative = Negativ
+asset-effect-pixelate = Pikselizacija
+asset-effect-sketch = Skica
+asset-effect-sharpen = Izoštravanje
 
 # Filters
 asset-filter-none = Bez

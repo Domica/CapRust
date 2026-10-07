@@ -325,6 +325,34 @@ const EFFECTS: &[Preset] = &[
         color: [240, 200, 130],
         coming_soon: false,
     },
+    Preset {
+        id: "negative",
+        label_key: "asset-effect-negative",
+        icon: ph::CIRCLE_HALF_TILT,
+        color: [40, 40, 50],
+        coming_soon: false,
+    },
+    Preset {
+        id: "pixelate",
+        label_key: "asset-effect-pixelate",
+        icon: ph::SQUARE,
+        color: [120, 140, 90],
+        coming_soon: false,
+    },
+    Preset {
+        id: "sketch",
+        label_key: "asset-effect-sketch",
+        icon: ph::PENCIL,
+        color: [170, 150, 130],
+        coming_soon: false,
+    },
+    Preset {
+        id: "sharpen",
+        label_key: "asset-effect-sharpen",
+        icon: ph::SNOWFLAKE,
+        color: [150, 190, 220],
+        coming_soon: false,
+    },
 ];
 
 const FILTERS: &[Preset] = &[
