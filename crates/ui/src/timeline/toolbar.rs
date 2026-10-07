@@ -340,16 +340,10 @@ pub fn show(
             ev.zoom_fit = true;
         }
 
-        ui.separator();
-
-        // --- Playhead time ---
-        ui.label(
-            RichText::new(format_playhead(playhead_ms))
-                .monospace()
-                .color(Color32::from_gray(220)),
-        );
-
-        // --- Right side: undo / redo ---
+        // --- Right side: playhead time + undo / redo ---
+        // The time readout used to sit mid-toolbar; it lives here now
+        // so the left tool cluster stays compact and the readout sits
+        // with the edit actions.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icon_action(ui, ph::ARROW_U_UP_RIGHT, &tr("tt-redo"), can_redo) {
                 ev.redo = true;
@@ -357,6 +351,12 @@ pub fn show(
             if icon_action(ui, ph::ARROW_U_UP_LEFT, &tr("tt-undo"), can_undo) {
                 ev.undo = true;
             }
+            ui.separator();
+            ui.label(
+                RichText::new(format_playhead(playhead_ms))
+                    .monospace()
+                    .color(Color32::from_gray(220)),
+            );
         });
     });
 
