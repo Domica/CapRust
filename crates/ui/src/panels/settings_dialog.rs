@@ -21,6 +21,7 @@ pub enum SettingsTab {
     Paths,
     Audio,
     Translation,
+    About,
 }
 
 pub struct SettingsEvents {
@@ -62,6 +63,7 @@ pub fn show(
         ui.selectable_value(tab, SettingsTab::Paths, tr("set-tab-paths"));
         ui.selectable_value(tab, SettingsTab::Audio, tr("set-tab-audio"));
         ui.selectable_value(tab, SettingsTab::Translation, tr("set-tab-translation"));
+        ui.selectable_value(tab, SettingsTab::About, tr("set-tab-about"));
     });
     ui.separator();
 
@@ -81,6 +83,7 @@ pub fn show(
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status, &mut ev),
             SettingsTab::Audio => show_audio(ui, settings),
             SettingsTab::Translation => show_translation(ui, settings),
+            SettingsTab::About => show_about(ui),
         });
 
     ui.separator();
@@ -848,6 +851,56 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
             .italics()
             .color(egui::Color32::from_gray(130)),
     );
+}
+
+// ---------------------------------------------------------------------------
+// About tab
+// ---------------------------------------------------------------------------
+
+/// Build identity: version + commit so a screenshot of this tab always
+/// tells which binary is under test.
+fn show_about(ui: &mut Ui) {
+    ui.label(egui::RichText::new(tr("set-tab-about")).strong());
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("about-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::M);
+
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let build = format!(
+        "{profile} / {}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    egui::Grid::new("about_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(tr("about-version"));
+            ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).monospace());
+            ui.end_row();
+            ui.label(tr("about-commit"));
+            ui.label(
+                egui::RichText::new(option_env!("CAPRUST_COMMIT").unwrap_or("unknown")).monospace(),
+            );
+            ui.end_row();
+            ui.label(tr("about-build"));
+            ui.label(egui::RichText::new(build).monospace());
+            ui.end_row();
+            ui.label(tr("about-author"));
+            ui.label("Domica / CapRust contributors");
+            ui.end_row();
+            ui.label(tr("about-license"));
+            ui.label("MIT");
+            ui.end_row();
+        });
 }
 
 /// Where the app writes its log files. Duplicated from the app

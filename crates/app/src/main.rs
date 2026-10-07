@@ -111,7 +111,11 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([900.0, 600.0])
-            .with_title("CapRust")
+            .with_title(format!(
+                "CapRust {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("CAPRUST_COMMIT").unwrap_or("unknown")
+            ))
             .with_icon(icon),
         ..Default::default()
     };

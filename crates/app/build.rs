@@ -3,6 +3,36 @@
 //! other platforms.
 
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    // Same commit-hash export as crates/ui/build.rs: the viewport
+    // title shows version + short hash so a screenshot always tells
+    // which binary is under test. Plain `git`, "unknown" fallback.
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let git_dir = std::path::Path::new(&manifest)
+        .join("..")
+        .join("..")
+        .join(".git");
+    for p in [git_dir.join("HEAD"), git_dir.join("refs")] {
+        if p.exists() {
+            println!("cargo:rerun-if-changed={}", p.display());
+        }
+    }
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=CAPRUST_COMMIT={commit}");
+
     #[cfg(windows)]
     {
         let mut res = winres::WindowsResource::new();
