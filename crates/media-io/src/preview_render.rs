@@ -83,6 +83,96 @@ pub struct PreviewRenderer {
     pub pcm_path: Option<PathBuf>,
 }
 
+/// Shared input block for preview-family renders: images get
+/// `-loop 1`, everything else a fast input-side `-ss` + `-t` window.
+/// One source of truth so the streaming preview and single-frame
+/// captures seek identically.
+fn push_plan_inputs(args: &mut Vec<String>, plan: &RenderPlan, fps: f64) {
+    // Images need -loop 1; everything else is plain -i.
+    let image_indices: std::collections::HashSet<usize> = plan
+        .video_clips
+        .iter()
+        .filter(|c| c.is_image)
+        .map(|c| c.input_index)
+        .collect();
+
+    for inp in &plan.inputs {
+        if image_indices.contains(&inp.ffmpeg_index) {
+            args.push("-loop".into());
+            args.push("1".into());
+            args.push("-framerate".into());
+            args.push(format!("{fps:.6}"));
+        } else if inp.source_start_sec > 0.0001 {
+            // Seek optimization (2a): ffmpeg jumps to the offset
+            // at demuxer level, skipping decode of everything
+            // before it. Turns a 5-second seek into ~200 ms.
+            //
+            // The `-t` matches the exporter arg shape: without it
+            // ffmpeg decodes to end-of-file and the filtergraph
+            // trim ends up looking at PTS it does not expect.
+            args.push("-ss".into());
+            args.push(format!("{:.6}", inp.source_start_sec));
+            args.push("-t".into());
+            args.push(format!("{:.6}", inp.duration_sec));
+        }
+        args.push("-protocol_whitelist".into());
+        args.push("file".into());
+        args.push("-i".into());
+        args.push(inp.path.to_string_lossy().to_string());
+    }
+}
+
+/// Render one frame through the full plan and write it as PNG.
+/// Used by Save frame: same filtergraph the paused preview shows,
+/// seeked to `at_ms`, at the plan's own resolution. Synchronous;
+/// the caller runs it off the UI thread.
+pub fn render_single_frame(
+    ffmpeg: &Path,
+    plan: &RenderPlan,
+    at_ms: u64,
+    out: &Path,
+    fps: f64,
+) -> Result<()> {
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create screenshots dir {}", parent.display()))?;
+        }
+    }
+    let (fg, v_label, _) = plan.build_filtergraph()?;
+    let mut args: Vec<String> = vec!["-y".into(), "-hide_banner".into()];
+    push_plan_inputs(&mut args, plan, fps);
+    args.push("-filter_complex".into());
+    args.push(fg);
+    // Same output-seek rule as the streaming preview: only when the
+    // planner did not already rewrite the inputs seek-relative.
+    if !plan.seek_optimized && at_ms > 0 {
+        args.push("-ss".into());
+        args.push(format!("{:.6}", at_ms as f64 / 1000.0));
+    }
+    args.push("-map".into());
+    args.push(format!("[{v_label}]"));
+    args.push("-frames:v".into());
+    args.push("1".into());
+    args.push(out.to_string_lossy().to_string());
+
+    let status = crate::silent_cmd::silent_command(ffmpeg)
+        .args(&args)
+        .stdin(Stdio::null())
+        .status()
+        .with_context(|| "spawn frame-capture ffmpeg".to_string())?;
+    if !status.success() {
+        anyhow::bail!("frame capture exited with {status}");
+    }
+    let len = std::fs::metadata(out)
+        .with_context(|| format!("frame file missing: {}", out.display()))?
+        .len();
+    if len == 0 {
+        anyhow::bail!("frame capture wrote an empty file");
+    }
+    Ok(())
+}
+
 impl PreviewRenderer {
     pub fn spawn(
         ffmpeg: &Path,
@@ -112,37 +202,7 @@ impl PreviewRenderer {
         ];
 
         // Inputs: images need -loop 1; everything else is plain -i.
-        let image_indices: std::collections::HashSet<usize> = plan
-            .video_clips
-            .iter()
-            .filter(|c| c.is_image)
-            .map(|c| c.input_index)
-            .collect();
-
-        for inp in &plan.inputs {
-            if image_indices.contains(&inp.ffmpeg_index) {
-                args.push("-loop".into());
-                args.push("1".into());
-                args.push("-framerate".into());
-                args.push(format!("{fps:.6}"));
-            } else if inp.source_start_sec > 0.0001 {
-                // Seek optimization (2a): ffmpeg jumps to the offset
-                // at demuxer level, skipping decode of everything
-                // before it. Turns a 5-second seek into ~200 ms.
-                //
-                // The `-t` matches the exporter arg shape: without it
-                // ffmpeg decodes to end-of-file and the filtergraph
-                // trim ends up looking at PTS it does not expect.
-                args.push("-ss".into());
-                args.push(format!("{:.6}", inp.source_start_sec));
-                args.push("-t".into());
-                args.push(format!("{:.6}", inp.duration_sec));
-            }
-            args.push("-protocol_whitelist".into());
-            args.push("file".into());
-            args.push("-i".into());
-            args.push(inp.path.to_string_lossy().to_string());
-        }
+        push_plan_inputs(&mut args, plan, fps);
 
         args.push("-filter_complex".into());
         args.push(fg.clone());

@@ -550,6 +550,75 @@ fn show_paths(
 
     ui.add_space(space::XL);
     ui.separator();
+    ui.label(egui::RichText::new(tr("set-paths-captures")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-paths-captures-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::S);
+
+    egui::Grid::new("capture_folders")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(tr("set-paths-screenshots"));
+            ui.horizontal(|ui| {
+                let mut d = settings.screenshots_dir.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut d)
+                            .desired_width(280.0)
+                            .hint_text(tr("set-paths-folder-auto")),
+                    )
+                    .changed()
+                {
+                    settings.screenshots_dir = if d.trim().is_empty() { None } else { Some(d) };
+                }
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        settings.screenshots_dir = Some(dir.to_string_lossy().to_string());
+                    }
+                }
+                if settings.screenshots_dir.is_some()
+                    && button::icon(ui, egui_phosphor::regular::X, &tr("set-backup-sync-clear"))
+                        .clicked()
+                {
+                    settings.screenshots_dir = None;
+                }
+            });
+            ui.end_row();
+
+            ui.label(tr("set-paths-recordings"));
+            ui.horizontal(|ui| {
+                let mut d = settings.recordings_dir.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut d)
+                            .desired_width(280.0)
+                            .hint_text(tr("set-paths-folder-auto")),
+                    )
+                    .changed()
+                {
+                    settings.recordings_dir = if d.trim().is_empty() { None } else { Some(d) };
+                }
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        settings.recordings_dir = Some(dir.to_string_lossy().to_string());
+                    }
+                }
+                if settings.recordings_dir.is_some()
+                    && button::icon(ui, egui_phosphor::regular::X, &tr("set-backup-sync-clear"))
+                        .clicked()
+                {
+                    settings.recordings_dir = None;
+                }
+            });
+            ui.end_row();
+        });
+
+    ui.add_space(space::XL);
+    ui.separator();
     ui.label(egui::RichText::new(tr("set-paths-ffmpeg")).strong());
     ui.label(
         egui::RichText::new(tr("set-paths-ffmpeg-hint"))

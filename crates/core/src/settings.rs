@@ -92,6 +92,15 @@ pub struct AppSettings {
     /// never synced", which makes any existing sync file newer.
     #[serde(default)]
     pub last_synced_at: Option<u64>,
+    /// Optional folder for saved preview frames (PNG). None or empty
+    /// = `<Pictures>/CapRust` (see `effective_screenshots_dir`).
+    #[serde(default)]
+    pub screenshots_dir: Option<String>,
+    /// Optional folder for screen recordings. None or empty =
+    /// `%APPDATA%/CapRust/recordings` (see
+    /// `effective_recordings_dir`).
+    #[serde(default)]
+    pub recordings_dir: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -134,6 +143,8 @@ impl Default for AppSettings {
             translate_email: None,
             sync_folder: None,
             last_synced_at: None,
+            screenshots_dir: None,
+            recordings_dir: None,
         }
     }
 }
@@ -145,6 +156,24 @@ fn default_models_dir() -> String {
     format!("{base}/CapRust/models")
 }
 
+/// User-visible pictures folder: `%USERPROFILE%/Pictures` on Windows,
+/// `~/Pictures` elsewhere, temp dir as a last resort.
+fn default_pictures_dir() -> String {
+    std::env::var("USERPROFILE")
+        .map(|u| format!("{u}/Pictures"))
+        .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/Pictures")))
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned())
+}
+
+/// Historical screen-recordings home. Kept as the default so existing
+/// installs keep writing where they always did.
+fn default_recordings_dir() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    base.join("CapRust").join("recordings")
+}
+
 impl AppSettings {
     /// Resolved models path (falls back to default if empty).
     pub fn effective_models_dir(&self) -> std::path::PathBuf {
@@ -153,6 +182,28 @@ impl AppSettings {
         } else {
             std::path::PathBuf::from(&self.models_dir)
         }
+    }
+
+    /// Resolved screenshots path: user override, else
+    /// `<Pictures>/CapRust`, else the OS temp dir. Never empty.
+    pub fn effective_screenshots_dir(&self) -> std::path::PathBuf {
+        if let Some(d) = self.screenshots_dir.as_ref() {
+            if !d.trim().is_empty() {
+                return std::path::PathBuf::from(d);
+            }
+        }
+        std::path::PathBuf::from(default_pictures_dir()).join("CapRust")
+    }
+
+    /// Resolved screen-recordings path: user override, else
+    /// `%APPDATA%/CapRust/recordings` (temp dir fallback).
+    pub fn effective_recordings_dir(&self) -> std::path::PathBuf {
+        if let Some(d) = self.recordings_dir.as_ref() {
+            if !d.trim().is_empty() {
+                return std::path::PathBuf::from(d);
+            }
+        }
+        default_recordings_dir()
     }
 
     /// Write this settings snapshot to `path` as JSON.
@@ -266,6 +317,9 @@ impl AppSettings {
     pub fn replace_from_untrusted(&mut self, mut loaded: AppSettings) {
         loaded.ffmpeg_path = self.ffmpeg_path.take();
         loaded.ffprobe_path = self.ffprobe_path.take();
+        // Capture folders are machine-local absolute paths; keep ours.
+        loaded.screenshots_dir = self.screenshots_dir.take();
+        loaded.recordings_dir = self.recordings_dir.take();
         *self = loaded;
     }
 
@@ -618,5 +672,48 @@ mod tests {
         assert!(a.check_sync_newer().is_none());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_dirs_fall_back_to_defaults() {
+        let s = AppSettings::default();
+        let shots = s.effective_screenshots_dir().to_string_lossy().into_owned();
+        assert!(shots.contains("CapRust"), "screenshots default: {shots}");
+        let rec = s.effective_recordings_dir().to_string_lossy().into_owned();
+        assert!(rec.contains("recordings"), "recordings default: {rec}");
+    }
+
+    #[test]
+    fn capture_dir_override_wins_blank_falls_back() {
+        let s = AppSettings {
+            screenshots_dir: Some("D:/shots".into()),
+            recordings_dir: Some("   ".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            s.effective_screenshots_dir(),
+            std::path::PathBuf::from("D:/shots")
+        );
+        assert!(s
+            .effective_recordings_dir()
+            .to_string_lossy()
+            .contains("recordings"));
+    }
+
+    #[test]
+    fn import_keeps_local_capture_dirs() {
+        let mut local = AppSettings {
+            screenshots_dir: Some("D:/shots".into()),
+            recordings_dir: Some("D:/rec".into()),
+            ..Default::default()
+        };
+        let loaded = AppSettings {
+            screenshots_dir: Some("/tmp/evil".into()),
+            recordings_dir: None,
+            ..Default::default()
+        };
+        local.replace_from_untrusted(loaded);
+        assert_eq!(local.screenshots_dir.as_deref(), Some("D:/shots"));
+        assert_eq!(local.recordings_dir.as_deref(), Some("D:/rec"));
     }
 }

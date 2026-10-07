@@ -4,6 +4,7 @@ use caprust_core::AspectRatio;
 use egui::{Color32, RichText, Ui, Vec2};
 use egui_phosphor::regular as ph;
 
+use crate::i18n_helper::tr;
 use crate::theme::tokens::{radius, text};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,8 @@ pub struct PreviewEvents {
     pub toggle_mute: bool,
     /// User dragged the master volume slider → Some(new value 0..=1).
     pub volume_changed: Option<f32>,
+    /// User clicked Save frame in the transport bar.
+    pub save_frame: bool,
 }
 
 // Transport-bar button sizes. Component-specific: the play button is
@@ -71,8 +74,18 @@ const BTN_PLAY: Vec2 = Vec2::new(38.0, 32.0);
 const BTN_MUTE: Vec2 = Vec2::new(28.0, 26.0);
 
 fn transport_button(ui: &mut Ui, icon: &str, tooltip: &str, size: Vec2) -> bool {
+    transport_button_enabled(ui, icon, tooltip, size, true)
+}
+
+fn transport_button_enabled(
+    ui: &mut Ui,
+    icon: &str,
+    tooltip: &str,
+    size: Vec2,
+    enabled: bool,
+) -> bool {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let bg = if resp.hovered() {
+    let bg = if enabled && resp.hovered() {
         ui.visuals().widgets.hovered.bg_fill
     } else {
         Color32::from_gray(50)
@@ -83,12 +96,25 @@ fn transport_button(ui: &mut Ui, icon: &str, tooltip: &str, size: Vec2) -> bool 
         egui::Align2::CENTER_CENTER,
         icon,
         egui::FontId::proportional(text::L),
-        Color32::from_gray(220),
+        if enabled {
+            Color32::from_gray(220)
+        } else {
+            Color32::from_gray(90)
+        },
     );
-    resp.on_hover_text(tooltip).clicked()
+    if enabled {
+        resp.on_hover_text(tooltip).clicked()
+    } else {
+        resp.on_hover_text(tooltip);
+        false
+    }
 }
 
 /// Draws only the transport bar + selectors (frame area is drawn by the caller).
+#[allow(clippy::too_many_arguments)]
+// Eight display inputs, each owned by a different caller field; a
+// params struct would just move the same fields behind one more
+// layer (same rationale as plan_from_project).
 pub fn show_transport(
     ui: &mut Ui,
     state: &mut PreviewState,
@@ -97,6 +123,7 @@ pub fn show_transport(
     ratio: &mut AspectRatio,
     muted: bool,
     volume: f32,
+    can_save_frame: bool,
 ) -> PreviewEvents {
     let mut ev = PreviewEvents::default();
 
@@ -175,6 +202,18 @@ pub fn show_transport(
                 });
             ui.label("Quality:");
             ui.separator();
+
+            // Save frame (screenshot of the paused preview). Disabled
+            // while playing: there is no stable frame to capture.
+            if transport_button_enabled(
+                ui,
+                ph::CAMERA,
+                &tr("preview-save-frame"),
+                BTN_MUTE,
+                can_save_frame,
+            ) {
+                ev.save_frame = true;
+            }
 
             // Mute toggle button.
             let mute_icon = if muted {

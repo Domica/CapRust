@@ -226,6 +226,10 @@ preview-loop = Loop
 preview-mute = Mute
 preview-unmute = Unmute
 preview-volume = Volume
+preview-save-frame = Save frame
+toast-frame-saved = Frame saved:
+toast-frame-failed = Save frame failed
+toast-frame-no-frame = Pause the preview first to save a frame.
 
 # Properties panel
 props-heading = Properties
@@ -398,6 +402,11 @@ set-shortcuts-enable = Enable keyboard shortcuts
 set-language-heading = Interface language
 set-language-applied = Applied immediately.
 set-paths-models = AI models folder
+set-paths-captures = Capture folders
+set-paths-captures-hint = Where saved frames and screen recordings go. Empty = app default.
+set-paths-screenshots = Saved frames
+set-paths-recordings = Recordings
+set-paths-folder-auto = auto
 set-paths-ffmpeg = FFmpeg binaries
 set-paths-ffmpeg-hint = Used for media probing, thumbnail extraction, and export. Leave empty to auto-detect from PATH.
 set-paths-detect = Detect now

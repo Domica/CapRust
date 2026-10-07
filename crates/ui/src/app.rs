@@ -377,6 +377,9 @@ pub struct CapRustApp {
     /// in-flight stab job. Stored here so the drain can write it into
     /// the clip without recomputing.
     pub stab_rel_path: Option<String>,
+    /// Receiver for an in-flight save-frame worker. Single result
+    /// message (Ok(path) / Err(reason)), drained per frame.
+    pub save_frame_rx: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -692,6 +695,7 @@ impl CapRustApp {
             stab_rx: None,
             stab_job_id: None,
             stab_rel_path: None,
+            save_frame_rx: None,
             narration_input: Default::default(),
             update_available: None,
             toasts: Vec::new(),
@@ -2705,6 +2709,103 @@ impl CapRustApp {
         }
     }
 
+    /// Save the paused preview frame as PNG, rendered at full project
+    /// resolution through the same filtergraph the preview shows.
+    /// Runs ffmpeg on a worker thread; the result is toasted by
+    /// drain_save_frame. No-op while playing or without a frame.
+    fn save_frame_png(&mut self) {
+        if self.preview.playing || !self.preview_player.has_frame {
+            self.toast(tr("toast-frame-no-frame"));
+            return;
+        }
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast_error(tr("toast-frame-failed"));
+            return;
+        };
+        let playhead = self.playhead_ms;
+        let stamp = crate::panels::preview_window::format_ms(playhead).replace([':', '.'], "-");
+        let default_name = format!("caprust-frame-{stamp}.png");
+        let Some(mut path) = rfd::FileDialog::new()
+            .set_title(tr("preview-save-frame"))
+            .add_filter("PNG", &["png"])
+            .set_directory(self.settings.effective_screenshots_dir())
+            .set_file_name(&default_name)
+            .save_file()
+        else {
+            return;
+        };
+        if path.extension().is_none() {
+            path.set_extension("png");
+        }
+
+        let (pw, ph) = self.project.project_dimensions();
+        let (fps_num, fps_den) = self.export_state.frame_rate.fraction(
+            self.project.frame_rate.num as i64,
+            self.project.frame_rate.den as i64,
+        );
+        let fps_f = fps_num as f64 / fps_den.max(1) as f64;
+        let models_dir = self.settings.effective_models_dir();
+        let project = self.project.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.save_frame_rx = Some(rx);
+        std::thread::Builder::new()
+            .name("caprust-save-frame".into())
+            .spawn(move || {
+                let out: Result<std::path::PathBuf, String> = (|| {
+                    let plan = caprust_media_io::export_graph::plan_from_project(
+                        &project,
+                        pw,
+                        ph,
+                        fps_num,
+                        fps_den,
+                        23,
+                        caprust_media_io::export::RateMode::Vbr,
+                        8000,
+                        "veryfast",
+                        &models_dir,
+                        playhead,
+                        caprust_core::project::VideoEncoder::H264Cpu,
+                    )
+                    .map_err(|e| format!("plan: {e:#}"))?;
+                    caprust_media_io::preview_render::render_single_frame(
+                        std::path::Path::new(&ffmpeg),
+                        &plan,
+                        playhead,
+                        &path,
+                        fps_f,
+                    )
+                    .map_err(|e| format!("{e:#}"))?;
+                    Ok(path)
+                })();
+                let _ = tx.send(out);
+            })
+            .expect("spawn save-frame thread");
+    }
+
+    /// Poll the in-flight save-frame worker. Toasts success/failure.
+    fn drain_save_frame(&mut self) {
+        let Some(rx) = self.save_frame_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(path)) => {
+                tracing::info!("frame saved to {}", path.display());
+                self.toast(format!("{} {}", tr("toast-frame-saved"), path.display()));
+            }
+            Ok(Err(e)) => {
+                tracing::error!("save frame failed: {e}");
+                self.toast_error(format!("{}: {e}", tr("toast-frame-failed")));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.save_frame_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::warn!("save frame: worker disconnected");
+                self.save_frame_rx = None;
+            }
+        }
+    }
+
     /// Poll the in-flight reframe job. On success, write the keypoints
     /// into the clip through SetClipCommand (undoable). On failure,
     /// toast and clear state.
@@ -3880,6 +3981,9 @@ impl CapRustApp {
         }
         if ev.toggle_loop {
             self.preview.loop_playback = !self.preview.loop_playback;
+        }
+        if ev.save_frame {
+            self.save_frame_png();
         }
     }
 
@@ -7864,6 +7968,7 @@ impl CapRustApp {
         ui.add_space(space::S);
 
         // ---- Transport bar ----
+        let can_save_frame = !self.preview.playing && self.preview_player.has_frame;
         let ev = crate::panels::preview_window::show_transport(
             ui,
             &mut self.preview,
@@ -7872,6 +7977,7 @@ impl CapRustApp {
             &mut self.project.aspect_ratio,
             self.settings.muted,
             self.settings.master_volume,
+            can_save_frame,
         );
         self.handle_preview_events(ev, total_ms);
 
@@ -8094,7 +8200,7 @@ impl CapRustApp {
             return;
         };
 
-        let dir = recordings_dir();
+        let dir = self.settings.effective_recordings_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
             self.screen_record.error = Some(format!("mkdir: {e}"));
             return;
@@ -9387,6 +9493,7 @@ impl eframe::App for CapRustApp {
         self.drain_beat_job();
         self.drain_bg_removal_job();
         self.drain_stab_job();
+        self.drain_save_frame();
         self.poll_audio_cache();
         let thumbs_ready = self.job_runner.drain(&mut self.project);
 
@@ -9751,12 +9858,4 @@ pub struct TextOverlayDrag {
     /// Scale factors from frame-space to screen-space at drag start.
     pub sx: f32,
     pub sy: f32,
-}
-
-#[cfg(windows)]
-fn recordings_dir() -> std::path::PathBuf {
-    let base = std::env::var("APPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
-    base.join("CapRust").join("recordings")
 }

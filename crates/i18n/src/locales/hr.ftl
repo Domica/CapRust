@@ -226,6 +226,10 @@ preview-loop = Ponavljaj
 preview-mute = Utišaj
 preview-unmute = Uključi zvuk
 preview-volume = Glasnoća
+preview-save-frame = Spremi kadar
+toast-frame-saved = Kadar spremljen:
+toast-frame-failed = Spremanje kadra nije uspjelo
+toast-frame-no-frame = Prvo pauziraj pregled pa spremi kadar.
 
 # Properties panel
 props-heading = Svojstva
@@ -398,6 +402,11 @@ set-shortcuts-enable = Omogući tipkovničke prečace
 set-language-heading = Jezik sučelja
 set-language-applied = Primjenjuje se odmah.
 set-paths-models = Mapa AI modela
+set-paths-captures = Mape snimanja
+set-paths-captures-hint = Gdje idu spremljeni kadrovi i snimke ekrana. Prazno = zadano.
+set-paths-screenshots = Spremljeni kadrovi
+set-paths-recordings = Snimke
+set-paths-folder-auto = auto
 set-paths-ffmpeg = FFmpeg binarke
 set-paths-ffmpeg-hint = Koristi se za analizu medija, izradu sličica i izvoz. Ostavi prazno za automatsku detekciju iz PATH-a.
 set-paths-detect = Detektiraj sada
