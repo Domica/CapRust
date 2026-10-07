@@ -444,6 +444,13 @@ asset-transition-wipe_l = Wipe Left
 asset-transition-wipe_r = Wipe Right
 asset-transition-rotate = Rotate
 asset-transition-blur_t = Blur Cut
+asset-transition-dissolve = Dissolve
+asset-transition-smooth_l = Smooth Left
+asset-transition-smooth_r = Smooth Right
+asset-transition-smooth_u = Smooth Up
+asset-transition-smooth_d = Smooth Down
+asset-transition-circle_close = Circle Close
+asset-transition-pixelize = Pixelize
 
 # Effects
 asset-effect-blur = Blur

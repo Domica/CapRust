@@ -210,6 +210,55 @@ const TRANSITIONS: &[Preset] = &[
         color: [110, 110, 130],
         coming_soon: false,
     },
+    Preset {
+        id: "dissolve",
+        label_key: "asset-transition-dissolve",
+        icon: ph::CIRCLE,
+        color: [150, 130, 200],
+        coming_soon: false,
+    },
+    Preset {
+        id: "smooth_l",
+        label_key: "asset-transition-smooth_l",
+        icon: ph::ARROW_LEFT,
+        color: [90, 150, 200],
+        coming_soon: false,
+    },
+    Preset {
+        id: "smooth_r",
+        label_key: "asset-transition-smooth_r",
+        icon: ph::ARROW_RIGHT,
+        color: [90, 150, 200],
+        coming_soon: false,
+    },
+    Preset {
+        id: "smooth_u",
+        label_key: "asset-transition-smooth_u",
+        icon: ph::ARROW_UP,
+        color: [90, 150, 200],
+        coming_soon: false,
+    },
+    Preset {
+        id: "smooth_d",
+        label_key: "asset-transition-smooth_d",
+        icon: ph::ARROW_DOWN,
+        color: [90, 150, 200],
+        coming_soon: false,
+    },
+    Preset {
+        id: "circle_close",
+        label_key: "asset-transition-circle_close",
+        icon: ph::CIRCLES_THREE,
+        color: [200, 120, 80],
+        coming_soon: false,
+    },
+    Preset {
+        id: "pixelize",
+        label_key: "asset-transition-pixelize",
+        icon: ph::SQUARE,
+        color: [120, 140, 90],
+        coming_soon: false,
+    },
 ];
 
 const EFFECTS: &[Preset] = &[

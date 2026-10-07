@@ -444,6 +444,13 @@ asset-transition-wipe_l = Brisanje lijevo
 asset-transition-wipe_r = Brisanje desno
 asset-transition-rotate = Rotacija
 asset-transition-blur_t = Zamućeni rez
+asset-transition-dissolve = Pretapanje
+asset-transition-smooth_l = Glatko lijevo
+asset-transition-smooth_r = Glatko desno
+asset-transition-smooth_u = Glatko gore
+asset-transition-smooth_d = Glatko dolje
+asset-transition-circle_close = Zatvaranje kruga
+asset-transition-pixelize = Pikselizacija
 
 # Effects
 asset-effect-blur = Zamućenje

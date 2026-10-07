@@ -1385,6 +1385,13 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
         "zoom_out" => "circleclose",
         "rotate" => "radial",
         "blur_t" => "fadeblack",
+        "dissolve" => "dissolve",
+        "smooth_l" => "smoothleft",
+        "smooth_r" => "smoothright",
+        "smooth_u" => "smoothup",
+        "smooth_d" => "smoothdown",
+        "circle_close" => "circleclose",
+        "pixelize" => "pixelize",
         _ => return None,
     })
 }
@@ -3113,8 +3120,24 @@ mod tests {
     #[test]
     fn xfade_mapping_covers_all_ids() {
         for id in [
-            "fade", "slide_l", "slide_r", "slide_u", "slide_d", "wipe_l", "wipe_r", "zoom_in",
-            "zoom_out", "rotate", "blur_t",
+            "fade",
+            "slide_l",
+            "slide_r",
+            "slide_u",
+            "slide_d",
+            "wipe_l",
+            "wipe_r",
+            "zoom_in",
+            "zoom_out",
+            "rotate",
+            "blur_t",
+            "dissolve",
+            "smooth_l",
+            "smooth_r",
+            "smooth_u",
+            "smooth_d",
+            "circle_close",
+            "pixelize",
         ] {
             assert!(is_xfade_id(id), "{id} should be a valid xfade id");
         }
@@ -3659,6 +3682,10 @@ mod tests {
         assert_eq!(xfade_name("slide_l"), Some("slideleft"));
         assert_eq!(xfade_name("zoom_in"), Some("circleopen"));
         assert_eq!(xfade_name("blur_t"), Some("fadeblack"));
+        assert_eq!(xfade_name("dissolve"), Some("dissolve"));
+        assert_eq!(xfade_name("smooth_l"), Some("smoothleft"));
+        assert_eq!(xfade_name("circle_close"), Some("circleclose"));
+        assert_eq!(xfade_name("pixelize"), Some("pixelize"));
     }
 
     #[test]
