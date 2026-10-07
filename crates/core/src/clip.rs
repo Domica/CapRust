@@ -339,6 +339,9 @@ fn default_transition_duration_ms() -> u64 {
 /// edges (fade in/out) are not in this set: they apply to one clip
 /// and never move their neighbours.
 pub fn is_xfade_transition(id: &str) -> bool {
+    // MUST stay in sync with media-io `xfade_name`: every id mapped
+    // there must be listed here, otherwise load normalization strips
+    // it and the apply command computes no shift.
     matches!(
         id,
         "fade"
@@ -352,6 +355,13 @@ pub fn is_xfade_transition(id: &str) -> bool {
             | "zoom_out"
             | "rotate"
             | "blur_t"
+            | "dissolve"
+            | "smooth_l"
+            | "smooth_r"
+            | "smooth_u"
+            | "smooth_d"
+            | "circle_close"
+            | "pixelize"
     )
 }
 

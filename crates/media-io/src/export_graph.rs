@@ -3728,6 +3728,23 @@ mod tests {
     }
 
     #[test]
+    fn core_xfade_list_matches_render_map() {
+        // Regression guard: new ids once landed in xfade_name but not
+        // in core is_xfade_transition, so load normalization stripped
+        // them and no shift was computed. Both lists must agree.
+        use caprust_core::clip::is_xfade_transition;
+        let ids = [
+            "fade", "slide_l", "slide_r", "slide_u", "slide_d", "wipe_l", "wipe_r",
+            "zoom_in", "zoom_out", "rotate", "blur_t", "dissolve", "smooth_l",
+            "smooth_r", "smooth_u", "smooth_d", "circle_close", "pixelize",
+        ];
+        for id in ids {
+            assert!(is_xfade_transition(id), "{id} missing from core list");
+            assert!(is_xfade_id(id), "{id} missing from render map");
+        }
+    }
+
+    #[test]
     fn atempo_chain_handles_extremes() {
         assert_eq!(atempo_chain(1.0), "");
         assert_eq!(atempo_chain(2.0), ",atempo=2.000000");
