@@ -3,6 +3,7 @@ pub mod audio_player;
 pub mod audio_render;
 pub mod auto_reframe;
 pub mod background_removal;
+pub mod beat;
 pub mod export;
 pub mod export_graph;
 pub mod export_progress;
