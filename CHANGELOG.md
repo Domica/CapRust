@@ -2,6 +2,27 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.9] — 2026-10-07
+
+### Added
+
+- **Media library hygiene.** Re-importing the same file no longer
+  duplicates the library (matched case- and separator-insensitively)
+  — skipped files report a toast. Clear all asks first in a centered
+  modal (Cancel / Yes); closing the dialog cancels.
+- **Menu polish.** Open File/Edit/View menus keep a persistent gray
+  highlight with an accent underline while open. Working shortcut
+  hints on File and Edit items (Ctrl+O/S/Z/Y, S, Del), gated on the
+  shortcuts setting. New bindings: Ctrl+S saves, Ctrl+O opens.
+
+### Fixed
+
+- **New transitions lost their overlap.** Dissolve, smooth, circle
+  close and pixelize were mapped for render but missing from the
+  core xfade list, so project load stripped them and no follower
+  shift was computed. Both lists are now bound by a regression test
+  in both directions.
+
 ## [0.9.8] — 2026-10-07
 
 ### Added
