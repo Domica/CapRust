@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.8-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -23,7 +23,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.7-win64-setup.exe`.
+1. Run `CapRust-0.9.8-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -385,6 +385,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.8** | 2026-10-07 | SRT sidecar export; beat-sync analysis + ruler markers; 4 effects, 7 transitions, 4 voice FX; Edit menu wired; caption overlap fix; CONTRIBUTING + TRANSLATING. |
 | **0.9.7** | 2026-10-06 | Export Open-folder reveal fixed (paths with spaces, missing dirs); timeline pan, scroll, resizable rows and width fixes; export finish actions use button widgets + i18n. |
 | **0.9.6** | 2026-10-06 | Disabled states for chip, switch and segmented_control; error toasts for save, load, export, undo and redo; button widgets replace raw buttons in every panel. |
 | **0.9.5** | 2026-10-06 | Panel polish (P3-all): switch / segmented_control / chip replace raw checkbox and selectable_value across Settings, media bin, clip properties, model prompt, and multicam. Clip.reversed now renders in video and audio chains (was silently dropped in the filtergraph). Reverse toggle capped at 60 s. |

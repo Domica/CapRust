@@ -2,6 +2,32 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.8] — 2026-10-07
+
+### Added
+
+- **SRT sidecar export.** New switch in the export dialog plus File
+  menu entry writes `.srt` next to the video (or standalone) from
+  normalized caption cues. Shared `CueWindow` utilities in core.
+- **Beat-sync (analysis + markers).** Onset-flux BPM detection runs
+  as a background job from the Sound panel, grids persist per media
+  with size/mtime fingerprinting, stale grids prune on load, and
+  markers draw on the ruler. Snap-to-beat stays a follow-up.
+- **4 effects, 7 transitions, 4 voice FX.** Negative, pixelate,
+  sketch, sharpen; dissolve, smooth ×4, circle-close, pixelize
+  (xfade path, overlap handling included); telephone, bass, echo,
+  chipmunk per-clip voice filters. Docs: CONTRIBUTING +
+  TRANSLATING guides.
+
+### Fixed
+
+- **Edit menu Split/Delete/Ripple Delete were stubs** since PR 7;
+  they now dispatch the same undoable commands as the keys.
+- **Caption rows no longer stack on overlaps.** Whisper segments
+  overlap in time but enable windows clamped only within a segment;
+  a normalization pass clamps across segments (preview and export
+  share the plan, one fix covers both).
+
 ## [0.9.7] — 2026-10-06
 
 ### Fixed
