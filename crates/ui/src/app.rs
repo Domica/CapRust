@@ -1303,6 +1303,27 @@ impl CapRustApp {
     /// New Project modal, opened from the start-screen sidebar. Reuses
     /// the draft fields stored on CapRustApp; the Create button runs
     /// the same path as before (create_project).
+    /// Persistent highlight for an open top-level menu (File/Edit/View).
+    /// egui's own open-state fill never fires: `is_menu_open` compares the
+    /// bar id against a different id scheme than the button response, so
+    /// we paint it ourselves on the background layer (below the label).
+    /// Gray fill + accent underline, mirroring toolbar toggles.
+    fn paint_menu_open(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let bg = ui.ctx().layer_painter(egui::LayerId::background());
+        bg.rect_filled(
+            rect.expand2(egui::vec2(4.0, 2.0)),
+            6.0,
+            egui::Color32::from_gray(45),
+        );
+        bg.line_segment(
+            [
+                egui::pos2(rect.left() + 4.0, rect.bottom() - 1.0),
+                egui::pos2(rect.right() - 4.0, rect.bottom() - 1.0),
+            ],
+            egui::Stroke::new(2.0, self.theme.accent_color()),
+        );
+    }
+
     fn show_new_project_modal(&mut self, ctx: &egui::Context) {
         if !self.new_project_modal_open {
             return;
@@ -1401,7 +1422,7 @@ impl CapRustApp {
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button(tr("menu-file"), |ui| {
+                let file_menu = ui.menu_button(tr("menu-file"), |ui| {
                     if ui.button(tr("menu-file-new")).clicked() {
                         self.mode = AppMode::StartScreen;
                         ui.close_menu();
@@ -1519,7 +1540,7 @@ impl CapRustApp {
                     }
                 });
 
-                ui.menu_button(tr("menu-edit"), |ui| {
+                let edit_menu = ui.menu_button(tr("menu-edit"), |ui| {
                     let can_undo = self.undo_stack.can_undo();
                     let undo_lbl = if self.settings.enable_shortcuts {
                         format!("{}  (Ctrl+Z)", tr("menu-edit-undo"))
@@ -1585,7 +1606,7 @@ impl CapRustApp {
                     }
                 });
 
-                ui.menu_button(tr("menu-view"), |ui| {
+                let view_menu = ui.menu_button(tr("menu-view"), |ui| {
                     ui.menu_button(tr("menu-view-sort"), |ui| {
                         for s in crate::panels::media_bin::MediaSort::all() {
                             let sel = self.media_bin.sort == s;
@@ -1622,6 +1643,15 @@ impl CapRustApp {
                     });
                 });
 
+                if file_menu.inner.is_some() {
+                    self.paint_menu_open(ui, file_menu.response.rect);
+                }
+                if edit_menu.inner.is_some() {
+                    self.paint_menu_open(ui, edit_menu.response.rect);
+                }
+                if view_menu.inner.is_some() {
+                    self.paint_menu_open(ui, view_menu.response.rect);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let export_btn = egui::Button::new(
                         egui::RichText::new("Export ⬆")
