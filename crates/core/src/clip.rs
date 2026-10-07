@@ -552,6 +552,20 @@ pub struct Clip {
     /// normalize.
     #[serde(default)]
     pub audio_voice_boost: bool,
+    /// Telephone/radio voice (ffmpeg `highpass=f=300,lowpass=f=3400`).
+    /// Creative FX stage, runs after normalize.
+    #[serde(default)]
+    pub audio_telephone: bool,
+    /// Bass boost (ffmpeg `bass=g=8`). Creative FX stage.
+    #[serde(default)]
+    pub audio_bass: bool,
+    /// Short slapback echo (ffmpeg `aecho`). Creative FX stage.
+    #[serde(default)]
+    pub audio_echo: bool,
+    /// Chipmunk pitch-up (ffmpeg `asetrate` + `aresample`). Shortens
+    /// the audio slightly; a fun effect, not sample-accurate.
+    #[serde(default)]
+    pub audio_chipmunk: bool,
     /// Volume automation curve. Empty = static `volume_db`. Non-empty
     /// = piecewise-linear in dB between sorted keyframes, held flat
     /// before the first and after the last.
@@ -628,6 +642,10 @@ impl Clip {
             audio_normalize: false,
             audio_denoise: false,
             audio_voice_boost: false,
+            audio_telephone: false,
+            audio_bass: false,
+            audio_echo: false,
+            audio_chipmunk: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             duck_reduction_db: -12.0,
@@ -673,6 +691,10 @@ impl Clip {
             audio_normalize: false,
             audio_denoise: false,
             audio_voice_boost: false,
+            audio_telephone: false,
+            audio_bass: false,
+            audio_echo: false,
+            audio_chipmunk: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             duck_reduction_db: -12.0,
@@ -718,6 +740,10 @@ impl Clip {
             audio_normalize: false,
             audio_denoise: false,
             audio_voice_boost: false,
+            audio_telephone: false,
+            audio_bass: false,
+            audio_echo: false,
+            audio_chipmunk: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             duck_reduction_db: -12.0,
@@ -767,6 +793,10 @@ impl Clip {
             audio_normalize: false,
             audio_denoise: false,
             audio_voice_boost: false,
+            audio_telephone: false,
+            audio_bass: false,
+            audio_echo: false,
+            audio_chipmunk: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             duck_reduction_db: -12.0,
@@ -822,6 +852,10 @@ impl Clip {
             audio_normalize: false,
             audio_denoise: false,
             audio_voice_boost: false,
+            audio_telephone: false,
+            audio_bass: false,
+            audio_echo: false,
+            audio_chipmunk: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             duck_reduction_db: -12.0,
@@ -875,6 +909,10 @@ impl Clip {
             audio_normalize: false,
             audio_denoise: false,
             audio_voice_boost: false,
+            audio_telephone: false,
+            audio_bass: false,
+            audio_echo: false,
+            audio_chipmunk: false,
             volume_keyframes: Vec::new(),
             duck_against: None,
             duck_reduction_db: -12.0,

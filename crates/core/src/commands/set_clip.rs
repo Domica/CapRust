@@ -37,6 +37,10 @@ pub struct SetClipCommand {
     pub audio_normalize: Option<bool>,
     pub audio_denoise: Option<bool>,
     pub audio_voice_boost: Option<bool>,
+    pub audio_telephone: Option<bool>,
+    pub audio_bass: Option<bool>,
+    pub audio_echo: Option<bool>,
+    pub audio_chipmunk: Option<bool>,
     pub volume_keyframes: Option<Vec<crate::clip::VolumeKeyframe>>,
     pub duck_against: Option<Option<Uuid>>,
     pub duck_reduction_db: Option<f32>,
@@ -87,6 +91,10 @@ impl SetClipCommand {
             audio_normalize: None,
             audio_denoise: None,
             audio_voice_boost: None,
+            audio_telephone: None,
+            audio_bass: None,
+            audio_echo: None,
+            audio_chipmunk: None,
             volume_keyframes: None,
             duck_against: None,
             duck_reduction_db: None,
@@ -201,6 +209,22 @@ impl SetClipCommand {
     }
     pub fn audio_voice_boost(mut self, v: bool) -> Self {
         self.audio_voice_boost = Some(v);
+        self
+    }
+    pub fn audio_telephone(mut self, v: bool) -> Self {
+        self.audio_telephone = Some(v);
+        self
+    }
+    pub fn audio_bass(mut self, v: bool) -> Self {
+        self.audio_bass = Some(v);
+        self
+    }
+    pub fn audio_echo(mut self, v: bool) -> Self {
+        self.audio_echo = Some(v);
+        self
+    }
+    pub fn audio_chipmunk(mut self, v: bool) -> Self {
+        self.audio_chipmunk = Some(v);
         self
     }
     /// Replace the whole automation curve. Pass an empty Vec to fall
@@ -328,6 +352,18 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.audio_voice_boost {
             c.audio_voice_boost = v;
+        }
+        if let Some(v) = self.audio_telephone {
+            c.audio_telephone = v;
+        }
+        if let Some(v) = self.audio_bass {
+            c.audio_bass = v;
+        }
+        if let Some(v) = self.audio_echo {
+            c.audio_echo = v;
+        }
+        if let Some(v) = self.audio_chipmunk {
+            c.audio_chipmunk = v;
         }
         if let Some(v) = self.volume_keyframes.clone() {
             c.volume_keyframes = v;

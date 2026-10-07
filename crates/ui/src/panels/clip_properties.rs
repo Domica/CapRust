@@ -100,6 +100,14 @@ pub enum PendingEdit {
     AudioDenoise(bool),
     /// Apply speech-tuned dynamic range compression on this clip.
     AudioVoiceBoost(bool),
+    /// Telephone/radio voice on this clip's audio.
+    AudioTelephone(bool),
+    /// Bass boost on this clip's audio.
+    AudioBass(bool),
+    /// Slapback echo on this clip's audio.
+    AudioEcho(bool),
+    /// Chipmunk pitch-up on this clip's audio.
+    AudioChipmunk(bool),
     /// Set or clear the chroma-key spec on the selected clip.
     /// Some(spec) = enable keying, None = disable.
     ChromaKey(Option<caprust_core::clip::ChromaKeySpec>),
@@ -1708,6 +1716,22 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         state
             .pending
             .push(PendingEdit::AudioVoiceBoost(voice_boost));
+    }
+    let mut telephone = clip.audio_telephone;
+    if switch::switch_labeled(ui, &mut telephone, tr("props-sound-telephone")).changed() {
+        state.pending.push(PendingEdit::AudioTelephone(telephone));
+    }
+    let mut bass = clip.audio_bass;
+    if switch::switch_labeled(ui, &mut bass, tr("props-sound-bass")).changed() {
+        state.pending.push(PendingEdit::AudioBass(bass));
+    }
+    let mut echo = clip.audio_echo;
+    if switch::switch_labeled(ui, &mut echo, tr("props-sound-echo")).changed() {
+        state.pending.push(PendingEdit::AudioEcho(echo));
+    }
+    let mut chipmunk = clip.audio_chipmunk;
+    if switch::switch_labeled(ui, &mut chipmunk, tr("props-sound-chipmunk")).changed() {
+        state.pending.push(PendingEdit::AudioChipmunk(chipmunk));
     }
 }
 

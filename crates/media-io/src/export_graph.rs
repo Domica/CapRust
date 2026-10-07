@@ -180,6 +180,25 @@ fn build_caption_drawtext_body(
     )
 }
 
+/// Creative voice FX chain (telephone, bass, echo, chipmunk). Runs
+/// after the corrective stages (denoise/boost/normalize).
+fn build_voice_fx(telephone: bool, bass: bool, echo: bool, chipmunk: bool) -> String {
+    let mut out = String::new();
+    if telephone {
+        out.push_str(",highpass=f=300,lowpass=f=3400");
+    }
+    if bass {
+        out.push_str(",bass=g=8");
+    }
+    if echo {
+        out.push_str(",aecho=0.8:0.7:60:0.3");
+    }
+    if chipmunk {
+        out.push_str(",asetrate=48000*1.25,aresample=48000");
+    }
+    out
+}
+
 /// Clamp overlapping caption enable windows so stacked rows cannot
 /// appear. Whisper segments routinely overlap in time (segment N ends
 /// after segment N+1 starts), but enable windows were only ever
@@ -308,6 +327,14 @@ pub struct AudioClip {
     /// -16 LUFS / -1.5 dBTP / LRA 11). Runs after voice_boost,
     /// before the user's volume / fades so those remain final.
     pub normalize: bool,
+    /// Telephone/radio voice. Creative FX stage, after normalize.
+    pub voice_telephone: bool,
+    /// Bass boost. Creative FX stage, after normalize.
+    pub voice_bass: bool,
+    /// Slapback echo. Creative FX stage, after normalize.
+    pub voice_echo: bool,
+    /// Chipmunk pitch-up. Creative FX stage, after normalize.
+    pub voice_chipmunk: bool,
 }
 
 /// A fully-described render request.
@@ -1003,6 +1030,14 @@ impl RenderPlan {
             } else {
                 String::new()
             };
+            // Creative voice FX, after the corrective stages. Each is
+            // independent; enabled ones concatenate in this order.
+            let voice_fx = build_voice_fx(
+                c.voice_telephone,
+                c.voice_bass,
+                c.voice_echo,
+                c.voice_chipmunk,
+            );
             fg.push_str(&ramp_preamble);
             // Post-chain: processing, gain, fades. If all are
             // empty, pass through with `anull` so the chain is
@@ -1013,7 +1048,7 @@ impl RenderPlan {
             // the reversed timeline, matching what the user hears.
             let reverse_prefix = if c.reversed { ",areverse" } else { "" };
             let tail = format!(
-                "{reverse_prefix}{denoise}{voice_boost}{normalize}{gain}{track_gain}{fade_in}{fade_out}"
+                "{reverse_prefix}{denoise}{voice_boost}{normalize}{voice_fx}{gain}{track_gain}{fade_in}{fade_out}"
             );
             let tail_clean = tail.trim_start_matches(',');
             let tail_chain = if tail_clean.is_empty() {
@@ -2957,6 +2992,10 @@ pub fn plan_from_project(
             denoise: c.audio_denoise,
             voice_boost: c.audio_voice_boost,
             normalize: c.audio_normalize,
+            voice_telephone: c.audio_telephone,
+            voice_bass: c.audio_bass,
+            voice_echo: c.audio_echo,
+            voice_chipmunk: c.audio_chipmunk,
         });
     }
 
@@ -4630,6 +4669,10 @@ mod reverse_filtergraph_tests {
             denoise: false,
             voice_boost: false,
             normalize: false,
+            voice_telephone: false,
+            voice_bass: false,
+            voice_echo: false,
+            voice_chipmunk: false,
         }];
         plan
     }
@@ -4679,6 +4722,17 @@ mod reverse_filtergraph_tests {
     fn no_reverse_audio_means_no_areverse() {
         let (fg, _, _) = base_plan_audio(false).build_filtergraph().unwrap();
         assert!(!fg.contains("areverse"), "no reverse -> no areverse: {fg}");
+    }
+
+    #[test]
+    fn voice_fx_chain_composes_enabled_flags() {
+        assert_eq!(build_voice_fx(false, false, false, false), "");
+        let t = build_voice_fx(true, false, false, false);
+        assert!(t.contains("highpass=") && t.contains("lowpass="));
+        let all = build_voice_fx(true, true, true, true);
+        for frag in ["highpass=", "bass=", "aecho=", "asetrate="] {
+            assert!(all.contains(frag), "missing {frag}");
+        }
     }
 
     #[test]
