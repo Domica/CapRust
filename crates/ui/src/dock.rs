@@ -17,14 +17,8 @@ use crate::theme::tokens::{elev, radius};
 /// One panel that can live anywhere in the dock tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Tab {
-    // Asset browser tabs (six of them, all starting in the left zone).
-    AssetMedia,
-    AssetTransitions,
-    AssetEffects,
-    AssetFilters,
-    AssetText,
-    AssetTemplates,
-    AssetPlugins,
+    // Asset browser — single dock tab with internal vertical tab strip.
+    AssetBrowser,
     // Standalone editor panels.
     Preview,
     Properties,
@@ -37,13 +31,7 @@ impl Tab {
     /// FTL key for the tab title.
     pub fn title_key(&self) -> &'static str {
         match self {
-            Self::AssetMedia => "asset-tab-media",
-            Self::AssetTransitions => "asset-tab-transitions",
-            Self::AssetEffects => "asset-tab-effects",
-            Self::AssetFilters => "asset-tab-filters",
-            Self::AssetText => "asset-tab-text",
-            Self::AssetTemplates => "asset-tab-templates",
-            Self::AssetPlugins => "asset-tab-plugins",
+            Self::AssetBrowser => "asset-tab-media",
             Self::Preview => "dock-tab-preview",
             Self::Properties => "props-heading",
             Self::Timeline => "dock-tab-timeline",
@@ -76,19 +64,7 @@ pub fn default_dock_state() -> DockState<Tab> {
     let [center, _bottom] = surface.split_below(center, 0.62, vec![Tab::Timeline]);
 
     // Center: split left so Assets take the left zone.
-    let [_left, _center] = surface.split_left(
-        center,
-        0.24,
-        vec![
-            Tab::AssetMedia,
-            Tab::AssetTransitions,
-            Tab::AssetEffects,
-            Tab::AssetFilters,
-            Tab::AssetText,
-            Tab::AssetTemplates,
-            Tab::AssetPlugins,
-        ],
-    );
+    let [_left, _center] = surface.split_left(center, 0.24, vec![Tab::AssetBrowser]);
 
     state
 }
@@ -157,19 +133,7 @@ pub fn preset_dock_state(preset: LayoutPreset) -> DockState<Tab> {
     let [center, _props] = surface.split_right(top, 0.78, vec![Tab::Properties]);
 
     // center: assets | preview
-    let [_assets, _preview] = surface.split_left(
-        center,
-        0.24,
-        vec![
-            Tab::AssetMedia,
-            Tab::AssetTransitions,
-            Tab::AssetEffects,
-            Tab::AssetFilters,
-            Tab::AssetText,
-            Tab::AssetTemplates,
-            Tab::AssetPlugins,
-        ],
-    );
+    let [_assets, _preview] = surface.split_left(center, 0.24, vec![Tab::AssetBrowser]);
 
     state
 }
@@ -205,33 +169,14 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             Tab::Properties => {
                 self.app.render_properties_panel(ui);
             }
-            Tab::AssetMedia => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Media);
-            }
-            Tab::AssetTransitions => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Transitions);
-            }
-            Tab::AssetEffects => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Effects);
-            }
-            Tab::AssetFilters => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Filters);
-            }
-            Tab::AssetText => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Text);
-            }
-            Tab::AssetTemplates => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Templates);
-            }
-            Tab::AssetPlugins => {
-                self.app
-                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Plugins);
+            Tab::AssetBrowser => {
+                let out = crate::panels::asset_browser::show(
+                    ui,
+                    &mut self.app.project,
+                    &mut self.app.asset_browser,
+                    &mut self.app.media_bin,
+                );
+                self.app.handle_asset_browser_output(out);
             }
         }
     }

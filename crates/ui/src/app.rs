@@ -6970,7 +6970,7 @@ impl CapRustApp {
     /// Handle a batch of asset-browser output: media jobs, imports,
     /// removals, preset clicks. Shared between the classic
     /// SidePanel::left and every docked AssetX tab.
-    fn handle_asset_browser_output(
+    pub(crate) fn handle_asset_browser_output(
         &mut self,
         out: crate::panels::asset_browser::AssetBrowserOutput,
     ) {
@@ -7116,6 +7116,7 @@ impl CapRustApp {
     /// Assets panel body for the dock layout: renders a single tab
     /// without the tab strip (egui_dock draws its own) and routes the
     /// output through the shared handler.
+    #[allow(dead_code)]
     pub(crate) fn render_assets_panel(
         &mut self,
         ui: &mut egui::Ui,
