@@ -2,6 +2,41 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.10] — 2026-10-07
+
+### Added
+
+- **Save paused preview frame.** Camera button on the preview
+  transport (active only while paused on a frame). Opens a save
+  dialog defaulting to the configured capture folder with name
+  `caprust-frame-<time>.png`. Renders at full resolution through
+  the same filtergraph as the preview, on a worker thread, with a
+  toast on completion.
+- **Capture folders in Settings → Paths.** Two new entries right
+  after AI models: Saved frames (default `Pictures/CapRust`) and
+  Recordings (default `%APPDATA%/recordings`). Both have Browse +
+  X buttons; empty = auto. Screen recording now reads its folder
+  from settings instead of a hardcoded path. Settings import
+  preserves local capture folders.
+- **Preset categories.** Transitions, effects and filters now show
+  category chips above the grid. New presets: wipe (L/R),
+  fade, white, grain, glow.
+- **Per-clip vidstab stabilization.** Detect job with trf cache,
+  per-clip enable in clip properties.
+- **About tab in Settings.** Shows version and commit hash.
+
+### Fixed
+
+- **Asset browser tab strip is now vertical.** Media, Transitions,
+  Effects, Filters and Text tabs sit on the left side of the
+  panel instead of a horizontal strip across the top.
+- **Playhead time display** moved next to undo/redo for better
+  visibility.
+- **Redundant Add Text button** removed from the toolbar.
+- **Disk-full hardening.** Pre-flight guards for preview, export
+  and audio cache (256 MB / 1 GB thresholds) with toast + startup
+  cleanup of stale `caprust-audio-*.pcm` files.
+
 ## [0.9.9] — 2026-10-07
 
 ### Added
