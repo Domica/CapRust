@@ -686,28 +686,36 @@ pub fn show(
 ) -> AssetBrowserOutput {
     let mut out = AssetBrowserOutput::default();
 
-    // --- Tab strip ---
-    ui.horizontal_wrapped(|ui| {
-        for tab in AssetTab::all() {
-            let selected = state.active == tab;
-            let text = format!("{} {}", tab.icon(), tr(tab.label()));
-            let btn = egui::Button::new(RichText::new(text).size(12.0))
-                .fill(if selected {
-                    ui.visuals().selection.bg_fill
-                } else {
-                    Color32::from_gray(50)
-                })
-                .min_size(V2::new(0.0, 26.0));
-            if ui.add(btn).clicked() {
-                state.active = tab;
+    // --- Vertical tab strip on the left, content on the right ---
+    ui.horizontal_top(|ui| {
+        // Left: vertical tab strip
+        ui.vertical(|ui| {
+            ui.set_min_width(120.0);
+            for tab in AssetTab::all() {
+                let selected = state.active == tab;
+                let text = format!("{} {}", tab.icon(), tr(tab.label()));
+                let btn = egui::Button::new(RichText::new(text).size(12.0))
+                    .fill(if selected {
+                        ui.visuals().selection.bg_fill
+                    } else {
+                        Color32::from_gray(50)
+                    })
+                    .min_size(V2::new(0.0, 30.0));
+                if ui.add(btn).clicked() {
+                    state.active = tab;
+                }
             }
-        }
-    });
-    ui.separator();
+        });
 
-    let content = render_tab_content(ui, state.active, project, state, media_state);
-    out.media = content.media;
-    out.preset_clicked = content.preset_clicked;
+        ui.separator();
+
+        // Right: tab content
+        ui.vertical(|ui| {
+            let content = render_tab_content(ui, state.active, project, state, media_state);
+            out.media = content.media;
+            out.preset_clicked = content.preset_clicked;
+        });
+    });
 
     out
 }
