@@ -254,6 +254,9 @@ pub struct MediaBinState {
     /// membership; plain click replaces. Cleared after a drag drop or
     /// a batch removal.
     pub selected_media: Vec<Uuid>,
+    /// Clear-all confirm modal is open. Set by the Clear all button,
+    /// cleared on either choice.
+    pub confirm_clear: bool,
 }
 
 impl Default for MediaBinState {
@@ -265,6 +268,7 @@ impl Default for MediaBinState {
             preview: PreviewSize::Medium,
             thumb_cache: ThumbnailCache::default(),
             selected_media: Vec::new(),
+            confirm_clear: false,
         }
     }
 }
@@ -286,7 +290,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // --- Import buttons ---
     let mut newly_imported: Vec<Uuid> = Vec::new();
     let mut skipped_duplicates: usize = 0;
-    let mut clear_all = false;
+    let mut clear_requested = false;
     // horizontal_wrapped so a narrow dock zone reflows to two rows
     // instead of clipping the trailing buttons.
     ui.horizontal_wrapped(|ui| {
@@ -310,12 +314,36 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
             .on_hover_text(tr("media-clear-all-tooltip"))
             .clicked()
         {
-            clear_all = true;
+            clear_requested = true;
         }
     });
-    if clear_all {
-        project.media.items.clear();
-        tracing::info!("media library cleared");
+    if clear_requested {
+        state.confirm_clear = true;
+    }
+    if state.confirm_clear {
+        let mut open = true;
+        egui::Window::new(tr("media-clear-confirm-title"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ui.ctx(), |ui| {
+                ui.label(tr("media-clear-confirm-body"));
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    if button::secondary(ui, tr("cancel")).clicked() {
+                        state.confirm_clear = false;
+                    }
+                    if button::primary(ui, tr("yes")).clicked() {
+                        project.media.items.clear();
+                        tracing::info!("media library cleared");
+                        state.confirm_clear = false;
+                    }
+                });
+            });
+        if !open {
+            state.confirm_clear = false;
+        }
     }
 
     ui.separator();
