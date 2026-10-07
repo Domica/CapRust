@@ -1447,6 +1447,9 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
         "slide_d" => "slidedown",
         "wipe_l" => "wipeleft",
         "wipe_r" => "wiperight",
+        "wipe_u" => "wipeup",
+        "wipe_d" => "wipedown",
+        "fadewhite" => "fadewhite",
         "zoom_in" => "circleopen",
         "zoom_out" => "circleclose",
         "rotate" => "radial",
@@ -1731,6 +1734,22 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
                 ",scale=iw/{b}:ih/{b}:flags=neighbor,scale={b}*iw:{b}*ih:flags=neighbor"
             )
         },
+        // Light animated film grain. Much subtler than the
+        // old_film/vhs noise stages: a texture, not a look.
+        "grain" => format!(
+            ",noise=alls={s:.0}:allf=t",
+            s = (6.0 * amount).clamp(1.0, 24.0)
+        ),
+        // Soft glow (bloom approximation). A true bloom needs a
+        // split+screen-blend pair, which the single-chain contract
+        // here cannot express (same reason as lens_flare above).
+        // Bleed highlights via gblur and lift the mids slightly so
+        // bright areas bloom outward. Reads as a dreamy haze.
+        "glow" => format!(
+            ",gblur=sigma={s:.2},eq=brightness={b:.3}",
+            s = (0.8 + 1.5 * amount).clamp(0.5, 8.0),
+            b = (0.02 * amount).clamp(0.0, 0.08)
+        ),
 
         _ => return None,
     };
@@ -3311,6 +3330,9 @@ mod tests {
             "slide_d",
             "wipe_l",
             "wipe_r",
+            "wipe_u",
+            "wipe_d",
+            "fadewhite",
             "zoom_in",
             "zoom_out",
             "rotate",
@@ -3327,6 +3349,26 @@ mod tests {
         }
         assert!(!is_xfade_id("none"));
         assert!(!is_xfade_id("glitch"));
+    }
+
+    #[test]
+    fn grain_and_glow_produce_single_chain_fragments() {
+        let grain = build_one_effect("grain", 1.0).expect("grain chain");
+        assert!(
+            grain.contains("noise=alls="),
+            "grain should emit noise: {grain}"
+        );
+        assert!(grain.contains("allf=t"), "grain should animate: {grain}");
+
+        let glow = build_one_effect("glow", 1.0).expect("glow chain");
+        assert!(
+            glow.contains("gblur=sigma="),
+            "glow should bleed highlights: {glow}"
+        );
+        assert!(
+            glow.contains("eq=brightness="),
+            "glow should lift mids: {glow}"
+        );
     }
 
     #[test]
@@ -3870,6 +3912,9 @@ mod tests {
         assert_eq!(xfade_name("blur_t"), Some("fadeblack"));
         assert_eq!(xfade_name("dissolve"), Some("dissolve"));
         assert_eq!(xfade_name("smooth_l"), Some("smoothleft"));
+        assert_eq!(xfade_name("wipe_u"), Some("wipeup"));
+        assert_eq!(xfade_name("wipe_d"), Some("wipedown"));
+        assert_eq!(xfade_name("fadewhite"), Some("fadewhite"));
         assert_eq!(xfade_name("circle_close"), Some("circleclose"));
         assert_eq!(xfade_name("pixelize"), Some("pixelize"));
     }
@@ -3888,6 +3933,9 @@ mod tests {
             "slide_d",
             "wipe_l",
             "wipe_r",
+            "wipe_u",
+            "wipe_d",
+            "fadewhite",
             "zoom_in",
             "zoom_out",
             "rotate",

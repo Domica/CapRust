@@ -89,6 +89,10 @@ pub struct AssetBrowserState {
     pub active: AssetTab,
     pub search: String,
     pub card_size: f32,
+    /// Selected Transitions left-column category ("all" = no filter).
+    pub transition_cat: String,
+    /// Selected Effects left-column category ("all" = no filter).
+    pub effect_cat: String,
     pub plugin_browser: crate::panels::plugin_browser::PluginBrowserState,
 }
 
@@ -97,6 +101,8 @@ impl AssetBrowserState {
         Self {
             active: AssetTab::Media,
             search: String::new(),
+            transition_cat: "all".to_string(),
+            effect_cat: "all".to_string(),
             card_size: 96.0,
             plugin_browser: Default::default(),
         }
@@ -138,6 +144,13 @@ const TRANSITIONS: &[Preset] = &[
         label_key: "asset-transition-fade",
         icon: ph::CIRCLE_HALF,
         color: [120, 90, 160],
+        coming_soon: false,
+    },
+    Preset {
+        id: "fadewhite",
+        label_key: "asset-transition-fadewhite",
+        icon: ph::SUN,
+        color: [220, 220, 230],
         coming_soon: false,
     },
     Preset {
@@ -193,6 +206,20 @@ const TRANSITIONS: &[Preset] = &[
         id: "wipe_r",
         label_key: "asset-transition-wipe_r",
         icon: ph::ARROW_LINE_RIGHT,
+        color: [140, 170, 90],
+        coming_soon: false,
+    },
+    Preset {
+        id: "wipe_u",
+        label_key: "asset-transition-wipe_u",
+        icon: ph::ARROW_LINE_UP,
+        color: [140, 170, 90],
+        coming_soon: false,
+    },
+    Preset {
+        id: "wipe_d",
+        label_key: "asset-transition-wipe_d",
+        icon: ph::ARROW_LINE_DOWN,
         color: [140, 170, 90],
         coming_soon: false,
     },
@@ -402,6 +429,20 @@ const EFFECTS: &[Preset] = &[
         color: [150, 190, 220],
         coming_soon: false,
     },
+    Preset {
+        id: "grain",
+        label_key: "asset-effect-grain",
+        icon: ph::DOTS_THREE,
+        color: [150, 150, 150],
+        coming_soon: false,
+    },
+    Preset {
+        id: "glow",
+        label_key: "asset-effect-glow",
+        icon: ph::LIGHTBULB,
+        color: [240, 220, 160],
+        coming_soon: false,
+    },
 ];
 
 const FILTERS: &[Preset] = &[
@@ -579,6 +620,51 @@ const TEXT_STYLES: &[Preset] = &[
 ];
 
 // ---------------------------------------------------------------------------
+// Categories (left-column filter on Transitions + Effects)
+// ---------------------------------------------------------------------------
+
+/// (category id, FTL label key) for the Transitions left column.
+const TRANSITION_CATS: &[(&str, &str)] = &[
+    ("all", "asset-cat-all"),
+    ("slide", "asset-cat-slide"),
+    ("wipe", "asset-cat-wipe"),
+    ("zoom", "asset-cat-zoom"),
+    ("smooth", "asset-cat-smooth"),
+    ("style", "asset-cat-style"),
+];
+
+/// (category id, FTL label key) for the Effects left column.
+const EFFECT_CATS: &[(&str, &str)] = &[
+    ("all", "asset-cat-all"),
+    ("color", "asset-cat-color"),
+    ("distort", "asset-cat-distort"),
+    ("texture", "asset-cat-texture"),
+    ("motion", "asset-cat-motion"),
+    ("adjust", "asset-cat-adjust"),
+];
+
+/// Map a preset id to its left-column category. Transition and effect
+/// id namespaces do not overlap, so one function covers both tabs.
+/// Unknown ids (filters, text styles) fall into "style"; those tabs
+/// do not filter by category, so the value never surfaces.
+fn preset_category(id: &str) -> &'static str {
+    match id {
+        "slide_l" | "slide_r" | "slide_u" | "slide_d" => "slide",
+        "wipe_l" | "wipe_r" | "wipe_u" | "wipe_d" => "wipe",
+        "zoom_in" | "zoom_out" => "zoom",
+        "smooth_l" | "smooth_r" | "smooth_u" | "smooth_d" => "smooth",
+        "negative" | "rgb_split" | "flash" | "light_leak" | "lens_flare" | "old_film" | "vhs" => {
+            "color"
+        }
+        "glitch" | "mirror" | "kaleido" | "pixelate" => "distort",
+        "grain" | "sketch" | "sparkle" | "particle" => "texture",
+        "shake" | "zoom_pulse" | "ghost" => "motion",
+        "blur" | "sharpen" | "vignette" | "glow" => "adjust",
+        _ => "style",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry
 // ---------------------------------------------------------------------------
 
@@ -642,25 +728,55 @@ pub fn render_tab_content(
             out.media = crate::panels::media_bin::show(ui, project, media_state);
         }
         AssetTab::Transitions => {
-            let clicked = preset_grid(ui, TRANSITIONS, state.card_size, &state.search);
+            let clicked = categorized_grid(
+                ui,
+                TRANSITIONS,
+                TRANSITION_CATS,
+                "trans_cats",
+                &mut state.transition_cat,
+                state.card_size,
+                &state.search,
+            );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Transitions));
             }
         }
         AssetTab::Effects => {
-            let clicked = preset_grid(ui, EFFECTS, state.card_size, &state.search);
+            let clicked = categorized_grid(
+                ui,
+                EFFECTS,
+                EFFECT_CATS,
+                "effect_cats",
+                &mut state.effect_cat,
+                state.card_size,
+                &state.search,
+            );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Effects));
             }
         }
         AssetTab::Filters => {
-            let clicked = preset_grid(ui, FILTERS, state.card_size, &state.search);
+            let clicked = preset_grid(
+                ui,
+                FILTERS,
+                state.card_size,
+                &state.search,
+                None,
+                f32::INFINITY,
+            );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Filters));
             }
         }
         AssetTab::Text => {
-            let clicked = preset_grid(ui, TEXT_STYLES, state.card_size, &state.search);
+            let clicked = preset_grid(
+                ui,
+                TEXT_STYLES,
+                state.card_size,
+                &state.search,
+                None,
+                f32::INFINITY,
+            );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Text));
             }
@@ -678,12 +794,50 @@ pub fn render_tab_content(
     out
 }
 
+/// Left-column category filter with the preset grid on the right.
+/// Used by the Transitions and Effects tabs. Returns the id of a card
+/// that was clicked, if any.
+fn categorized_grid(
+    ui: &mut Ui,
+    presets: &[Preset],
+    cats: &[(&str, &str)],
+    salt: &str,
+    selected: &mut String,
+    card_size: f32,
+    search: &str,
+) -> Option<&'static str> {
+    // Capture the height before entering the horizontal layout:
+    // available_height() reads 0 inside one (§5), and both columns
+    // need an explicit bound for their scroll areas.
+    let h = ui.available_height();
+    let mut clicked: Option<&'static str> = None;
+    ui.horizontal_top(|ui| {
+        egui::ScrollArea::vertical()
+            .id_salt(salt)
+            .max_height(h)
+            .auto_shrink([true, false])
+            .show(ui, |ui| {
+                ui.set_width(104.0);
+                for (id, key) in cats {
+                    ui.selectable_value(selected, (*id).to_string(), tr(key));
+                }
+            });
+        ui.separator();
+        ui.vertical(|ui| {
+            clicked = preset_grid(ui, presets, card_size, search, Some(selected.as_str()), h);
+        });
+    });
+    clicked
+}
+
 /// Grid of preset cards. Returns the id of a card that was clicked, if any.
 fn preset_grid(
     ui: &mut Ui,
     presets: &[Preset],
     card_size: f32,
     search: &str,
+    category: Option<&str>,
+    max_h: f32,
 ) -> Option<&'static str> {
     let mut clicked: Option<&'static str> = None;
     let h_gap = 6.0;
@@ -696,6 +850,16 @@ fn preset_grid(
     let filtered: Vec<&Preset> = presets
         .iter()
         .filter(|p| {
+            // Category first ("none" always stays: it clears the
+            // transition and is not a style). Empty/"all" = no filter.
+            let cat_ok = match category {
+                None => true,
+                Some(c) if c == "all" || c.is_empty() => true,
+                Some(c) => p.id == "none" || preset_category(p.id) == c,
+            };
+            if !cat_ok {
+                return false;
+            }
             if needle.is_empty() {
                 return true;
             }
@@ -711,6 +875,7 @@ fn preset_grid(
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
+        .max_height(max_h)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::new(h_gap, v_gap);
             for row in filtered.chunks(cols) {

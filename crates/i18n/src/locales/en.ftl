@@ -448,8 +448,20 @@ set-appearance-updates-hint = Silent check, once per day. You can skip or snooze
 asset-coming-soon = Coming soon
 
 # Transitions
+asset-cat-all = All
+asset-cat-slide = Slide
+asset-cat-wipe = Wipe
+asset-cat-zoom = Zoom
+asset-cat-smooth = Smooth
+asset-cat-style = Style
+asset-cat-color = Color
+asset-cat-distort = Distortion
+asset-cat-texture = Texture
+asset-cat-motion = Motion
+asset-cat-adjust = Adjust
 asset-transition-none = None
 asset-transition-fade = Fade
+asset-transition-fadewhite = Fade to White
 asset-transition-slide_l = Slide Left
 asset-transition-slide_r = Slide Right
 asset-transition-slide_u = Slide Up
@@ -458,6 +470,8 @@ asset-transition-zoom_in = Zoom In
 asset-transition-zoom_out = Zoom Out
 asset-transition-wipe_l = Wipe Left
 asset-transition-wipe_r = Wipe Right
+asset-transition-wipe_u = Wipe Up
+asset-transition-wipe_d = Wipe Down
 asset-transition-rotate = Rotate
 asset-transition-blur_t = Blur Cut
 asset-transition-dissolve = Dissolve
@@ -489,6 +503,8 @@ asset-effect-negative = Negative
 asset-effect-pixelate = Pixelate
 asset-effect-sketch = Sketch
 asset-effect-sharpen = Sharpen
+asset-effect-grain = Film Grain
+asset-effect-glow = Soft Glow
 
 # Filters
 asset-filter-none = None

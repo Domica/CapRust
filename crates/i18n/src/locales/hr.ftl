@@ -448,8 +448,20 @@ set-appearance-updates-hint = Tiha provjera, jednom dnevno. Možeš preskočiti 
 asset-coming-soon = Uskoro
 
 # Transitions
+asset-cat-all = Sve
+asset-cat-slide = Klizanje
+asset-cat-wipe = Brisanje
+asset-cat-zoom = Zum
+asset-cat-smooth = Glatko
+asset-cat-style = Stil
+asset-cat-color = Boja
+asset-cat-distort = Distorzija
+asset-cat-texture = Tekstura
+asset-cat-motion = Pokret
+asset-cat-adjust = Prilagodba
 asset-transition-none = Bez
 asset-transition-fade = Postupno
+asset-transition-fadewhite = Prijelaz u bijelo
 asset-transition-slide_l = Klizanje lijevo
 asset-transition-slide_r = Klizanje desno
 asset-transition-slide_u = Klizanje gore
@@ -458,6 +470,8 @@ asset-transition-zoom_in = Povećanje
 asset-transition-zoom_out = Smanjenje
 asset-transition-wipe_l = Brisanje lijevo
 asset-transition-wipe_r = Brisanje desno
+asset-transition-wipe_u = Brisanje gore
+asset-transition-wipe_d = Brisanje dolje
 asset-transition-rotate = Rotacija
 asset-transition-blur_t = Zamućeni rez
 asset-transition-dissolve = Pretapanje
@@ -489,6 +503,8 @@ asset-effect-negative = Negativ
 asset-effect-pixelate = Pikselizacija
 asset-effect-sketch = Skica
 asset-effect-sharpen = Izoštravanje
+asset-effect-grain = Zrnatost
+asset-effect-glow = Meki sjaj
 
 # Filters
 asset-filter-none = Bez
