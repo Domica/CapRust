@@ -3734,9 +3734,24 @@ mod tests {
         // them and no shift was computed. Both lists must agree.
         use caprust_core::clip::is_xfade_transition;
         let ids = [
-            "fade", "slide_l", "slide_r", "slide_u", "slide_d", "wipe_l", "wipe_r",
-            "zoom_in", "zoom_out", "rotate", "blur_t", "dissolve", "smooth_l",
-            "smooth_r", "smooth_u", "smooth_d", "circle_close", "pixelize",
+            "fade",
+            "slide_l",
+            "slide_r",
+            "slide_u",
+            "slide_d",
+            "wipe_l",
+            "wipe_r",
+            "zoom_in",
+            "zoom_out",
+            "rotate",
+            "blur_t",
+            "dissolve",
+            "smooth_l",
+            "smooth_r",
+            "smooth_u",
+            "smooth_d",
+            "circle_close",
+            "pixelize",
         ];
         for id in ids {
             assert!(is_xfade_transition(id), "{id} missing from core list");
