@@ -815,6 +815,7 @@ impl CapRustApp {
                 // Scan for missing source files. If any are found, open
                 // the relink dialog on the next update() frame.
                 self.check_missing_media_on_load();
+                self.prune_stale_beat_grids();
                 // Waveform cache may be missing on a freshly-opened project
                 // (different machine) or for media imported before the
                 // waveform pipeline existed. Enqueue what is missing.
@@ -824,6 +825,43 @@ impl CapRustApp {
                 tracing::error!("Load failed: {e}");
                 self.toast_error(format!("{}: {e}", tr("toast-load-failed")));
             }
+        }
+    }
+
+    /// Drop beat grids whose source file changed on disk (size or
+    /// mtime mismatch) or vanished. They recompute on demand via the
+    /// Sound panel button; dropping keeps stale markers off the ruler.
+    /// Same metadata-only spirit as the probe backfills below.
+    fn prune_stale_beat_grids(&mut self) {
+        let stale: Vec<uuid::Uuid> = self
+            .project
+            .beat_grids
+            .iter()
+            .filter(|(id, e)| {
+                let path = match self.project.media.items.iter().find(|m| &m.id == *id) {
+                    Some(m) => m.path.clone(),
+                    None => return true,
+                };
+                match std::fs::metadata(&path) {
+                    Ok(md) => {
+                        let mtime = md
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        md.len() != e.source_len_bytes || mtime != e.source_mtime_secs
+                    }
+                    Err(_) => true,
+                }
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &stale {
+            self.project.beat_grids.remove(id);
+        }
+        if !stale.is_empty() {
+            tracing::info!("beat: pruned {} stale grids", stale.len());
         }
     }
 
@@ -4006,6 +4044,49 @@ impl CapRustApp {
                             }
                         }
                         t += interval_ms;
+                    }
+                    // Beat markers for analysed audio clips. Media-time
+                    // beats map onto the timeline through the clip offset;
+                    // speed-ramped clips are skipped (timing no longer
+                    // matches). Skipped when nothing is stored: no grid,
+                    // no markers.
+                    {
+                        let accent = theme_snapshot.accent_color();
+                        for clip in &self.project.clips {
+                            let mid = match clip.media_id {
+                                Some(id) => id,
+                                None => continue,
+                            };
+                            let entry = match self.project.beat_grids.get(&mid) {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            if (clip.speed - 1.0).abs() > 0.01 {
+                                continue;
+                            }
+                            let clip_end =
+                                clip.start_time_ms.saturating_add(clip.duration_ms);
+                            for &b in &entry.beats_ms {
+                                let t = clip
+                                    .start_time_ms
+                                    .saturating_add(b)
+                                    .saturating_sub(clip.source_offset_ms);
+                                if t < clip.start_time_ms || t > clip_end {
+                                    continue;
+                                }
+                                let x = ruler_rect.left() + t as f32 * px_per_ms - scroll_x;
+                                if x < ruler_rect.left() || x > ruler_rect.right() {
+                                    continue;
+                                }
+                                rp.line_segment(
+                                    [
+                                        egui::Pos2::new(x, ruler_rect.top() + 2.0),
+                                        egui::Pos2::new(x, ruler_rect.top() + 9.0),
+                                    ],
+                                    egui::Stroke::new(1.5_f32, accent),
+                                );
+                            }
+                        }
                     }
                     let ph_x = ruler_rect.left() + self.playhead_ms as f32 * px_per_ms - scroll_x;
                     let ph_visible = ph_x >= ruler_rect.left() && ph_x <= ruler_rect.right();
