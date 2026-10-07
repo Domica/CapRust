@@ -826,9 +826,11 @@ fn categorized_grid(
             .auto_shrink([true, false])
             .show(ui, |ui| {
                 ui.set_width(104.0);
-                for (id, key) in cats {
-                    ui.selectable_value(selected, (*id).to_string(), tr(key));
-                }
+                ui.vertical(|ui| {
+                    for (id, key) in cats {
+                        ui.selectable_value(selected, (*id).to_string(), tr(key));
+                    }
+                });
             });
         ui.separator();
         ui.vertical(|ui| {
