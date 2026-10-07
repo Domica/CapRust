@@ -180,6 +180,38 @@ pub struct CaptionSegment {
     pub words: Vec<WordTiming>,
 }
 
+/// One caption cue window in absolute project milliseconds. Shared by
+/// the render overlap clamp and the SRT writer so both agree on what
+/// "no overlap" means.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueWindow {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+/// Sort by start; clamp each end to the next start; drop fully covered
+/// and empty windows. Whisper segments routinely overlap in time and
+/// unclamped windows render as stacked rows (preview and export share
+/// the same plan, so one fix covers both).
+pub fn normalize_cue_windows(mut cues: Vec<CueWindow>) -> Vec<CueWindow> {
+    cues.retain(|c| !c.text.trim().is_empty() && c.end_ms > c.start_ms);
+    cues.sort_by_key(|c| (c.start_ms, c.end_ms));
+    let mut out: Vec<CueWindow> = Vec::with_capacity(cues.len());
+    for mut c in cues {
+        if let Some(last) = out.last() {
+            if c.start_ms < last.end_ms {
+                if c.end_ms <= last.end_ms {
+                    continue;
+                }
+                c.start_ms = last.end_ms;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EffectInstance {
     pub effect_id: String,
@@ -989,3 +1021,37 @@ mod chroma_key_tests {
 /// memory on 1080p30 approaches 6 GB at 60 s. Enforced in
 /// clip_properties; the render layer accepts any duration.
 pub const REVERSE_MAX_SEC: f64 = 60.0;
+
+#[cfg(test)]
+mod cue_window_tests {
+    use super::*;
+
+    fn cue(start_ms: u64, end_ms: u64, text: &str) -> CueWindow {
+        CueWindow {
+            start_ms,
+            end_ms,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn overlapping_windows_clamp_to_next_start() {
+        let out = normalize_cue_windows(vec![cue(0, 1000, "a"), cue(800, 2000, "b")]);
+        assert_eq!(out.len(), 2);
+        assert_eq!((out[0].start_ms, out[0].end_ms), (0, 1000));
+        assert_eq!((out[1].start_ms, out[1].end_ms), (1000, 2000));
+    }
+
+    #[test]
+    fn fully_covered_empty_and_zero_windows_drop() {
+        let out = normalize_cue_windows(vec![
+            cue(0, 1000, "a"),
+            cue(200, 500, "b"),
+            cue(1000, 1000, "c"),
+            cue(1000, 2000, "  "),
+            cue(1000, 2000, "d"),
+        ]);
+        let texts: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, vec!["a", "d"]);
+    }
+}

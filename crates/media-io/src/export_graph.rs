@@ -180,6 +180,53 @@ fn build_caption_drawtext_body(
     )
 }
 
+/// Clamp overlapping caption enable windows so stacked rows cannot
+/// appear. Whisper segments routinely overlap in time (segment N ends
+/// after segment N+1 starts), but enable windows were only ever
+/// clamped *within* a segment (next word), never *across* segments —
+/// two drawtexts then rendered different accumulated text at the same
+/// y simultaneously. Only caption-style clips are touched;
+/// TextOverlay clips may overlap intentionally. Fully covered windows
+/// are dropped. Must run before text_end_sec is computed.
+fn normalize_caption_text_clips(clips: &mut Vec<TextClip>) {
+    let mut idx: Vec<usize> = clips
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.caption_style.is_some())
+        .map(|(i, _)| i)
+        .collect();
+    idx.sort_by(|&a, &b| {
+        clips[a]
+            .timeline_start_sec
+            .partial_cmp(&clips[b].timeline_start_sec)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut remove = vec![false; clips.len()];
+    let mut last_end = f64::NEG_INFINITY;
+    for i in idx {
+        let start = clips[i].timeline_start_sec;
+        let end = start + clips[i].duration_sec;
+        if start < last_end {
+            if end <= last_end {
+                remove[i] = true;
+                continue;
+            }
+            clips[i].timeline_start_sec = last_end;
+            clips[i].duration_sec = end - last_end;
+        }
+        last_end = last_end.max(end);
+    }
+    if remove.iter().any(|&d| d) {
+        let mut kept = Vec::with_capacity(clips.len());
+        for (i, t) in std::mem::take(clips).into_iter().enumerate() {
+            if !remove[i] {
+                kept.push(t);
+            }
+        }
+        *clips = kept;
+    }
+}
+
 fn build_text_effect_opts(effect: Option<&caprust_core::clip::TextEffect>) -> String {
     use caprust_core::clip::TextEffectKind;
     let Some(e) = effect else {
@@ -2971,6 +3018,7 @@ pub fn plan_from_project(
         .iter()
         .map(|c| c.timeline_start_sec + c.duration_sec)
         .fold(0.0_f64, f64::max);
+    normalize_caption_text_clips(&mut text_clips);
     let text_end_sec = text_clips
         .iter()
         .map(|c| c.timeline_start_sec + c.duration_sec)
@@ -4572,5 +4620,42 @@ mod reverse_filtergraph_tests {
     fn no_reverse_audio_means_no_areverse() {
         let (fg, _, _) = base_plan_audio(false).build_filtergraph().unwrap();
         assert!(!fg.contains("areverse"), "no reverse -> no areverse: {fg}");
+    }
+
+    #[test]
+    fn overlapping_caption_windows_normalize() {
+        use caprust_core::clip::{CaptionPosition, CaptionStyle, TextMotion};
+        fn cap(start: f64, dur: f64) -> TextClip {
+            TextClip {
+                content: "x".into(),
+                font_size: 32.0,
+                timeline_start_sec: start,
+                duration_sec: dur,
+                above: false,
+                z_order: 0,
+                style: "caption".into(),
+                motion: TextMotion::default(),
+                effect: None,
+                caption_style: Some(CaptionStyle {
+                    font_size: 32.0,
+                    position: CaptionPosition::Bottom,
+                    color: [255, 255, 0],
+                    outline_color: [0, 0, 0],
+                    outline_width: 2.0,
+                    bg_enabled: false,
+                    bg_opacity: 0.8,
+                }),
+            }
+        }
+        let mut plain = cap(0.9, 0.05);
+        plain.caption_style = None;
+        let mut v = vec![cap(0.0, 1.0), cap(0.8, 1.2), plain];
+        normalize_caption_text_clips(&mut v);
+        assert_eq!(v.len(), 3);
+        assert!((v[0].timeline_start_sec - 0.0).abs() < 1e-9);
+        assert!((v[0].duration_sec - 1.0).abs() < 1e-9);
+        assert!((v[1].timeline_start_sec - 1.0).abs() < 1e-9);
+        assert!((v[1].duration_sec - 1.0).abs() < 1e-9);
+        assert!((v[2].timeline_start_sec - 0.9).abs() < 1e-9);
     }
 }
