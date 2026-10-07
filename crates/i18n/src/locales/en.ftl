@@ -10,6 +10,7 @@ menu-file-save = Save Project
 menu-file-save-as = Save As…
 menu-file-import = Import Media…
 menu-file-export = Export…
+menu-file-export-subtitles = Export subtitles…
 menu-file-record-screen = Record screen
 screen-record-title = Screen recording
 screen-record-loading = Loading monitors...
@@ -333,6 +334,9 @@ exp-color-range = Color range
 exp-button =  Export
 exp-open-folder = Open folder
 exp-dismiss = Dismiss
+exp-subtitles = Subtitles
+exp-subtitles-srt = Export subtitles (.srt)
+exp-srt-done = Subtitles saved
 
 # Settings dialog
 set-title = Settings

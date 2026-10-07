@@ -10,6 +10,7 @@ menu-file-save = Spremi projekt
 menu-file-save-as = Spremi kao…
 menu-file-import = Uvezi medije…
 menu-file-export = Izvezi…
+menu-file-export-subtitles = Izvezi titlove…
 menu-file-record-screen = Snimi ekran
 screen-record-title = Snimanje ekrana
 screen-record-loading = Ucitavanje monitora...
@@ -333,6 +334,9 @@ exp-color-range = Raspon boja
 exp-button =  Izvezi
 exp-open-folder = Otvori mapu
 exp-dismiss = Odbaci
+exp-subtitles = Titlovi
+exp-subtitles-srt = Izvezi titlove (.srt)
+exp-srt-done = Titlovi spremljeni
 
 # Settings dialog
 set-title = Postavke

@@ -1401,6 +1401,26 @@ impl CapRustApp {
                         self.export_open = true;
                         ui.close_menu();
                     }
+                    if ui.button(tr("menu-file-export-subtitles")).clicked() {
+                        if let Some(f) = rfd::FileDialog::new()
+                            .add_filter("SubRip subtitles", &["srt"])
+                            .set_file_name(format!("{}.srt", self.project.name))
+                            .save_file()
+                        {
+                            let mut p = f.clone();
+                            if p.extension().is_none() {
+                                p.set_extension("srt");
+                            }
+                            match Self::write_srt_file(&self.project.clips, &p) {
+                                Ok(n) => self.toast(format!("{} ({n})", tr("exp-srt-done"))),
+                                Err(e) => {
+                                    tracing::error!("srt export failed: {e}");
+                                    self.toast_error(format!("{}: {e}", tr("toast-export-failed")));
+                                }
+                            }
+                        }
+                        ui.close_menu();
+                    }
                     #[cfg(windows)]
                     if ui.button(tr("menu-file-record-screen")).clicked() {
                         self.screen_record_open = true;
@@ -8124,6 +8144,16 @@ impl CapRustApp {
         }
     }
 
+    /// Collect normalized caption cues from the project and write
+    /// them as SubRip. Returns the cue count. Used by File → Export
+    /// subtitles and by the export dialog switch.
+    fn write_srt_file(clips: &[Clip], dest: &std::path::Path) -> std::io::Result<usize> {
+        let cues = caprust_core::clip::collect_caption_cues(clips);
+        let srt = caprust_core::clip::cues_to_srt(&cues);
+        std::fs::write(dest, srt)?;
+        Ok(cues.len())
+    }
+
     fn start_export(&mut self) {
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
             tracing::error!("export: ffmpeg not detected");
@@ -8244,6 +8274,16 @@ impl CapRustApp {
                     self.export_in_progress = false;
                     self.export_tracker = None;
                     self.export_finished_path = Some(output.to_string_lossy().to_string());
+                    if self.export_state.subtitles_srt {
+                        let srt_path = std::path::PathBuf::from(&output).with_extension("srt");
+                        match Self::write_srt_file(&self.project.clips, &srt_path) {
+                            Ok(n) => self.toast(format!("{} ({n})", tr("exp-srt-done"))),
+                            Err(e) => {
+                                tracing::error!("srt sidecar failed: {e}");
+                                self.toast_error(format!("{}: {e}", tr("toast-export-failed")));
+                            }
+                        }
+                    }
                 }
                 ExportEvent::Failed(msg) => {
                     tracing::error!("export failed: {msg}");

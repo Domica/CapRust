@@ -212,6 +212,53 @@ pub fn normalize_cue_windows(mut cues: Vec<CueWindow>) -> Vec<CueWindow> {
     out
 }
 
+/// Format cue windows as SubRip (.srt). Input is assumed normalized;
+/// each cue becomes its index, `HH:MM:SS,mmm --> ...`, text, blank line.
+pub fn cues_to_srt(cues: &[CueWindow]) -> String {
+    fn ts(ms: u64) -> String {
+        format!(
+            "{:02}:{:02}:{:02},{:03}",
+            ms / 3_600_000,
+            ms / 60_000 % 60,
+            ms / 1_000 % 60,
+            ms % 1_000
+        )
+    }
+    let mut out = String::new();
+    for (i, c) in cues.iter().enumerate() {
+        out.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            i + 1,
+            ts(c.start_ms),
+            ts(c.end_ms),
+            c.text.trim()
+        ));
+    }
+    out
+}
+
+/// Collect caption cues from project clips in absolute project
+/// milliseconds, normalized (no overlaps). Render equivalent lives in
+/// export_graph (same rule); times here are raw timeline positions.
+pub fn collect_caption_cues(clips: &[Clip]) -> Vec<CueWindow> {
+    let mut cues = Vec::new();
+    for c in clips {
+        if let ClipType::Captions { segments, .. } = &c.clip_type {
+            for seg in segments {
+                if seg.text.trim().is_empty() {
+                    continue;
+                }
+                cues.push(CueWindow {
+                    start_ms: c.start_time_ms.saturating_add(seg.start_ms),
+                    end_ms: c.start_time_ms.saturating_add(seg.end_ms),
+                    text: seg.text.clone(),
+                });
+            }
+        }
+    }
+    normalize_cue_windows(cues)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EffectInstance {
     pub effect_id: String,
@@ -1053,5 +1100,20 @@ mod cue_window_tests {
         ]);
         let texts: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, vec!["a", "d"]);
+    }
+
+    #[test]
+    fn srt_formats_index_timestamps_and_text() {
+        let out = cues_to_srt(&[cue(0, 1000, "hello"), cue(3723004, 3724999, "world")]);
+        assert_eq!(
+            out,
+            "1\n00:00:00,000 --> 00:00:01,000\nhello\n\n\
+             2\n01:02:03,004 --> 01:02:04,999\nworld\n\n"
+        );
+    }
+
+    #[test]
+    fn srt_empty_is_empty() {
+        assert_eq!(cues_to_srt(&[]), "");
     }
 }

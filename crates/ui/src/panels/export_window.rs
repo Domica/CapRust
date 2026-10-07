@@ -3,6 +3,7 @@
 use crate::i18n_helper::tr;
 use crate::theme::tokens::space;
 use crate::widgets::button;
+use crate::widgets::switch;
 use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
 use egui::Ui;
 use std::path::{Path, PathBuf};
@@ -42,6 +43,8 @@ impl ColorRange {
 #[derive(Debug, Clone)]
 pub struct ExportState {
     pub destination: String,
+    /// Write a .srt sidecar next to the video on export.
+    pub subtitles_srt: bool,
     pub resolution: ExportResolution,
     pub frame_rate: ExportFrameRate,
     pub codec: caprust_core::project::VideoEncoder,
@@ -90,6 +93,7 @@ impl Default for ExportState {
     fn default() -> Self {
         Self {
             destination: default_videos_dir(),
+            subtitles_srt: false,
             resolution: ExportResolution::FullHd,
             frame_rate: ExportFrameRate::Original,
             codec: caprust_core::project::VideoEncoder::H264Cpu,
@@ -243,6 +247,13 @@ pub fn show(
             .color(egui::Color32::from_gray(160)),
     );
 
+    ui.add_space(space::L);
+    ui.separator();
+
+    // --- Subtitles ---
+    ui.label(egui::RichText::new(tr("exp-subtitles")).strong());
+    ui.add_space(space::XS);
+    switch::switch_labeled(ui, &mut state.subtitles_srt, tr("exp-subtitles-srt"));
     ui.add_space(space::L);
     ui.separator();
 
