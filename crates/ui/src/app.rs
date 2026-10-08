@@ -3,7 +3,7 @@ use crate::media_jobs::JobRunner;
 use crate::panels::asset_browser::AssetBrowserState;
 use crate::panels::clip_properties::{PendingEdit, PropertiesState};
 use crate::panels::export_window::ExportState;
-use crate::panels::media_bin::{MediaBinState, PreviewSize, TabLayout};
+use crate::panels::media_bin::{MediaBinLayout, MediaBinState, PreviewSize, TabLayout};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
 use crate::theme::tokens::{anim, elev, radius, space, text};
@@ -622,6 +622,19 @@ impl CapRustApp {
             .and_then(|s| s.get_string("recent"))
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
+        // Media-bin layout (tab mode + sidebar width) is persisted
+        // across sessions; without this the View → Tab layout toggle
+        // always reverted to "No filter" on the next launch.
+        let media_bin_layout: MediaBinLayout = cc
+            .storage
+            .and_then(|s| s.get_string("media_bin_layout"))
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let media_bin = MediaBinState {
+            tab_layout: media_bin_layout.tab_layout,
+            sidebar_width: media_bin_layout.sidebar_width,
+            ..MediaBinState::default()
+        };
         let update_rx = spawn_update_check(&settings);
         Self {
             mode: AppMode::StartScreen,
@@ -634,9 +647,9 @@ impl CapRustApp {
             export_open: false,
             export_state: ExportState::default(),
             available_encoders: None,
-            media_bin: MediaBinState::default(),
+            media_bin,
             preview_size: PreviewSize::Medium,
-            tab_layout: TabLayout::default(),
+            tab_layout: media_bin_layout.tab_layout,
             timeline_tools: TimelineToolState::default(),
             playhead_ms: 0,
             timeline_zoom: 1.0,
@@ -9800,6 +9813,12 @@ impl eframe::App for CapRustApp {
         }
         if let Ok(json) = serde_json::to_string(&self.recent) {
             storage.set_string("recent", json);
+        }
+        if let Ok(json) = serde_json::to_string(&MediaBinLayout {
+            tab_layout: self.media_bin.tab_layout,
+            sidebar_width: self.media_bin.sidebar_width,
+        }) {
+            storage.set_string("media_bin_layout", json);
         }
     }
 }

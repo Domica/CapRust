@@ -271,6 +271,24 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color32 {
 // State
 // ---------------------------------------------------------------------------
 
+/// Persisted media-bin layout: which tab mode is active and how wide the
+/// filter sidebar is. Saved/restored across sessions via eframe::Storage
+/// under the "media_bin_layout" key.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MediaBinLayout {
+    pub tab_layout: TabLayout,
+    pub sidebar_width: f32,
+}
+
+impl Default for MediaBinLayout {
+    fn default() -> Self {
+        Self {
+            tab_layout: TabLayout::default(),
+            sidebar_width: 110.0,
+        }
+    }
+}
+
 pub struct MediaBinState {
     pub sort: MediaSort,
     pub sort_dir: SortDirection,
