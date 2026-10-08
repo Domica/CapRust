@@ -14,7 +14,7 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ### Fixed
 
-- **Save frame output path escaping.** Fixed exit code -22 (EINVAL) on Windows paths with spaces/colons by using same escaping as filter inputs.
+- **Save Frame EINVAL fix.** Save Frame exited with ffmpeg code -22 ("Error binding filtergraph inputs/outputs: Invalid argument"): the single-frame render built the full filtergraph (video + audio chain) but mapped only the video output, leaving the `[a_final]` audio label unconnected. Single-frame capture now renders a video-only filtergraph and writes the PNG with `-update 1`.
 - **Timeline overlay test for three-color waveform.** Fixed test assertions to match new positive/negative/center line rendering (previous test expected single-color polyline).
 - **Crossing detection logic.** Only triggers on actual sign changes (pos→neg or neg→pos), not when either value is exactly 0.
 

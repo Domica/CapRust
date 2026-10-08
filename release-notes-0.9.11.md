@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- **Save frame output path escaping.** Fixed exit code -22 (EINVAL) on Windows paths with spaces/colons by using same escaping as filter inputs.
+- **Save Frame EINVAL fix.** Save Frame exited with ffmpeg code -22 ("Error binding filtergraph inputs/outputs: Invalid argument"): the single-frame render built the full filtergraph (video + audio chain) but mapped only the video output, leaving the `[a_final]` audio label unconnected. Single-frame capture now renders a video-only filtergraph and writes the PNG with `-update 1`.
 - **Timeline overlay test for three-color waveform.** Fixed test assertions to match new positive/negative/center line rendering (previous test expected single-color polyline).
 - **Crossing detection logic.** Only triggers on actual sign changes (pos→neg or neg→pos), not when either value is exactly 0.
 
@@ -26,5 +26,5 @@
 
 ## SHA256
 
-- `CapRust-0.9.11-win64-setup.exe`: `05fb73ac52bb2d3f25a7130014c6eb7ea96e1d02e2855e278d5fab0aa1417eb0`
-- `caprust-nightly-linux.zip`: `cef298ec533c0c726fe490f4d6677bde38b9db702049b9d35ba2606f4c2a2b81`
+- `CapRust-0.9.11-win64-setup.exe`: `c977aa3253b4a57ca9f7bd8eef92ff8e5b3054f45784ca1aa7cd250aab097f24`
+- `caprust-nightly-linux.zip`: `1ecced617f5e5b929661e711503a0de17340e0333b28d4e6295eb6d0be1fd3f2`
