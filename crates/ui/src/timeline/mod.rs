@@ -164,6 +164,7 @@ fn contributes_audio(
 /// - `positive_color`: dB > 0 (above 0 dB, typically green)
 /// - `negative_color`: dB < 0 (below 0 dB, typically orange)
 /// - `center_color`: 0 dB reference line (subtle white)
+#[allow(clippy::too_many_arguments)]
 pub fn draw_audio_envelope(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -211,7 +212,7 @@ pub fn draw_audio_envelope(
     let mut pos_points = Vec::new();
     let mut neg_points = Vec::new();
     let mut last_frac = None;
-    let mut last_db = None;
+    let mut last_db: Option<f32> = None;
 
     for &(frac, db) in samples_db {
         let x = rect.left() + frac * rect.width();
@@ -232,12 +233,13 @@ pub fn draw_audio_envelope(
             let crossed = (prev_db > 0.0 && db < 0.0) || (prev_db < 0.0 && db > 0.0);
             if crossed {
                 // Linear interpolation to find crossing point at 0 dB
-                let db_f32 = db as f32;
-                let prev_db_f32 = prev_db as f32;
-                let t = if (db_f32 - prev_db_f32).abs() > f32::EPSILON {
-                    -prev_db_f32 / (db_f32 - prev_db_f32)
-                } else {
-                    0.5_f32
+                let t: f32 = {
+                    let diff: f32 = db - prev_db;
+                    if diff.abs() > f32::EPSILON {
+                        -prev_db / diff
+                    } else {
+                        0.5_f32
+                    }
                 };
                 let cross_x = rect.left() + (prev_frac + t * (frac - prev_frac)) * rect.width();
                 let cross_pt = egui::pos2(cross_x, center_y);
@@ -536,19 +538,6 @@ mod overlay_tests {
 
         // The test samples are all at or below 0 dB: [(0.0, 0.0), (0.5, 0.0), (1.0, -60.0)]
         // So positive line only has the center crossing points (at 0 dB), negative line has all points.
-        fn get_stroke_color(stroke: &PathStroke) -> Option<Color32> {
-            // Stroke color can be Solid or Premultiplied; try to extract RGB regardless of mode
-            fn color_from_mode(mode: &ColorMode) -> Option<Color32> {
-                match mode {
-                    ColorMode::Solid(c) => Some(c),
-                    // ColorMode doesn't have Premultiplied in egui 0.31, but check anyway
-                    #[allow(unreachable_patterns)]
-                    ColorMode::Premultiplied(c) => Some(c),
-                    _ => None,
-                }
-            }
-            color_from_mode(&stroke.color)
-        }
         fn stroke_is(color: Color32, stroke: &PathStroke) -> bool {
             matches!(stroke.color, ColorMode::Solid(c) if c == color)
         }
@@ -592,18 +581,18 @@ mod overlay_tests {
             );
         }
 
-        // Also verify center line exists (0 dB reference) - it's drawn with semi-transparent white
+        // Also verify center line exists (0 dB reference) - it's a horizontal line at center_y
+        let center_y = full.bottom() - db_to_normalized_y(0.0).clamp(0.0, 1.0) * full.height();
         let center_line = shapes.iter().find_map(|s| match &s.shape {
-            egui::Shape::Path(l)
-                if {
-                    if let Some(c) = get_stroke_color(&l.stroke) {
-                        c.r() == 255 && c.g() == 255 && c.b() == 255 && c.a() < 255
-                    } else {
-                        false
-                    }
-                } =>
-            {
-                Some(l.points.clone())
+            egui::Shape::Path(l) => {
+                let is_horizontal = l.points.len() >= 2
+                    && (l.points.first().unwrap().y - center_y).abs() < 1.0
+                    && (l.points.last().unwrap().y - center_y).abs() < 1.0;
+                if is_horizontal {
+                    Some(l.points.clone())
+                } else {
+                    None
+                }
             }
             _ => None,
         });
