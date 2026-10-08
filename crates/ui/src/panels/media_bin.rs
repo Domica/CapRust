@@ -7,7 +7,7 @@ use crate::widgets::empty;
 use crate::widgets::segmented_control;
 use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
-use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
+use egui::{Color32, CursorIcon, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as ph;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -257,6 +257,8 @@ pub struct MediaBinState {
     /// Clear-all confirm modal is open. Set by the Clear all button,
     /// cleared on either choice.
     pub confirm_clear: bool,
+    /// Left sidebar width in pixels (persisted per session).
+    pub sidebar_width: f32,
 }
 
 impl Default for MediaBinState {
@@ -269,6 +271,7 @@ impl Default for MediaBinState {
             thumb_cache: ThumbnailCache::default(),
             selected_media: Vec::new(),
             confirm_clear: false,
+            sidebar_width: 110.0,
         }
     }
 }
@@ -291,282 +294,116 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     let mut newly_imported: Vec<Uuid> = Vec::new();
     let mut skipped_duplicates: usize = 0;
     let mut clear_requested = false;
-    // horizontal_wrapped so a narrow dock zone reflows to two rows
-    // instead of clipping the trailing buttons.
-    ui.horizontal_wrapped(|ui| {
-        if button::secondary(ui, tr("media-import-clips")).clicked() {
-            let (ids, dup) = import_with(project, VIDEO_EXTS, "Video");
-            newly_imported.extend(ids);
-            skipped_duplicates += dup;
-        }
-        if button::secondary(ui, tr("media-import-music")).clicked() {
-            let (ids, dup) = import_with(project, AUDIO_EXTS, "Audio");
-            newly_imported.extend(ids);
-            skipped_duplicates += dup;
-        }
-        if button::secondary(ui, tr("media-import-images")).clicked() {
-            let (ids, dup) = import_with(project, IMAGE_EXTS, "Image");
-            newly_imported.extend(ids);
-            skipped_duplicates += dup;
-        }
-        ui.separator();
-        if button::ghost(ui, tr("media-clear-all"))
-            .on_hover_text(tr("media-clear-all-tooltip"))
-            .clicked()
-        {
-            clear_requested = true;
-        }
-    });
-    if clear_requested {
-        state.confirm_clear = true;
-    }
-    if state.confirm_clear {
-        let mut open = true;
-        egui::Window::new(tr("media-clear-confirm-title"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ui.ctx(), |ui| {
-                ui.label(tr("media-clear-confirm-body"));
-                ui.add_space(space::M);
-                ui.horizontal(|ui| {
-                    if button::secondary(ui, tr("cancel")).clicked() {
-                        state.confirm_clear = false;
-                    }
-                    if button::primary(ui, tr("yes")).clicked() {
-                        project.media.items.clear();
-                        tracing::info!("media library cleared");
-                        state.confirm_clear = false;
-                    }
-                });
-            });
-        if !open {
-            state.confirm_clear = false;
-        }
-    }
 
-    ui.separator();
+    // Capture height for sidebar layout
+    let h = ui.available_height();
+    let mut sidebar_w = state.sidebar_width;
+    let mut result: Option<MediaBinOutput> = None;
 
-    // --- Sort + size controls ---
-    ui.horizontal_wrapped(|ui| {
-        egui::ComboBox::from_id_salt("media_sort")
-            .selected_text(format!(
-                "{} {}",
-                tr("media-sort-label"),
-                tr(&format!("media-sort-{}", state.sort.key()))
-            ))
-            .width(110.0) // sort combo; component-specific
-            .show_ui(ui, |ui| {
-                for s in MediaSort::all() {
-                    ui.selectable_value(&mut state.sort, s, tr(&format!("media-sort-{}", s.key())));
-                }
-            });
-        // Sort direction toggle
-        let dir_icon = state.sort_dir.icon();
-        if button::icon(
-            ui,
-            dir_icon,
-            &tr(&format!("media-sort-dir-{}", state.sort_dir.key())),
-        )
-        .clicked()
-        {
-            state.sort_dir = state.sort_dir.flipped();
-        }
-        ui.separator();
-        ui.label(tr("media-filter-label"));
-        egui::ComboBox::from_id_salt("media_filter")
-            .selected_text(state.filter.label())
-            .width(90.0) // filter combo; component-specific
-            .show_ui(ui, |ui| {
-                for f in MediaFilter::all() {
-                    ui.selectable_value(
-                        &mut state.filter,
-                        f,
-                        tr(&format!("media-filter-{}", f.key())),
+    ui.horizontal_top(|ui| {
+        // Left sidebar: filter, sort, size picker
+        let _sidebar_resp = egui::ScrollArea::vertical()
+            .id_salt("media_bin_sidebar")
+            .max_height(h)
+            .auto_shrink([true, false])
+            .show(ui, |ui| {
+                ui.set_min_width(90.0);
+                ui.set_max_width(200.0);
+                ui.set_width(sidebar_w);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(tr("media-bin-sidebar-title"))
+                            .strong()
+                            .size(11.0),
                     );
-                }
-            });
-        ui.separator();
-        ui.label(tr("media-size-label"));
-        let all = [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large];
-        let labels: Vec<_> = all.iter().map(|s| s.label()).collect();
-        let selected = all.iter().position(|s| *s == state.preview).unwrap_or(1);
-        let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
-        if let Some(i) = clicked {
-            if i != selected {
-                state.preview = all[i];
-            }
-        }
-    });
+                    ui.add_space(space::XS);
+                    ui.separator();
 
-    ui.separator();
-
-    // --- Sorted item list ---
-    let mut sorted: Vec<MediaItem> = project
-        .media
-        .items
-        .iter()
-        .filter(|m| state.filter.matches(m.kind))
-        .cloned()
-        .collect();
-    match state.sort {
-        MediaSort::Added => sorted.sort_by_key(|m| m.added_at),
-        MediaSort::Name => sorted.sort_by_key(|m| a_lower(&m.name)),
-        MediaSort::Type => sorted.sort_by(|a, b| {
-            kind_rank(a.kind)
-                .cmp(&kind_rank(b.kind))
-                .then_with(|| a.name.cmp(&b.name))
-        }),
-    }
-
-    if state.sort_dir == SortDirection::Descending {
-        sorted.reverse();
-    }
-
-    if sorted.is_empty() {
-        empty::placeholder_with(ui, |ui| {
-            ui.label(
-                RichText::new("No media imported yet.")
-                    .italics()
-                    .color(Color32::from_gray(120)),
-            );
-            ui.label(
-                RichText::new("Click Clips / Music / Images above.")
-                    .small()
-                    .color(Color32::from_gray(90)),
-            );
-        });
-        return MediaBinOutput {
-            dragging: None,
-            newly_imported,
-            remove_requested: Vec::new(),
-            skipped_duplicates,
-        };
-    }
-
-    // --- Dynamic column layout ---
-    let card_w = state.preview.card_w();
-    let thumb_h = state.preview.thumb_h();
-    let h_gap = space::S;
-    let v_gap = space::S;
-    let scrollbar_reserve = space::XL;
-    let avail = (ui.available_width() - scrollbar_reserve).max(card_w);
-
-    // number of columns that fit; at least 1
-    let cols = (((avail + h_gap) / (card_w + h_gap)).floor() as usize).max(1);
-
-    let dragging: Option<Uuid> = None;
-    let mut remove_requested: Vec<Uuid> = Vec::new();
-
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(h_gap, v_gap);
-
-            let project_path_opt: Option<&str> = project.project_path.as_deref();
-            for row in sorted.chunks(cols) {
-                ui.horizontal(|ui| {
-                    for item in row {
-                        let is_selected = state.selected_media.contains(&item.id);
-                        let selected_ids = state.selected_media.clone();
-                        let (resp, should_remove) = draw_card(
-                            ui,
-                            item,
-                            card_w,
-                            thumb_h,
-                            &mut state.thumb_cache,
-                            project_path_opt,
-                            is_selected,
-                            &selected_ids,
-                        );
-                        // Selection: plain click replaces, Ctrl+click
-                        // toggles. Ignore clicks that were actually the
-                        // start of a long-press drag: check if primary
-                        // is still held.
-                        if resp.clicked() {
-                            let ctrl = ui.ctx().input(|i| i.modifiers.ctrl || i.modifiers.command);
-                            if ctrl {
-                                if let Some(pos) =
-                                    state.selected_media.iter().position(|id| *id == item.id)
-                                {
-                                    state.selected_media.remove(pos);
-                                } else {
-                                    state.selected_media.push(item.id);
-                                }
-                            } else {
-                                state.selected_media = vec![item.id];
+                    // Filter
+                    ui.label(tr("media-filter-label"));
+                    egui::ComboBox::from_id_salt("media_filter_sidebar")
+                        .selected_text(state.filter.label())
+                        .width(100.0)
+                        .show_ui(ui, |ui| {
+                            for f in MediaFilter::all() {
+                                ui.selectable_value(
+                                    &mut state.filter,
+                                    f,
+                                    tr(&format!("media-filter-{}", f.key())),
+                                );
                             }
-                        }
-                        if should_remove {
-                            // If the clicked X belongs to a multi-item
-                            // selection, remove every selected item in
-                            // one shot. Otherwise just the clicked one.
-                            if state.selected_media.len() > 1
-                                && state.selected_media.contains(&item.id)
-                            {
-                                for id in state.selected_media.drain(..) {
-                                    remove_requested.push(id);
-                                }
-                            } else {
-                                remove_requested.push(item.id);
-                                state.selected_media.retain(|x| *x != item.id);
+                        });
+                    ui.add_space(space::S);
+
+                    // Sort
+                    ui.label(tr("media-sort-label"));
+                    egui::ComboBox::from_id_salt("media_sort_sidebar")
+                        .selected_text(tr(&format!("media-sort-{}", state.sort.key())))
+                        .width(100.0)
+                        .show_ui(ui, |ui| {
+                            for s in MediaSort::all() {
+                                ui.selectable_value(
+                                    &mut state.sort,
+                                    s,
+                                    tr(&format!("media-sort-{}", s.key())),
+                                );
                             }
+                        });
+                    ui.add_space(space::XS);
+                    // Sort direction toggle
+                    let dir_icon = state.sort_dir.icon();
+                    if button::icon(
+                        ui,
+                        dir_icon,
+                        &tr(&format!("media-sort-dir-{}", state.sort_dir.key())),
+                    )
+                    .clicked()
+                    {
+                        state.sort_dir = state.sort_dir.flipped();
+                    }
+                    ui.add_space(space::S);
+
+                    // Preview size (S/M/L)
+                    ui.label(tr("media-size-label"));
+                    let all = [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large];
+                    let labels: Vec<_> = all.iter().map(|s| s.label()).collect();
+                    let selected = all.iter().position(|s| *s == state.preview).unwrap_or(1);
+                    let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+                    if let Some(i) = clicked {
+                        if i != selected {
+                            state.preview = all[i];
                         }
                     }
                 });
-            }
-        });
-
-    // Drag preview badge: shows how many items are being dragged,
-    // following the cursor. egui's DnD does not auto-render a
-    // preview for typed payloads, so draw one here.
-    if let Some(payload) = egui::DragAndDrop::payload::<Vec<uuid::Uuid>>(ui.ctx()) {
-        let n = payload.len();
-        if n > 0 {
-            if let Some(p) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                let text = if n == 1 {
-                    tr("media-drag-one").to_string()
-                } else {
-                    format!("{} {}", n, tr("media-drag-many"))
-                };
-                let painter = ui.ctx().layer_painter(egui::LayerId::new(
-                    egui::Order::Tooltip,
-                    egui::Id::new("media_drag_badge"),
-                ));
-                let font = egui::FontId::proportional(text::S);
-                let galley = painter.layout_no_wrap(text, font, egui::Color32::WHITE);
-                let pad = space::S;
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(p.x + 12.0, p.y + 12.0),
-                    egui::vec2(galley.size().x + pad * 2.0, galley.size().y + pad),
-                );
-                painter.rect_filled(
-                    rect,
-                    radius::cr(radius::SM),
-                    egui::Color32::from_rgba_unmultiplied(30, 30, 40, 220),
-                );
-                painter.rect_stroke(
-                    rect,
-                    radius::cr(radius::SM),
-                    egui::Stroke::new(elev::STROKE_HAIRLINE, egui::Color32::from_gray(120)),
-                    egui::StrokeKind::Inside,
-                );
-                painter.galley(
-                    egui::pos2(rect.left() + pad, rect.top() + pad / 2.0),
-                    galley,
-                    egui::Color32::WHITE,
-                );
-            }
+            });
+        // Drag handle to resize sidebar
+        let sep_resp = ui.allocate_response(Vec2::new(4.0, h), Sense::drag());
+        if sep_resp.dragged() {
+            sidebar_w = (sidebar_w + sep_resp.drag_delta().x).clamp(90.0, 200.0);
         }
-    }
+        sep_resp.on_hover_cursor(CursorIcon::ResizeHorizontal);
+        ui.separator();
 
-    MediaBinOutput {
-        dragging,
-        newly_imported,
-        remove_requested,
-        skipped_duplicates,
-    }
+        // Right: import + grid
+        result = Some(
+            ui.vertical(|ui| {
+                import_and_grid_ui(
+                    ui,
+                    project,
+                    state,
+                    &mut newly_imported,
+                    &mut skipped_duplicates,
+                    &mut clear_requested,
+                )
+            })
+            .inner,
+        );
+    });
+
+    // Save sidebar width
+    state.sidebar_width = sidebar_w;
+
+    result.unwrap()
 }
 
 fn a_lower(s: &str) -> String {
@@ -890,6 +727,231 @@ fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> (Vec<U
         }
     }
     (new_ids, skipped)
+}
+
+/// Right side: import buttons + sorted grid. Extracted from `show`
+/// so the sidebar layout can call it without duplication.
+fn import_and_grid_ui(
+    ui: &mut Ui,
+    project: &mut ProjectState,
+    state: &mut MediaBinState,
+    newly_imported: &mut Vec<Uuid>,
+    skipped_duplicates: &mut usize,
+    clear_requested: &mut bool,
+) -> MediaBinOutput {
+    // --- Import buttons ---
+    ui.horizontal_wrapped(|ui| {
+        if button::secondary(ui, tr("media-import-clips")).clicked() {
+            let (ids, dup) = import_with(project, VIDEO_EXTS, "Video");
+            newly_imported.extend(ids);
+            *skipped_duplicates += dup;
+        }
+        if button::secondary(ui, tr("media-import-music")).clicked() {
+            let (ids, dup) = import_with(project, AUDIO_EXTS, "Audio");
+            newly_imported.extend(ids);
+            *skipped_duplicates += dup;
+        }
+        if button::secondary(ui, tr("media-import-images")).clicked() {
+            let (ids, dup) = import_with(project, IMAGE_EXTS, "Image");
+            newly_imported.extend(ids);
+            *skipped_duplicates += dup;
+        }
+        ui.separator();
+        if button::ghost(ui, tr("media-clear-all"))
+            .on_hover_text(tr("media-clear-all-tooltip"))
+            .clicked()
+        {
+            *clear_requested = true;
+        }
+    });
+    if *clear_requested {
+        state.confirm_clear = true;
+    }
+    if state.confirm_clear {
+        let mut open = true;
+        egui::Window::new(tr("media-clear-confirm-title"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ui.ctx(), |ui| {
+                ui.label(tr("media-clear-confirm-body"));
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    if button::secondary(ui, tr("cancel")).clicked() {
+                        state.confirm_clear = false;
+                    }
+                    if button::primary(ui, tr("yes")).clicked() {
+                        project.media.items.clear();
+                        tracing::info!("media library cleared");
+                        state.confirm_clear = false;
+                    }
+                });
+            });
+        if !open {
+            state.confirm_clear = false;
+        }
+    }
+
+    ui.separator();
+
+    // --- Sorted item list ---
+    let mut sorted: Vec<MediaItem> = project
+        .media
+        .items
+        .iter()
+        .filter(|m| state.filter.matches(m.kind))
+        .cloned()
+        .collect();
+    match state.sort {
+        MediaSort::Added => sorted.sort_by_key(|m| m.added_at),
+        MediaSort::Name => sorted.sort_by_key(|m| a_lower(&m.name)),
+        MediaSort::Type => sorted.sort_by(|a, b| {
+            kind_rank(a.kind)
+                .cmp(&kind_rank(b.kind))
+                .then_with(|| a.name.cmp(&b.name))
+        }),
+    }
+
+    if state.sort_dir == SortDirection::Descending {
+        sorted.reverse();
+    }
+
+    if sorted.is_empty() {
+        empty::placeholder_with(ui, |ui| {
+            ui.label(
+                RichText::new("No media imported yet.")
+                    .italics()
+                    .color(Color32::from_gray(120)),
+            );
+            ui.label(
+                RichText::new("Click Clips / Music / Images above.")
+                    .small()
+                    .color(Color32::from_gray(90)),
+            );
+        });
+        return MediaBinOutput {
+            dragging: None,
+            newly_imported: std::mem::take(newly_imported),
+            remove_requested: Vec::new(),
+            skipped_duplicates: *skipped_duplicates,
+        };
+    }
+
+    // --- Dynamic column layout ---
+    let card_w = state.preview.card_w();
+    let thumb_h = state.preview.thumb_h();
+    let h_gap = space::S;
+    let v_gap = space::S;
+    let scrollbar_reserve = space::XL;
+    let avail = (ui.available_width() - scrollbar_reserve).max(card_w);
+
+    // number of columns that fit; at least 1
+    let cols = (((avail + h_gap) / (card_w + h_gap)).floor() as usize).max(1);
+
+    let mut remove_requested: Vec<Uuid> = Vec::new();
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(h_gap, v_gap);
+
+            let project_path_opt: Option<&str> = project.project_path.as_deref();
+            for row in sorted.chunks(cols) {
+                ui.horizontal(|ui| {
+                    for item in row {
+                        let is_selected = state.selected_media.contains(&item.id);
+                        let selected_ids = state.selected_media.clone();
+                        let (resp, should_remove) = draw_card(
+                            ui,
+                            item,
+                            card_w,
+                            thumb_h,
+                            &mut state.thumb_cache,
+                            project_path_opt,
+                            is_selected,
+                            &selected_ids,
+                        );
+                        // Selection: plain click replaces, Ctrl+click
+                        // toggles. Ignore clicks that were actually the
+                        // start of a long-press drag: check if primary
+                        // is still held.
+                        if resp.clicked() {
+                            let ctrl = ui.ctx().input(|i| i.modifiers.ctrl || i.modifiers.command);
+                            if ctrl {
+                                if let Some(pos) =
+                                    state.selected_media.iter().position(|id| *id == item.id)
+                                {
+                                    state.selected_media.remove(pos);
+                                } else {
+                                    state.selected_media.push(item.id);
+                                }
+                            } else {
+                                state.selected_media = vec![item.id];
+                            }
+                        }
+                        if should_remove {
+                            // If the clicked X belongs to a multi-item
+                            // selection, remove every selected item in
+                            // one shot. Otherwise just the clicked one.
+                            if state.selected_media.len() > 1
+                                && state.selected_media.contains(&item.id)
+                            {
+                                for id in state.selected_media.drain(..) {
+                                    remove_requested.push(id);
+                                }
+                            } else {
+                                remove_requested.push(item.id);
+                                state.selected_media.retain(|x| *x != item.id);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+    // Drag preview badge: shows how many items are being dragged,
+    // following the cursor. egui's DnD does not auto-render a
+    // preview for typed payloads, so draw one here.
+    if let Some(payload) = egui::DragAndDrop::payload::<Vec<uuid::Uuid>>(ui.ctx()) {
+        let n = payload.len();
+        if n > 0 {
+            if let Some(p) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                let text = if n == 1 {
+                    tr("media-drag-one").to_string()
+                } else {
+                    format!("{} {}", n, tr("media-drag-many"))
+                };
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new("media_drag_badge"),
+                ));
+                let font = egui::FontId::proportional(text::S);
+                let galley =
+                    painter.layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE);
+                let pad = space::S;
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(p.x + 12.0, p.y + 12.0),
+                    egui::vec2(galley.size().x + pad * 2.0, galley.size().y + pad),
+                );
+                painter.rect_filled(rect, radius::cr(radius::SM), egui::Color32::from_gray(30));
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    font.clone(),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+    }
+
+    MediaBinOutput {
+        dragging: None,
+        newly_imported: std::mem::take(newly_imported),
+        remove_requested,
+        skipped_duplicates: *skipped_duplicates,
+    }
 }
 
 #[cfg(test)]

@@ -791,7 +791,7 @@ pub fn render_tab_content(
                 &mut state.transition_cat,
                 state.card_size.px(),
                 &state.search,
-                state.sidebar_width,
+                &mut state.sidebar_width,
                 &mut state.card_size,
             );
             if let Some(id) = clicked {
@@ -807,7 +807,7 @@ pub fn render_tab_content(
                 &mut state.effect_cat,
                 state.card_size.px(),
                 &state.search,
-                state.sidebar_width,
+                &mut state.sidebar_width,
                 &mut state.card_size,
             );
             if let Some(id) = clicked {
@@ -823,7 +823,7 @@ pub fn render_tab_content(
                 &mut state.filter_cat,
                 state.card_size.px(),
                 &state.search,
-                state.sidebar_width,
+                &mut state.sidebar_width,
                 &mut state.card_size,
             );
             if let Some(id) = clicked {
@@ -842,7 +842,7 @@ pub fn render_tab_content(
                 &mut "all".to_string(), // dummy, not used for text
                 state.card_size.px(),
                 &state.search,
-                state.sidebar_width,
+                &mut state.sidebar_width,
                 &mut state.card_size,
             );
             if let Some(id) = clicked {
@@ -874,7 +874,7 @@ fn categorized_grid(
     selected: &mut String,
     _card_size: f32,
     search: &str,
-    sidebar_width: f32,
+    sidebar_width: &mut f32,
     card_size_state: &mut PresetCardSize,
 ) -> Option<&'static str> {
     // Capture the height before entering the horizontal layout:
@@ -882,7 +882,6 @@ fn categorized_grid(
     // need an explicit bound for their scroll areas.
     let h = ui.available_height();
     let mut clicked: Option<&'static str> = None;
-    let mut sidebar_w = sidebar_width;
     ui.horizontal_top(|ui| {
         // Left sidebar: category list + size picker
         let _sidebar_resp = egui::ScrollArea::vertical()
@@ -892,7 +891,7 @@ fn categorized_grid(
             .show(ui, |ui| {
                 ui.set_min_width(80.0);
                 ui.set_max_width(200.0);
-                ui.set_width(sidebar_w);
+                ui.set_width(*sidebar_width);
                 ui.vertical(|ui| {
                     // Size picker (S/M/L) — above categories
                     ui.horizontal(|ui| {
@@ -909,7 +908,7 @@ fn categorized_grid(
         // Drag handle to resize sidebar
         let sep_resp = ui.allocate_response(Vec2::new(4.0, h), Sense::drag());
         if sep_resp.dragged() {
-            sidebar_w = (sidebar_w + sep_resp.drag_delta().x).clamp(80.0, 200.0);
+            *sidebar_width = (*sidebar_width + sep_resp.drag_delta().x).clamp(80.0, 200.0);
         }
         sep_resp.on_hover_cursor(CursorIcon::ResizeHorizontal);
         ui.separator();

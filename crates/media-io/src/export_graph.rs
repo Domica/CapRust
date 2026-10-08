@@ -2243,7 +2243,11 @@ fn compute_xfade_audio_shifts(
 ///     that is hard to reason about.
 ///
 /// Returns None when the path contains a single quote.
-fn escape_movie_path(path: &std::path::Path) -> Option<String> {
+/// Escape a path for use as an ffmpeg filter input or output option.
+/// Returns None if the path contains a single quote (no quoting survives that).
+/// On Windows: forward slashes, drive-colon backslash-escaped, single-quoted.
+/// Verified live against the gyan.dev essentials build.
+pub fn escape_movie_path(path: &std::path::Path) -> Option<String> {
     let s = path.to_string_lossy();
     if s.contains('\'') {
         return None;
