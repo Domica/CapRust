@@ -142,8 +142,8 @@ impl PreviewSize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TabLayout {
     #[default]
-    NoFilter,   // Legacy flat list without sidebar
-    Filtered,   // With sidebar (filter, sort, size)
+    NoFilter, // Legacy flat list without sidebar
+    Filtered, // With sidebar (filter, sort, size)
 }
 
 impl TabLayout {
@@ -317,7 +317,6 @@ pub struct MediaBinOutput {
     pub remove_requested: Vec<Uuid>,
     pub skipped_duplicates: usize,
 }
-
 
 // Legacy flat list layout (no sidebar filter). Controls on top, grid below.
 fn show_legacy(
@@ -562,7 +561,8 @@ fn show_legacy(
                     egui::Id::new("media_drag_badge"),
                 ));
                 let font = egui::FontId::proportional(text::S);
-                let galley = painter.layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE);
+                let galley =
+                    painter.layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE);
                 let pad = space::S;
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(p.x + 12.0, p.y + 12.0),
@@ -589,10 +589,6 @@ fn show_legacy(
 }
 
 pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> MediaBinOutput {
-    // In NoFilter mode, show the legacy flat list with controls on top
-    if state.tab_layout == TabLayout::NoFilter {
-        return show_legacy(ui, project, state);
-    }
     // In NoFilter mode, show the legacy flat list with controls on top
     if state.tab_layout == TabLayout::NoFilter {
         return show_legacy(ui, project, state);
@@ -626,20 +622,23 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     ui.add_space(space::XS);
                     ui.separator();
 
-                    // Filter
-                    ui.label(tr("media-filter-label"));
-                    egui::ComboBox::from_id_salt("media_filter_sidebar")
-                        .selected_text(state.filter.label())
-                        .width(100.0)
-                        .show_ui(ui, |ui| {
-                            for f in MediaFilter::all() {
-                                ui.selectable_value(
-                                    &mut state.filter,
-                                    f,
+                    // Show (Show / Filter) - vertical list like asset browser
+                    ui.label(tr("media-show-label"));
+                    ui.add_space(space::XS);
+                    ui.vertical(|ui| {
+                        for f in MediaFilter::all() {
+                            let selected = state.filter == f;
+                            if ui
+                                .selectable_label(
+                                    selected,
                                     tr(&format!("media-filter-{}", f.key())),
-                                );
+                                )
+                                .clicked()
+                            {
+                                state.filter = f;
                             }
-                        });
+                        }
+                    });
                     ui.add_space(space::S);
 
                     // Sort
