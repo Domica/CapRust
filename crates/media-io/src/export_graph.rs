@@ -389,6 +389,40 @@ impl RenderPlan {
     /// Build the `-filter_complex` string + `-map` arguments.
     /// Returns (filter_graph, video_label, audio_label).
     pub fn build_filtergraph(&self) -> Result<(String, String, Option<String>)> {
+        let (mut fg, v_final) = self.build_video_chain();
+
+        // -------- AUDIO (unchanged) --------
+        let a_final = self.build_audio_chain(&mut fg);
+
+        if fg.ends_with(';') {
+            fg.pop();
+        }
+
+        Ok((fg, v_final, a_final))
+    }
+
+    /// Build only the video pipeline (no audio chain). The single
+    /// output label is `[v_final]`.
+    ///
+    /// Used by save-frame, which maps only the video output. The
+    /// full `build_filtergraph` also emits an `[a_final]` audio
+    /// label; leaving it unconnected makes ffmpeg fail with
+    /// "Error binding filtergraph inputs/outputs: Invalid argument"
+    /// (EINVAL), because every filtergraph output must be bound to
+    /// an output stream. Mirrors `build_audio_only_filtergraph`.
+    pub fn build_video_only_filtergraph(&self) -> Result<(String, String)> {
+        let (fg, v_final) = self.build_video_chain();
+        let mut fg = fg;
+        if fg.ends_with(';') {
+            fg.pop();
+        }
+        Ok((fg, v_final))
+    }
+
+    /// Build the video pipeline: per-clip decode / trim / scale / fit,
+    /// z-order runs with xfade transitions, the black-base overlay
+    /// stack and drawtext overlays. Returns (filter_graph, video_label).
+    fn build_video_chain(&self) -> (String, String) {
         let mut fg = String::new();
 
         // -------- VIDEO pipeline --------
@@ -898,14 +932,7 @@ impl RenderPlan {
         }
         let v_final = v_prev;
 
-        // -------- AUDIO (unchanged) --------
-        let a_final = self.build_audio_chain(&mut fg);
-
-        if fg.ends_with(';') {
-            fg.pop();
-        }
-
-        Ok((fg, v_final, a_final))
+        (fg, v_final)
     }
 
     /// Append the audio pipeline to `fg`, returning the output label

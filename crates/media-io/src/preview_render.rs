@@ -139,7 +139,7 @@ pub fn render_single_frame(
                 .with_context(|| format!("create screenshots dir {}", parent.display()))?;
         }
     }
-    let (fg, v_label, _) = plan.build_filtergraph()?;
+    let (fg, v_label) = plan.build_video_only_filtergraph()?;
     let mut args: Vec<String> = vec!["-y".into(), "-hide_banner".into()];
     push_plan_inputs(&mut args, plan, fps);
     args.push("-filter_complex".into());
@@ -154,10 +154,15 @@ pub fn render_single_frame(
     args.push(format!("[{v_label}]"));
     args.push("-frames:v".into());
     args.push("1".into());
-    // Let ffmpeg infer the output format from the .png extension.
     // Force RGBA pixel format for PNG encoder compatibility.
     args.push("-pix_fmt".into());
     args.push("rgba".into());
+    // Single-image write: without this the image2 muxer warns
+    // that the filename lacks a %03d sequence pattern.
+    // -update 1 tells it to overwrite one file, which is
+    // exactly what a single-frame capture wants.
+    args.push("-update".into());
+    args.push("1".into());
     // Output path: escape for ffmpeg output (Windows quoting, not filter escaping).
     let out_escaped = escape_output_path(out);
     args.push(out_escaped);
