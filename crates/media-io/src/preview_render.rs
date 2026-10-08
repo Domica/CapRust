@@ -154,8 +154,10 @@ pub fn render_single_frame(
     args.push(format!("[{v_label}]"));
     args.push("-frames:v".into());
     args.push("1".into());
-    // Let ffmpeg choose the appropriate pixel format for PNG output.
-    // The filter graph output format might not be compatible with forced rgba conversion.
+    // Force RGBA pixel format for PNG encoder compatibility.
+    // The filter graph output format might not be directly compatible with PNG encoder.
+    args.push("-pix_fmt".into());
+    args.push("rgba".into());
     // Output path: escape for ffmpeg output (Windows quoting, not filter escaping).
     let out_escaped = escape_output_path(out);
     args.push(out_escaped);
