@@ -2267,7 +2267,12 @@ pub fn escape_output_path(path: &std::path::Path) -> String {
     let s = path.to_string_lossy();
     #[cfg(windows)]
     {
-        if s.contains(' ') || s.contains('&') || s.contains('^') || s.contains('%') {
+        // Windows cmd.exe special characters that need quoting:
+        // space, &, ^, %, (, ), [, ], {, }, !, ^, ", ', `, ,, ;, =, +, ~, #, @, !, &, |, <, >
+        let needs_quoting = s.chars().any(|c| {
+            matches!(c, ' ' | '&' | '^' | '%' | '(' | ')' | '[' | ']' | '{' | '}' | '!' | '"' | '\'' | '`' | ',' | ';' | '=' | '+' | '~' | '#' | '@' | '|' | '<' | '>')
+        });
+        if needs_quoting {
             format!("\"{}\"", s.replace('"', "\\\""))
         } else {
             s.to_string()

@@ -656,20 +656,23 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     ui.add_space(space::S);
                     ui.separator();
 
-                    // Sort
+                    // Sort - vertical list like Show
                     ui.label(tr("media-sort-label"));
-                    egui::ComboBox::from_id_salt("media_sort_sidebar")
-                        .selected_text(tr(&format!("media-sort-{}", state.sort.key())))
-                        .width(100.0)
-                        .show_ui(ui, |ui| {
-                            for s in MediaSort::all() {
-                                ui.selectable_value(
-                                    &mut state.sort,
-                                    s,
+                    ui.add_space(space::XS);
+                    ui.vertical(|ui| {
+                        for s in MediaSort::all() {
+                            let selected = state.sort == s;
+                            if ui
+                                .selectable_label(
+                                    selected,
                                     tr(&format!("media-sort-{}", s.key())),
-                                );
+                                )
+                                .clicked()
+                            {
+                                state.sort = s;
                             }
-                        });
+                        }
+                    });
                     ui.add_space(space::XS);
                     // Sort direction toggle
                     let dir_icon = state.sort_dir.icon();
