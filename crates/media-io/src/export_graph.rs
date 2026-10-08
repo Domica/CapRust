@@ -2261,66 +2261,11 @@ pub fn escape_movie_path(path: &std::path::Path) -> Option<String> {
 }
 
 /// Escape a path for use as an ffmpeg OUTPUT file.
-/// On Windows: double-quote the path if it contains spaces or special chars.
-/// The drive letter colon (C:) is NOT escaped as it's valid in output paths.
-/// On Unix: single-quote if it contains spaces or special chars.
+/// On Windows: return the path as-is (std::process::Command handles args correctly).
+/// The drive letter colon (C:) is valid in output paths.
+/// On Unix: return as-is.
 pub fn escape_output_path(path: &std::path::Path) -> String {
-    let s = path.to_string_lossy();
-    #[cfg(windows)]
-    {
-        // Windows cmd.exe special characters that need quoting (excluding drive letter colon):
-        // space, &, ^, %, (, ), [, ], {, }, !, ^, ", ', `, ,, ;, =, +, ~, #, @, |, <, >
-        // Drive letter colon (C:) is valid and should NOT be escaped for output paths.
-        let needs_quoting = s.chars().any(|c| {
-            matches!(
-                c,
-                ' ' | '&'
-                    | '^'
-                    | '%'
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | '!'
-                    | '"'
-                    | '\''
-                    | '`'
-                    | ','
-                    | ';'
-                    | '='
-                    | '+'
-                    | '~'
-                    | '#'
-                    | '@'
-                    | '|'
-                    | '<'
-                    | '>'
-            )
-        });
-        if needs_quoting {
-            // Don't escape drive letter colon (C:) - it's valid in output paths
-            // Only escape quotes inside the path
-            format!("\"{}\"", s.replace('"', "\\\""))
-        } else {
-            s.to_string()
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        if s.contains(' ')
-            || s.contains('\'')
-            || s.contains('"')
-            || s.contains('$')
-            || s.contains('`')
-            || s.contains('\\')
-        {
-            format!("'{}'", s.replace('\'', "'\\''"))
-        } else {
-            s.to_string()
-        }
-    }
+    path.to_string_lossy().to_string()
 }
 
 /// Resolve the mask path for a clip. The stored path is relative to
