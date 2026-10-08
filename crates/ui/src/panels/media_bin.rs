@@ -663,10 +663,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                         for s in MediaSort::all() {
                             let selected = state.sort == s;
                             if ui
-                                .selectable_label(
-                                    selected,
-                                    tr(&format!("media-sort-{}", s.key())),
-                                )
+                                .selectable_label(selected, tr(&format!("media-sort-{}", s.key())))
                                 .clicked()
                             {
                                 state.sort = s;

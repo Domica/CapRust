@@ -2270,7 +2270,32 @@ pub fn escape_output_path(path: &std::path::Path) -> String {
         // Windows cmd.exe special characters that need quoting:
         // space, &, ^, %, (, ), [, ], {, }, !, ^, ", ', `, ,, ;, =, +, ~, #, @, !, &, |, <, >
         let needs_quoting = s.chars().any(|c| {
-            matches!(c, ' ' | '&' | '^' | '%' | '(' | ')' | '[' | ']' | '{' | '}' | '!' | '"' | '\'' | '`' | ',' | ';' | '=' | '+' | '~' | '#' | '@' | '|' | '<' | '>')
+            matches!(
+                c,
+                ' ' | '&'
+                    | '^'
+                    | '%'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '!'
+                    | '"'
+                    | '\''
+                    | '`'
+                    | ','
+                    | ';'
+                    | '='
+                    | '+'
+                    | '~'
+                    | '#'
+                    | '@'
+                    | '|'
+                    | '<'
+                    | '>'
+            )
         });
         if needs_quoting {
             format!("\"{}\"", s.replace('"', "\\\""))
