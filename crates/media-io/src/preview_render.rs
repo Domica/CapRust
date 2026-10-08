@@ -154,20 +154,45 @@ pub fn render_single_frame(
     args.push(format!("[{v_label}]"));
     args.push("-frames:v".into());
     args.push("1".into());
-    // Let ffmpeg choose the best pixel format for PNG encoder.
-    // The filter graph output format might not be compatible with forced RGBA.
-    // Preview uses rawvideo which is more flexible; PNG encoder has specific requirements.
+    // Let ffmpeg infer the output format from the .png extension.
+    // Force RGBA pixel format for PNG encoder compatibility.
+    args.push("-pix_fmt".into());
+    args.push("rgba".into());
     // Output path: escape for ffmpeg output (Windows quoting, not filter escaping).
     let out_escaped = escape_output_path(out);
     args.push(out_escaped);
 
-    let status = crate::silent_cmd::silent_command(ffmpeg)
+    tracing::debug!(
+        "save-frame: ffmpeg args: {}",
+        args.iter()
+            .map(|a| if a.contains(' ') {
+                format!("{a:?}")
+            } else {
+                a.clone()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    let output = crate::silent_cmd::silent_command(ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .with_context(|| "spawn frame-capture ffmpeg".to_string())?;
-    if !status.success() {
-        anyhow::bail!("frame capture exited with {status}");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::error!(
+            "save-frame: ffmpeg failed with status {}: stderr={}",
+            output.status,
+            stderr
+        );
+        anyhow::bail!(
+            "frame capture exited with {}: {}",
+            output.status,
+            stderr.lines().last().unwrap_or("")
+        );
     }
     let len = std::fs::metadata(out)
         .with_context(|| format!("frame file missing: {}", out.display()))?
