@@ -622,6 +622,20 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     ui.add_space(space::XS);
                     ui.separator();
 
+                    // Preview size (S/M/L) - at top like other tabs
+                    ui.label(tr("media-size-label"));
+                    let all = [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large];
+                    let labels: Vec<_> = all.iter().map(|s| s.label()).collect();
+                    let selected = all.iter().position(|s| *s == state.preview).unwrap_or(1);
+                    let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+                    if let Some(i) = clicked {
+                        if i != selected {
+                            state.preview = all[i];
+                        }
+                    }
+                    ui.add_space(space::S);
+                    ui.separator();
+
                     // Show (Show / Filter) - vertical list like asset browser
                     ui.label(tr("media-show-label"));
                     ui.add_space(space::XS);
@@ -640,6 +654,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                         }
                     });
                     ui.add_space(space::S);
+                    ui.separator();
 
                     // Sort
                     ui.label(tr("media-sort-label"));
@@ -668,18 +683,22 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                         state.sort_dir = state.sort_dir.flipped();
                     }
                     ui.add_space(space::S);
+                    ui.separator();
 
-                    // Preview size (S/M/L)
-                    ui.label(tr("media-size-label"));
-                    let all = [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large];
-                    let labels: Vec<_> = all.iter().map(|s| s.label()).collect();
-                    let selected = all.iter().position(|s| *s == state.preview).unwrap_or(1);
-                    let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
-                    if let Some(i) = clicked {
-                        if i != selected {
-                            state.preview = all[i];
-                        }
-                    }
+                    // Filter
+                    ui.label(tr("media-filter-label"));
+                    egui::ComboBox::from_id_salt("media_filter_sidebar")
+                        .selected_text(state.filter.label())
+                        .width(100.0)
+                        .show_ui(ui, |ui| {
+                            for f in MediaFilter::all() {
+                                ui.selectable_value(
+                                    &mut state.filter,
+                                    f,
+                                    tr(&format!("media-filter-{}", f.key())),
+                                );
+                            }
+                        });
                 });
             });
         // Drag handle to resize sidebar
