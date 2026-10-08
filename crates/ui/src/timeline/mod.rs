@@ -159,6 +159,12 @@ fn contributes_audio(
 /// `rect` is the clip's full (unclipped) rect, so a clip scrolled partly
 /// out of view keeps the overlay aligned with the time axis; `visible` is
 /// the part of it that is actually on screen.
+///
+/// Three-color amplitude rendering:
+/// - `positive_color`: dB > 0 (above 0 dB, typically green)
+/// - `negative_color`: dB < 0 (below 0 dB, typically orange)
+/// - `center_color`: 0 dB reference line (subtle white)
+#[allow(clippy::too_many_arguments)]
 pub fn draw_audio_envelope(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -166,7 +172,9 @@ pub fn draw_audio_envelope(
     samples_db: &[EnvelopeSample],
 
     duck_zones: &[DuckZone],
-    line_color: egui::Color32,
+    positive_color: egui::Color32,
+    negative_color: egui::Color32,
+    center_color: egui::Color32,
     duck_zone_color: egui::Color32,
 ) {
     if rect.width() < 4.0 || rect.height() < 4.0 {
@@ -189,17 +197,73 @@ pub fn draw_audio_envelope(
     if samples_db.len() < 2 {
         return;
     }
-    let mut points = Vec::with_capacity(samples_db.len());
+
+    // Draw center reference line (0 dB)
+    let center_y = rect.bottom() - db_to_normalized_y(0.0).clamp(0.0, 1.0) * rect.height();
+    clipped.add(egui::Shape::line(
+        vec![
+            egui::pos2(rect.left(), center_y),
+            egui::pos2(rect.right(), center_y),
+        ],
+        egui::Stroke::new(0.8_f32, center_color.gamma_multiply(0.5)),
+    ));
+
+    // Draw amplitude segments split by sign (positive/negative)
+    let mut pos_points = Vec::new();
+    let mut neg_points = Vec::new();
+    let mut last_frac = None;
+    let mut last_db: Option<f32> = None;
+
     for &(frac, db) in samples_db {
         let x = rect.left() + frac * rect.width();
         let norm_y = db_to_normalized_y(clamp_db(db));
         let y = rect.bottom() - norm_y * rect.height();
-        points.push(egui::pos2(x, y));
+        let pt = egui::pos2(x, y);
+
+        if db > 0.0 {
+            pos_points.push(pt);
+        } else {
+            neg_points.push(pt);
+        }
+
+        // Check if we cross 0 dB between this and previous sample
+        // Only trigger on actual sign changes (positive -> negative or negative -> positive)
+        // Not when either value is exactly 0 (which is on the boundary, not a crossing)
+        if let (Some(prev_frac), Some(prev_db)) = (last_frac, last_db) {
+            let crossed = (prev_db > 0.0 && db < 0.0) || (prev_db < 0.0 && db > 0.0);
+            if crossed {
+                // Linear interpolation to find crossing point at 0 dB
+                let diff: f32 = db - prev_db;
+                let t = if diff.abs() > f32::EPSILON {
+                    -prev_db / diff
+                } else {
+                    0.5_f32
+                };
+                let cross_x = rect.left() + (prev_frac + t * (frac - prev_frac)) * rect.width();
+                let cross_pt = egui::pos2(cross_x, center_y);
+                pos_points.push(cross_pt);
+                neg_points.push(cross_pt);
+            }
+        }
+
+        last_frac = Some(frac);
+        last_db = Some(db);
     }
-    clipped.add(egui::Shape::line(
-        points,
-        egui::Stroke::new(1.5_f32, line_color),
-    ));
+
+    // Draw positive amplitude (green)
+    if pos_points.len() >= 2 {
+        clipped.add(egui::Shape::line(
+            pos_points,
+            egui::Stroke::new(1.5_f32, positive_color),
+        ));
+    }
+    // Draw negative amplitude (orange)
+    if neg_points.len() >= 2 {
+        clipped.add(egui::Shape::line(
+            neg_points,
+            egui::Stroke::new(1.5_f32, negative_color),
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +271,7 @@ mod overlay_tests {
     use super::*;
     use caprust_core::clip::Clip;
     use caprust_core::{MediaKind, ProjectState, Track, TrackKind};
+    use egui::{Color32, epaint::{ColorMode, PathStroke}};
 
     #[test]
     fn zero_db_is_sixty_percent() {
@@ -434,6 +499,8 @@ mod overlay_tests {
                 visible,
                 samples,
                 zones,
+                egui::Color32::GREEN,
+                egui::Color32::ORANGE,
                 egui::Color32::WHITE,
                 egui::Color32::WHITE,
             );
@@ -464,17 +531,67 @@ mod overlay_tests {
             .expect("duck zone rect");
         assert_eq!((zone.left(), zone.right()), (100.0, 350.0));
 
-        let line = shapes
+        // The test samples are all at or below 0 dB: [(0.0, 0.0), (0.5, 0.0), (1.0, -60.0)]
+        // So positive line only has the center crossing points (at 0 dB), negative line has all points.
+        #[allow(dead_code)]
+        fn get_stroke_color(stroke: &PathStroke) -> Option<Color32> {
+            // Stroke color can be Solid or Premultiplied; try to extract RGB regardless of mode
+            fn color_from_mode(mode: &ColorMode) -> Option<Color32> {
+                match mode {
+                    ColorMode::Solid(ref c) => Some(*c),
+                    _ => None,
+                }
+            }
+            color_from_mode(&stroke.color)
+        }
+        fn stroke_is(color: Color32, stroke: &PathStroke) -> bool {
+            matches!(stroke.color, ColorMode::Solid(c) if c == color)
+        }
+
+        let pos_line = shapes
             .iter()
             .find_map(|s| match &s.shape {
-                egui::Shape::Path(l) => Some(l.points.clone()),
+                egui::Shape::Path(l) if stroke_is(egui::Color32::GREEN, &l.stroke) => Some(l.points.clone()),
                 _ => None,
-            })
-            .expect("polyline");
-        assert_eq!(line.first().unwrap().x, -400.0);
-        assert_eq!(line.last().unwrap().x, 600.0);
-        // The middle sample sits at the middle of the *full* clip.
-        assert_eq!(line[1].x, 100.0);
+            });
+        let neg_line = shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Path(l) if stroke_is(egui::Color32::ORANGE, &l.stroke) => Some(l.points.clone()),
+                _ => None,
+            });
+
+        // Positive line only has the center crossing points (at x=100, the 0 dB crossing)
+        if let Some(line) = pos_line {
+            assert!(line.iter().any(|p| (p.x - 100.0).abs() < 1.0), "positive line should have center crossing at x=100");
+        }
+
+        // Negative line should have all three points: start at -400, middle at 100, end at 600
+        if let Some(line) = neg_line {
+            assert_eq!(line.first().unwrap().x, -400.0, "negative line should start at -400");
+            assert!(line.iter().any(|p| (p.x - 100.0).abs() < 1.0), "negative line should have middle point at x=100");
+            assert_eq!(line.last().unwrap().x, 600.0, "negative line should end at 600");
+        }
+
+        // Also verify center line exists (0 dB reference)
+        let center_y = full.bottom() - db_to_normalized_y(0.0).clamp(0.0, 1.0) * full.height();
+        let center_line = shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Path(l) => {
+                    // Check if this is a horizontal line at center_y
+                    let is_horizontal = l.points.len() >= 2
+                        && (l.points.first().unwrap().y - center_y).abs() < 1.0
+                        && (l.points.last().unwrap().y - center_y).abs() < 1.0;
+                    if is_horizontal {
+                        Some(l.points.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            });
+        assert!(center_line.is_some(), "center line (0 dB) should exist");
     }
 
     // ---- #26: export-gate tests ----

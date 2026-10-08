@@ -82,6 +82,15 @@ pub struct Theme {
     /// Waveform strip color drawn behind audio/video clips. RGB only.
     #[serde(default = "default_waveform_color")]
     pub waveform: [u8; 3],
+    /// Waveform amplitude color for positive dB (above 0 dB). RGB only.
+    #[serde(default = "default_waveform_positive")]
+    pub waveform_positive: [u8; 3],
+    /// Waveform amplitude color for negative dB (below 0 dB). RGB only.
+    #[serde(default = "default_waveform_negative")]
+    pub waveform_negative: [u8; 3],
+    /// Waveform center line color (0 dB reference). RGB only.
+    #[serde(default = "default_waveform_center")]
+    pub waveform_center: [u8; 3],
     /// Global UI scale. Multiplies egui's pixels-per-point, which
     /// scales text, buttons, panels, and the window chrome in one
     /// knob. 1.0 is the default look.
@@ -167,6 +176,18 @@ fn default_overlap_shading() -> [u8; 4] {
 fn default_waveform_color() -> [u8; 3] {
     [120, 200, 255]
 }
+fn default_waveform_positive() -> [u8; 3] {
+    // Bright green for positive amplitude (above 0 dB)
+    [80, 220, 100]
+}
+fn default_waveform_negative() -> [u8; 3] {
+    // Warm orange for negative amplitude (below 0 dB)
+    [255, 160, 60]
+}
+fn default_waveform_center() -> [u8; 3] {
+    // Subtle white for 0 dB reference line
+    [220, 220, 230]
+}
 fn default_track_audio() -> [u8; 3] {
     [128, 200, 148]
 }
@@ -191,6 +212,9 @@ impl Default for Theme {
             track_text: default_track_text(),
             overlap_shading: default_overlap_shading(),
             waveform: default_waveform_color(),
+            waveform_positive: default_waveform_positive(),
+            waveform_negative: default_waveform_negative(),
+            waveform_center: default_waveform_center(),
             playhead: default_playhead_color(),
             playhead_size: PlayheadSize::default(),
             font_scale: 1.0,
@@ -225,9 +249,33 @@ impl Theme {
         )
     }
 
-    /// Waveform strip color.
+    /// Waveform strip color (legacy, used for simple strips).
     pub fn waveform_color(&self) -> Color32 {
         Color32::from_rgb(self.waveform[0], self.waveform[1], self.waveform[2])
+    }
+    /// Waveform amplitude color for positive dB (above 0 dB).
+    pub fn waveform_positive_color(&self) -> Color32 {
+        Color32::from_rgb(
+            self.waveform_positive[0],
+            self.waveform_positive[1],
+            self.waveform_positive[2],
+        )
+    }
+    /// Waveform amplitude color for negative dB (below 0 dB).
+    pub fn waveform_negative_color(&self) -> Color32 {
+        Color32::from_rgb(
+            self.waveform_negative[0],
+            self.waveform_negative[1],
+            self.waveform_negative[2],
+        )
+    }
+    /// Waveform center line color (0 dB reference).
+    pub fn waveform_center_color(&self) -> Color32 {
+        Color32::from_rgb(
+            self.waveform_center[0],
+            self.waveform_center[1],
+            self.waveform_center[2],
+        )
     }
 
     pub fn apply(&self, ctx: &egui::Context) {

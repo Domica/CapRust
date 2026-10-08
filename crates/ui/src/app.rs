@@ -3,7 +3,7 @@ use crate::media_jobs::JobRunner;
 use crate::panels::asset_browser::AssetBrowserState;
 use crate::panels::clip_properties::{PendingEdit, PropertiesState};
 use crate::panels::export_window::ExportState;
-use crate::panels::media_bin::{MediaBinState, PreviewSize};
+use crate::panels::media_bin::{MediaBinState, PreviewSize, TabLayout};
 use crate::panels::preview_window::{PreviewEvents, PreviewState};
 use crate::preview_player::PreviewPlayer;
 use crate::theme::tokens::{anim, elev, radius, space, text};
@@ -245,6 +245,8 @@ pub struct CapRustApp {
     pub available_encoders: Option<Vec<caprust_core::project::VideoEncoder>>,
     pub media_bin: MediaBinState,
     pub preview_size: PreviewSize,
+    /// Media tab layout mode: "no-filter" (legacy flat list) or "filtered" (with sidebar).
+    pub tab_layout: TabLayout,
     pub timeline_tools: TimelineToolState,
     pub playhead_ms: u64,
     pub timeline_zoom: f32,
@@ -634,6 +636,7 @@ impl CapRustApp {
             available_encoders: None,
             media_bin: MediaBinState::default(),
             preview_size: PreviewSize::Medium,
+            tab_layout: TabLayout::default(),
             timeline_tools: TimelineToolState::default(),
             playhead_ms: 0,
             timeline_zoom: 1.0,
@@ -1642,6 +1645,15 @@ impl CapRustApp {
                             if ui.selectable_label(sel, sz.label()).clicked() {
                                 self.preview_size = sz;
                                 self.media_bin.preview = sz;
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.menu_button(tr("menu-view-tab-layout"), |ui| {
+                        for l in crate::panels::media_bin::TabLayout::all() {
+                            let sel = self.tab_layout == l;
+                            if ui.selectable_label(sel, tr(l.ftl_key())).clicked() {
+                                self.tab_layout = l;
                                 ui.close_menu();
                             }
                         }
@@ -5072,17 +5084,19 @@ impl CapRustApp {
                                     .cloned()
                                 {
                                     let (samples, zones) = self.envelope_for(&clip_data);
-                                    let line_color = theme_snapshot.waveform_color();
-                                    // Per-zone opacity comes from the DuckZone
-                                    // itself (derived from duck_reduction_db).
-                                    let duck_color = line_color;
+                                    let pos_color = theme_snapshot.waveform_positive_color();
+                                    let neg_color = theme_snapshot.waveform_negative_color();
+                                    let center_color = theme_snapshot.waveform_center_color();
+                                    let duck_color = theme_snapshot.waveform_color();
                                     crate::timeline::draw_audio_envelope(
                                         &p,
                                         full_rect,
                                         clip_rect,
                                         &samples,
                                         &zones,
-                                        line_color,
+                                        pos_color,
+                                        neg_color,
+                                        center_color,
                                         duck_color,
                                     );
                                 }

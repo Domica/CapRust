@@ -244,6 +244,15 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             ui.label(tr("set-appearance-waveform"));
             ui.color_edit_button_srgb(&mut theme.waveform);
             ui.end_row();
+            ui.label(tr("set-appearance-waveform-positive"));
+            ui.color_edit_button_srgb(&mut theme.waveform_positive);
+            ui.end_row();
+            ui.label(tr("set-appearance-waveform-negative"));
+            ui.color_edit_button_srgb(&mut theme.waveform_negative);
+            ui.end_row();
+            ui.label(tr("set-appearance-waveform-center"));
+            ui.color_edit_button_srgb(&mut theme.waveform_center);
+            ui.end_row();
         });
 
     ui.add_space(space::L);

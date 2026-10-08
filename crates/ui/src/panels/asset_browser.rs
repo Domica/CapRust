@@ -652,6 +652,55 @@ const TEXT_STYLES: &[Preset] = &[
         color: [180, 160, 100],
         coming_soon: false,
     },
+    Preset {
+        id: "outline",
+        label_key: "asset-text-outline",
+        icon: ph::SQUARES_FOUR,
+        color: [100, 180, 160],
+        coming_soon: false,
+    },
+    Preset {
+        id: "shadow",
+        label_key: "asset-text-shadow",
+        icon: ph::EYE_CLOSED,
+        color: [120, 100, 180],
+        coming_soon: false,
+    },
+    Preset {
+        id: "typewriter",
+        label_key: "asset-text-typewriter",
+        icon: ph::KEY,
+        color: [160, 120, 80],
+        coming_soon: false,
+    },
+    Preset {
+        id: "neon",
+        label_key: "asset-text-neon",
+        icon: ph::LIGHTNING,
+        color: [90, 240, 200],
+        coming_soon: false,
+    },
+    Preset {
+        id: "3d",
+        label_key: "asset-text-3d",
+        icon: ph::CUBE,
+        color: [220, 160, 60],
+        coming_soon: false,
+    },
+    Preset {
+        id: "gradient",
+        label_key: "asset-text-gradient",
+        icon: ph::FADERS,
+        color: [230, 130, 160],
+        coming_soon: false,
+    },
+    Preset {
+        id: "stamp",
+        label_key: "asset-text-stamp",
+        icon: ph::STAMP,
+        color: [180, 60, 60],
+        coming_soon: false,
+    },
 ];
 
 // ---------------------------------------------------------------------------

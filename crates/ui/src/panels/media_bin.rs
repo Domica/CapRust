@@ -9,6 +9,7 @@ use caprust_core::media::{guess_kind, AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS};
 use caprust_core::{MediaItem, MediaKind, ProjectState};
 use egui::{Color32, CursorIcon, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as ph;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -137,6 +138,32 @@ impl PreviewSize {
     }
 }
 
+/// Media tab layout mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TabLayout {
+    #[default]
+    NoFilter,   // Legacy flat list without sidebar
+    Filtered,   // With sidebar (filter, sort, size)
+}
+
+impl TabLayout {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::NoFilter => "No filter",
+            Self::Filtered => "Filtered",
+        }
+    }
+    pub fn ftl_key(&self) -> &'static str {
+        match self {
+            Self::NoFilter => "menu-view-tab-layout-no-filter",
+            Self::Filtered => "menu-view-tab-layout-filtered",
+        }
+    }
+    pub fn all() -> [Self; 2] {
+        [Self::NoFilter, Self::Filtered]
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Thumbnail cache
 // ---------------------------------------------------------------------------
@@ -249,6 +276,7 @@ pub struct MediaBinState {
     pub sort_dir: SortDirection,
     pub filter: MediaFilter,
     pub preview: PreviewSize,
+    pub tab_layout: TabLayout,
     pub thumb_cache: ThumbnailCache,
     /// Media items highlighted for a batch action. Ctrl+click toggles
     /// membership; plain click replaces. Cleared after a drag drop or
@@ -268,6 +296,7 @@ impl Default for MediaBinState {
             sort_dir: SortDirection::Ascending,
             filter: MediaFilter::All,
             preview: PreviewSize::Medium,
+            tab_layout: TabLayout::default(),
             thumb_cache: ThumbnailCache::default(),
             selected_media: Vec::new(),
             confirm_clear: false,
@@ -289,7 +318,285 @@ pub struct MediaBinOutput {
     pub skipped_duplicates: usize,
 }
 
+
+// Legacy flat list layout (no sidebar filter). Controls on top, grid below.
+fn show_legacy(
+    ui: &mut Ui,
+    project: &mut ProjectState,
+    state: &mut MediaBinState,
+) -> MediaBinOutput {
+    let mut newly_imported: Vec<Uuid> = Vec::new();
+    let mut skipped_duplicates: usize = 0;
+    let mut clear_requested = false;
+
+    // --- Import buttons ---
+    ui.horizontal_wrapped(|ui| {
+        if button::secondary(ui, tr("media-import-clips")).clicked() {
+            let (ids, dup) = import_with(project, VIDEO_EXTS, "Video");
+            newly_imported.extend(ids);
+            skipped_duplicates += dup;
+        }
+        if button::secondary(ui, tr("media-import-music")).clicked() {
+            let (ids, dup) = import_with(project, AUDIO_EXTS, "Audio");
+            newly_imported.extend(ids);
+            skipped_duplicates += dup;
+        }
+        if button::secondary(ui, tr("media-import-images")).clicked() {
+            let (ids, dup) = import_with(project, IMAGE_EXTS, "Image");
+            newly_imported.extend(ids);
+            skipped_duplicates += dup;
+        }
+        ui.separator();
+        if button::ghost(ui, tr("media-clear-all"))
+            .on_hover_text(tr("media-clear-all-tooltip"))
+            .clicked()
+        {
+            clear_requested = true;
+        }
+    });
+    if clear_requested {
+        state.confirm_clear = true;
+    }
+    if state.confirm_clear {
+        let mut open = true;
+        egui::Window::new(tr("media-clear-confirm-title"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ui.ctx(), |ui| {
+                ui.label(tr("media-clear-confirm-body"));
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    if button::secondary(ui, tr("cancel")).clicked() {
+                        state.confirm_clear = false;
+                    }
+                    if button::primary(ui, tr("yes")).clicked() {
+                        project.media.items.clear();
+                        tracing::info!("media library cleared");
+                        state.confirm_clear = false;
+                    }
+                });
+            });
+        if !open {
+            state.confirm_clear = false;
+        }
+    }
+
+    ui.separator();
+
+    // --- Sort + size controls (horizontal, like before) ---
+    ui.horizontal_wrapped(|ui| {
+        egui::ComboBox::from_id_salt("media_sort_legacy")
+            .selected_text(format!(
+                "{} {}",
+                tr("media-sort-label"),
+                tr(&format!("media-sort-{}", state.sort.key()))
+            ))
+            .width(110.0)
+            .show_ui(ui, |ui| {
+                for s in MediaSort::all() {
+                    ui.selectable_value(&mut state.sort, s, tr(&format!("media-sort-{}", s.key())));
+                }
+            });
+        // Sort direction toggle
+        let dir_icon = state.sort_dir.icon();
+        if button::icon(
+            ui,
+            dir_icon,
+            &tr(&format!("media-sort-dir-{}", state.sort_dir.key())),
+        )
+        .clicked()
+        {
+            state.sort_dir = state.sort_dir.flipped();
+        }
+        ui.separator();
+        ui.label(tr("media-filter-label"));
+        egui::ComboBox::from_id_salt("media_filter_legacy")
+            .selected_text(state.filter.label())
+            .width(90.0)
+            .show_ui(ui, |ui| {
+                for f in MediaFilter::all() {
+                    ui.selectable_value(
+                        &mut state.filter,
+                        f,
+                        tr(&format!("media-filter-{}", f.key())),
+                    );
+                }
+            });
+        ui.separator();
+        ui.label(tr("media-size-label"));
+        let all = [PreviewSize::Small, PreviewSize::Medium, PreviewSize::Large];
+        let labels: Vec<_> = all.iter().map(|s| s.label()).collect();
+        let selected = all.iter().position(|s| *s == state.preview).unwrap_or(1);
+        let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+        if let Some(i) = clicked {
+            if i != selected {
+                state.preview = all[i];
+            }
+        }
+    });
+
+    ui.separator();
+
+    // --- Sorted item list (full width grid) ---
+    let mut sorted: Vec<MediaItem> = project
+        .media
+        .items
+        .iter()
+        .filter(|m| state.filter.matches(m.kind))
+        .cloned()
+        .collect();
+    match state.sort {
+        MediaSort::Added => sorted.sort_by_key(|m| m.added_at),
+        MediaSort::Name => sorted.sort_by_key(|m| a_lower(&m.name)),
+        MediaSort::Type => sorted.sort_by(|a, b| {
+            kind_rank(a.kind)
+                .cmp(&kind_rank(b.kind))
+                .then_with(|| a.name.cmp(&b.name))
+        }),
+    }
+
+    if state.sort_dir == SortDirection::Descending {
+        sorted.reverse();
+    }
+
+    if sorted.is_empty() {
+        empty::placeholder_with(ui, |ui| {
+            ui.label(
+                RichText::new("No media imported yet.")
+                    .italics()
+                    .color(Color32::from_gray(120)),
+            );
+            ui.label(
+                RichText::new("Click Clips / Music / Images above.")
+                    .small()
+                    .color(Color32::from_gray(90)),
+            );
+        });
+        return MediaBinOutput {
+            dragging: None,
+            newly_imported,
+            remove_requested: Vec::new(),
+            skipped_duplicates,
+        };
+    }
+
+    // --- Dynamic column layout ---
+    let card_w = state.preview.card_w();
+    let thumb_h = state.preview.thumb_h();
+    let h_gap = space::S;
+    let v_gap = space::S;
+    let scrollbar_reserve = space::XL;
+    let avail = (ui.available_width() - scrollbar_reserve).max(card_w);
+
+    // number of columns that fit; at least 1
+    let cols = (((avail + h_gap) / (card_w + h_gap)).floor() as usize).max(1);
+
+    let mut remove_requested: Vec<Uuid> = Vec::new();
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(h_gap, v_gap);
+
+            let project_path_opt: Option<&str> = project.project_path.as_deref();
+            for row in sorted.chunks(cols) {
+                ui.horizontal(|ui| {
+                    for item in row {
+                        let is_selected = state.selected_media.contains(&item.id);
+                        let selected_ids = state.selected_media.clone();
+                        let (resp, should_remove) = draw_card(
+                            ui,
+                            item,
+                            card_w,
+                            thumb_h,
+                            &mut state.thumb_cache,
+                            project_path_opt,
+                            is_selected,
+                            &selected_ids,
+                        );
+                        if resp.clicked() {
+                            let ctrl = ui.ctx().input(|i| i.modifiers.ctrl || i.modifiers.command);
+                            if ctrl {
+                                if let Some(pos) =
+                                    state.selected_media.iter().position(|id| *id == item.id)
+                                {
+                                    state.selected_media.remove(pos);
+                                } else {
+                                    state.selected_media.push(item.id);
+                                }
+                            } else {
+                                state.selected_media = vec![item.id];
+                            }
+                        }
+                        if should_remove {
+                            if state.selected_media.len() > 1
+                                && state.selected_media.contains(&item.id)
+                            {
+                                for id in state.selected_media.drain(..) {
+                                    remove_requested.push(id);
+                                }
+                            } else {
+                                remove_requested.push(item.id);
+                                state.selected_media.retain(|x| *x != item.id);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+    // Drag preview badge
+    if let Some(payload) = egui::DragAndDrop::payload::<Vec<uuid::Uuid>>(ui.ctx()) {
+        let n = payload.len();
+        if n > 0 {
+            if let Some(p) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                let text = if n == 1 {
+                    tr("media-drag-one").to_string()
+                } else {
+                    format!("{} {}", n, tr("media-drag-many"))
+                };
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new("media_drag_badge"),
+                ));
+                let font = egui::FontId::proportional(text::S);
+                let galley = painter.layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE);
+                let pad = space::S;
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(p.x + 12.0, p.y + 12.0),
+                    egui::vec2(galley.size().x + pad * 2.0, galley.size().y + pad),
+                );
+                painter.rect_filled(rect, radius::cr(radius::SM), egui::Color32::from_gray(30));
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    font,
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+    }
+
+    MediaBinOutput {
+        dragging: None,
+        newly_imported,
+        remove_requested,
+        skipped_duplicates,
+    }
+}
+
 pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) -> MediaBinOutput {
+    // In NoFilter mode, show the legacy flat list with controls on top
+    if state.tab_layout == TabLayout::NoFilter {
+        return show_legacy(ui, project, state);
+    }
+    // In NoFilter mode, show the legacy flat list with controls on top
+    if state.tab_layout == TabLayout::NoFilter {
+        return show_legacy(ui, project, state);
+    }
     // --- Import buttons ---
     let mut newly_imported: Vec<Uuid> = Vec::new();
     let mut skipped_duplicates: usize = 0;
