@@ -1651,9 +1651,10 @@ impl CapRustApp {
                     });
                     ui.menu_button(tr("menu-view-tab-layout"), |ui| {
                         for l in crate::panels::media_bin::TabLayout::all() {
-                            let sel = self.tab_layout == l;
+                            let sel = self.media_bin.tab_layout == l;
                             if ui.selectable_label(sel, tr(l.ftl_key())).clicked() {
-                                self.tab_layout = l;
+                                self.media_bin.tab_layout = l;
+                                self.tab_layout = l; // Keep both in sync
                                 ui.close_menu();
                             }
                         }
