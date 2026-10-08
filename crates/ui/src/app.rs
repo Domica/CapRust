@@ -6608,6 +6608,8 @@ impl CapRustApp {
                     &mut self.asset_browser,
                     &mut self.media_bin,
                 );
+                // Sync tab_layout back to media_bin
+                self.media_bin.tab_layout = self.asset_browser.tab_layout;
                 self.handle_asset_browser_output(out);
             });
 
@@ -7146,12 +7148,14 @@ impl CapRustApp {
         ui: &mut egui::Ui,
         tab: crate::panels::asset_browser::AssetTab,
     ) {
+        let tab_layout = self.media_bin.tab_layout;
         let out = crate::panels::asset_browser::render_tab_content(
             ui,
             tab,
             &mut self.project,
             &mut self.asset_browser,
             &mut self.media_bin,
+            tab_layout,
         );
         self.handle_asset_browser_output(out);
     }

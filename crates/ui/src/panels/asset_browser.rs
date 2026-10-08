@@ -6,7 +6,7 @@
 //! to the selected timeline clip comes in a follow-up PR.
 
 use crate::i18n_helper::tr;
-use crate::panels::media_bin::{MediaBinOutput, MediaBinState};
+use crate::panels::media_bin::{MediaBinOutput, MediaBinState, TabLayout};
 use crate::theme::tokens::elev;
 use crate::widgets::empty;
 use caprust_core::ProjectState;
@@ -126,6 +126,8 @@ pub struct AssetBrowserState {
     pub filter_cat: String,
     /// Left sidebar width in pixels (persisted per session).
     pub sidebar_width: f32,
+    /// Selected tab layout mode (NoFilter/Filtered).
+    pub tab_layout: TabLayout,
     pub plugin_browser: crate::panels::plugin_browser::PluginBrowserState,
 }
 
@@ -139,6 +141,7 @@ impl AssetBrowserState {
             effect_cat: "all".to_string(),
             filter_cat: "all".to_string(),
             sidebar_width: 104.0,
+            tab_layout: TabLayout::default(),
             plugin_browser: Default::default(),
         }
     }
@@ -780,6 +783,8 @@ pub fn show(
     state: &mut AssetBrowserState,
     media_state: &mut MediaBinState,
 ) -> AssetBrowserOutput {
+    // Sync tab_layout from media_state to local state
+    state.tab_layout = media_state.tab_layout;
     let mut out = AssetBrowserOutput::default();
 
     // --- Vertical tab strip on the left, content on the right ---
@@ -807,7 +812,14 @@ pub fn show(
 
         // Right: tab content
         ui.vertical(|ui| {
-            let content = render_tab_content(ui, state.active, project, state, media_state);
+            let content = render_tab_content(
+                ui,
+                state.active,
+                project,
+                state,
+                media_state,
+                media_state.tab_layout,
+            );
             out.media = content.media;
             out.preset_clicked = content.preset_clicked;
         });
@@ -825,6 +837,7 @@ pub fn render_tab_content(
     project: &mut ProjectState,
     state: &mut AssetBrowserState,
     media_state: &mut MediaBinState,
+    tab_layout: TabLayout,
 ) -> AssetBrowserOutput {
     let mut out = AssetBrowserOutput::default();
     match tab {
@@ -842,6 +855,7 @@ pub fn render_tab_content(
                 &state.search,
                 &mut state.sidebar_width,
                 &mut state.card_size,
+                tab_layout,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Transitions));
@@ -858,6 +872,7 @@ pub fn render_tab_content(
                 &state.search,
                 &mut state.sidebar_width,
                 &mut state.card_size,
+                tab_layout,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Effects));
@@ -874,6 +889,7 @@ pub fn render_tab_content(
                 &state.search,
                 &mut state.sidebar_width,
                 &mut state.card_size,
+                tab_layout,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Filters));
@@ -893,6 +909,7 @@ pub fn render_tab_content(
                 &state.search,
                 &mut state.sidebar_width,
                 &mut state.card_size,
+                tab_layout,
             );
             if let Some(id) = clicked {
                 out.preset_clicked = Some((id, AssetTab::Text));
@@ -912,7 +929,7 @@ pub fn render_tab_content(
 }
 
 /// Left-column category filter with the preset grid on the right.
-/// Used by the Transitions, Effects, and Filters tabs. Returns the id
+/// Used by the Transitions, Effects, Filters, and Text tabs. Returns the id
 /// of a card that was clicked, if any.
 #[allow(clippy::too_many_arguments)]
 fn categorized_grid(
@@ -925,7 +942,20 @@ fn categorized_grid(
     search: &str,
     sidebar_width: &mut f32,
     card_size_state: &mut PresetCardSize,
+    tab_layout: TabLayout,
 ) -> Option<&'static str> {
+    // In NoFilter mode, skip the sidebar and show the grid directly
+    if tab_layout == TabLayout::NoFilter {
+        return preset_grid(
+            ui,
+            presets,
+            card_size_state.px(),
+            search,
+            Some(selected.as_str()),
+            ui.available_height(),
+        );
+    }
+
     // Capture the height before entering the horizontal layout:
     // available_height() reads 0 inside one (§5), and both columns
     // need an explicit bound for their scroll areas.
