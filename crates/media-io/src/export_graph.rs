@@ -2247,6 +2247,7 @@ fn compute_xfade_audio_shifts(
 /// Returns None if the path contains a single quote (no quoting survives that).
 /// On Windows: forward slashes, drive-colon backslash-escaped, single-quoted.
 /// Verified live against the gyan.dev essentials build.
+/// Used for filter graph INPUT sources (e.g. `movie=...`).
 pub fn escape_movie_path(path: &std::path::Path) -> Option<String> {
     let s = path.to_string_lossy();
     if s.contains('\'') {
@@ -2257,6 +2258,35 @@ pub fn escape_movie_path(path: &std::path::Path) -> Option<String> {
     // option parser. Single-quote quoting does not protect it.
     let colon_escaped = normalized.replace(':', "\\:");
     Some(format!("'{colon_escaped}'"))
+}
+
+/// Escape a path for use as an ffmpeg OUTPUT file.
+/// On Windows: double-quote the path if it contains spaces or special chars.
+/// On Unix: single-quote if it contains spaces or special chars.
+pub fn escape_output_path(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if s.contains(' ') || s.contains('&') || s.contains('^') || s.contains('%') {
+            format!("\"{}\"", s.replace('"', "\\\""))
+        } else {
+            s.to_string()
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if s.contains(' ')
+            || s.contains('\'')
+            || s.contains('"')
+            || s.contains('$')
+            || s.contains('`')
+            || s.contains('\\')
+        {
+            format!("'{}'", s.replace('\'', "'\\''"))
+        } else {
+            s.to_string()
+        }
+    }
 }
 
 /// Resolve the mask path for a clip. The stored path is relative to

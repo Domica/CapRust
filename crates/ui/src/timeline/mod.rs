@@ -164,7 +164,6 @@ fn contributes_audio(
 /// - `positive_color`: dB > 0 (above 0 dB, typically green)
 /// - `negative_color`: dB < 0 (below 0 dB, typically orange)
 /// - `center_color`: 0 dB reference line (subtle white)
-#[allow(clippy::too_many_arguments)]
 pub fn draw_audio_envelope(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -212,7 +211,7 @@ pub fn draw_audio_envelope(
     let mut pos_points = Vec::new();
     let mut neg_points = Vec::new();
     let mut last_frac = None;
-    let mut last_db: Option<f32> = None;
+    let mut last_db = None;
 
     for &(frac, db) in samples_db {
         let x = rect.left() + frac * rect.width();
@@ -233,9 +232,10 @@ pub fn draw_audio_envelope(
             let crossed = (prev_db > 0.0 && db < 0.0) || (prev_db < 0.0 && db > 0.0);
             if crossed {
                 // Linear interpolation to find crossing point at 0 dB
-                let diff: f32 = db - prev_db;
-                let t = if diff.abs() > f32::EPSILON {
-                    -prev_db / diff
+                let db_f32 = db as f32;
+                let prev_db_f32 = prev_db as f32;
+                let t = if (db_f32 - prev_db_f32).abs() > f32::EPSILON {
+                    -prev_db_f32 / (db_f32 - prev_db_f32)
                 } else {
                     0.5_f32
                 };
@@ -271,7 +271,10 @@ mod overlay_tests {
     use super::*;
     use caprust_core::clip::Clip;
     use caprust_core::{MediaKind, ProjectState, Track, TrackKind};
-    use egui::{Color32, epaint::{ColorMode, PathStroke}};
+    use egui::{
+        epaint::{ColorMode, PathStroke},
+        Color32,
+    };
 
     #[test]
     fn zero_db_is_sixty_percent() {
@@ -533,12 +536,14 @@ mod overlay_tests {
 
         // The test samples are all at or below 0 dB: [(0.0, 0.0), (0.5, 0.0), (1.0, -60.0)]
         // So positive line only has the center crossing points (at 0 dB), negative line has all points.
-        #[allow(dead_code)]
         fn get_stroke_color(stroke: &PathStroke) -> Option<Color32> {
             // Stroke color can be Solid or Premultiplied; try to extract RGB regardless of mode
             fn color_from_mode(mode: &ColorMode) -> Option<Color32> {
                 match mode {
-                    ColorMode::Solid(ref c) => Some(*c),
+                    ColorMode::Solid(c) => Some(c),
+                    // ColorMode doesn't have Premultiplied in egui 0.31, but check anyway
+                    #[allow(unreachable_patterns)]
+                    ColorMode::Premultiplied(c) => Some(c),
                     _ => None,
                 }
             }
@@ -548,49 +553,60 @@ mod overlay_tests {
             matches!(stroke.color, ColorMode::Solid(c) if c == color)
         }
 
-        let pos_line = shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Path(l) if stroke_is(egui::Color32::GREEN, &l.stroke) => Some(l.points.clone()),
-                _ => None,
-            });
-        let neg_line = shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Path(l) if stroke_is(egui::Color32::ORANGE, &l.stroke) => Some(l.points.clone()),
-                _ => None,
-            });
+        let pos_line = shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Path(l) if stroke_is(egui::Color32::GREEN, &l.stroke) => {
+                Some(l.points.clone())
+            }
+            _ => None,
+        });
+        let neg_line = shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Path(l) if stroke_is(egui::Color32::ORANGE, &l.stroke) => {
+                Some(l.points.clone())
+            }
+            _ => None,
+        });
 
         // Positive line only has the center crossing points (at x=100, the 0 dB crossing)
         if let Some(line) = pos_line {
-            assert!(line.iter().any(|p| (p.x - 100.0).abs() < 1.0), "positive line should have center crossing at x=100");
+            assert!(
+                line.iter().any(|p| (p.x - 100.0).abs() < 1.0),
+                "positive line should have center crossing at x=100"
+            );
         }
 
         // Negative line should have all three points: start at -400, middle at 100, end at 600
         if let Some(line) = neg_line {
-            assert_eq!(line.first().unwrap().x, -400.0, "negative line should start at -400");
-            assert!(line.iter().any(|p| (p.x - 100.0).abs() < 1.0), "negative line should have middle point at x=100");
-            assert_eq!(line.last().unwrap().x, 600.0, "negative line should end at 600");
+            assert_eq!(
+                line.first().unwrap().x,
+                -400.0,
+                "negative line should start at -400"
+            );
+            assert!(
+                line.iter().any(|p| (p.x - 100.0).abs() < 1.0),
+                "negative line should have middle point at x=100"
+            );
+            assert_eq!(
+                line.last().unwrap().x,
+                600.0,
+                "negative line should end at 600"
+            );
         }
 
-        // Also verify center line exists (0 dB reference)
-        let center_y = full.bottom() - db_to_normalized_y(0.0).clamp(0.0, 1.0) * full.height();
-        let center_line = shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Path(l) => {
-                    // Check if this is a horizontal line at center_y
-                    let is_horizontal = l.points.len() >= 2
-                        && (l.points.first().unwrap().y - center_y).abs() < 1.0
-                        && (l.points.last().unwrap().y - center_y).abs() < 1.0;
-                    if is_horizontal {
-                        Some(l.points.clone())
+        // Also verify center line exists (0 dB reference) - it's drawn with semi-transparent white
+        let center_line = shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Path(l)
+                if {
+                    if let Some(c) = get_stroke_color(&l.stroke) {
+                        c.r() == 255 && c.g() == 255 && c.b() == 255 && c.a() < 255
                     } else {
-                        None
+                        false
                     }
-                }
-                _ => None,
-            });
+                } =>
+            {
+                Some(l.points.clone())
+            }
+            _ => None,
+        });
         assert!(center_line.is_some(), "center line (0 dB) should exist");
     }
 

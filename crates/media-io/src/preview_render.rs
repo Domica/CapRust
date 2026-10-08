@@ -8,7 +8,7 @@
 //!  - Reader thread THROTTLES its own emission to the target fps using
 //!    `std::thread::sleep`, so the consumer sees exactly fps frames/sec.
 
-use crate::export_graph::{escape_movie_path, RenderPlan};
+use crate::export_graph::{escape_output_path, RenderPlan};
 use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -154,8 +154,8 @@ pub fn render_single_frame(
     args.push(format!("[{v_label}]"));
     args.push("-frames:v".into());
     args.push("1".into());
-    // Output path: escape like filter inputs to handle spaces/colons on Windows.
-    let out_escaped = escape_movie_path(out).unwrap_or_else(|| out.to_string_lossy().to_string());
+    // Output path: escape for ffmpeg output (Windows quoting, not filter escaping).
+    let out_escaped = escape_output_path(out);
     args.push(out_escaped);
 
     let status = crate::silent_cmd::silent_command(ffmpeg)
