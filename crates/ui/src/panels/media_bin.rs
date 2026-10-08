@@ -682,24 +682,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     {
                         state.sort_dir = state.sort_dir.flipped();
                     }
-                    ui.add_space(space::S);
-                    ui.separator();
-
-                    // Filter
-                    ui.label(tr("media-filter-label"));
-                    egui::ComboBox::from_id_salt("media_filter_sidebar")
-                        .selected_text(state.filter.label())
-                        .width(100.0)
-                        .show_ui(ui, |ui| {
-                            for f in MediaFilter::all() {
-                                ui.selectable_value(
-                                    &mut state.filter,
-                                    f,
-                                    tr(&format!("media-filter-{}", f.key())),
-                                );
-                            }
-                        });
-                });
+                    });
             });
         // Drag handle to resize sidebar
         let sep_resp = ui.allocate_response(Vec2::new(4.0, h), Sense::drag());
