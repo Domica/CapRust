@@ -682,7 +682,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     {
                         state.sort_dir = state.sort_dir.flipped();
                     }
-                    });
+                });
             });
         // Drag handle to resize sidebar
         let sep_resp = ui.allocate_response(Vec2::new(4.0, h), Sense::drag());
