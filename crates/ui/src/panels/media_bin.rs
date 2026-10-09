@@ -674,8 +674,31 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                     ui.add_space(space::S);
                     ui.separator();
 
-                    // Sort - vertical list like Show
-                    ui.label(tr("media-sort-label"));
+                    // Sort - vertical list like Show. The direction
+                    // toggle sits in the header row, right-aligned so
+                    // it tracks the sidebar width as it is dragged,
+                    // wrapped in a bordered frame for visibility.
+                    ui.horizontal(|ui| {
+                        ui.label(tr("media-sort-label"));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let dir_icon = state.sort_dir.icon();
+                            let frame = egui::Frame::new()
+                                .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(120)))
+                                .corner_radius(egui::CornerRadius::same(4))
+                                .inner_margin(egui::Margin::same(2));
+                            frame.show(ui, |ui| {
+                                if button::icon(
+                                    ui,
+                                    dir_icon,
+                                    &tr(&format!("media-sort-dir-{}", state.sort_dir.key())),
+                                )
+                                .clicked()
+                                {
+                                    state.sort_dir = state.sort_dir.flipped();
+                                }
+                            });
+                        });
+                    });
                     ui.add_space(space::XS);
                     ui.vertical(|ui| {
                         for s in MediaSort::all() {
@@ -688,18 +711,6 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
                             }
                         }
                     });
-                    ui.add_space(space::XS);
-                    // Sort direction toggle
-                    let dir_icon = state.sort_dir.icon();
-                    if button::icon(
-                        ui,
-                        dir_icon,
-                        &tr(&format!("media-sort-dir-{}", state.sort_dir.key())),
-                    )
-                    .clicked()
-                    {
-                        state.sort_dir = state.sort_dir.flipped();
-                    }
                 });
             });
         // Drag handle to resize sidebar
