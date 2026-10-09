@@ -1642,7 +1642,19 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             1.0 + 0.1 * amount
         ),
         "mirror" => ",hflip".into(),
-        "kaleido" => ",vflip,hflip".into(),
+        // Kaleidoscope approximation. A true mirrored-segment kaleidoscope
+        // needs split+hstack/vstack, which the single-chain contract here
+        // cannot express (same reason as lens_flare/glow above). Instead:
+        // a fisheye warp (lenscorrection) plus a continuously rotating
+        // hue. Reads as psychedelic motion, clearly distinct from the
+        // plain 180-degree rotation the old vflip,hflip produced.
+        "kaleido" => {
+            let k1 = (-0.15 * amount).clamp(-0.6, 0.0);
+            let spd = (20.0 + 20.0 * amount).clamp(5.0, 80.0);
+            format!(
+                ",lenscorrection=cx=0.5:cy=0.5:k1={k1:.3}:k2=-0.05,hue=h='t*{spd:.1}'"
+            )
+        }
         "old_film" => ",curves=preset=vintage,noise=alls=15:allf=t".into(),
         "vintage" => format!(
             ",curves=preset=vintage,colorbalance=rm={rm:.3}:gm={gm:.3}:bm={bm:.3}",
@@ -1709,7 +1721,18 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             0.05 * amount,
             0.15 * amount
         ),
-        "fade" => format!(",fade=t=in:st=0:d={:.3}", 0.6 * amount.max(0.1)),
+        // ---- Faded film ("fade" filter): lifted blacks, muted look ----
+        // This is the persistent CapCut-style "Fade/Memory" filter: the
+        // whole clip gets washed-out blacks and pulled saturation. It is
+        // NOT a temporal fade-in (that lives on the transition edges):
+        // the old fade=t=in fragment only blacked out the first 0.6 s
+        // of the clip, which read as "just a black screen".
+        "fade" => format!(
+            ",eq=brightness={:.3}:saturation={:.3}:contrast={:.3}",
+            0.06 * amount,
+            (1.0 - 0.3 * amount).max(0.0),
+            (1.0 - 0.15 * amount).max(0.0),
+        ),
         "pastel" => format!(
             ",eq=saturation={:.3}:brightness={:.3}",
             (1.0 - 0.25 * amount).max(0.0),
@@ -1856,11 +1879,13 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
                 ",scale=iw/{b}:ih/{b}:flags=neighbor,scale={b}*iw:{b}*ih:flags=neighbor"
             )
         },
-        // Light animated film grain. Much subtler than the
-        // old_film/vhs noise stages: a texture, not a look.
+        // Light animated film grain. Strength raised after a user
+        // report that alls=6 was invisible: at amount 1 the per-frame
+        // mean-abs-diff is now ~13 (vs ~3 for clean video), clearly
+        // visible without destroying the image. allf=t keeps it temporal.
         "grain" => format!(
             ",noise=alls={s:.0}:allf=t",
-            s = (6.0 * amount).clamp(1.0, 24.0)
+            s = (15.0 * amount).clamp(5.0, 60.0)
         ),
         // Soft glow (bloom approximation). A true bloom needs a
         // split+screen-blend pair, which the single-chain contract
@@ -1874,13 +1899,17 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
         ),
 
         // ---- Cinematic bars: letterbox 2.39:1 ----
-        // Pads black bars top and bottom. amount scales bar thickness
-        // (0 = no bars, 1 = ~2.39:1 on a 16:9 frame).
+        // Drawn with drawbox (filled black bands top and bottom) rather
+        // than pad: pad changes the frame dimensions, which the
+        // downstream size-normalization would squash back (and pad's
+        // option is `color`, not `c` — the old fragment errored with
+        // "Option not found" and stalled the preview). drawbox keeps
+        // dimensions intact. Thickness is a fraction of frame height:
+        // 0.128 each side ~= 2.39:1 on a 16:9 frame at amount 1.
         "cinematic_bars" => {
-            let bar = (0.12 * amount).clamp(0.0, 0.25);
+            let t = (0.128 * amount).clamp(0.0, 0.45);
             format!(
-                ",pad=iw:ih+2*{bar:.3}:(ow-iw)/2:0:c=black,setsar=1",
-                bar = bar,
+                ",drawbox=x=0:y=0:w=iw:h='ih*{t:.3}':t=fill:c=black,drawbox=x=0:y='ih-ih*{t:.3}':w=iw:h='ih*{t:.3}':t=fill:c=black"
             )
         }
 
@@ -1950,10 +1979,13 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
         }
 
         // ---- Freezeframe: hold the first frame for the clip ----
-        // select=eq(n\,0) picks frame 0 for every output frame, so the
-        // whole clip shows a single still. amount is accepted but ignored
-        // (a freeze is binary) — kept so the slider is consistent.
-        "freezeframe" => ",select=eq(n\\,0),setpts=N/FRAME_RATE/TB".into(),
+        // loop=loop=-1:size=1 repeats frame 0 forever (setpts rebuilds
+        // CFR timestamps afterwards). The old select=eq(n,0) emitted
+        // exactly one frame then EOF, so the whole clip rendered black
+        // (only the audio played). The downstream overlay shortest=0
+        // bounds the infinite stream to the timeline duration.
+        // amount is accepted but ignored (a freeze is binary).
+        "freezeframe" => ",loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB".into(),
 
         // ---- Echo: motion trail with exponential decay ----
         // Like ghost but with a non-uniform weight ramp so the trail
@@ -4086,8 +4118,8 @@ mod tests {
         assert!(
             build_one_effect("cinematic_bars", 1.0)
                 .unwrap()
-                .contains("pad="),
-            "cinematic_bars should letterbox via pad"
+                .contains("drawbox="),
+            "cinematic_bars should letterbox via drawbox"
         );
         assert!(
             build_one_effect("teal_orange", 1.0)
@@ -4125,13 +4157,46 @@ mod tests {
         assert!(
             build_one_effect("freezeframe", 1.0)
                 .unwrap()
-                .contains("select="),
-            "freezeframe should freeze via select"
+                .contains("loop=loop=-1"),
+            "freezeframe should freeze via loop"
         );
         assert!(
             build_one_effect("echo", 1.0).unwrap().contains("tmix="),
             "echo should trail via tmix"
         );
+    }
+
+    #[test]
+    fn fixed_effects_emit_working_fragments() {
+        // cinematic_bars: drawbox bands (pad's option is `color`, not
+        // `c` — the old fragment errored and stalled the preview).
+        let bars = build_one_effect("cinematic_bars", 1.0).expect("bars chain");
+        assert!(bars.contains("drawbox="), "bars must draw boxes: {bars}");
+        assert!(bars.contains("t=fill"), "bars must be filled: {bars}");
+        assert!(!bars.contains("pad="), "bars must not use pad: {bars}");
+        // freezeframe: infinite loop of frame 0 (select emitted one
+        // frame then EOF -> black clip).
+        let fr = build_one_effect("freezeframe", 1.0).expect("freeze chain");
+        assert!(fr.contains("loop=loop=-1"), "freeze must loop: {fr}");
+        assert!(!fr.contains("select="), "freeze must not use select: {fr}");
+        // grain: visible strength (alls=6 was imperceptible).
+        let g = build_one_effect("grain", 1.0).expect("grain chain");
+        let s: f32 = g
+            .split("alls=")
+            .nth(1)
+            .and_then(|s| s.split(':').next())
+            .and_then(|s| s.parse().ok())
+            .expect("grain strength");
+        assert!(s >= 10.0, "grain too subtle at amount 1: {s}");
+        // kaleido: fisheye + hue rotation, not a plain 180 flip.
+        let k = build_one_effect("kaleido", 1.0).expect("kaleido chain");
+        assert!(k.contains("lenscorrection="), "kaleido must warp: {k}");
+        assert!(k.contains("hue="), "kaleido must shift hue: {k}");
+        // fade filter: faded-film look over the whole clip, not a
+        // temporal fade-in (which blacked out the clip start).
+        let f = build_one_effect("fade", 1.0).expect("fade chain");
+        assert!(f.contains("brightness="), "fade must lift blacks: {f}");
+        assert!(!f.contains("fade=t=in"), "fade must not fade in: {f}");
     }
 
     #[test]
