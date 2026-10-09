@@ -2,6 +2,21 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.12] — 2026-10-09
+
+### Added
+
+- **27 new transitions.** Cover, reveal, diagonal, corner wipes, vertical/horizontal open/close, fade-grays, zoom-blur fade, circle/rect crop, squeeze — all ffmpeg xfade keywords, zero new render logic.
+- **10 new effects.** Cinematic bars (2.39:1 letterbox), teal & orange, cross process, bleach bypass, moonlight, dreamy haze, 3D flip, freezeframe, echo, and beauty (edge-preserving skin smoothing via smartblur).
+- **Color LUT pipeline.** Per-clip LUT (built-in id or custom `.cube` path), `lut3d` render stage with Windows path escaping, 4 bundled 17³ film LUTs (Kodak, Fuji, B&W contrast, vintage sepia), custom `.cube` upload from Properties → Effects, `.cube` parser with validation.
+- **Beat snap-to-grid + auto-cut.** Clip edges snap to analysed beat markers; "Auto-cut to beats" splits every video clip at each beat as a single undo step.
+- **Media-bin tab layout persistence.** The View → Tab layout toggle (Filtered / No filter) and sidebar width survive restarts via `MediaBinLayout` storage.
+
+### Fixed
+
+- **Save Frame EINVAL.** Single-frame capture built the full filtergraph but mapped only the video output, leaving `[a_final]` unconnected (ffmpeg -22). Now renders a video-only filtergraph with `-update 1`.
+- **5 broken effects/filters.** Cinematic bars (bad `pad` option stalled preview → `drawbox`), freezeframe (single frame then black → infinite `loop`), grain (imperceptible → stronger), kaleido (plain flip → fisheye + hue rotation), fade filter (temporal fade-in → faded-film look).
+
 ## [0.9.11] — 2026-10-08
 
 ### Added

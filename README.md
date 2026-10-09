@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.11-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.12-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -23,7 +23,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.11-win64-setup.exe`.
+1. Run `CapRust-0.9.12-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -385,6 +385,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.12** | 2026-10-09 | Save Frame EINVAL fix (video-only filtergraph), media-bin tab layout persistence, 27 new transitions, 10 new effects (incl. beauty skin smoothing), color LUT pipeline (.cube upload + 4 film LUTs), 5 effect/filter repairs, beat snap-to-grid + auto-cut. |
 | **0.9.11** | 2026-10-08 | Three-color waveform, media bin sidebar with TabLayout (NoFilter/Filtered), 8 new text styles, View menu Tab Layout toggle, waveform color pickers, save frame path fix, disk-full hardening, vertical asset tabs. |
 | **0.9.10** | 2026-10-07 | Save paused preview frame, capture folders in settings, preset categories + new presets, per-clip vidstab, About tab, vertical asset tabs, disk-full hardening. |
 | **0.9.9** | 2026-10-07 | Import without duplicates, Clear-all confirm, menu highlight + shortcuts + Ctrl+S/O, transition overlap fix. |
