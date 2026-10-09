@@ -4778,7 +4778,10 @@ impl CapRustApp {
                             p.rect_stroke(
                                 clip_rect,
                                 4.0,
-                                egui::Stroke::new(1.5_f32, border_color),
+                                egui::Stroke::new(
+                                    theme_snapshot.clip_border_width(),
+                                    border_color,
+                                ),
                                 egui::StrokeKind::Inside,
                             );
 

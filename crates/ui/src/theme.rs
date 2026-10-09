@@ -91,6 +91,14 @@ pub struct Theme {
     /// Waveform center line color (0 dB reference). RGB only.
     #[serde(default = "default_waveform_center")]
     pub waveform_center: [u8; 3],
+    /// Clip border width in px on the timeline. Default 1.5.
+    #[serde(default = "default_clip_border_width")]
+    pub clip_border_width: f32,
+    /// Optional fixed clip border color. None = automatic per-track
+    /// pastel (see `clip_border_color`). Some(rgb) paints every clip
+    /// border in that color instead.
+    #[serde(default)]
+    pub clip_border_override: Option<[u8; 3]>,
     /// Global UI scale. Multiplies egui's pixels-per-point, which
     /// scales text, buttons, panels, and the window chrome in one
     /// knob. 1.0 is the default look.
@@ -188,6 +196,9 @@ fn default_waveform_center() -> [u8; 3] {
     // Subtle white for 0 dB reference line
     [220, 220, 230]
 }
+fn default_clip_border_width() -> f32 {
+    1.5
+}
 fn default_track_audio() -> [u8; 3] {
     [128, 200, 148]
 }
@@ -215,6 +226,8 @@ impl Default for Theme {
             waveform_positive: default_waveform_positive(),
             waveform_negative: default_waveform_negative(),
             waveform_center: default_waveform_center(),
+            clip_border_width: default_clip_border_width(),
+            clip_border_override: None,
             playhead: default_playhead_color(),
             playhead_size: PlayheadSize::default(),
             font_scale: 1.0,
@@ -374,19 +387,29 @@ impl Theme {
     /// Border color drawn around every clip on the timeline. Uses the
     /// pastel track color so the border is always a different hue from
     /// the clip's own saturated fill, which is what makes two adjacent
-    /// clips distinguishable at a glance.
+    /// clips distinguishable at a glance. A user-set
+    /// `clip_border_override` wins over the automatic color.
     ///
     /// Dark theme: pastel kept bright — reads as a light outline on the
     /// dark clip fill.
     /// Light theme: pastel darkened — reads as a deeper outline so it
     /// still contrasts on a lighter lane.
     pub fn clip_border_color(&self, kind: TrackKind) -> Color32 {
+        if let Some([r, g, b]) = self.clip_border_override {
+            return Color32::from_rgb(r, g, b);
+        }
         let [r, g, b] = self.track_color(kind);
         let base = Color32::from_rgb(r, g, b);
         match self.mode {
             ThemeMode::Light => base.gamma_multiply(0.55),
             ThemeMode::Dark | ThemeMode::Custom => base.gamma_multiply(1.15),
         }
+    }
+
+    /// Clip border width in px. Clamped to a sane range so a stray
+    /// serialized value cannot make borders invisible or huge.
+    pub fn clip_border_width(&self) -> f32 {
+        self.clip_border_width.clamp(0.5, 6.0)
     }
 
     /// Lane background. Pastel tint that respects theme mode: brighter
@@ -429,3 +452,50 @@ pub const ACCENT_PRESETS: &[(&str, [u8; 3])] = &[
     ("Teal", [20, 184, 166]),
     ("Cyan", [6, 182, 212]),
 ];
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn clip_border_defaults_to_auto_pastel() {
+        let t = Theme::default();
+        assert!(t.clip_border_override.is_none());
+        assert!((t.clip_border_width() - 1.5).abs() < 0.001);
+        // Automatic color differs per track (pastel of the track color).
+        let v = t.clip_border_color(TrackKind::Video);
+        let a = t.clip_border_color(TrackKind::Audio);
+        assert_ne!((v.r(), v.g(), v.b()), (a.r(), a.g(), a.b()));
+    }
+
+    #[test]
+    fn clip_border_override_wins_for_every_track() {
+        let t = Theme {
+            clip_border_override: Some([10, 20, 30]),
+            ..Theme::default()
+        };
+        for kind in [
+            TrackKind::Video,
+            TrackKind::Audio,
+            TrackKind::Captions,
+            TrackKind::Text,
+        ] {
+            let c = t.clip_border_color(kind);
+            assert_eq!((c.r(), c.g(), c.b()), (10, 20, 30));
+        }
+    }
+
+    #[test]
+    fn clip_border_width_clamps_stray_values() {
+        let thin = Theme {
+            clip_border_width: 0.0,
+            ..Theme::default()
+        };
+        assert!((thin.clip_border_width() - 0.5).abs() < 0.001);
+        let thick = Theme {
+            clip_border_width: 99.0,
+            ..Theme::default()
+        };
+        assert!((thick.clip_border_width() - 6.0).abs() < 0.001);
+    }
+}

@@ -83,7 +83,7 @@ pub fn show(
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status, &mut ev),
             SettingsTab::Audio => show_audio(ui, settings),
             SettingsTab::Translation => show_translation(ui, settings),
-            SettingsTab::About => show_about(ui),
+            SettingsTab::About => show_about(ui, settings),
         });
 
     ui.separator();
@@ -256,6 +256,36 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
             ui.label(tr("set-appearance-waveform-bottom"));
             switch::switch_labeled(ui, &mut settings.waveform_bottom, "");
             ui.end_row();
+            ui.label(tr("set-appearance-clip-border-width"));
+            ui.add(
+                egui::Slider::new(&mut theme.clip_border_width, 0.5..=6.0)
+                    .step_by(0.5)
+                    .suffix(" px"),
+            );
+            ui.end_row();
+            ui.label(tr("set-appearance-clip-border-color"));
+            ui.horizontal(|ui| {
+                let mut rgb: [u8; 3] = match theme.clip_border_override {
+                    Some(v) => v,
+                    // Picker starting point when on automatic: the
+                    // current video-track border color.
+                    None => {
+                        let c = theme.clip_border_color(caprust_core::TrackKind::Video);
+                        [c.r(), c.g(), c.b()]
+                    }
+                };
+                if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    theme.clip_border_override = Some(rgb);
+                }
+                if theme.clip_border_override.is_some()
+                    && ui
+                        .small_button(tr("set-appearance-clip-border-auto"))
+                        .clicked()
+                {
+                    theme.clip_border_override = None;
+                }
+            });
+            ui.end_row();
         });
 
     ui.add_space(space::L);
@@ -311,36 +341,6 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
     if button::ghost(ui, tr("set-appearance-reset")).clicked() {
         *theme = Theme::default();
     }
-
-    ui.add_space(space::L);
-    ui.separator();
-    ui.label(egui::RichText::new(tr("set-appearance-logs")).strong());
-    ui.label(
-        egui::RichText::new(tr("set-appearance-logs-hint"))
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
-    if button::secondary(ui, tr("set-appearance-open-logs")).clicked() {
-        let dir = logs_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        if let Err(e) = open::that(&dir) {
-            tracing::warn!("open logs dir: {e}");
-        }
-    }
-
-    ui.add_space(space::L);
-    ui.separator();
-    ui.label(egui::RichText::new(tr("set-appearance-updates")).strong());
-    switch::switch_labeled(
-        ui,
-        &mut settings.check_for_updates,
-        tr("set-appearance-check-updates"),
-    );
-    ui.label(
-        egui::RichText::new(tr("set-appearance-updates-hint"))
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -940,7 +940,7 @@ fn show_translation(ui: &mut Ui, settings: &mut AppSettings) {
 
 /// Build identity: version + commit so a screenshot of this tab always
 /// tells which binary is under test.
-fn show_about(ui: &mut Ui) {
+fn show_about(ui: &mut Ui, settings: &mut AppSettings) {
     ui.label(egui::RichText::new(tr("set-tab-about")).strong());
     ui.add_space(space::XS);
     ui.label(
@@ -982,6 +982,40 @@ fn show_about(ui: &mut Ui) {
             ui.label("MIT");
             ui.end_row();
         });
+
+    // Logs live here (moved from Appearance): diagnostics belong with
+    // the build identity above, not with theme colors.
+    ui.add_space(space::L);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-logs")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-appearance-logs-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    if button::secondary(ui, tr("set-appearance-open-logs")).clicked() {
+        let dir = logs_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if let Err(e) = open::that(&dir) {
+            tracing::warn!("open logs dir: {e}");
+        }
+    }
+
+    // Update checks live here too: version-related, next to the
+    // version/commit identity.
+    ui.add_space(space::L);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-appearance-updates")).strong());
+    switch::switch_labeled(
+        ui,
+        &mut settings.check_for_updates,
+        tr("set-appearance-check-updates"),
+    );
+    ui.label(
+        egui::RichText::new(tr("set-appearance-updates-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
 }
 
 /// Where the app writes its log files. Duplicated from the app
