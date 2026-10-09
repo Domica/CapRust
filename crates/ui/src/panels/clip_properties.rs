@@ -131,6 +131,10 @@ pub enum PendingEdit {
     /// The dispatcher resolves the clip id from the selection, like
     /// StartReframe.
     StartBeatAnalysis,
+    /// Split every video clip at this audio clip's beat markers.
+    /// One MacroCommand so Ctrl+Z is a single step. No-op with a toast
+    /// when the clip has no analysed grid yet.
+    StartBeatAutocut,
     /// Clear the background-removal mask path. The mask file itself
     /// stays in cache until the user clears the project cache.
     ClearBgRemoval,
@@ -1827,6 +1831,9 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.add_space(space::XS);
     if button::secondary(ui, tr("props-sound-beats")).clicked() {
         state.pending.push(PendingEdit::StartBeatAnalysis);
+    }
+    if button::secondary(ui, tr("props-sound-autocut")).clicked() {
+        state.pending.push(PendingEdit::StartBeatAutocut);
     }
 }
 

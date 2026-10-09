@@ -31,6 +31,37 @@ pub struct BeatEntry {
     pub source_mtime_secs: u64,
 }
 
+/// Map media-time beats onto the timeline for one clip.
+///
+/// Mirrors the ruler's marker mapping: `t = clip_start + b -
+/// source_offset`, keeping only beats inside the clip's visible
+/// window. Speed-ramped clips are skipped (timing no longer matches
+/// the analysis) by returning an empty vec.
+///
+/// Shared by snap-to-beat and auto-cut so both agree with the
+/// displayed markers.
+pub fn timeline_beats(
+    clip_start_ms: u64,
+    clip_duration_ms: u64,
+    source_offset_ms: u64,
+    speed: f32,
+    beats_ms: &[u64],
+) -> Vec<u64> {
+    if (speed - 1.0).abs() > 0.01 {
+        return Vec::new();
+    }
+    let clip_end = clip_start_ms.saturating_add(clip_duration_ms);
+    beats_ms
+        .iter()
+        .map(|b| {
+            clip_start_ms
+                .saturating_add(*b)
+                .saturating_sub(source_offset_ms)
+        })
+        .filter(|&t| t >= clip_start_ms && t <= clip_end)
+        .collect()
+}
+
 const FRAME: usize = 256;
 const HOP: usize = 64;
 const MIN_GAP_SEC: f64 = 0.25; // fastest supported tempo: 240 BPM
@@ -196,6 +227,21 @@ mod tests {
         s[8000] = i16::MAX;
         let grid = detect_beats(&s, SR);
         assert!(grid.beats_ms.is_empty());
+    }
+
+    #[test]
+    fn timeline_beats_maps_offset_and_clips_range() {
+        // Clip at 1000..6000 ms, source offset 500, beats at media
+        // 0/1000/2000/6000 ms -> timeline 500/1500/2500/6500. The first
+        // is before the clip window, the last past its end: both cut.
+        let t = timeline_beats(1000, 5000, 500, 1.0, &[0, 1000, 2000, 6000]);
+        assert_eq!(t, vec![1500, 2500]);
+    }
+
+    #[test]
+    fn timeline_beats_skips_ramped_clips() {
+        let t = timeline_beats(0, 5000, 0, 1.5, &[0, 1000]);
+        assert!(t.is_empty());
     }
 
     #[test]

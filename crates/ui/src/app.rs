@@ -1823,6 +1823,38 @@ impl CapRustApp {
             best_start = (ph - duration_ms as i64).max(0);
         }
 
+        // Beat markers from analysed audio clips. Same timeline mapping
+        // as the ruler markers; speed-ramped clips contribute nothing.
+        for clip in &self.project.clips {
+            let mid = match clip.media_id {
+                Some(id) => id,
+                None => continue,
+            };
+            let entry = match self.project.beat_grids.get(&mid) {
+                Some(e) => e,
+                None => continue,
+            };
+            for t in caprust_core::beat::timeline_beats(
+                clip.start_time_ms,
+                clip.duration_ms,
+                clip.source_offset_ms,
+                clip.speed,
+                &entry.beats_ms,
+            ) {
+                let target = t as i64;
+                let d = (cand_start - target).abs();
+                if d < best_dist {
+                    best_dist = d;
+                    best_start = target;
+                }
+                let d2 = (cand_end - target).abs();
+                if d2 < best_dist {
+                    best_dist = d2;
+                    best_start = (target - duration_ms as i64).max(0);
+                }
+            }
+        }
+
         best_start.max(0)
     }
 
@@ -2239,6 +2271,82 @@ impl CapRustApp {
             }
         }
         None
+    }
+
+    /// Split every video clip at this audio clip's beat markers.
+    /// One MacroCommand so Ctrl+Z is a single step. Beats within
+    /// 150 ms of a clip edge are skipped (they would leave slivers).
+    /// Toasts and no-ops when the clip has no analysed grid yet.
+    fn auto_cut_to_beats(&mut self, clip_id: uuid::Uuid) {
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let mid = match clip.media_id {
+            Some(id) => id,
+            None => {
+                self.toast(tr("toast-autocut-no-beats"));
+                return;
+            }
+        };
+        let beats: Vec<u64> = match self.project.beat_grids.get(&mid) {
+            Some(e) => caprust_core::beat::timeline_beats(
+                clip.start_time_ms,
+                clip.duration_ms,
+                clip.source_offset_ms,
+                clip.speed,
+                &e.beats_ms,
+            ),
+            None => {
+                self.toast(tr("toast-autocut-no-beats"));
+                return;
+            }
+        };
+        if beats.is_empty() {
+            self.toast(tr("toast-autocut-no-beats"));
+            return;
+        }
+        const EDGE_MARGIN_MS: u64 = 150;
+        let mut cmds: Vec<Box<dyn caprust_core::commands::Command>> = Vec::new();
+        // Ascending beats: earlier splits only subdivide, so later beat
+        // times stay valid against the evolving clip list (each split
+        // is looked up by clip id at execute time).
+        let mut sorted = beats;
+        sorted.sort_unstable();
+        for t in sorted {
+            // Snapshot the current video clips spanning t. Re-query per
+            // beat because previous splits changed the list.
+            let targets: Vec<uuid::Uuid> = self
+                .project
+                .clips
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c.clip_type,
+                        caprust_core::clip::ClipType::Video { .. }
+                            | caprust_core::clip::ClipType::Image { .. }
+                    )
+                })
+                .filter(|c| {
+                    let end = c.start_time_ms.saturating_add(c.duration_ms);
+                    t > c.start_time_ms.saturating_add(EDGE_MARGIN_MS) && t + EDGE_MARGIN_MS < end
+                })
+                .map(|c| c.id)
+                .collect();
+            for id in targets {
+                cmds.push(Box::new(SplitClipCommand::new(id, t)));
+            }
+        }
+        if cmds.is_empty() {
+            self.toast(tr("toast-autocut-nothing"));
+            return;
+        }
+        let n = cmds.len();
+        let cmd = caprust_core::commands::macro_command::MacroCommand::new(
+            format!("auto-cut {n} splits"),
+            cmds,
+        );
+        let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+        self.toast(format!("{}: {n}", tr("toast-autocut-done")));
     }
 
     fn start_beat_job(&mut self, clip_id: uuid::Uuid) {
@@ -6931,6 +7039,9 @@ impl CapRustApp {
                         }
                         PendingEdit::StartBeatAnalysis => {
                             self.start_beat_job(id);
+                        }
+                        PendingEdit::StartBeatAutocut => {
+                            self.auto_cut_to_beats(id);
                         }
                         PendingEdit::StartBgRemoval => {
                             self.start_bg_removal_job(id);
