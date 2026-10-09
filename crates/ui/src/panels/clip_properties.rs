@@ -122,6 +122,10 @@ pub enum PendingEdit {
     /// apply (built-in id or custom .cube path); Clear removes it.
     SetLut(String),
     ClearLut,
+    /// Set or clear the blend mode on the selected clip.
+    /// Some(id) = composite this clip's run with that blend mode,
+    /// None = plain overlay.
+    BlendMode(Option<String>),
     /// Start an auto-reframe analysis for the currently-selected
     /// clip. The dispatcher resolves the clip id from the selection
     /// and hands it to start_reframe_job. No payload because the
@@ -1902,6 +1906,54 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             }
             ui.label("");
             ui.end_row();
+        });
+
+    ui.add_space(space::S);
+
+    // --- Blend mode ---
+    ui.label(egui::RichText::new(tr("props-blend-mode")).strong());
+    ui.add_space(space::XS);
+    let blend_id = clip.blend_mode.clone().unwrap_or_default();
+    egui::ComboBox::from_id_salt("clip_blend_combo")
+        .selected_text(if blend_id.is_empty() || blend_id == "normal" {
+            tr("props-blend-none")
+        } else {
+            blend_id.clone()
+        })
+        .width(160.0)
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_label(
+                    blend_id.is_empty() || blend_id == "normal",
+                    tr("props-blend-none"),
+                )
+                .clicked()
+            {
+                state.pending.push(PendingEdit::BlendMode(None));
+            }
+            for id in [
+                "multiply",
+                "screen",
+                "overlay",
+                "darken",
+                "lighten",
+                "difference",
+                "exclusion",
+                "dodge",
+                "burn",
+                "hardlight",
+                "softlight",
+                "addition",
+                "subtract",
+                "average",
+            ] {
+                let selected = blend_id == id;
+                if ui.selectable_label(selected, id).clicked() && !selected {
+                    state
+                        .pending
+                        .push(PendingEdit::BlendMode(Some(id.to_string())));
+                }
+            }
         });
 
     ui.add_space(space::S);

@@ -411,6 +411,10 @@ pub struct CapRustApp {
     /// Pending track rename: (track_index, edit_buffer). Some while the
     /// rename modal is open.
     pub track_rename: Option<(usize, String)>,
+    /// Pending clip rename: (clip_id, edit_buffer). Some while the
+    /// rename modal is open. Opened by double-clicking a non-text
+    /// clip or the clip context menu "Rename" item.
+    pub clip_rename: Option<(uuid::Uuid, String)>,
     /// Clips waiting to be transcribed, in order. Populated by
     /// "caption all in track"; drained sequentially because only one
     /// caption_rx slot exists at a time.
@@ -722,6 +726,7 @@ impl CapRustApp {
             caption_job_id: None,
             clip_clipboard: None,
             track_rename: None,
+            clip_rename: None,
             caption_queue: std::collections::VecDeque::new(),
             caption_batch_total: 0,
             caption_batch_current: 0,
@@ -5381,10 +5386,26 @@ impl CapRustApp {
                             );
                             // Double-click on a clip → focus its
                             // TextOverlay content editor in the
-                            // Properties panel. For non-text clips
-                            // the dispatcher clears any stale flag.
+                            // Properties panel. Non-text clips open
+                            // the rename modal instead.
                             if resp.double_clicked() {
-                                pending_actions.push(ClipAction::FocusTextContent(clip_id));
+                                let is_text = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|c| c.id == clip_id)
+                                    .map(|c| {
+                                        matches!(
+                                            c.clip_type,
+                                            caprust_core::ClipType::TextOverlay { .. }
+                                        )
+                                    })
+                                    .unwrap_or(false);
+                                if is_text {
+                                    pending_actions.push(ClipAction::FocusTextContent(clip_id));
+                                } else {
+                                    pending_actions.push(ClipAction::RenameClip(clip_id));
+                                }
                             }
                             // Selection and drag are driven by egui's
                             // interaction result, not by geometric
@@ -5555,6 +5576,11 @@ impl CapRustApp {
                                 };
                                 if ui.button(dup_lbl).clicked() {
                                     pending_actions.push(ClipAction::Duplicate(clip_id));
+                                    ui.close_menu();
+                                }
+                                // --- Rename clip ---
+                                if ui.button(tr("clip-ctx-rename")).clicked() {
+                                    pending_actions.push(ClipAction::RenameClip(clip_id));
                                     ui.close_menu();
                                 }
                                 ui.separator();
@@ -6092,6 +6118,17 @@ impl CapRustApp {
                     // on its next render.
                     self.selected_clips = vec![id];
                     self.properties.focus_content_for = Some(id);
+                }
+                ClipAction::RenameClip(id) => {
+                    self.selected_clips = vec![id];
+                    let buf = self
+                        .project
+                        .clips
+                        .iter()
+                        .find(|c| c.id == id)
+                        .and_then(|c| c.name.clone())
+                        .unwrap_or_default();
+                    self.clip_rename = Some((id, buf));
                 }
                 ClipAction::Select(id) => {
                     let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
@@ -7205,6 +7242,11 @@ impl CapRustApp {
                                 caprust_core::commands::set_clip::SetClipCommand::new(id).lut(None);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::BlendMode(m) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .blend_mode(m);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::Name(v) => {
                             let trimmed = v.trim().to_string();
                             let new_name = if trimmed.is_empty() {
@@ -7278,6 +7320,17 @@ impl CapRustApp {
 
         if out.media.skipped_duplicates > 0 {
             self.toast(tr("media-import-duplicates-skipped"));
+        }
+        if let Some((found, missing)) = out.media.refreshed {
+            if missing == 0 {
+                self.toast(format!("{}: {found}", tr("media-refresh-ok")));
+            } else {
+                self.toast_error(format!(
+                    "{}: {missing}, {}: {found}",
+                    tr("media-refresh-missing"),
+                    tr("media-refresh-found")
+                ));
+            }
         }
         // Enqueue background probe + thumbnail jobs for new imports.
         for id in out.media.newly_imported {
@@ -8634,6 +8687,71 @@ impl CapRustApp {
         }
     }
 
+    fn show_clip_rename_window(&mut self, ctx: &egui::Context) {
+        let Some((id, mut buf)) = self.clip_rename.clone() else {
+            return;
+        };
+
+        let mut commit = false;
+        let mut cancel = false;
+
+        egui::Window::new(tr("clip-rename-title"))
+            .id(egui::Id::new("clip_rename_modal"))
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut buf)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(tr("clip-rename-hint")),
+                );
+                resp.request_focus();
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    commit = true;
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    cancel = true;
+                }
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    let ok = egui::Button::new(
+                        egui::RichText::new(tr("clip-rename-ok"))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    )
+                    .fill(egui::Color32::from_rgb(34, 139, 230));
+                    if ui.add(ok).clicked() {
+                        commit = true;
+                    }
+                    if ui.button(tr("clip-rename-cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if cancel {
+            self.clip_rename = None;
+            return;
+        }
+        if commit {
+            let trimmed = buf.trim().to_string();
+            let new_name = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id).name(new_name);
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::error!("rename clip failed: {e}");
+            }
+            self.clip_rename = None;
+        } else {
+            self.clip_rename = Some((id, buf));
+        }
+    }
+
     fn show_model_prompt_window(&mut self, ctx: &egui::Context) {
         if self.model_prompt.is_none() {
             return;
@@ -9732,6 +9850,9 @@ enum ClipAction {
     RippleDelete(uuid::Uuid),
     SetSpeed(uuid::Uuid, f32),
     MuteClip(uuid::Uuid),
+    /// Open the clip rename modal for `id`. The dispatcher also
+    /// selects the clip (plain click semantics).
+    RenameClip(uuid::Uuid),
     /// Per-clip waveform layout override. Some(true) = split display,
     /// Some(false) = legacy overlay. Set from the clip context menu
     /// ("Clip display" submenu); undoable via SetClipCommand.
@@ -10006,6 +10127,9 @@ impl eframe::App for CapRustApp {
         }
         if self.track_rename.is_some() {
             self.show_track_rename_window(ctx);
+        }
+        if self.clip_rename.is_some() {
+            self.show_clip_rename_window(ctx);
         }
         self.show_toasts(ctx);
         self.show_update_toast(ctx);

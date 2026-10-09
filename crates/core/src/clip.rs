@@ -668,6 +668,13 @@ pub struct Clip {
     /// legacy overlay. Set from the clip context menu ("Clip display").
     #[serde(default)]
     pub split_display: Option<bool>,
+    /// Blend mode for compositing this clip over lower z-order layers.
+    /// None (or "normal") = plain overlay. Otherwise one of the ffmpeg
+    /// `blend=all_mode=` keywords (multiply, screen, ...). Only the
+    /// first set mode in a z-order run takes effect (see
+    /// `blend_mode_name`); mixed-mode runs use the first clip's mode.
+    #[serde(default)]
+    pub blend_mode: Option<String>,
 }
 
 impl Clip {
@@ -718,6 +725,7 @@ impl Clip {
             chroma_key: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -770,6 +778,7 @@ impl Clip {
             chroma_key: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -822,6 +831,7 @@ impl Clip {
             chroma_key: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -878,6 +888,7 @@ impl Clip {
             chroma_key: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -940,6 +951,7 @@ impl Clip {
             chroma_key: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -1000,6 +1012,7 @@ impl Clip {
             chroma_key: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             source_duration_ms: 0,
             media_id: None,
         }

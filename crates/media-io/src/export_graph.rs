@@ -92,6 +92,9 @@ pub struct VideoClip {
     /// Color LUT reference. `None` = no LUT. `Some("id")` for a
     /// built-in LUT, absolute path for a custom `.cube` file.
     pub lut: Option<String>,
+    /// Blend mode for this clip's z-order run. `None` (or "normal") =
+    /// plain overlay. See `blend_mode_name` for valid ids.
+    pub blend_mode: Option<String>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -115,6 +118,11 @@ pub struct TextClip {
     /// appearance is driven by the user-editable CaptionStyle instead
     /// of the preset `style` string. TextOverlay clips leave this None.
     pub caption_style: Option<caprust_core::clip::CaptionStyle>,
+    /// Per-clip EFFECTS-stack instances (blur, shake, glow, ...),
+    /// cloned from the source clip. Applied to the composited frame
+    /// right after this text's drawtext stage, then normalized back
+    /// to project dimensions. Empty = text renders as before.
+    pub effects: Vec<caprust_core::clip::EffectInstance>,
 }
 
 /// Effect option suffix for a drawtext body. Blink = hard on/off via
@@ -717,7 +725,8 @@ impl RenderPlan {
         }
 
         // ---- Phase 2b: render each run ----
-        let mut run_labels: Vec<(u32, f64, String)> = Vec::with_capacity(runs.len());
+        let mut run_labels: Vec<(u32, f64, String, Option<String>)> =
+            Vec::with_capacity(runs.len());
         // The model already stores follower clips at their shifted
         // positions when an xfade is attached; no per-z bookkeeping
         // is needed here.
@@ -828,7 +837,18 @@ impl RenderPlan {
                 ));
             }
 
-            run_labels.push((run.z_order, effective_start, out_label));
+            // Blend mode for compositing this run: the first set
+            // (and valid) mode among its clips wins. Mixed-mode runs
+            // use the first clip's mode; unknown ids fall back to
+            // plain overlay via blend_mode_name.
+            let run_blend = run
+                .members
+                .iter()
+                .filter_map(|&idx| self.video_clips[idx].blend_mode.as_deref())
+                .filter_map(blend_mode_name)
+                .next()
+                .map(str::to_string);
+            run_labels.push((run.z_order, effective_start, out_label, run_blend));
         }
 
         // ---- Phase 3: black base + overlay in z-order ----
@@ -847,11 +867,19 @@ impl RenderPlan {
         });
 
         let mut v_prev = String::from("v_base");
-        for (i, (_z, _start, label)) in run_labels.iter().enumerate() {
+        for (i, (_z, _start, label, blend)) in run_labels.iter().enumerate() {
             let v_next = format!("v_ov{i}");
-            fg.push_str(&format!(
-                "[{v_prev}][{label}]overlay=shortest=0:eof_action=pass[{v_next}];",
-            ));
+            match blend {
+                // Blend compositing: top = run output, bottom = base.
+                // Same EOF contract as the overlay arm (pass the base
+                // through when the run ends; never freeze its tail).
+                Some(mode) => fg.push_str(&format!(
+                    "[{label}][{v_prev}]blend=all_mode={mode}:all_opacity=1:shortest=0:eof_action=pass:repeatlast=0[{v_next}];",
+                )),
+                None => fg.push_str(&format!(
+                    "[{v_prev}][{label}]overlay=shortest=0:eof_action=pass[{v_next}];",
+                )),
+            }
             v_prev = v_next;
         }
 
@@ -886,14 +914,31 @@ impl RenderPlan {
                 .replace(':', "\\:")
                 .replace('\'', "\u{2019}")
                 .replace('"', "\u{201C}");
+            // Per-clip EFFECTS stack (blur, shake, glow, ...). Applied
+            // to the composited frame right after this text's drawtext
+            // stage so text clips honor the same effects as video clips.
+            // Dimension-changing effects (shake crop, pixelate scale)
+            // are normalized back to the exact project size, mirroring
+            // the video-clip path. Empty = byte-identical output.
+            let fx_chain = build_effects_chain(&t.effects);
+            let fx_suffix = if fx_chain.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "{fx_chain},scale={w}:{h}:flags=bicubic,setsar=1",
+                    w = self.width,
+                    h = self.height,
+                )
+            };
             // Captions path: user-editable CaptionStyle wins over the
             // preset string. TextOverlay path: classic preset layout.
             if let Some(cs) = t.caption_style.as_ref() {
                 let body = build_caption_drawtext_body(t, &escaped, cs);
                 fg.push_str(&format!(
-                    "[{v_prev}]{body}[v_txt{t_i}];",
+                    "[{v_prev}]{body}{fx_suffix}[v_txt{t_i}];",
                     v_prev = v_prev,
                     body = body,
+                    fx_suffix = fx_suffix,
                     t_i = t_i,
                 ));
             } else {
@@ -930,7 +975,7 @@ impl RenderPlan {
                     _ => String::new(),
                 };
                 fg.push_str(&format!(
-                "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x={x_expr}:y={y}{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'[v_txt{t_i}];",
+                "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x={x_expr}:y={y}{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'{fx_suffix}[v_txt{t_i}];",
                 v_prev = v_prev,
                 escaped = escaped,
                 fs = fs,
@@ -940,6 +985,7 @@ impl RenderPlan {
                 effect_opts = effect_opts,
                 start = t.timeline_start_sec,
                 end = t.timeline_start_sec + t.duration_sec,
+                fx_suffix = fx_suffix,
                 t_i = t_i,
             ));
             }
@@ -1477,6 +1523,29 @@ fn ease_curve_name(e: caprust_core::clip::EaseCurve) -> Option<&'static str> {
         EaseCurve::EaseOut => Some("par"),
         EaseCurve::EaseInOut => Some("qsin"),
     }
+}
+
+/// Map a blend mode id to the ffmpeg `blend=all_mode=` keyword.
+/// "normal"/None means plain overlay (no blend stage). Unknown ids
+/// return None so a stray serialized value can never break the graph.
+pub fn blend_mode_name(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "multiply" => "multiply",
+        "screen" => "screen",
+        "overlay" => "overlay",
+        "darken" => "darken",
+        "lighten" => "lighten",
+        "difference" => "difference",
+        "exclusion" => "exclusion",
+        "dodge" => "dodge",
+        "burn" => "burn",
+        "hardlight" => "hardlight",
+        "softlight" => "softlight",
+        "addition" => "addition",
+        "subtract" => "subtract",
+        "average" => "average",
+        _ => return None,
+    })
 }
 
 /// Map a preset id to the ffmpeg `xfade=transition=...` keyword.
@@ -2969,6 +3038,7 @@ pub fn plan_from_project(
                         stab_trf: resolve_stab_path(project, c),
                         chroma_key: c.chroma_key,
                         lut: c.lut.clone(),
+                        blend_mode: c.blend_mode.clone(),
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -3013,6 +3083,7 @@ pub fn plan_from_project(
                         stab_trf: resolve_stab_path(project, c),
                         chroma_key: c.chroma_key,
                         lut: c.lut.clone(),
+                        blend_mode: c.blend_mode.clone(),
                     });
                 }
                 ClipType::TextOverlay {
@@ -3089,6 +3160,7 @@ pub fn plan_from_project(
                         motion: *motion,
                         effect: *effect,
                         caption_style: None,
+                        effects: c.effects.clone(),
                     });
                 }
                 ClipType::Captions {
@@ -3187,6 +3259,7 @@ pub fn plan_from_project(
                                 motion: *motion,
                                 effect: *effect,
                                 caption_style: Some(*caption_style),
+                                effects: c.effects.clone(),
                             });
                         } else {
                             let mut acc = String::new();
@@ -3244,6 +3317,7 @@ pub fn plan_from_project(
                                     motion: *motion,
                                     effect: *effect,
                                     caption_style: Some(*caption_style),
+                                    effects: c.effects.clone(),
                                 });
                             }
                         }
@@ -3783,6 +3857,7 @@ mod tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3960,6 +4035,7 @@ mod tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4423,6 +4499,7 @@ mod tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4479,6 +4556,7 @@ mod tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4701,6 +4779,7 @@ mod tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4743,6 +4822,7 @@ mod text_motion_render_tests {
             motion: TextMotion::default(),
             effect: None,
             caption_style: None,
+            effects: Vec::new(),
         }
     }
 
@@ -4751,6 +4831,57 @@ mod text_motion_render_tests {
         assert!(build_text_effect_opts(None).is_empty());
         let t = base();
         assert!(build_text_effect_opts(t.effect.as_ref()).is_empty());
+    }
+
+    fn text_only_plan(t: TextClip) -> RenderPlan {
+        RenderPlan {
+            inputs: vec![],
+            video_clips: vec![],
+            audio_clips: vec![],
+            text_clips: vec![t],
+            total_duration_sec: 2.0,
+            width: 640,
+            height: 270,
+            fps_num: 24,
+            fps_den: 1,
+            crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
+            preset: "veryfast".into(),
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
+            seek_ms: 0,
+            seek_optimized: false,
+        }
+    }
+
+    fn blur_instance() -> caprust_core::clip::EffectInstance {
+        caprust_core::clip::EffectInstance {
+            effect_id: "blur".into(),
+            amount: 1.0,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn text_clip_effects_render_after_drawtext() {
+        let mut t = base();
+        t.effects = vec![blur_instance()];
+        let (fg, _, _) = text_only_plan(t).build_filtergraph().expect("filtergraph");
+        let dt = fg.find("drawtext=").expect("drawtext stage");
+        let blur = fg.find("boxblur=").expect("blur from text effects");
+        assert!(blur > dt, "effect must follow drawtext: {fg}");
+        assert!(fg.contains("scale=640:270"), "dims normalized: {fg}");
+    }
+
+    #[test]
+    fn text_clip_without_effects_is_untouched() {
+        let (fg, _, _) = text_only_plan(base())
+            .build_filtergraph()
+            .expect("filtergraph");
+        assert!(fg.contains("drawtext="), "drawtext present: {fg}");
+        assert!(!fg.contains("boxblur="), "no effect leakage: {fg}");
     }
 
     #[test]
@@ -4932,6 +5063,57 @@ mod chroma_key_filter_tests {
         assert!(
             !fg.contains("lut3d="),
             "plain plan must not emit lut3d: {fg}"
+        );
+    }
+
+    #[test]
+    fn blend_mode_names_map_to_ffmpeg_keywords() {
+        assert_eq!(blend_mode_name("multiply"), Some("multiply"));
+        assert_eq!(blend_mode_name("screen"), Some("screen"));
+        assert_eq!(blend_mode_name("overlay"), Some("overlay"));
+        assert_eq!(blend_mode_name("softlight"), Some("softlight"));
+        assert_eq!(blend_mode_name("normal"), None);
+        assert_eq!(blend_mode_name(""), None);
+        assert_eq!(blend_mode_name("nope"), None);
+    }
+
+    fn two_run_plan(top_blend: Option<&str>) -> RenderPlan {
+        let mut plan = single_video_plan_with_mask(None);
+        let mut top = plan.video_clips[0].clone();
+        top.z_order = 1;
+        top.blend_mode = top_blend.map(str::to_string);
+        plan.video_clips.push(top);
+        plan
+    }
+
+    #[test]
+    fn blend_run_emits_blend_stage() {
+        let plan = two_run_plan(Some("multiply"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("blend=all_mode=multiply"),
+            "blend run must emit blend stage: {fg}"
+        );
+    }
+
+    #[test]
+    fn plain_runs_keep_overlay() {
+        let plan = two_run_plan(None);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("overlay=shortest=0:eof_action=pass"),
+            "plain runs must use overlay: {fg}"
+        );
+        assert!(!fg.contains("blend="), "no blend without a mode: {fg}");
+    }
+
+    #[test]
+    fn unknown_blend_falls_back_to_overlay() {
+        let plan = two_run_plan(Some("nope"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("overlay=shortest=0:eof_action=pass"),
+            "unknown mode must fall back to overlay: {fg}"
         );
     }
 }
@@ -5259,6 +5441,7 @@ mod flip_filtergraph_tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5355,6 +5538,7 @@ mod reverse_filtergraph_tests {
                 stab_trf: None,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5487,6 +5671,7 @@ mod reverse_filtergraph_tests {
                     bg_enabled: false,
                     bg_opacity: 0.8,
                 }),
+                effects: Vec::new(),
             }
         }
         let mut plain = cap(0.9, 0.05);
@@ -5605,6 +5790,7 @@ mod stab_tests {
                 stab_trf: stab,
                 chroma_key: None,
                 lut: None,
+                blend_mode: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],

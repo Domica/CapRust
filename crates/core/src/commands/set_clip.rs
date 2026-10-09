@@ -74,6 +74,8 @@ pub struct SetClipCommand {
     /// Some(v) = per-clip waveform layout override. None = leave
     /// untouched.
     pub split_display: Option<Option<bool>>,
+    /// Some(v) = blend mode override. None = leave untouched.
+    pub blend_mode: Option<Option<String>>,
     before: Option<Clip>,
 }
 
@@ -119,6 +121,7 @@ impl SetClipCommand {
             transition_duration_ms: None,
             lut: None,
             split_display: None,
+            blend_mode: None,
             before: None,
         }
     }
@@ -301,6 +304,11 @@ impl SetClipCommand {
         self.split_display = Some(v);
         self
     }
+    /// Set or clear the blend mode.
+    pub fn blend_mode(mut self, v: Option<String>) -> Self {
+        self.blend_mode = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -448,6 +456,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.split_display {
             c.split_display = v;
+        }
+        if let Some(v) = self.blend_mode.clone() {
+            c.blend_mode = v;
         }
         Ok(())
     }

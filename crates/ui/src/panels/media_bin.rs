@@ -334,6 +334,25 @@ pub struct MediaBinOutput {
     pub newly_imported: Vec<Uuid>,
     pub remove_requested: Vec<Uuid>,
     pub skipped_duplicates: usize,
+    /// Set when the user clicks Refresh: (files found, files missing).
+    pub refreshed: Option<(usize, usize)>,
+}
+
+/// Re-check every library path on disk. Returns (found, missing).
+/// Missing basenames go to the log so the user knows what moved.
+fn refresh_imported(project: &ProjectState) -> (usize, usize) {
+    let mut found = 0;
+    let mut missing = 0;
+    for item in &project.media.items {
+        if std::path::Path::new(&item.path).exists() {
+            found += 1;
+        } else {
+            missing += 1;
+            tracing::warn!("media refresh: missing {}", item.path);
+        }
+    }
+    tracing::info!("media refresh: {found} found, {missing} missing");
+    (found, missing)
 }
 
 // Legacy flat list layout (no sidebar filter). Controls on top, grid below.
@@ -345,6 +364,7 @@ fn show_legacy(
     let mut newly_imported: Vec<Uuid> = Vec::new();
     let mut skipped_duplicates: usize = 0;
     let mut clear_requested = false;
+    let mut refreshed: Option<(usize, usize)> = None;
 
     // --- Import buttons ---
     ui.horizontal_wrapped(|ui| {
@@ -369,6 +389,12 @@ fn show_legacy(
             .clicked()
         {
             clear_requested = true;
+        }
+        if button::ghost(ui, tr("media-refresh"))
+            .on_hover_text(tr("media-refresh-tooltip"))
+            .clicked()
+        {
+            refreshed = Some(refresh_imported(project));
         }
     });
     if clear_requested {
@@ -496,6 +522,7 @@ fn show_legacy(
             newly_imported,
             remove_requested: Vec::new(),
             skipped_duplicates,
+            refreshed,
         };
     }
 
@@ -603,6 +630,7 @@ fn show_legacy(
         newly_imported,
         remove_requested,
         skipped_duplicates,
+        refreshed,
     }
 }
 
@@ -1076,6 +1104,7 @@ fn import_and_grid_ui(
     skipped_duplicates: &mut usize,
     clear_requested: &mut bool,
 ) -> MediaBinOutput {
+    let mut refreshed: Option<(usize, usize)> = None;
     // --- Import buttons ---
     ui.horizontal_wrapped(|ui| {
         if button::secondary(ui, tr("media-import-clips")).clicked() {
@@ -1099,6 +1128,12 @@ fn import_and_grid_ui(
             .clicked()
         {
             *clear_requested = true;
+        }
+        if button::ghost(ui, tr("media-refresh"))
+            .on_hover_text(tr("media-refresh-tooltip"))
+            .clicked()
+        {
+            refreshed = Some(refresh_imported(project));
         }
     });
     if *clear_requested {
@@ -1172,6 +1207,7 @@ fn import_and_grid_ui(
             newly_imported: std::mem::take(newly_imported),
             remove_requested: Vec::new(),
             skipped_duplicates: *skipped_duplicates,
+            refreshed,
         };
     }
 
@@ -1288,6 +1324,7 @@ fn import_and_grid_ui(
         newly_imported: std::mem::take(newly_imported),
         remove_requested,
         skipped_duplicates: *skipped_duplicates,
+        refreshed,
     }
 }
 
