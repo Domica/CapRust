@@ -2,6 +2,21 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.13] — 2026-10-09
+
+### Added
+
+- **Text effects parity.** The EFFECTS stack (blur, shake, glow, …) now renders on text/caption overlays, applied right after each drawtext stage with project-size normalization.
+- **Blend modes.** Per-clip compositing (multiply, screen, overlay, darken, lighten, difference, exclusion, dodge, burn, hardlight, softlight, addition, subtract, average) via `blend=all_mode=` with overlay-identical EOF handling; first set mode in a run wins.
+- **Clip rename.** Double-click a non-text clip (text clips keep focusing the content editor) or the context menu Rename item; modal with Enter/Escape, undoable.
+- **Refresh imported files.** Refresh button next to Clear all (both bin layouts) re-checks every library path; toast on success, count on missing.
+- **Per-clip split display.** Right-click → Clip display → Standard / Split (thumbnail strip on top, waveform band at bottom); global Settings default for untouched clips.
+- **Clip border width + color.** Timeline border thickness slider (0.5–6 px) and fixed-color override (or automatic per-track pastel).
+
+### Changed
+
+- **Logs + update checks moved to About.** The log-folder opener and the update-check toggle now sit at the bottom of Settings → About, next to the version/commit identity.
+
 ## [0.9.12] — 2026-10-09
 
 ### Added
