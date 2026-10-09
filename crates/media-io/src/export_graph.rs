@@ -1488,6 +1488,34 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
         "smooth_d" => "smoothdown",
         "circle_close" => "circleclose",
         "pixelize" => "pixelize",
+        "cover_l" => "coverleft",
+        "cover_r" => "coverright",
+        "cover_u" => "coverup",
+        "cover_d" => "coverdown",
+        "reveal_l" => "revealleft",
+        "reveal_r" => "revealright",
+        "reveal_u" => "revealup",
+        "reveal_d" => "revealdown",
+        "diag_tl" => "diagtl",
+        "diag_tr" => "diagtr",
+        "diag_bl" => "diagbl",
+        "diag_br" => "diagbr",
+        "wipe_tl" => "wipetl",
+        "wipe_tr" => "wipetr",
+        "wipe_bl" => "wipebl",
+        "wipe_br" => "wipebr",
+        "vert_open" => "vertopen",
+        "vert_close" => "vertclose",
+        "horz_open" => "horzopen",
+        "horz_close" => "horzclose",
+        "fadegrays" => "fadegrays",
+        "distance" => "distance",
+        "hblur" => "hblur",
+        "circle_crop" => "circlecrop",
+        "rect_crop" => "rectcrop",
+        "zoom_blur" => "zoomin",
+        "squeeze_h" => "squeezeh",
+        "squeeze_v" => "squeezev",
         _ => return None,
     })
 }
@@ -1777,6 +1805,101 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             s = (0.8 + 1.5 * amount).clamp(0.5, 8.0),
             b = (0.02 * amount).clamp(0.0, 0.08)
         ),
+
+        // ---- Cinematic bars: letterbox 2.39:1 ----
+        // Pads black bars top and bottom. amount scales bar thickness
+        // (0 = no bars, 1 = ~2.39:1 on a 16:9 frame).
+        "cinematic_bars" => {
+            let bar = (0.12 * amount).clamp(0.0, 0.25);
+            format!(
+                ",pad=iw:ih+2*{bar:.3}:(ow-iw)/2:0:c=black,setsar=1",
+                bar = bar,
+            )
+        }
+
+        // ---- Teal & orange: cinematic color grade ----
+        // Shadows shift teal (boost blue/green in lows), highlights shift
+        // orange (boost red in highs). amount scales the split.
+        "teal_orange" => format!(
+            ",colorbalance=rm={rm:.3}:gm={gm:.3}:bm={bm:.3}:rh={rh:.3}:gh={gh:.3}:bh={bh:.3}",
+            rm = -0.06 * amount,
+            gm = -0.02 * amount,
+            bm = 0.08 * amount,
+            rh = 0.10 * amount,
+            gh = 0.04 * amount,
+            bh = -0.04 * amount,
+        ),
+
+        // ---- Cross process: pushed color development ----
+        // Lifts reds in shadows, shifts greens, cools highlights. A film
+        // cross-processing look approximated with colorbalance.
+        "cross_process" => format!(
+            ",colorbalance=rm={rm:.3}:gm={gm:.3}:bm={bm:.3}:rh={rh:.3}:gh={gh:.3}:bh={bh:.3}",
+            rm = 0.10 * amount,
+            gm = 0.06 * amount,
+            bm = -0.04 * amount,
+            rh = -0.04 * amount,
+            gh = 0.02 * amount,
+            bh = 0.08 * amount,
+        ),
+
+        // ---- Bleach bypass: silver retention ----
+        // Desaturates + boosts contrast, the classic film-noir look.
+        // amount scales both stages.
+        "bleach_bypass" => format!(
+            ",eq=saturation={sat:.3}:contrast={con:.3}",
+            sat = (1.0 - 0.6 * amount).clamp(0.0, 1.0),
+            con = 1.0 + 0.3 * amount,
+        ),
+
+        // ---- Moonlight: cool nocturnal tint ----
+        // Blue-dominant shadow lift with a slight overall cool cast.
+        "moonlight" => format!(
+            ",colorbalance=rm={rm:.3}:gm={gm:.3}:bm={bm:.3}",
+            rm = -0.04 * amount,
+            gm = 0.02 * amount,
+            bm = 0.12 * amount,
+        ),
+
+        // ---- Dreamy haze: soft glow + slight blur ----
+        // A softer, brighter take on glow: more blur, less contrast push.
+        "dreamy_haze" => format!(
+            ",gblur=sigma={s:.2},eq=brightness={b:.3}:saturation={sat:.3}",
+            s = (1.5 + 3.0 * amount).clamp(1.0, 10.0),
+            b = (0.05 * amount).clamp(0.0, 0.12),
+            sat = 1.0 + 0.1 * amount,
+        ),
+
+        // ---- 3D flip: rotate around vertical axis ----
+        // Uses crop+rotate to fake a perspective flip. Not a true 3D
+        // transform (ffmpeg has no perspective filter in the essentials
+        // build), but reads as a card-flip at small angles.
+        "flip3d" => {
+            let angle = (0.3 * amount).clamp(0.05, 1.2);
+            format!(
+                ",rotate={angle:.3}*PI/180:ow=rotw({angle:.3}*PI/180):oh=roth({angle:.3}*PI/180):c=black",
+                angle = angle,
+            )
+        }
+
+        // ---- Freezeframe: hold the first frame for the clip ----
+        // select=eq(n\,0) picks frame 0 for every output frame, so the
+        // whole clip shows a single still. amount is accepted but ignored
+        // (a freeze is binary) — kept so the slider is consistent.
+        "freezeframe" => ",select=eq(n\\,0),setpts=N/FRAME_RATE/TB".into(),
+
+        // ---- Echo: motion trail with exponential decay ----
+        // Like ghost but with a non-uniform weight ramp so the trail
+        // falls off faster, reading as a smooth echo rather than a
+        // uniform smudge. tmix weights are 1, 1/2, 1/4, ...
+        "echo" => {
+            let frames = ((2.0 + 4.0 * amount).round() as i32).clamp(2, 8);
+            let weights = (0..frames)
+                .map(|k| format!("{:.4}", 1.0 / (1.0 + k as f32)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(",tmix=frames={frames}:weights='{weights}'")
+        }
 
         _ => return None,
     };
@@ -3888,6 +4011,59 @@ mod tests {
     }
 
     #[test]
+    fn new_effects_emit_expected_filters() {
+        assert!(
+            build_one_effect("cinematic_bars", 1.0)
+                .unwrap()
+                .contains("pad="),
+            "cinematic_bars should letterbox via pad"
+        );
+        assert!(
+            build_one_effect("teal_orange", 1.0)
+                .unwrap()
+                .contains("colorbalance="),
+            "teal_orange should grade via colorbalance"
+        );
+        assert!(
+            build_one_effect("cross_process", 1.0)
+                .unwrap()
+                .contains("colorbalance="),
+            "cross_process should shift via colorbalance"
+        );
+        let bb = build_one_effect("bleach_bypass", 1.0).unwrap();
+        assert!(
+            bb.contains("saturation="),
+            "bleach_bypass should desaturate"
+        );
+        assert!(
+            bb.contains("contrast="),
+            "bleach_bypass should boost contrast"
+        );
+        assert!(
+            build_one_effect("moonlight", 1.0)
+                .unwrap()
+                .contains("colorbalance="),
+            "moonlight should tint via colorbalance"
+        );
+        let dh = build_one_effect("dreamy_haze", 1.0).unwrap();
+        assert!(dh.contains("gblur="), "dreamy_haze should soften via gblur");
+        assert!(
+            build_one_effect("flip3d", 1.0).unwrap().contains("rotate="),
+            "flip3d should rotate"
+        );
+        assert!(
+            build_one_effect("freezeframe", 1.0)
+                .unwrap()
+                .contains("select="),
+            "freezeframe should freeze via select"
+        );
+        assert!(
+            build_one_effect("echo", 1.0).unwrap().contains("tmix="),
+            "echo should trail via tmix"
+        );
+    }
+
+    #[test]
     fn ghost_frame_count_clamps_between_2_and_12() {
         let g = build_one_effect("ghost", 4.0).unwrap();
         let n: i32 = g
@@ -3957,6 +4133,20 @@ mod tests {
         assert_eq!(xfade_name("fadewhite"), Some("fadewhite"));
         assert_eq!(xfade_name("circle_close"), Some("circleclose"));
         assert_eq!(xfade_name("pixelize"), Some("pixelize"));
+        assert_eq!(xfade_name("cover_l"), Some("coverleft"));
+        assert_eq!(xfade_name("reveal_r"), Some("revealright"));
+        assert_eq!(xfade_name("diag_tl"), Some("diagtl"));
+        assert_eq!(xfade_name("wipe_br"), Some("wipebr"));
+        assert_eq!(xfade_name("vert_open"), Some("vertopen"));
+        assert_eq!(xfade_name("horz_close"), Some("horzclose"));
+        assert_eq!(xfade_name("fadegrays"), Some("fadegrays"));
+        assert_eq!(xfade_name("distance"), Some("distance"));
+        assert_eq!(xfade_name("hblur"), Some("hblur"));
+        assert_eq!(xfade_name("circle_crop"), Some("circlecrop"));
+        assert_eq!(xfade_name("rect_crop"), Some("rectcrop"));
+        assert_eq!(xfade_name("zoom_blur"), Some("zoomin"));
+        assert_eq!(xfade_name("squeeze_h"), Some("squeezeh"));
+        assert_eq!(xfade_name("squeeze_v"), Some("squeezev"));
     }
 
     #[test]
@@ -3987,6 +4177,34 @@ mod tests {
             "smooth_d",
             "circle_close",
             "pixelize",
+            "cover_l",
+            "cover_r",
+            "cover_u",
+            "cover_d",
+            "reveal_l",
+            "reveal_r",
+            "reveal_u",
+            "reveal_d",
+            "diag_tl",
+            "diag_tr",
+            "diag_bl",
+            "diag_br",
+            "wipe_tl",
+            "wipe_tr",
+            "wipe_bl",
+            "wipe_br",
+            "vert_open",
+            "vert_close",
+            "horz_open",
+            "horz_close",
+            "fadegrays",
+            "distance",
+            "hblur",
+            "circle_crop",
+            "rect_crop",
+            "zoom_blur",
+            "squeeze_h",
+            "squeeze_v",
         ];
         for id in ids {
             assert!(is_xfade_transition(id), "{id} missing from core list");
