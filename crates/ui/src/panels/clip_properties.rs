@@ -118,6 +118,10 @@ pub enum PendingEdit {
     /// Replace the auto-reframe keypoints on the clip. Empty Vec =
     /// clear the pan path and fall back to source fit.
     AutoReframe(Vec<caprust_core::clip::ReframeKeypoint>),
+    /// Set or clear the color LUT on the selected clip. Set means
+    /// apply (built-in id or custom .cube path); Clear removes it.
+    SetLut(String),
+    ClearLut,
     /// Start an auto-reframe analysis for the currently-selected
     /// clip. The dispatcher resolves the clip id from the selection
     /// and hands it to start_reframe_job. No payload because the
@@ -878,6 +882,35 @@ fn ease_label(e: caprust_core::clip::EaseCurve) -> String {
         EaseCurve::EaseInOut => "props-ease-in-out",
     };
     tr(key)
+}
+
+/// Built-in LUT id -> FTL label pairs for the picker dropdown.
+fn builtin_luts() -> [(&'static str, String); 4] {
+    [
+        ("film_kodak", tr("props-lut-film_kodak")),
+        ("film_fuji", tr("props-lut-film_fuji")),
+        ("bw_contrast", tr("props-lut-bw_contrast")),
+        ("vintage_sepia", tr("props-lut-vintage_sepia")),
+    ]
+}
+
+/// Display label for a clip's current LUT: built-in id maps to its
+/// name, a custom .cube path shows its file name, empty = None.
+fn builtin_lut_label(lut_id: &str) -> String {
+    if lut_id.is_empty() {
+        return tr("props-lut-none");
+    }
+    for (id, label) in builtin_luts() {
+        if id == lut_id {
+            return label;
+        }
+    }
+    // Custom upload: show the file name instead of the full path.
+    let p = std::path::Path::new(lut_id);
+    match p.file_name().and_then(|n: &std::ffi::OsStr| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => lut_id.to_string(),
+    }
 }
 
 /// Extract the N (ms) from a SpeedRampRange, or the default 2000 for
@@ -1799,6 +1832,71 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
 fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
+    ui.add_space(space::S);
+
+    // --- Color LUT ---
+    ui.label(egui::RichText::new(tr("props-lut")).strong());
+    ui.add_space(space::XS);
+    let lut_id = clip.lut.clone().unwrap_or_default();
+    let lut_label = if lut_id.is_empty() {
+        tr("props-lut-none")
+    } else {
+        builtin_lut_label(&lut_id)
+    };
+    egui::Grid::new("clip_lut")
+        .num_columns(3)
+        .spacing([space::S, space::XS])
+        .show(ui, |ui| {
+            ui.label(lut_label);
+            if ui.small_button(tr("props-lut-clear")).clicked() && clip.lut.is_some() {
+                state.pending.push(PendingEdit::ClearLut);
+            }
+            ui.end_row();
+
+            ui.label("");
+            ui.label("");
+            ui.end_row();
+
+            // Built-in picker.
+            ui.label(tr("props-lut-builtin"));
+            egui::ComboBox::from_id_salt("lut_builtin_combo")
+                .selected_text(if lut_id.is_empty() {
+                    tr("props-lut-none")
+                } else {
+                    builtin_lut_label(&lut_id)
+                })
+                .width(160.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(lut_id.is_empty(), tr("props-lut-none"))
+                        .clicked()
+                    {
+                        state.pending.push(PendingEdit::ClearLut);
+                    }
+                    for (id, label) in builtin_luts() {
+                        let selected = lut_id == id;
+                        if ui.selectable_label(selected, label).clicked() && !selected {
+                            state.pending.push(PendingEdit::SetLut(id.to_string()));
+                        }
+                    }
+                });
+            ui.end_row();
+
+            // Custom .cube upload.
+            ui.label(tr("props-lut-custom"));
+            if ui.button(tr("props-lut-upload")).clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Cube LUT", &["cube"])
+                    .pick_file()
+                {
+                    let path_str = path.to_string_lossy().to_string();
+                    state.pending.push(PendingEdit::SetLut(path_str));
+                }
+            }
+            ui.label("");
+            ui.end_row();
+        });
+
     ui.add_space(space::S);
 
     // --- Transitions ---

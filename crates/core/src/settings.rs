@@ -101,6 +101,10 @@ pub struct AppSettings {
     /// `effective_recordings_dir`).
     #[serde(default)]
     pub recordings_dir: Option<String>,
+    /// Optional folder for cached custom LUT (.cube) files. None or
+    /// empty = `%APPDATA%/CapRust/luts` (see `effective_lut_cache_dir`).
+    #[serde(default)]
+    pub lut_cache_dir: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -145,6 +149,7 @@ impl Default for AppSettings {
             last_synced_at: None,
             screenshots_dir: None,
             recordings_dir: None,
+            lut_cache_dir: None,
         }
     }
 }
@@ -172,6 +177,101 @@ fn default_recordings_dir() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
     base.join("CapRust").join("recordings")
+}
+
+fn default_lut_cache_dir() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    base.join("CapRust").join("luts")
+}
+
+/// Parsed 3D LUT from a `.cube` file.
+#[derive(Debug, Clone)]
+pub struct CubeLut {
+    pub size: u32,
+    pub data: Vec<[f32; 3]>,
+}
+
+impl CubeLut {
+    /// Parse a `.cube` 3D LUT file.
+    ///
+    /// Format reference: https://wwwimages.adobe.com/content/dam/acom/en/products/speedgrade/cc/pdfs/cube-lut-specification-1.0.pdf
+    ///
+    /// Lines starting with `#` are comments, `TITLE` is optional,
+    /// `LUT_3D_SIZE N` is required, `DOMAIN_MIN`/`DOMAIN_MAX` default
+    /// to `[0.0, 1.0]`. The remaining lines are N*N*N RGB triples
+    /// ordered B-major (blue fastest).
+    pub fn parse(content: &str) -> Result<Self> {
+        let mut size: Option<u32> = None;
+        let mut domain_min = [0.0_f32; 3];
+        let mut domain_max = [1.0_f32; 3];
+        let mut data = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            // TITLE is optional; skip it.
+            if line.starts_with("TITLE") {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("LUT_3D_SIZE") {
+                size = Some(rest.trim().parse().context("invalid LUT_3D_SIZE")?);
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("DOMAIN_MIN") {
+                let parts: Vec<f32> = rest
+                    .split_whitespace()
+                    .map(|s| s.parse::<f32>().context("invalid DOMAIN_MIN value"))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if parts.len() != 3 {
+                    anyhow::bail!("DOMAIN_MIN must have 3 components");
+                }
+                domain_min[0] = parts[0];
+                domain_min[1] = parts[1];
+                domain_min[2] = parts[2];
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("DOMAIN_MAX") {
+                let parts: Vec<f32> = rest
+                    .split_whitespace()
+                    .map(|s| s.parse::<f32>().context("invalid DOMAIN_MAX value"))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if parts.len() != 3 {
+                    anyhow::bail!("DOMAIN_MAX must have 3 components");
+                }
+                domain_max[0] = parts[0];
+                domain_max[1] = parts[1];
+                domain_max[2] = parts[2];
+                continue;
+            }
+            // RGB triple line.
+            let parts: Vec<f32> = line
+                .split_whitespace()
+                .map(|s| s.parse::<f32>().context("invalid LUT data value"))
+                .collect::<Result<Vec<_>, _>>()?;
+            if parts.len() != 3 {
+                anyhow::bail!("LUT data line must have 3 components, got {}", parts.len());
+            }
+            data.push([parts[0], parts[1], parts[2]]);
+        }
+
+        let size = size.context("missing LUT_3D_SIZE")?;
+        let expected = (size * size * size) as usize;
+        if data.len() != expected {
+            anyhow::bail!(
+                "LUT data has {} entries, expected {} for size {}",
+                data.len(),
+                expected,
+                size
+            );
+        }
+        let _ = (domain_min, domain_max); // validated but not stored yet
+
+        Ok(Self { size, data })
+    }
 }
 
 impl AppSettings {
@@ -204,6 +304,17 @@ impl AppSettings {
             }
         }
         default_recordings_dir()
+    }
+
+    /// Custom LUT (.cube) cache directory. Falls back to
+    /// `%APPDATA%/CapRust/luts` when unset.
+    pub fn effective_lut_cache_dir(&self) -> std::path::PathBuf {
+        if let Some(d) = self.lut_cache_dir.as_ref() {
+            if !d.trim().is_empty() {
+                return std::path::PathBuf::from(d);
+            }
+        }
+        default_lut_cache_dir()
     }
 
     /// Write this settings snapshot to `path` as JSON.
@@ -432,6 +543,42 @@ mod tests {
             label,
             uuid::Uuid::new_v4()
         ))
+    }
+
+    #[test]
+    fn cube_lut_parses_minimal_file() {
+        let content = "# comment\nTITLE \"test\"\nLUT_3D_SIZE 2\n1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1.0 1.0 1.0\n0.5 0.5 0.5\n0.0 0.0 0.0\n1.0 0.5 0.0\n0.0 1.0 0.5\n";
+        let lut = CubeLut::parse(content).expect("valid 2x2x2 cube");
+        assert_eq!(lut.size, 2);
+        assert_eq!(lut.data.len(), 8);
+        assert_eq!(lut.data[0], [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn cube_lut_rejects_wrong_entry_count() {
+        let content = "LUT_3D_SIZE 2\n1.0 0.0 0.0\n";
+        assert!(CubeLut::parse(content).is_err());
+    }
+
+    #[test]
+    fn cube_lut_rejects_missing_size() {
+        let content = "1.0 0.0 0.0\n";
+        assert!(CubeLut::parse(content).is_err());
+    }
+
+    #[test]
+    fn cube_lut_parses_generated_builtin() {
+        // The generator emits 17^3 = 4913 entries after 4 header lines.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("app")
+            .join("assets")
+            .join("luts")
+            .join("film_kodak.cube");
+        let content = fs::read_to_string(&path).expect("bundled film_kodak.cube exists");
+        let lut = CubeLut::parse(&content).expect("generated cube must parse");
+        assert_eq!(lut.size, 17);
+        assert_eq!(lut.data.len(), 17 * 17 * 17);
     }
 
     #[test]

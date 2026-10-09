@@ -68,6 +68,9 @@ pub struct SetClipCommand {
     pub transition_out_easing: Option<crate::clip::EaseCurve>,
     /// Some(v) = replace the shared transition duration in ms.
     pub transition_duration_ms: Option<u64>,
+    /// Some(Some(x)) = set the LUT reference. Some(None) = clear it.
+    /// None = leave untouched.
+    pub lut: Option<Option<String>>,
     before: Option<Clip>,
 }
 
@@ -111,6 +114,7 @@ impl SetClipCommand {
             transition_in_easing: None,
             transition_out_easing: None,
             transition_duration_ms: None,
+            lut: None,
             before: None,
         }
     }
@@ -283,6 +287,11 @@ impl SetClipCommand {
         self.speed_range = Some(v);
         self
     }
+    /// Set or clear the LUT reference.
+    pub fn lut(mut self, v: Option<String>) -> Self {
+        self.lut = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -424,6 +433,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.transition_duration_ms {
             c.transition_duration_ms = v;
+        }
+        if let Some(v) = self.lut.clone() {
+            c.lut = v;
         }
         Ok(())
     }

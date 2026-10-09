@@ -525,6 +525,10 @@ pub struct Clip {
     pub media_id: Option<Uuid>,
     #[serde(default)]
     pub effects: Vec<EffectInstance>,
+    /// Color LUT applied to this clip. `None` = no LUT.
+    /// `Some("id")` for a built-in LUT, or an absolute path to a custom `.cube` file.
+    #[serde(default)]
+    pub lut: Option<String>,
     #[serde(default)]
     pub transition_in: Option<String>,
     #[serde(default)]
@@ -706,6 +710,7 @@ impl Clip {
             bg_removal: None,
             stab_trf: None,
             chroma_key: None,
+            lut: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -756,6 +761,7 @@ impl Clip {
             bg_removal: None,
             stab_trf: None,
             chroma_key: None,
+            lut: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -806,6 +812,7 @@ impl Clip {
             bg_removal: None,
             stab_trf: None,
             chroma_key: None,
+            lut: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -860,6 +867,7 @@ impl Clip {
             bg_removal: None,
             stab_trf: None,
             chroma_key: None,
+            lut: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -920,6 +928,7 @@ impl Clip {
             bg_removal: None,
             stab_trf: None,
             chroma_key: None,
+            lut: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -978,6 +987,7 @@ impl Clip {
             bg_removal: None,
             stab_trf: None,
             chroma_key: None,
+            lut: None,
             source_duration_ms: 0,
             media_id: None,
         }

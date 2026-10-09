@@ -6958,6 +6958,16 @@ impl CapRustApp {
                                 .auto_reframe(kps);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::SetLut(lut) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .lut(Some(lut));
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
+                        PendingEdit::ClearLut => {
+                            let cmd =
+                                caprust_core::commands::set_clip::SetClipCommand::new(id).lut(None);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::Name(v) => {
                             let trimmed = v.trim().to_string();
                             let new_name = if trimmed.is_empty() {

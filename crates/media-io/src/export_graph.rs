@@ -89,6 +89,9 @@ pub struct VideoClip {
     pub stab_trf: Option<std::path::PathBuf>,
     /// Chroma key (green screen). None = no keying.
     pub chroma_key: Option<caprust_core::clip::ChromaKeySpec>,
+    /// Color LUT reference. `None` = no LUT. `Some("id")` for a
+    /// built-in LUT, absolute path for a custom `.cube` file.
+    pub lut: Option<String>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -564,6 +567,18 @@ impl RenderPlan {
                     ck.key_color[0], ck.key_color[1], ck.key_color[2],
                     ck.similarity, ck.blend,
                 ));
+            }
+            // Color LUT (3D cube) applied before effects so the effect
+            // chain grades the already-graded image. Built-in LUTs are
+            // referenced by id; custom LUTs are absolute .cube paths.
+            // escape_movie_path handles the Windows drive-colon inside
+            // filtergraphs (a bare `C:` is truncated by the option parser).
+            if let Some(lut_id) = &c.lut {
+                if let Some(lut_path) = resolve_lut_path(lut_id) {
+                    if let Some(escaped) = escape_movie_path(&lut_path) {
+                        fg.push_str(&format!(",lut3d=file={escaped}"));
+                    }
+                }
             }
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
@@ -1548,6 +1563,58 @@ fn build_effects_chain(effects: &[caprust_core::clip::EffectInstance]) -> String
         }
     }
     out
+}
+
+/// Resolve a clip's LUT reference to an absolute `.cube` path.
+///
+/// `lut_id` is either a built-in LUT id (e.g. "film_kodak") mapped to a
+/// bundled asset, or an absolute path to a user-uploaded `.cube` file.
+/// Returns `None` when the id is unknown or the path does not exist.
+fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
+    // Built-in LUTs: bundled in assets/luts/. The id maps to a filename.
+    let builtins = [
+        ("film_kodak", "film_kodak.cube"),
+        ("film_fuji", "film_fuji.cube"),
+        ("bw_contrast", "bw_contrast.cube"),
+        ("vintage_sepia", "vintage_sepia.cube"),
+    ];
+    for (id, filename) in &builtins {
+        if lut_id == *id {
+            // assets/luts/ is bundled next to the exe in release builds
+            // and in the workspace in dev. Walk up from the current exe.
+            let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+            let candidates = [
+                exe_dir.join("assets").join("luts").join(filename),
+                exe_dir
+                    .join("..")
+                    .join("assets")
+                    .join("luts")
+                    .join(filename),
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("assets")
+                    .join("luts")
+                    .join(filename),
+                std::path::PathBuf::from("assets")
+                    .join("luts")
+                    .join(filename),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
+            // Fall through: id is known but asset is missing — return None.
+            return None;
+        }
+    }
+    // Custom LUT: absolute path to a .cube file.
+    let p = PathBuf::from(lut_id);
+    if p.exists() && p.extension().and_then(|e| e.to_str()) == Some("cube") {
+        return Some(p);
+    }
+    None
 }
 
 /// Single-effect fragment. Kept separate from the loop so tests can
@@ -2855,6 +2922,7 @@ pub fn plan_from_project(
                         bg_removal_path: resolve_bg_removal_path(project, c),
                         stab_trf: resolve_stab_path(project, c),
                         chroma_key: c.chroma_key,
+                        lut: c.lut.clone(),
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -2898,6 +2966,7 @@ pub fn plan_from_project(
                         bg_removal_path: resolve_bg_removal_path(project, c),
                         stab_trf: resolve_stab_path(project, c),
                         chroma_key: c.chroma_key,
+                        lut: c.lut.clone(),
                     });
                 }
                 ClipType::TextOverlay {
@@ -3667,6 +3736,7 @@ mod tests {
                 bg_removal_path: None,
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -3843,6 +3913,7 @@ mod tests {
                 bg_removal_path: mask.map(std::path::PathBuf::from),
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4252,6 +4323,7 @@ mod tests {
                 bg_removal_path: None,
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4307,6 +4379,7 @@ mod tests {
                 bg_removal_path: None,
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4528,6 +4601,7 @@ mod tests {
                 bg_removal_path: None,
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4695,6 +4769,70 @@ mod chroma_key_filter_tests {
         assert!(
             !fg.contains("chromakey="),
             "plain plan must not emit chromakey: {fg}"
+        );
+    }
+
+    fn write_tmp_cube(label: &str) -> std::path::PathBuf {
+        // Minimal valid 2x2x2 cube.
+        let path = std::env::temp_dir().join(format!(
+            "caprust_lut_test_{label}_{}.cube",
+            std::process::id()
+        ));
+        let mut content = String::from("TITLE \"t\"\nLUT_3D_SIZE 2\n");
+        for _ in 0..8 {
+            content.push_str("0.5 0.5 0.5\n");
+        }
+        std::fs::write(&path, content).expect("write tmp cube");
+        path
+    }
+
+    fn plan_with_lut(lut: Option<String>) -> RenderPlan {
+        let mut plan = single_video_plan_with_mask(None);
+        plan.video_clips[0].lut = lut;
+        plan
+    }
+
+    #[test]
+    fn lut_emits_lut3d_stage_for_custom_cube() {
+        let cube = write_tmp_cube("custom");
+        let plan = plan_with_lut(Some(cube.to_string_lossy().to_string()));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("lut3d=file="),
+            "plan with a valid .cube must emit lut3d: {fg}"
+        );
+        let _ = std::fs::remove_file(&cube);
+    }
+
+    #[test]
+    fn lut_unknown_id_emits_no_stage() {
+        let plan = plan_with_lut(Some("not_a_known_lut".into()));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            !fg.contains("lut3d="),
+            "unknown LUT id must not emit lut3d: {fg}"
+        );
+    }
+
+    #[test]
+    fn lut_non_cube_extension_resolves_none() {
+        let not_cube =
+            std::env::temp_dir().join(format!("caprust_lut_test_{}.png", std::process::id()));
+        std::fs::write(&not_cube, b"fake").expect("write tmp file");
+        assert!(
+            resolve_lut_path(&not_cube.to_string_lossy()).is_none(),
+            "non-.cube path must not resolve"
+        );
+        let _ = std::fs::remove_file(&not_cube);
+    }
+
+    #[test]
+    fn no_lut_no_stage() {
+        let plan = plan_with_lut(None);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            !fg.contains("lut3d="),
+            "plain plan must not emit lut3d: {fg}"
         );
     }
 }
@@ -5021,6 +5159,7 @@ mod flip_filtergraph_tests {
                 bg_removal_path: None,
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5116,6 +5255,7 @@ mod reverse_filtergraph_tests {
                 bg_removal_path: None,
                 stab_trf: None,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5365,6 +5505,7 @@ mod stab_tests {
                 bg_removal_path: None,
                 stab_trf: stab,
                 chroma_key: None,
+                lut: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],

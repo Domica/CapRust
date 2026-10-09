@@ -33,6 +33,34 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=CAPRUST_COMMIT={commit}");
 
+    // Copy built-in LUT (.cube) files into the output directory so the
+    // render graph can resolve them relative to the executable at runtime.
+    // OUT_DIR is <target>/<profile>/build/<pkg>-<hash>/out, so three
+    // levels up is <target>/<profile>.
+    let out_dir = std::env::var("OUT_DIR").unwrap_or_default();
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let luts_src = std::path::Path::new(&manifest_dir)
+        .join("assets")
+        .join("luts");
+    let luts_dst = std::path::Path::new(&out_dir)
+        .join("..")
+        .join("..")
+        .join("..")
+        .join("assets")
+        .join("luts");
+    if luts_src.is_dir() {
+        let _ = std::fs::create_dir_all(&luts_dst);
+        if let Ok(rd) = std::fs::read_dir(&luts_src) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) == Some("cube") {
+                    let dst = luts_dst.join(entry.file_name());
+                    let _ = std::fs::copy(&p, &dst);
+                }
+            }
+        }
+    }
+
     #[cfg(windows)]
     {
         let mut res = winres::WindowsResource::new();
