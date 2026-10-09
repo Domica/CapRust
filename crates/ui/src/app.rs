@@ -4814,6 +4814,32 @@ impl CapRustApp {
                                 }
                             }
 
+                            // Split clip display: thumbnail strip on top,
+                            // waveform band at the bottom. Per-clip
+                            // override wins; otherwise the global
+                            // Settings → Appearance → Timeline toggle
+                            // decides. Video clips only; audio clips
+                            // keep the full-height waveform.
+                            let split_layout: Option<(egui::Rect, egui::Rect)> = {
+                                let is_video = matches!(
+                                    ctype,
+                                    caprust_core::ClipType::Video { .. }
+                                );
+                                let enabled = self
+                                    .project
+                                    .clips
+                                    .iter()
+                                    .find(|cc| cc.id == clip_id)
+                                    .and_then(|cc| cc.split_display)
+                                    .unwrap_or(self.settings.waveform_bottom);
+                                if is_video && enabled {
+                                    crate::timeline::split_clip_rects(clip_rect)
+                                } else {
+                                    None
+                                }
+                            };
+                            let thumb_rect = split_layout.map(|(s, _)| s).unwrap_or(clip_rect);
+
                             // Thumbnail strip: lookup clip's media_id → texture, tile across clip width.
                             let thumb_tex = {
                                 // Lazy-load from <project>/cache/thumbnails/<id>.jpg
@@ -4837,15 +4863,15 @@ impl CapRustApp {
                             if let Some(tex) = thumb_tex {
                                 let tex_size = tex.size_vec2();
                                 let aspect = tex_size.x / tex_size.y.max(1.0);
-                                let tile_h = clip_rect.height();
+                                let tile_h = thumb_rect.height();
                                 let tile_w = (tile_h * aspect).max(8.0);
-                                let mut x = clip_rect.left();
-                                let right = clip_rect.right();
+                                let mut x = thumb_rect.left();
+                                let right = thumb_rect.right();
                                 let mut guard = 0;
                                 while x < right - 1.0 && guard < 200 {
                                     let w = (right - x).min(tile_w);
                                     let tile_rect = egui::Rect::from_min_size(
-                                        egui::pos2(x, clip_rect.top()),
+                                        egui::pos2(x, thumb_rect.top()),
                                         egui::vec2(w, tile_h),
                                     );
                                     let frac = (w / tile_w).min(1.0);
@@ -4862,7 +4888,7 @@ impl CapRustApp {
                                     guard += 1;
                                 }
                                 // Dim overlay so clip-type color stays readable.
-                                p.rect_filled(clip_rect, 4.0, c.gamma_multiply(0.35));
+                                p.rect_filled(thumb_rect, 4.0, c.gamma_multiply(0.35));
                             }
 
                             // Crossfade overlap shading. When the
@@ -4961,6 +4987,33 @@ impl CapRustApp {
                                 // Resolution is capped at one bar per
                                 // 2 px so the segment count stays
                                 // small regardless of clip width.
+                                //
+                                // Split display: the waveform lives in
+                                // the bottom band, not centered over
+                                // the thumbnails. Video without audio
+                                // (or detached) shows a darker empty
+                                // band instead.
+                                let wave_rect =
+                                    split_layout.map(|(_, w)| w).unwrap_or(clip_rect);
+                                if split_layout.is_some()
+                                    && matches!(ctype, caprust_core::ClipType::Video { .. })
+                                {
+                                    let has_audio_wave = self
+                                        .project
+                                        .clips
+                                        .iter()
+                                        .find(|cc| cc.id == clip_id)
+                                        .and_then(|cc| cc.media_id)
+                                        .and_then(|mid| self.waveform_peaks_for(mid))
+                                        .is_some();
+                                    if !has_audio_wave {
+                                        p.rect_filled(
+                                            wave_rect,
+                                            0.0,
+                                            egui::Color32::BLACK.gamma_multiply(0.45),
+                                        );
+                                    }
+                                }
                                 if let Some(media_id) = self
                                     .project
                                     .clips
@@ -4971,8 +5024,8 @@ impl CapRustApp {
                                     if let Some(peaks) = self.waveform_peaks_for(media_id) {
                                         let bar_w = 2.0_f32;
                                         let n_bars = ((clip_rect.width() / bar_w) as usize).max(1);
-                                        let center_y = clip_rect.center().y;
-                                        let amp = clip_rect.height() * 0.35;
+                                        let center_y = wave_rect.center().y;
+                                        let amp = wave_rect.height() * 0.42;
                                         let wf = theme_snapshot.waveform_color();
                                         let stroke = egui::Stroke::new(
                                             bar_w * 0.75,
@@ -5006,7 +5059,10 @@ impl CapRustApp {
                                                 .min(peaks.len());
                                         let visible = end_idx.saturating_sub(start_idx).max(1);
                                         let stride = (visible / n_bars).max(1);
-                                        let clip = ui.painter().with_clip_rect(clip_rect);
+                                        let clip_paint_rect = split_layout
+                                            .map(|(_, w)| w)
+                                            .unwrap_or(clip_rect);
+                                        let clip = ui.painter().with_clip_rect(clip_paint_rect);
                                         let mut i = start_idx;
                                         let mut x = clip_rect.left();
                                         while i < end_idx && x < clip_rect.right() {
@@ -5569,6 +5625,66 @@ impl CapRustApp {
                                 if ui.button(mute_lbl).clicked() {
                                     pending_actions.push(ClipAction::MuteClip(clip_id));
                                     ui.close_menu();
+                                }
+                                // --- Clip display: standard vs split ---
+                                // Per-clip waveform layout override. Only
+                                // offered on video clips (the split puts
+                                // the thumbnail strip on top and the
+                                // waveform band at the bottom).
+                                {
+                                    let is_video = self
+                                        .project
+                                        .clips
+                                        .iter()
+                                        .find(|c| c.id == clip_id)
+                                        .map(|c| {
+                                            matches!(
+                                                c.clip_type,
+                                                caprust_core::ClipType::Video { .. }
+                                            )
+                                        })
+                                        .unwrap_or(false);
+                                    if is_video {
+                                        let effective_split = self
+                                            .project
+                                            .clips
+                                            .iter()
+                                            .find(|c| c.id == clip_id)
+                                            .and_then(|c| c.split_display)
+                                            .unwrap_or(self.settings.waveform_bottom);
+                                        ui.menu_button(tr("clip-ctx-display"), |ui| {
+                                            if ui
+                                                .selectable_label(
+                                                    !effective_split,
+                                                    tr("clip-ctx-display-standard"),
+                                                )
+                                                .clicked()
+                                            {
+                                                pending_actions.push(
+                                                    ClipAction::SetSplitDisplay(
+                                                        clip_id,
+                                                        Some(false),
+                                                    ),
+                                                );
+                                                ui.close_menu();
+                                            }
+                                            if ui
+                                                .selectable_label(
+                                                    effective_split,
+                                                    tr("clip-ctx-display-split"),
+                                                )
+                                                .clicked()
+                                            {
+                                                pending_actions.push(
+                                                    ClipAction::SetSplitDisplay(
+                                                        clip_id,
+                                                        Some(true),
+                                                    ),
+                                                );
+                                                ui.close_menu();
+                                            }
+                                        });
+                                    }
                                 }
                                 ui.separator();
                                 if ui.button(tr("clip-ctx-generate-captions")).clicked() {
@@ -6533,6 +6649,13 @@ impl CapRustApp {
                         caprust_core::commands::set_clip::SetClipCommand::new(id).volume_db(target);
                     if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
                         tracing::error!("mute clip failed: {e}");
+                    }
+                }
+                ClipAction::SetSplitDisplay(id, v) => {
+                    let cmd =
+                        caprust_core::commands::set_clip::SetClipCommand::new(id).split_display(v);
+                    if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        tracing::error!("set split display failed: {e}");
                     }
                 }
                 ClipAction::FadeDragStart(id, edge, current_ms) => {
@@ -9606,6 +9729,10 @@ enum ClipAction {
     RippleDelete(uuid::Uuid),
     SetSpeed(uuid::Uuid, f32),
     MuteClip(uuid::Uuid),
+    /// Per-clip waveform layout override. Some(true) = split display,
+    /// Some(false) = legacy overlay. Set from the clip context menu
+    /// ("Clip display" submenu); undoable via SetClipCommand.
+    SetSplitDisplay(uuid::Uuid, Option<bool>),
     FadeDragStart(uuid::Uuid, FadeEdge, f32),
     FadeDragDelta(uuid::Uuid, f32, f32),
     FadeDragEnd(uuid::Uuid),

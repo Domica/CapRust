@@ -662,6 +662,12 @@ pub struct Clip {
     pub stab_trf: Option<String>,
     #[serde(default)]
     pub chroma_key: Option<ChromaKeySpec>,
+    /// Per-clip waveform layout override. None = follow the global
+    /// `waveform_bottom` setting. Some(true) = split display (strip on
+    /// top, waveform band at the bottom) for this clip; Some(false) =
+    /// legacy overlay. Set from the clip context menu ("Clip display").
+    #[serde(default)]
+    pub split_display: Option<bool>,
 }
 
 impl Clip {
@@ -711,6 +717,7 @@ impl Clip {
             stab_trf: None,
             chroma_key: None,
             lut: None,
+            split_display: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -762,6 +769,7 @@ impl Clip {
             stab_trf: None,
             chroma_key: None,
             lut: None,
+            split_display: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -813,6 +821,7 @@ impl Clip {
             stab_trf: None,
             chroma_key: None,
             lut: None,
+            split_display: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -868,6 +877,7 @@ impl Clip {
             stab_trf: None,
             chroma_key: None,
             lut: None,
+            split_display: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -929,6 +939,7 @@ impl Clip {
             stab_trf: None,
             chroma_key: None,
             lut: None,
+            split_display: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -988,6 +999,7 @@ impl Clip {
             stab_trf: None,
             chroma_key: None,
             lut: None,
+            split_display: None,
             source_duration_ms: 0,
             media_id: None,
         }

@@ -268,6 +268,28 @@ pub fn draw_audio_envelope(
     }
 }
 
+/// Split a video clip's rect into the thumbnail strip (top) and the
+/// waveform band (bottom) for the split clip display.
+///
+/// Returns `None` when the split is not applicable: the clip rect is
+/// too short to hold both regions (under `MIN_SPLIT_HEIGHT`), so the
+/// caller should fall back to the legacy overlay. Otherwise returns
+/// `(strip_rect, wave_rect)` where the strip keeps the top
+/// `STRIP_FRAC` of the height and the wave band takes the rest.
+pub fn split_clip_rects(clip_rect: egui::Rect) -> Option<(egui::Rect, egui::Rect)> {
+    /// Fraction of the clip height kept for the thumbnail strip.
+    const STRIP_FRAC: f32 = 0.7;
+    /// Below this height there is no room for a useful wave band.
+    const MIN_SPLIT_HEIGHT: f32 = 30.0;
+    if clip_rect.height() < MIN_SPLIT_HEIGHT {
+        return None;
+    }
+    let split_y = clip_rect.top() + clip_rect.height() * STRIP_FRAC;
+    let strip = egui::Rect::from_min_max(clip_rect.min, egui::pos2(clip_rect.right(), split_y));
+    let wave = egui::Rect::from_min_max(egui::pos2(clip_rect.left(), split_y), clip_rect.max);
+    Some((strip, wave))
+}
+
 #[cfg(test)]
 mod overlay_tests {
     use super::*;
@@ -704,5 +726,25 @@ mod overlay_tests {
         }
         std::fs::remove_dir_all(&dir).ok();
         assert!(bad.is_empty(), "overlay disagrees with export:\n{bad:#?}");
+    }
+
+    #[test]
+    fn split_rects_cover_full_clip_height() {
+        let clip = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(210.0, 80.0));
+        let (strip, wave) = split_clip_rects(clip).expect("60px clip splits");
+        assert_eq!(strip.top(), 20.0);
+        assert_eq!(wave.bottom(), 80.0);
+        assert!((strip.bottom() - wave.top()).abs() < 0.001);
+        // 70/30 split of 60 px.
+        assert!((strip.height() - 42.0).abs() < 0.001);
+        assert!((wave.height() - 18.0).abs() < 0.001);
+        assert_eq!(strip.left(), 10.0);
+        assert_eq!(wave.right(), 210.0);
+    }
+
+    #[test]
+    fn split_rects_reject_short_clips() {
+        let short = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 20.0));
+        assert!(split_clip_rects(short).is_none());
     }
 }

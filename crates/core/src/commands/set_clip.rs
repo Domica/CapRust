@@ -71,6 +71,9 @@ pub struct SetClipCommand {
     /// Some(Some(x)) = set the LUT reference. Some(None) = clear it.
     /// None = leave untouched.
     pub lut: Option<Option<String>>,
+    /// Some(v) = per-clip waveform layout override. None = leave
+    /// untouched.
+    pub split_display: Option<Option<bool>>,
     before: Option<Clip>,
 }
 
@@ -115,6 +118,7 @@ impl SetClipCommand {
             transition_out_easing: None,
             transition_duration_ms: None,
             lut: None,
+            split_display: None,
             before: None,
         }
     }
@@ -292,6 +296,11 @@ impl SetClipCommand {
         self.lut = Some(v);
         self
     }
+    /// Set or clear the per-clip waveform layout override.
+    pub fn split_display(mut self, v: Option<bool>) -> Self {
+        self.split_display = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -436,6 +445,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.lut.clone() {
             c.lut = v;
+        }
+        if let Some(v) = self.split_display {
+            c.split_display = v;
         }
         Ok(())
     }

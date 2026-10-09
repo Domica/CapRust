@@ -44,6 +44,14 @@ pub struct AppSettings {
     /// default; mirrors the "trim follow" toggle in the timeline tray.
     #[serde(default)]
     pub trim_follow: bool,
+    /// Waveform-at-bottom clip layout. When true, video clips with
+    /// audio shrink the thumbnail strip to the top ~70% and draw the
+    /// waveform in a dedicated bottom band; video without audio shows
+    /// a darker empty band. Off = legacy overlay (waveform centered
+    /// over the full clip). On by default; toggle in Settings →
+    /// Appearance → Timeline.
+    #[serde(default = "default_true")]
+    pub waveform_bottom: bool,
     /// Where the auto-downloaded FFmpeg lives. None or empty =
     /// `%APPDATA%/CapRust/ffmpeg` (see `ffmpeg::managed_dir`).
     #[serde(default)]
@@ -138,6 +146,7 @@ impl Default for AppSettings {
             muted: false,
             check_for_updates: true,
             trim_follow: false,
+            waveform_bottom: true,
             managed_ffmpeg_dir: None,
             ffmpeg_prompt_dismissed: false,
             docked_panels: Vec::new(),
