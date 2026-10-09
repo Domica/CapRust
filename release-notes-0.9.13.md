@@ -18,5 +18,5 @@
 
 ## SHA256
 
-- `CapRust-0.9.13-win64-setup.exe`: `TODO_EXE_SHA`
-- `caprust-nightly-linux.zip`: `TODO_ZIP_SHA`
+- `CapRust-0.9.13-win64-setup.exe`: `6d2d90fff36d793ef86f3579786cabfaa02649d3b38a1b16094ba44be0e1dff1`
+- `caprust-nightly-linux.zip`: `97c4f005dc1b6c8e1c5af5e4d6d5adcd92a65bb2eeeeea384371ea05bf2d7de6`
