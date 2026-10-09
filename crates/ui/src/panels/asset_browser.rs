@@ -740,6 +740,13 @@ const EFFECTS: &[Preset] = &[
         color: [140, 160, 180],
         coming_soon: false,
     },
+    Preset {
+        id: "beauty",
+        label_key: "asset-effect-beauty",
+        icon: ph::SPARKLE,
+        color: [240, 200, 210],
+        coming_soon: false,
+    },
 ];
 
 const FILTERS: &[Preset] = &[
@@ -1015,7 +1022,7 @@ fn preset_category(id: &str) -> &'static str {
         "glitch" | "mirror" | "kaleido" | "pixelate" => "distort",
         "grain" | "sketch" | "sparkle" | "particle" => "texture",
         "shake" | "zoom_pulse" | "ghost" | "echo" => "motion",
-        "blur" | "sharpen" | "vignette" | "glow" | "dreamy_haze" => "adjust",
+        "blur" | "sharpen" | "vignette" | "glow" | "dreamy_haze" | "beauty" => "adjust",
         "cinematic_bars" | "flip3d" | "freezeframe" => "motion",
         "teal_orange" | "cross_process" | "bleach_bypass" | "moonlight" => "color",
         // Filters

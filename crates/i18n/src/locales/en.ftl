@@ -566,6 +566,7 @@ asset-effect-dreamy_haze = Dreamy Haze
 asset-effect-flip3d = 3D Flip
 asset-effect-freezeframe = Freezeframe
 asset-effect-echo = Echo
+asset-effect-beauty = Beauty
 
 # Filters
 asset-filter-none = None

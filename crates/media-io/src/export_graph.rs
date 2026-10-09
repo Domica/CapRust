@@ -2000,6 +2000,20 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             format!(",tmix=frames={frames}:weights='{weights}'")
         }
 
+        // ---- Beauty: skin smoothing ----
+        // smartblur blurs flat areas (skin) while respecting outlines
+        // above luma_threshold, so pores and noise soften but eyes,
+        // lips and hair edges stay crisp. radius and strength scale
+        // with amount; threshold is fixed so edge protection never
+        // weakens at high amounts. A face-region mask (YuNet) is a
+        // future refinement; on typical talking-head footage the
+        // edge-aware blur already reads as skin smoothing.
+        "beauty" => {
+            let r = (1.0 + 2.0 * amount).clamp(0.5, 5.0);
+            let s = (0.5 * amount).clamp(0.1, 1.0);
+            format!(",smartblur=luma_radius={r:.1}:luma_strength={s:.2}:luma_threshold=8")
+        }
+
         _ => return None,
     };
     Some(frag)
@@ -4197,6 +4211,26 @@ mod tests {
         let f = build_one_effect("fade", 1.0).expect("fade chain");
         assert!(f.contains("brightness="), "fade must lift blacks: {f}");
         assert!(!f.contains("fade=t=in"), "fade must not fade in: {f}");
+    }
+
+    #[test]
+    fn beauty_emits_edge_preserving_smooth() {
+        let b = build_one_effect("beauty", 1.0).expect("beauty chain");
+        assert!(
+            b.contains("smartblur="),
+            "beauty must smooth via smartblur: {b}"
+        );
+        assert!(
+            b.contains("luma_threshold="),
+            "beauty must protect edges via threshold: {b}"
+        );
+        // Strength scales with amount; radius stays in smartblur's 0.1..=5 range.
+        let hi = build_one_effect("beauty", 4.0).expect("beauty max chain");
+        assert!(
+            hi.contains("luma_strength=1.00"),
+            "strength clamps at 1: {hi}"
+        );
+        assert!(hi.contains("luma_radius=5.0"), "radius clamps at 5: {hi}");
     }
 
     #[test]

@@ -566,6 +566,7 @@ asset-effect-dreamy_haze = Sanjivost
 asset-effect-flip3d = 3D preokret
 asset-effect-freezeframe = Zamrzni frame
 asset-effect-echo = Jeka
+asset-effect-beauty = Ljepota
 
 # Filters
 asset-filter-none = Bez
