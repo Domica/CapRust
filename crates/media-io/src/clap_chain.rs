@@ -162,7 +162,16 @@ pub struct ClapChain {
 }
 
 impl ClapChain {
-    pub fn load(descriptors: Vec<PluginDescriptor>, sample_rate: u32, block_frames: usize) -> Self {
+    /// Load a master chain. `trusted_dirs` is the effective scan set
+    /// (see `clap_host::effective_scan_dirs`) — callers with settings
+    /// access must pass defaults + the configured custom dir so the
+    /// browser and the loader never disagree about what is loadable.
+    pub fn load(
+        descriptors: Vec<PluginDescriptor>,
+        sample_rate: u32,
+        block_frames: usize,
+        trusted_dirs: &[std::path::PathBuf],
+    ) -> Self {
         let mut plugins = Vec::with_capacity(descriptors.len());
         for d in &descriptors {
             if d.bypassed {
@@ -171,7 +180,7 @@ impl ClapChain {
             }
             // The path comes from the (untrusted) project file; loading
             // it is native code execution.
-            if !crate::clap_host::is_trusted_plugin_path(&d.path) {
+            if !crate::clap_host::is_trusted_plugin_path_in(&d.path, trusted_dirs) {
                 tracing::warn!(
                     "CLAP: refusing {} ({}): {} is not in a plugin scan directory",
                     d.name,
@@ -286,7 +295,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn empty_chain() -> ClapChain {
-        ClapChain::load(vec![], 48_000, 1024)
+        ClapChain::load(vec![], 48_000, 1024, &crate::clap_host::default_scan_dirs())
     }
 
     fn bogus_plugin_chain() -> ClapChain {
@@ -295,7 +304,12 @@ mod tests {
             PathBuf::from("Z:/caprust_definitely_missing_xyz.clap"),
             "Missing",
         );
-        ClapChain::load(vec![p], 48_000, 1024)
+        ClapChain::load(
+            vec![p],
+            48_000,
+            1024,
+            &crate::clap_host::default_scan_dirs(),
+        )
     }
 
     #[test]
@@ -331,7 +345,12 @@ mod tests {
             "Bypassed",
         );
         p.bypassed = true;
-        let c = ClapChain::load(vec![p], 48_000, 1024);
+        let c = ClapChain::load(
+            vec![p],
+            48_000,
+            1024,
+            &crate::clap_host::default_scan_dirs(),
+        );
         assert_eq!(c.len(), 1);
         assert_eq!(c.loaded_len(), 0);
     }
@@ -352,7 +371,7 @@ mod tests {
             PathBuf::from("Z:/caprust_x.clap"),
             "X",
         );
-        let mut c = ClapChain::load(vec![p], 48_000, 512);
+        let mut c = ClapChain::load(vec![p], 48_000, 512, &crate::clap_host::default_scan_dirs());
         // Force-load path so plugins vec is empty but we still hit the guard.
         let mut buf = vec![0.0f32; 4096];
         // loaded_len is 0 (bogus path), so guard is bypassed. This test
@@ -362,7 +381,7 @@ mod tests {
 
     #[test]
     fn accessors_round_trip() {
-        let c = ClapChain::load(vec![], 44_100, 512);
+        let c = ClapChain::load(vec![], 44_100, 512, &crate::clap_host::default_scan_dirs());
         assert_eq!(c.sample_rate(), 44_100);
         assert_eq!(c.block_frames(), 512);
     }
@@ -376,7 +395,12 @@ mod tests {
             return;
         }
         let desc = PluginDescriptor::new("com.u-he.ZebraHZ", path, "ZebraHZ");
-        let mut c = ClapChain::load(vec![desc], 48_000, 1024);
+        let mut c = ClapChain::load(
+            vec![desc],
+            48_000,
+            1024,
+            &crate::clap_host::default_scan_dirs(),
+        );
         assert_eq!(c.loaded_len(), 1);
 
         // Feed a 1024-frame stereo sine; assert process returns Ok and

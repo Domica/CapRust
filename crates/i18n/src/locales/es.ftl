@@ -441,6 +441,8 @@ set-paths-captures = Carpetas de capturas
 set-paths-captures-hint = Dónde van los fotogramas guardados y las grabaciones de pantalla. Vacío = valor predeterminado.
 set-paths-screenshots = Fotogramas guardados
 set-paths-recordings = Grabaciones
+set-paths-luts = Carpeta LUT (.cube)
+set-paths-clap = Carpeta extra de plugins CLAP
 set-paths-folder-auto = automático
 set-paths-ffmpeg = Binarios de FFmpeg
 set-paths-ffmpeg-hint = Usados para analizar medios, extraer miniaturas y exportar. Déjalo vacío para detectar automáticamente desde PATH.
@@ -799,6 +801,7 @@ toast-settings-exported = Ajustes exportados
 toast-settings-imported = Ajustes importados
 toast-settings-export-failed = Error de exportación de ajustes
 toast-settings-import-failed = Error de importación de ajustes
+toast-plugin-untrusted = Rechazado: el plugin está fuera de las carpetas de búsqueda
 
 set-backup-sync-hint = Carpeta de sincronización: apunta a una carpeta de Google Drive, OneDrive, Dropbox, Box, iCloud o Syncthing para mantener los ajustes sincronizados entre equipos.
 set-backup-sync-none = sin carpeta de sincronización

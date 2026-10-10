@@ -113,6 +113,12 @@ pub struct AppSettings {
     /// empty = `%APPDATA%/CapRust/luts` (see `effective_lut_cache_dir`).
     #[serde(default)]
     pub lut_cache_dir: Option<String>,
+    /// Optional extra folder scanned for CLAP plugins, in addition to
+    /// the two built-in locations (system CLAP dir + app plugins dir).
+    /// None or empty = defaults only. The folder joins the trusted set
+    /// for plugin loads (see media-io `clap_host::effective_scan_dirs`).
+    #[serde(default)]
+    pub clap_dir: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -159,6 +165,7 @@ impl Default for AppSettings {
             screenshots_dir: None,
             recordings_dir: None,
             lut_cache_dir: None,
+            clap_dir: None,
         }
     }
 }

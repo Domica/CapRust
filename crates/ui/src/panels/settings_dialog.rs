@@ -630,6 +630,60 @@ fn show_paths(
                 }
             });
             ui.end_row();
+
+            ui.label(tr("set-paths-luts"));
+            ui.horizontal(|ui| {
+                let mut d = settings.lut_cache_dir.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut d)
+                            .desired_width(280.0)
+                            .hint_text(tr("set-paths-folder-auto")),
+                    )
+                    .changed()
+                {
+                    settings.lut_cache_dir = if d.trim().is_empty() { None } else { Some(d) };
+                }
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        settings.lut_cache_dir = Some(dir.to_string_lossy().to_string());
+                    }
+                }
+                if settings.lut_cache_dir.is_some()
+                    && button::icon(ui, egui_phosphor::regular::X, &tr("set-backup-sync-clear"))
+                        .clicked()
+                {
+                    settings.lut_cache_dir = None;
+                }
+            });
+            ui.end_row();
+
+            ui.label(tr("set-paths-clap"));
+            ui.horizontal(|ui| {
+                let mut d = settings.clap_dir.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut d)
+                            .desired_width(280.0)
+                            .hint_text(tr("set-paths-folder-auto")),
+                    )
+                    .changed()
+                {
+                    settings.clap_dir = if d.trim().is_empty() { None } else { Some(d) };
+                }
+                if button::secondary(ui, tr("new-button-browse")).clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        settings.clap_dir = Some(dir.to_string_lossy().to_string());
+                    }
+                }
+                if settings.clap_dir.is_some()
+                    && button::icon(ui, egui_phosphor::regular::X, &tr("set-backup-sync-clear"))
+                        .clicked()
+                {
+                    settings.clap_dir = None;
+                }
+            });
+            ui.end_row();
         });
 
     ui.add_space(space::XL);

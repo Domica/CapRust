@@ -441,6 +441,8 @@ set-paths-captures = Capture folders
 set-paths-captures-hint = Where saved frames and screen recordings go. Empty = app default.
 set-paths-screenshots = Saved frames
 set-paths-recordings = Recordings
+set-paths-luts = LUT folder (.cube)
+set-paths-clap = Extra CLAP plugin folder
 set-paths-folder-auto = auto
 set-paths-ffmpeg = FFmpeg binaries
 set-paths-ffmpeg-hint = Used for media probing, thumbnail extraction, and export. Leave empty to auto-detect from PATH.
@@ -799,6 +801,7 @@ toast-settings-exported = Settings exported
 toast-settings-imported = Settings imported
 toast-settings-export-failed = Settings export failed
 toast-settings-import-failed = Settings import failed
+toast-plugin-untrusted = Refused: plugin is outside the scan folders
 
 set-backup-sync-hint = Sync folder: point at a Google Drive, OneDrive, Dropbox, Box, iCloud, or Syncthing folder to keep settings in step across machines.
 set-backup-sync-none = no sync folder

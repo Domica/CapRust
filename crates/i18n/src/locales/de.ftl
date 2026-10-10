@@ -441,6 +441,8 @@ set-paths-captures = Aufnahmeordner
 set-paths-captures-hint = Ablage für gespeicherte Einzelbilder und Bildschirmaufnahmen. Leer = Standard der App.
 set-paths-screenshots = Gespeicherte Einzelbilder
 set-paths-recordings = Aufnahmen
+set-paths-luts = LUT-Ordner (.cube)
+set-paths-clap = Zusätzlicher CLAP-Plugin-Ordner
 set-paths-folder-auto = automatisch
 set-paths-ffmpeg = FFmpeg-Programme
 set-paths-ffmpeg-hint = Wird für Medienanalyse, Vorschaubilderzeugung und Export verwendet. Leer lassen für automatische Erkennung über PATH.
@@ -799,6 +801,7 @@ toast-settings-exported = Einstellungen exportiert
 toast-settings-imported = Einstellungen importiert
 toast-settings-export-failed = Einstellungs-Export fehlgeschlagen
 toast-settings-import-failed = Einstellungs-Import fehlgeschlagen
+toast-plugin-untrusted = Abgelehnt: Plugin liegt außerhalb der Scan-Ordner
 
 set-backup-sync-hint = Sync-Ordner: auf einen Google-Drive-, OneDrive-, Dropbox-, Box-, iCloud- oder Syncthing-Ordner zeigen, um Einstellungen rechnerübergreifend abzugleichen.
 set-backup-sync-none = kein Sync-Ordner

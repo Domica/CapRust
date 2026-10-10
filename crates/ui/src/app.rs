@@ -6901,6 +6901,11 @@ impl CapRustApp {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
 
+        // Keep the plugin browser's scan set in sync with Settings →
+        // Paths (custom CLAP dir). Resetting `scanned` triggers a
+        // rescan with the new set on the next panel render.
+        self.sync_plugin_scan_dirs();
+
         egui::SidePanel::left("left_panel")
             .resizable(true)
             .default_width(280.0)
@@ -7325,16 +7330,32 @@ impl CapRustApp {
     ) {
         // Master-chain plugin add request from the browser.
         if let Some(info) = out.plugin_add_requested {
-            let inst = caprust_core::plugin::PluginInstance::new(
-                info.id.clone(),
-                info.path.clone(),
-                info.name.clone(),
-            );
-            let cmd = caprust_core::commands::add_master_plugin::AddMasterPluginCommand::new(inst);
-            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
-                tracing::warn!("add master plugin failed: {e:#}");
+            // The browser only lists scanned dirs, but the path still
+            // comes from the filesystem — refuse anything outside the
+            // effective scan set (defaults + configured custom dir).
+            let extra = self
+                .settings
+                .clap_dir
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(std::path::Path::new);
+            let dirs = caprust_media_io::clap_host::effective_scan_dirs(extra);
+            if !caprust_media_io::clap_host::is_trusted_plugin_path_in(&info.path, &dirs) {
+                tracing::warn!("refusing untrusted plugin path {}", info.path.display());
+                self.toast_error(format!("{}: {}", tr("toast-plugin-untrusted"), info.name));
             } else {
-                tracing::info!("added master plugin: {}", info.name);
+                let inst = caprust_core::plugin::PluginInstance::new(
+                    info.id.clone(),
+                    info.path.clone(),
+                    info.name.clone(),
+                );
+                let cmd =
+                    caprust_core::commands::add_master_plugin::AddMasterPluginCommand::new(inst);
+                if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                    tracing::warn!("add master plugin failed: {e:#}");
+                } else {
+                    tracing::info!("added master plugin: {}", info.name);
+                }
             }
         }
 
@@ -7473,6 +7494,25 @@ impl CapRustApp {
         }
     }
 
+    /// Recompute the CLAP scan set from Settings and invalidate the
+    /// plugin browser when it changed (custom dir added/removed).
+    /// Called before every asset-browser render so both layouts stay
+    /// in sync without signature churn in the panel functions.
+    fn sync_plugin_scan_dirs(&mut self) {
+        let extra = self
+            .settings
+            .clap_dir
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(std::path::Path::new);
+        let dirs = caprust_media_io::clap_host::effective_scan_dirs(extra);
+        let pb = &mut self.asset_browser.plugin_browser;
+        if pb.scan_dirs != dirs {
+            pb.scan_dirs = dirs;
+            pb.scanned = false;
+        }
+    }
+
     /// Assets panel body for the dock layout: renders a single tab
     /// without the tab strip (egui_dock draws its own) and routes the
     /// output through the shared handler.
@@ -7481,6 +7521,7 @@ impl CapRustApp {
         ui: &mut egui::Ui,
         tab: crate::panels::asset_browser::AssetTab,
     ) {
+        self.sync_plugin_scan_dirs();
         let tab_layout = self.media_bin.tab_layout;
         let out = crate::panels::asset_browser::render_tab_content(
             ui,

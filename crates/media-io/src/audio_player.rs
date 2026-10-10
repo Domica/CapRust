@@ -130,7 +130,12 @@ impl AudioPlayer {
     pub fn play_pcm_file(path: &Path, start_ms: u64) -> Result<Self> {
         #[cfg(feature = "clap")]
         {
-            Self::play_pcm_file_with_chain(path, start_ms, Vec::new())
+            Self::play_pcm_file_with_chain(
+                path,
+                start_ms,
+                Vec::new(),
+                crate::clap_host::default_scan_dirs(),
+            )
         }
         #[cfg(not(feature = "clap"))]
         {
@@ -140,6 +145,9 @@ impl AudioPlayer {
 
     /// Play a raw PCM file with a master CLAP chain applied on the
     /// reader thread. Empty `chain` is identical to `play_pcm_file`.
+    /// `trusted_dirs` is the effective plugin scan set (see
+    /// `clap_host::effective_scan_dirs`); the loader refuses any
+    /// descriptor outside it.
     ///
     /// Feature-gated: only available with `--features clap`.
     #[cfg(feature = "clap")]
@@ -147,8 +155,9 @@ impl AudioPlayer {
         path: &Path,
         start_ms: u64,
         chain: Vec<PluginInstance>,
+        trusted_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
-        Self::play_pcm_file_inner_with_chain(path, start_ms, Some(chain))
+        Self::play_pcm_file_inner_with_chain(path, start_ms, Some(chain), trusted_dirs)
     }
 
     #[cfg(not(feature = "clap"))]
@@ -162,6 +171,7 @@ impl AudioPlayer {
         #[cfg_attr(not(feature = "clap"), allow(unused_variables))] chain: Option<
             Vec<PluginInstance>,
         >,
+        #[cfg(feature = "clap")] trusted_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
         // Verify the file exists before we commit to spawning anything.
         // NOTE: do NOT clamp byte_offset to the file's current size. At this
@@ -183,6 +193,8 @@ impl AudioPlayer {
             stop_flag.clone(),
             #[cfg(feature = "clap")]
             chain,
+            #[cfg(feature = "clap")]
+            trusted_dirs,
         )?;
 
         let source: SourceFn = Box::new(move |out: &mut [f32]| consumer.pop_slice(out));
@@ -470,13 +482,19 @@ fn spawn_pcm_reader(
     mut producer: HeapProd<f32>,
     stop: Arc<AtomicBool>,
     #[cfg(feature = "clap")] chain: Option<Vec<PluginInstance>>,
+    #[cfg(feature = "clap")] trusted_dirs: Vec<PathBuf>,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name("caprust-audio-reader".into())
         .spawn(move || {
             #[cfg(feature = "clap")]
             let mut chain = chain.map(|c| {
-                crate::clap_chain::ClapChain::load(c, TARGET_SAMPLE_RATE, READ_CHUNK_FRAMES)
+                crate::clap_chain::ClapChain::load(
+                    c,
+                    TARGET_SAMPLE_RATE,
+                    READ_CHUNK_FRAMES,
+                    &trusted_dirs,
+                )
             });
 
             if let Err(e) = pcm_reader_loop(

@@ -41,6 +41,22 @@ pub fn default_scan_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Effective scan directories: the defaults plus the user-configured
+/// extra folder from Settings → Paths (if set and non-blank).
+/// Deduplicated so a custom dir equal to a default is not scanned
+/// twice. Use this everywhere a scan or a trust check happens so the
+/// browser and the loader never disagree.
+pub fn effective_scan_dirs(custom: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs = default_scan_dirs();
+    if let Some(c) = custom {
+        let c = c.to_path_buf();
+        if !c.as_os_str().is_empty() && !dirs.contains(&c) {
+            dirs.push(c);
+        }
+    }
+    dirs
+}
+
 fn appdata_base() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -191,6 +207,23 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&trusted);
         let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn effective_scan_dirs_adds_custom_once() {
+        let base = effective_scan_dirs(None);
+        assert!(!base.is_empty());
+        let custom = PathBuf::from("/tmp/caprust-clap-custom");
+        let with = effective_scan_dirs(Some(&custom));
+        assert_eq!(with.len(), base.len() + 1);
+        assert_eq!(with.last().unwrap(), &custom);
+        // Blank and duplicate customs are ignored.
+        assert_eq!(effective_scan_dirs(Some(Path::new(""))).len(), base.len());
+        assert_eq!(
+            effective_scan_dirs(Some(&base[0])).len(),
+            base.len(),
+            "duplicate custom dir must not scan twice"
+        );
     }
 
     #[test]

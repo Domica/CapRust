@@ -441,6 +441,8 @@ set-paths-captures = Mape snimanja
 set-paths-captures-hint = Gdje idu spremljeni kadrovi i snimke ekrana. Prazno = zadano.
 set-paths-screenshots = Spremljeni kadrovi
 set-paths-recordings = Snimke
+set-paths-luts = LUT mapa (.cube)
+set-paths-clap = Dodatna CLAP mapa
 set-paths-folder-auto = auto
 set-paths-ffmpeg = FFmpeg binarke
 set-paths-ffmpeg-hint = Koristi se za analizu medija, izradu sličica i izvoz. Ostavi prazno za automatsku detekciju iz PATH-a.
@@ -799,6 +801,7 @@ toast-settings-exported = Postavke izvezene
 toast-settings-imported = Postavke uvezene
 toast-settings-export-failed = Izvoz postavki nije uspio
 toast-settings-import-failed = Uvoz postavki nije uspio
+toast-plugin-untrusted = Odbijeno: dodatak je izvan mapa za skeniranje
 
 set-backup-sync-hint = Sync folder: pokaži na Google Drive, OneDrive, Dropbox, Box, iCloud ili Syncthing mapu da držiš postavke usklađene između računala.
 set-backup-sync-none = bez sync mape
