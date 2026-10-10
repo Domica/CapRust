@@ -17,7 +17,7 @@
 
 **Not another Electron wrapper.** Native binary, starts in under 500 ms. No cloud, no telemetry, MIT licensed.
 
-📖 **Full documentation: [full_readme.md](full_readme.md)** — every feature, architecture, status table, testing, contributing.
+📖 **Full documentation: [full_readme.md](full_readme.md)** with every feature, architecture, status table, testing and contributing.
 
 ---
 
@@ -52,12 +52,12 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 🎬 **49 transitions, 32 effects, blend modes, film LUTs.** Live preview, same graph renders export.
 ⚡ **Cut fast.** Split, trim, ripple, freeze frame, 0.1x–10x speed ramps, magnetic timeline, auto-cut to beats.
 🎛️ **Multi-track audio.** Volume keyframes, auto-ducking, beat detection, one-switch cleanup (denoise/boost/normalize) + voice FX.
-🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors — dark/light/custom themes.
+🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors, plus dark/light/custom themes.
 ✍️ **Titles.** 15 text styles, stroke, shadow, boxes, captions translation.
-🚀 **Export.** H.264, HEVC, AV1 — CPU or hardware (NVENC/AMF). Up to 4K 60.
+🚀 **Export.** H.264, HEVC, AV1 (CPU or hardware: NVENC/AMF). Up to 4K 60.
 🦀 **Native Rust engine.** Sub-500 ms startup, ffmpeg subprocess (never linked), full undo/redo.
-🧠 **Scriptable.** MCP server (JSON-RPC over stdio) — AI agents can drive the editor.
-💻 **Windows + Linux. 5 UI languages.** EN, HR, ES, IT, DE — runtime switching, no restart.
+🧠 **Scriptable.** MCP server (JSON-RPC over stdio), so AI agents can drive the editor.
+💻 **Windows + Linux. 5 UI languages.** EN, HR, ES, IT, DE with runtime switching, no restart.
 
 ---
 
@@ -93,17 +93,17 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 
 ## Features
 
-- **Magnetic multi-track timeline** — V1/V2, audio, text, overlay, captions; snap, ripple, trim, split, auto-cut to beats
-- **45+ transitions, 30+ effects, 16 filters, 15 text styles** — plus blend modes and per-clip color LUTs (`.cube` upload)
-- **Local AI** — Whisper captions + SRT, Piper narration, auto-reframe, background removal
-- **Pro audio** — volume automation, auto-ducking, beat detection, fade handles, CLAP plugins
+- **Magnetic multi-track timeline:** V1/V2, audio, text, overlay, captions; snap, ripple, trim, split, auto-cut to beats
+- **45+ transitions, 30+ effects, 16 filters, 15 text styles**, plus blend modes and per-clip color LUTs (`.cube` upload)
+- **Local AI:** Whisper captions + SRT, Piper narration, auto-reframe, background removal
+- **Pro audio:** volume automation, auto-ducking, beat detection, fade handles, CLAP plugins
 - **Chroma key, multicam with audio sync, screen recording**, hardware encode (NVENC/AMF)
 - **Fully customizable UI** (window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors)
 
 ---
 
 > [!NOTE]
-> 🌍 **Want CapRust in your language?** See [TRANSLATING.md](TRANSLATING.md) — copy `en.ftl`, translate the values, open a PR. Untranslated keys render as raw keys, so even partial translations help.
+> 🌍 **Want CapRust in your language?** See [TRANSLATING.md](TRANSLATING.md): copy `en.ftl`, translate the values, open a PR. Untranslated keys render as raw keys, so even partial translations help.
 
 ## Quick Start
 
