@@ -640,7 +640,7 @@ impl CapRustApp {
             ..MediaBinState::default()
         };
         let update_rx = spawn_update_check(&settings);
-        Self {
+        let mut app = Self {
             mode: AppMode::StartScreen,
             project: ProjectState::default(),
             undo_stack: UndoStack::new(),
@@ -760,7 +760,17 @@ impl CapRustApp {
             pending_hash: 0,
             pending_respawn_at: None,
             job_runner: JobRunner::new(),
-        }
+        };
+        // Scan once at startup so the start-screen Settings shows the
+        // true on-disk state. Without this the registry is all
+        // NotDownloaded until some job path happens to scan, which is
+        // exactly the "models need downloading although they are on
+        // disk" report after a version update.
+        app.project.models.merge_missing_defaults();
+        app.project
+            .models
+            .scan_local(&app.settings.effective_models_dir());
+        app
     }
 
     fn create_project(&mut self) {
@@ -772,6 +782,11 @@ impl CapRustApp {
             project_path: Some(self.draft.location.clone()),
             ..ProjectState::default()
         };
+        // Fresh registry from Default is all NotDownloaded; rescan so
+        // Settings shows the on-disk truth (same reason as new()).
+        self.project.models.merge_missing_defaults();
+        let models_dir = self.settings.effective_models_dir();
+        self.project.models.scan_local(&models_dir);
         self.undo_stack = UndoStack::new();
         self.mode = AppMode::Editor;
         // Do NOT persist yet — user must hit Save (Ctrl+S) first.
@@ -817,6 +832,11 @@ impl CapRustApp {
                 // added Piper URLs). Also adds brand-new models from
                 // later builds.
                 state.models.merge_missing_defaults();
+                // Rescan: a project saved by an older build carries
+                // stale statuses, and merged-in entries start as
+                // NotDownloaded even when the file is on disk.
+                let models_dir = self.settings.effective_models_dir();
+                state.models.scan_local(&models_dir);
                 self.project = state;
                 self.undo_stack = UndoStack::new();
                 self.mode = AppMode::Editor;

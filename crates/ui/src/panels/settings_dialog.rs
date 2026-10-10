@@ -353,8 +353,11 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
 fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) -> Option<String> {
     // Backfill registry entries added since this project was saved,
     // so a model introduced in a later build appears in Settings
-    // without requiring a project reopen.
+    // without requiring a project reopen. Rescan right away: merged
+    // entries start as NotDownloaded even when the file is on disk,
+    // and the models dir may have changed in the Paths tab.
     models.merge_missing_defaults();
+    models.scan_local(&settings.effective_models_dir());
     ui.label(egui::RichText::new(tr("set-models-heading")).strong());
     ui.label(
         egui::RichText::new(format!(

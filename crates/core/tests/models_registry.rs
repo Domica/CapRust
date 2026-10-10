@@ -96,3 +96,32 @@ fn merge_distrusts_registry_from_project_file() {
     assert_eq!(r.models[0].sha256, d.models[0].sha256);
     assert!(r.models[0].enabled, "user state survives the merge");
 }
+
+#[test]
+fn scan_after_merge_marks_on_disk_models_ready() {
+    // Bug scenario: after a version update, merge_missing_defaults
+    // clones in new entries as NotDownloaded even though the file
+    // is on disk. A rescan must flip them to Ready.
+    let dir = std::env::temp_dir().join(format!("caprust_models_scan_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let r = ModelRegistry::default();
+    let first_id = r.models[0].id.clone();
+    let path = ModelRegistry::local_path_static(&r.models, &dir, &first_id);
+    std::fs::write(&path, b"fake-weights").unwrap();
+
+    let mut fresh = ModelRegistry::default();
+    assert!(
+        fresh
+            .models
+            .iter()
+            .all(|m| m.status == ModelStatus::NotDownloaded),
+        "default registry starts un-scanned"
+    );
+    fresh.merge_missing_defaults();
+    fresh.scan_local(&dir);
+    let m = fresh.models.iter().find(|m| m.id == first_id).unwrap();
+    assert_eq!(m.status, ModelStatus::Ready, "on-disk file must scan Ready");
+    assert_eq!(m.progress, 1.0);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
