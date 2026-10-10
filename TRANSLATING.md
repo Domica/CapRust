@@ -1,14 +1,22 @@
 # Translating CapRust
 
-CapRust ships English + Croatian via [Fluent](https://projectfluent.org).
-Every user-visible string resolves through `tr("key")` — there are no
-hardcoded UI strings by design.
+CapRust ships English, Croatian, Spanish, Italian and German via
+[Fluent](https://projectfluent.org). Every user-visible string
+resolves through `tr("key")` — there are no hardcoded UI strings by
+design.
+
+Want to help with a new language (or fix an existing one)? Reply in
+the [translations discussion](https://github.com/Domica/CapRust/discussions/46)
+so two people don't duplicate work.
 
 ## Files
 
 ```
 crates/i18n/src/locales/en.ftl   # source of truth, always complete
 crates/i18n/src/locales/hr.ftl   # Croatian translation
+crates/i18n/src/locales/es.ftl   # Spanish translation
+crates/i18n/src/locales/it.ftl   # Italian translation
+crates/i18n/src/locales/de.ftl   # German translation
 crates/i18n/src/lib.rs           # registration + language list
 ```
 

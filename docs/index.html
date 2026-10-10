@@ -54,10 +54,66 @@
 
 <section class="screenshot">
   <div class="container">
-    <img src="screenshots/editor.png" alt="CapRust editor: media bin on the left, preview in the center, timeline below, clip properties on the right.">
-    <p class="caption">The editor — media bin, live preview, magnetic timeline, clip properties.</p>
+    <div class="carousel" id="shots" aria-roledescription="carousel" aria-label="CapRust screenshots">
+      <div class="carousel-track">
+        <figure class="slide is-active"><img src="screenshots/editor.png" alt="CapRust editor" loading="lazy"><figcaption>The editor — media bin, live preview, magnetic timeline, clip properties.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/start-screen.png" alt="Start screen" loading="lazy"><figcaption>Start screen — recent projects at a glance.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-tracks-caption.png" alt="Captions on timeline" loading="lazy"><figcaption>AI captions burned in on the timeline.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-clip-properties.png" alt="Clip properties" loading="lazy"><figcaption>Clip properties — speed, volume, fades, chroma key.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-clip-effects.png" alt="Clip effects" loading="lazy"><figcaption>Per-clip effects chain with undo.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-effects.png" alt="Effects browser" loading="lazy"><figcaption>Effects browser — 45+ presets.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-transitions.png" alt="Transitions" loading="lazy"><figcaption>Transitions — 40+ xfade presets.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-filters.png" alt="Filters" loading="lazy"><figcaption>Color filters and film LUTs.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-master.png" alt="Master chain" loading="lazy"><figcaption>Master audio chain with CLAP plugins.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-settings.png" alt="Settings" loading="lazy"><figcaption>Settings — appearance, models, paths.</figcaption></figure>
+        <figure class="slide"><img src="screenshots/editor-settings-backup.png" alt="Settings backup" loading="lazy"><figcaption>Settings backup and cloud sync.</figcaption></figure>
+      </div>
+      <button class="carousel-btn prev" aria-label="Previous screenshot">‹</button>
+      <button class="carousel-btn next" aria-label="Next screenshot">›</button>
+      <div class="carousel-dots" role="tablist" aria-label="Choose screenshot"></div>
+    </div>
   </div>
 </section>
+
+<script>
+(function () {
+  var root = document.getElementById('shots');
+  if (!root) return;
+  var slides = Array.prototype.slice.call(root.querySelectorAll('.slide'));
+  var dotsBox = root.querySelector('.carousel-dots');
+  var idx = 0, timer = null;
+
+  slides.forEach(function (_, i) {
+    var d = document.createElement('button');
+    d.className = 'dot' + (i === 0 ? ' is-active' : '');
+    d.setAttribute('aria-label', 'Screenshot ' + (i + 1) + ' of ' + slides.length);
+    d.addEventListener('click', function () { go(i); restart(); });
+    dotsBox.appendChild(d);
+  });
+  var dots = Array.prototype.slice.call(dotsBox.children);
+
+  function go(i) {
+    slides[idx].classList.remove('is-active');
+    dots[idx].classList.remove('is-active');
+    idx = (i + slides.length) % slides.length;
+    slides[idx].classList.add('is-active');
+    dots[idx].classList.add('is-active');
+  }
+  function restart() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(function () { go(idx + 1); }, 6000);
+  }
+  root.querySelector('.prev').addEventListener('click', function () { go(idx - 1); restart(); });
+  root.querySelector('.next').addEventListener('click', function () { go(idx + 1); restart(); });
+  root.addEventListener('mouseenter', function () { if (timer) clearInterval(timer); });
+  root.addEventListener('mouseleave', restart);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { go(idx - 1); restart(); }
+    if (e.key === 'ArrowRight') { go(idx + 1); restart(); }
+  });
+  restart();
+})();
+</script>
 
 <section id="features">
   <div class="container">

@@ -11,6 +11,9 @@ thread_local! {
         for (lang, ftl) in [
             ("en", include_str!("locales/en.ftl")),
             ("hr", include_str!("locales/hr.ftl")),
+            ("es", include_str!("locales/es.ftl")),
+            ("it", include_str!("locales/it.ftl")),
+            ("de", include_str!("locales/de.ftl")),
         ] {
             let resource = FluentResource::try_new(ftl.to_string()).expect("valid FTL");
             let lang_id: LanguageIdentifier = lang.parse().unwrap();
@@ -64,8 +67,53 @@ pub fn t_lang(key: &str, lang: &str) -> String {
 pub fn detect_locale() -> String {
     sys_locale::get_locale()
         .map(|l| l.split('-').next().unwrap_or("en").to_string())
-        .filter(|l| matches!(l.as_str(), "en" | "hr"))
+        .filter(|l| matches!(l.as_str(), "en" | "hr" | "es" | "it" | "de"))
         .unwrap_or_else(|| "en".into())
 }
 
-pub const LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("hr", "Hrvatski")];
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("hr", "Hrvatski"),
+    ("es", "Español"),
+    ("it", "Italiano"),
+    ("de", "Deutsch"),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ftl_keys(ftl: &str) -> Vec<String> {
+        ftl.lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                !t.is_empty() && !t.starts_with('#') && t.contains('=')
+            })
+            .map(|l| l.split('=').next().unwrap_or("").trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_language_resolves_every_english_key() {
+        let en = include_str!("locales/en.ftl");
+        let en_keys = ftl_keys(en);
+        assert!(!en_keys.is_empty());
+        for (lang, _) in LANGUAGES {
+            let ftl = match *lang {
+                "en" => en,
+                "hr" => include_str!("locales/hr.ftl"),
+                "es" => include_str!("locales/es.ftl"),
+                "it" => include_str!("locales/it.ftl"),
+                "de" => include_str!("locales/de.ftl"),
+                _ => panic!("unregistered language {lang}"),
+            };
+            let keys = ftl_keys(ftl);
+            assert_eq!(keys.len(), en_keys.len(), "{lang} key count");
+            for k in &en_keys {
+                assert!(keys.contains(k), "{lang} is missing key {k}");
+                // t_lang falls back to the raw key when untranslated.
+                assert_ne!(t_lang(k, lang), *k, "{lang} has no value for {k}");
+            }
+        }
+    }
+}

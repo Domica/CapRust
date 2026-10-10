@@ -136,7 +136,7 @@ impl Default for AppSettings {
         Self {
             language: sys_locale::get_locale()
                 .map(|l| l.split('-').next().unwrap_or("en").to_string())
-                .filter(|l| matches!(l.as_str(), "en" | "hr"))
+                .filter(|l| matches!(l.as_str(), "en" | "hr" | "es" | "it" | "de"))
                 .unwrap_or_else(|| "en".into()),
             models_dir: default_models_dir(),
             ffmpeg_path: None,

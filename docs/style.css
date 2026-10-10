@@ -217,6 +217,93 @@ nav .links a:hover { color: var(--text); text-decoration: none; }
   margin-top: 16px;
 }
 
+/* --- Carousel ----------------------------------------------------------- */
+
+.carousel {
+  position: relative;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.carousel-track {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6),
+              0 0 0 1px rgba(74, 222, 128, 0.05);
+  background: var(--bg-elevated);
+}
+
+.carousel .slide {
+  display: none;
+  margin: 0;
+}
+
+.carousel .slide.is-active {
+  display: block;
+}
+
+.carousel .slide img {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.carousel .slide figcaption {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 12px 16px 14px;
+}
+
+.carousel-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  background: rgba(15, 15, 18, 0.8);
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.carousel-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.carousel-btn.prev { left: 12px; }
+.carousel-btn.next { right: 12px; }
+
+.carousel-dots {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.carousel-dots .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: var(--border-hover);
+  cursor: pointer;
+}
+
+.carousel-dots .dot:hover { background: var(--text-dim); }
+
+.carousel-dots .dot.is-active { background: var(--accent); }
+
 /* --- Section heading ---------------------------------------------------- */
 
 section { padding: 64px 0; }
