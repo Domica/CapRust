@@ -45,6 +45,23 @@ A modern video editor focused on **short-form social content**. Built from scrat
 
 **Not another Electron wrapper.** Native binary, starts in under 500 ms.
 
+## Highlights
+
+🆓 **No watermarks. No payments.** MIT licensed, no telemetry, no account.
+📴 **Local-first, works offline.** AI runs on your machine, cloud sync is just a folder.
+🗨️ **Auto-captions.** Local Whisper (tiny→medium), styled + progressive-reveal captions, SRT export.
+🎙️ **Text-to-speech.** Free local Piper voices, straight onto the timeline.
+🪄 **Background removal.** One click per clip, cached masks, preview = export.
+🎬 **49 transitions, 32 effects, blend modes, film LUTs.** Live preview, same graph renders export.
+⚡ **Cut fast.** Split, trim, ripple, freeze frame, 0.1x–10x speed ramps, magnetic timeline, auto-cut to beats.
+🎛️ **Multi-track audio.** Volume keyframes, auto-ducking, beat detection, one-switch cleanup (denoise/boost/normalize) + voice FX.
+🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors — dark/light/custom themes.
+✍️ **Titles.** 15 text styles, stroke, shadow, boxes, captions translation.
+🚀 **Export.** H.264, HEVC, AV1 — CPU or hardware (NVENC/AMF). Up to 4K 60.
+🦀 **Native Rust engine.** Sub-500 ms startup, ffmpeg subprocess (never linked), full undo/redo.
+🧠 **Scriptable.** MCP server (JSON-RPC over stdio) — AI agents can drive the editor.
+💻 **Windows + Linux. 5 UI languages.** EN, HR, ES, IT, DE — runtime switching, no restart.
+
 ---
 
 ## Screenshots
@@ -235,6 +252,9 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - Editable track colors and playhead
 
 ---
+
+> [!NOTE]
+> 🌍 **Want CapRust in your language?** See [TRANSLATING.md](TRANSLATING.md) — copy `en.ftl`, translate the values, open a PR. Untranslated keys render as raw keys, so even partial translations help.
 
 ## Quick Start
 
