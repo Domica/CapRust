@@ -415,6 +415,11 @@ pub struct CapRustApp {
     /// rename modal is open. Opened by double-clicking a non-text
     /// clip or the clip context menu "Rename" item.
     pub clip_rename: Option<(uuid::Uuid, String)>,
+    /// Pending template apply (replaces the timeline). Some while the
+    /// confirm modal is open.
+    pub template_confirm: Option<crate::panels::asset_browser::TemplateRequest>,
+    /// Pending save-as-template: name buffer. Some while the modal is open.
+    pub template_save: Option<String>,
     /// Clips waiting to be transcribed, in order. Populated by
     /// "caption all in track"; drained sequentially because only one
     /// caption_rx slot exists at a time.
@@ -727,6 +732,8 @@ impl CapRustApp {
             clip_clipboard: None,
             track_rename: None,
             clip_rename: None,
+            template_confirm: None,
+            template_save: None,
             caption_queue: std::collections::VecDeque::new(),
             caption_batch_total: 0,
             caption_batch_current: 0,
@@ -7328,6 +7335,36 @@ impl CapRustApp {
         &mut self,
         out: crate::panels::asset_browser::AssetBrowserOutput,
     ) {
+        // Template actions from the Templates tab.
+        if let Some(path) = out.template_delete_requested {
+            match caprust_core::template::delete_template(&path) {
+                Ok(()) => self.toast(tr("toast-template-deleted")),
+                Err(e) => self.toast_error(format!("{}: {e:#}", tr("toast-template-failed"))),
+            }
+        }
+        if out.template_import_requested {
+            if let Some(src) = rfd::FileDialog::new()
+                .add_filter("Template", &[caprust_core::template::TEMPLATE_EXT])
+                .pick_file()
+            {
+                match caprust_core::template::import_template_file(&src) {
+                    Ok(dst) => self.toast(format!(
+                        "{}: {}",
+                        tr("toast-template-imported"),
+                        dst.display()
+                    )),
+                    Err(e) => self.toast_error(format!("{}: {e:#}", tr("toast-template-failed"))),
+                }
+            }
+        }
+        if out.template_save_requested {
+            let suggestion = format!("{} template", self.project.name);
+            self.template_save = Some(suggestion);
+        }
+        if let Some(req) = out.template_apply_requested {
+            self.template_confirm = Some(req);
+        }
+
         // Master-chain plugin add request from the browser.
         if let Some(info) = out.plugin_add_requested {
             // The browser only lists scanned dirs, but the path still
@@ -8745,6 +8782,155 @@ impl CapRustApp {
             self.track_rename = None;
         } else {
             self.track_rename = Some((idx, buf));
+        }
+    }
+
+    fn show_template_save_window(&mut self, ctx: &egui::Context) {
+        let Some(mut buf) = self.template_save.clone() else {
+            return;
+        };
+
+        let mut commit = false;
+        let mut cancel = false;
+
+        egui::Window::new(tr("template-save-title"))
+            .id(egui::Id::new("template_save_modal"))
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut buf)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(tr("template-save-hint")),
+                );
+                resp.request_focus();
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    commit = true;
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    cancel = true;
+                }
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    let ok = egui::Button::new(
+                        egui::RichText::new(tr("template-save-ok"))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    )
+                    .fill(egui::Color32::from_rgb(34, 139, 230));
+                    if ui.add(ok).clicked() {
+                        commit = true;
+                    }
+                    if ui.button(tr("template-save-cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if cancel {
+            self.template_save = None;
+            return;
+        }
+        if commit {
+            match caprust_core::template::save_template(&self.project, &buf) {
+                Ok(path) => self.toast(format!(
+                    "{}: {}",
+                    tr("toast-template-saved"),
+                    path.display()
+                )),
+                Err(e) => self.toast_error(format!("{}: {e:#}", tr("toast-template-failed"))),
+            }
+            self.template_save = None;
+        } else {
+            self.template_save = Some(buf);
+        }
+    }
+
+    fn show_template_confirm_window(&mut self, ctx: &egui::Context) {
+        let Some(req) = self.template_confirm.clone() else {
+            return;
+        };
+        use crate::panels::asset_browser::TemplateRequest;
+
+        let label = match &req {
+            TemplateRequest::Bundled(id) => caprust_core::template::bundled_templates()
+                .into_iter()
+                .find(|t| t.id == *id)
+                .map(|t| t.display.to_string())
+                .unwrap_or_else(|| id.to_string()),
+            TemplateRequest::User(p) => p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("template")
+                .to_string(),
+        };
+
+        let mut apply = false;
+        let mut cancel = false;
+
+        egui::Window::new(tr("template-confirm-title"))
+            .id(egui::Id::new("template_confirm_modal"))
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_width(380.0)
+            .show(ctx, |ui| {
+                ui.label(format!("{}: {label}", tr("template-confirm-body")));
+                ui.add_space(space::M);
+                ui.horizontal(|ui| {
+                    let ok = egui::Button::new(
+                        egui::RichText::new(tr("template-confirm-apply"))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    )
+                    .fill(egui::Color32::from_rgb(34, 139, 230));
+                    if ui.add(ok).clicked() {
+                        apply = true;
+                    }
+                    if ui.button(tr("template-confirm-cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if cancel {
+            self.template_confirm = None;
+            return;
+        }
+        if apply {
+            let loaded = match &req {
+                TemplateRequest::Bundled(id) => {
+                    match caprust_core::template::bundled_templates()
+                        .into_iter()
+                        .find(|t| t.id == *id)
+                    {
+                        Some(t) => Some(caprust_core::template::parse_bundled(&t)),
+                        None => {
+                            tracing::error!("unknown bundled template {id}");
+                            None
+                        }
+                    }
+                }
+                TemplateRequest::User(p) => Some(caprust_core::template::load_template(p)),
+            };
+            match loaded {
+                Some(Ok(mut state)) => {
+                    // The template becomes the timeline. Fresh undo
+                    // history (same as opening a project), unsaved
+                    // path so the next save asks where to write.
+                    state.project_path = None;
+                    self.project = state;
+                    self.undo_stack = UndoStack::new();
+                    self.selected_clips.clear();
+                    self.check_missing_media_on_load();
+                    self.toast(format!("{}: {label}", tr("toast-template-applied")));
+                }
+                Some(Err(e)) => self.toast_error(format!("{}: {e:#}", tr("toast-template-failed"))),
+                None => {}
+            }
+            self.template_confirm = None;
         }
     }
 
@@ -10191,6 +10377,12 @@ impl eframe::App for CapRustApp {
         }
         if self.clip_rename.is_some() {
             self.show_clip_rename_window(ctx);
+        }
+        if self.template_save.is_some() {
+            self.show_template_save_window(ctx);
+        }
+        if self.template_confirm.is_some() {
+            self.show_template_confirm_window(ctx);
         }
         self.show_toasts(ctx);
         self.show_update_toast(ctx);

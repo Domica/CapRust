@@ -1052,6 +1052,24 @@ pub struct AssetBrowserOutput {
     pub preset_clicked: Option<(&'static str, AssetTab)>,
     /// User asked to add a CLAP plugin to the master chain.
     pub plugin_add_requested: Option<caprust_media_io::clap_host::PluginInfo>,
+    /// User clicked Apply on a template. Bundled carries the template
+    /// id; User carries the file path. app.rs confirms (it replaces
+    /// the timeline) before loading.
+    pub template_apply_requested: Option<TemplateRequest>,
+    /// User clicked Save-as-template / Import in the Templates tab.
+    /// app.rs opens the name modal / file picker (panels can't).
+    pub template_save_requested: bool,
+    pub template_import_requested: bool,
+    /// User clicked Delete on a user template (path). app.rs deletes
+    /// and toasts; the list refreshes next frame.
+    pub template_delete_requested: Option<std::path::PathBuf>,
+}
+
+/// Which template the user wants to apply.
+#[derive(Debug, Clone)]
+pub enum TemplateRequest {
+    Bundled(&'static str),
+    User(std::path::PathBuf),
 }
 
 pub fn show(
@@ -1199,10 +1217,71 @@ pub fn render_tab_content(
             }
         }
         AssetTab::Templates => {
-            empty::placeholder(ui, tr("asset-templates-hint"));
+            show_templates_tab(ui, &mut out);
         }
     }
     out
+}
+
+/// Templates tab: bundled starters + user templates with Apply,
+/// plus Save-as-template and Import actions (modals/pickers live in
+/// app.rs — panels can't spawn them).
+fn show_templates_tab(ui: &mut Ui, out: &mut AssetBrowserOutput) {
+    ui.label(RichText::new(tr("asset-tab-templates")).strong());
+    ui.add_space(4.0);
+
+    ui.label(RichText::new(tr("asset-templates-bundled")).strong());
+    for t in caprust_core::template::bundled_templates() {
+        ui.horizontal(|ui| {
+            ui.label(t.display);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button(tr("asset-templates-apply")).clicked() {
+                    out.template_apply_requested = Some(TemplateRequest::Bundled(t.id));
+                }
+            });
+        });
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+    ui.label(RichText::new(tr("asset-templates-yours")).strong());
+    let user = caprust_core::template::list_user_templates();
+    if user.is_empty() {
+        ui.label(
+            RichText::new(tr("asset-templates-hint"))
+                .small()
+                .color(Color32::from_gray(140)),
+        );
+    }
+    for f in &user {
+        ui.horizontal(|ui| {
+            ui.label(&f.name);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button(tr("asset-templates-delete")).clicked() {
+                    out.template_delete_requested = Some(f.path.clone());
+                }
+                if ui.small_button(tr("asset-templates-apply")).clicked() {
+                    out.template_apply_requested = Some(TemplateRequest::User(f.path.clone()));
+                }
+            });
+        });
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ui.button(tr("asset-templates-save")).clicked() {
+            out.template_save_requested = true;
+        }
+        if ui.button(tr("asset-templates-import")).clicked() {
+            out.template_import_requested = true;
+        }
+    });
+    ui.label(
+        RichText::new(tr("asset-templates-contrib"))
+            .small()
+            .color(Color32::from_gray(140)),
+    );
 }
 
 /// Left-column category filter with the preset grid on the right.
