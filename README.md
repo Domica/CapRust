@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.13-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.14-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -26,7 +26,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.13-win64-setup.exe`.
+1. Run `CapRust-0.9.14-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -126,6 +126,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.14** | 2026-10-10 | Spanish, Italian, German UI; slim README + full_readme; landing screenshot carousel; LUT + CLAP folder pickers in Settings; models rescan fix. |
 | **0.9.13** | 2026-10-09 | Text effects, blend modes, clip rename, refresh imports, split display, border options. |
 | **0.9.12** | 2026-10-09 | Save Frame fix, 27 transitions, 10 effects, LUT pipeline, beat snap + auto-cut. |
 | **0.9.11** | 2026-10-08 | Three-color waveform, media bin sidebar, 8 text styles, waveform pickers. |

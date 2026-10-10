@@ -2,6 +2,19 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.14] — 2026-10-10
+
+### Added
+
+- **Spanish, Italian, German UI.** Three new Fluent locales (758 keys each, placeholder-verified), runtime switching, OS-locale detection. A new test enforces that every language resolves every English key.
+- **LUT + extra CLAP folder pickers.** Settings → Paths → Capture folders gains a LUT (`.cube`) folder and an extra CLAP plugin folder. The custom CLAP dir joins the trusted scan set everywhere (browser rescan, add-time validation, loader check).
+- **Landing screenshot carousel.** Hero shot becomes an 11-slide carousel (arrows, dots, keyboard, auto-advance with hover pause).
+- **Slim README + full_readme.md.** Front page down to essentials with a collapsible gallery; everything else (with refreshed counts) in full_readme.md.
+
+### Fixed
+
+- **Models showed "needs download" although on disk.** Statuses are now rescanned at startup, project open/create, and in the Models tab itself. Regression test included.
+
 ## [0.9.13] — 2026-10-09
 
 ### Added
