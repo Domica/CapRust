@@ -37,6 +37,12 @@ pub struct SettingsEvents {
     /// User clicked "Import settings" in Paths -> Backup. app.rs opens
     /// a pick dialog and loads AppSettings via import_from_file.
     pub import_requested: bool,
+    /// User clicked "Save theme" at the bottom of Appearance. app.rs
+    /// opens a save dialog and writes the Theme as JSON.
+    pub theme_export_requested: bool,
+    /// User clicked "Load theme" at the bottom of Appearance. app.rs
+    /// opens a pick dialog and replaces the Theme from JSON.
+    pub theme_import_requested: bool,
 }
 
 pub fn show(
@@ -53,6 +59,8 @@ pub fn show(
         download_requested: None,
         export_requested: false,
         import_requested: false,
+        theme_export_requested: false,
+        theme_import_requested: false,
     };
 
     ui.horizontal(|ui| {
@@ -72,7 +80,7 @@ pub fn show(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| match tab {
-            SettingsTab::Appearance => show_appearance(ui, theme, settings),
+            SettingsTab::Appearance => show_appearance(ui, theme, settings, &mut ev),
             SettingsTab::Models => {
                 if let Some(id) = show_models(ui, models, settings) {
                     ev.download_requested = Some(id);
@@ -122,7 +130,12 @@ pub fn show(
 // Appearance
 // ---------------------------------------------------------------------------
 
-fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
+fn show_appearance(
+    ui: &mut Ui,
+    theme: &mut Theme,
+    settings: &mut AppSettings,
+    ev: &mut SettingsEvents,
+) {
     ui.label(egui::RichText::new(tr("set-tab-appearance")).strong());
     ui.add_space(space::XS);
 
@@ -341,6 +354,16 @@ fn show_appearance(ui: &mut Ui, theme: &mut Theme, settings: &mut AppSettings) {
     if button::ghost(ui, tr("set-appearance-reset")).clicked() {
         *theme = Theme::default();
     }
+
+    ui.add_space(space::S);
+    ui.horizontal(|ui| {
+        if button::primary(ui, tr("set-appearance-theme-save")).clicked() {
+            ev.theme_export_requested = true;
+        }
+        if button::secondary(ui, tr("set-appearance-theme-load")).clicked() {
+            ev.theme_import_requested = true;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

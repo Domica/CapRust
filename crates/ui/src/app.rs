@@ -9873,6 +9873,12 @@ impl CapRustApp {
                 if ev.import_requested {
                     self.handle_settings_import();
                 }
+                if ev.theme_export_requested {
+                    self.handle_theme_export();
+                }
+                if ev.theme_import_requested {
+                    self.handle_theme_import();
+                }
                 if ev.save {
                     // Re-detect ffmpeg with new paths
                     self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
@@ -9938,6 +9944,60 @@ impl CapRustApp {
             Err(e) => {
                 tracing::warn!("settings import failed: {e:#}");
                 self.toast_error(tr("toast-settings-import-failed"));
+            }
+        }
+    }
+
+    /// Write the current Theme to a user-chosen JSON file.
+    fn handle_theme_export(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr("set-appearance-theme-save"))
+            .add_filter("JSON", &["json"])
+            .set_file_name("caprust-theme.json")
+            .save_file()
+        else {
+            return;
+        };
+
+        let result = serde_json::to_string_pretty(&self.theme)
+            .map_err(|e| e.to_string())
+            .and_then(|json| std::fs::write(&path, json).map_err(|e| e.to_string()));
+        match result {
+            Ok(()) => {
+                tracing::info!("theme exported to {}", path.display());
+                self.toast(tr("toast-theme-exported"));
+            }
+            Err(e) => {
+                tracing::warn!("theme export failed: {e}");
+                self.toast_error(tr("toast-theme-export-failed"));
+            }
+        }
+    }
+
+    /// Replace the current Theme from a user-chosen JSON file. A bad
+    /// file toasts and keeps the running theme untouched.
+    fn handle_theme_import(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr("set-appearance-theme-load"))
+            .add_filter("JSON", &["json"])
+            .pick_file()
+        else {
+            return;
+        };
+
+        let loaded: Result<crate::theme::Theme, String> = (|| {
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            serde_json::from_str(&text).map_err(|e| e.to_string())
+        })();
+        match loaded {
+            Ok(theme) => {
+                self.theme = theme;
+                tracing::info!("theme imported from {}", path.display());
+                self.toast(tr("toast-theme-imported"));
+            }
+            Err(e) => {
+                tracing::warn!("theme import failed: {e}");
+                self.toast_error(tr("toast-theme-import-failed"));
             }
         }
     }
