@@ -17,6 +17,8 @@
 
 **Not another Electron wrapper.** Native binary, starts in under 500 ms. No cloud, no telemetry, MIT licensed.
 
+*I started building it in my free time while playing with AI-generated videos (Minimax H3) — I wanted an editor that's fully customizable and works my way. If you like it, enjoy and use it. :)*
+
 📖 **Full documentation: [full_readme.md](full_readme.md)** with every feature, architecture, status table, testing and contributing.
 
 ---
