@@ -821,6 +821,14 @@ props-transition-duration = Dauer
 toast-xfade-removed-on-move = Übergang entfernt, weil der Clip verschoben wurde
 
 asset-tab-plugins = Plugins
+asset-tab-sfx = Sound-FX
+asset-sfx-search = Suchen
+asset-sfx-search-hint = Name oder Kategorie…
+asset-sfx-download = Laden
+asset-sfx-downloaded = In Bibliothek
+asset-sfx-license = Mixkit Free-Lizenz: kommerzielle Nutzung OK, keine Attribution, keine Anmeldung.
+toast-sfx-ready = Sound geladen
+toast-sfx-failed = Sound-Download fehlgeschlagen
 plugin-browser-heading = CLAP-Plugins
 plugin-browser-refresh = Aktualisieren
 plugin-browser-empty = Keine Plugins gefunden. .clap-Dateien in einen von diesen ablegen:

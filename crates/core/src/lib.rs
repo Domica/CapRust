@@ -12,6 +12,7 @@ pub mod project;
 pub mod project_io;
 pub mod recent;
 pub mod settings;
+pub mod sfx;
 pub mod template;
 pub mod track;
 pub mod translate;

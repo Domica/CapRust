@@ -25,6 +25,7 @@ pub enum Tab {
     AssetText,
     AssetTemplates,
     AssetPlugins,
+    AssetSfx,
     // Standalone editor panels.
     Preview,
     Properties,
@@ -44,6 +45,7 @@ impl Tab {
             Self::AssetText => "asset-tab-text",
             Self::AssetTemplates => "asset-tab-templates",
             Self::AssetPlugins => "asset-tab-plugins",
+            Self::AssetSfx => "asset-tab-sfx",
             Self::Preview => "dock-tab-preview",
             Self::Properties => "props-heading",
             Self::Timeline => "dock-tab-timeline",
@@ -87,6 +89,7 @@ pub fn default_dock_state() -> DockState<Tab> {
             Tab::AssetText,
             Tab::AssetTemplates,
             Tab::AssetPlugins,
+            Tab::AssetSfx,
         ],
     );
 
@@ -168,6 +171,7 @@ pub fn preset_dock_state(preset: LayoutPreset) -> DockState<Tab> {
             Tab::AssetText,
             Tab::AssetTemplates,
             Tab::AssetPlugins,
+            Tab::AssetSfx,
         ],
     );
 
@@ -232,6 +236,10 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             Tab::AssetPlugins => {
                 self.app
                     .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Plugins);
+            }
+            Tab::AssetSfx => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Sfx);
             }
         }
     }

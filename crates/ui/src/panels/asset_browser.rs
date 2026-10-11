@@ -23,10 +23,11 @@ pub enum AssetTab {
     Text,
     Templates,
     Plugins,
+    Sfx,
 }
 
 impl AssetTab {
-    pub fn all() -> [Self; 7] {
+    pub fn all() -> [Self; 8] {
         [
             Self::Media,
             Self::Transitions,
@@ -35,6 +36,7 @@ impl AssetTab {
             Self::Text,
             Self::Templates,
             Self::Plugins,
+            Self::Sfx,
         ]
     }
     pub fn label(&self) -> &'static str {
@@ -46,6 +48,7 @@ impl AssetTab {
             Self::Text => "asset-tab-text",
             Self::Templates => "asset-tab-templates",
             Self::Plugins => "asset-tab-plugins",
+            Self::Sfx => "asset-tab-sfx",
         }
     }
     pub fn icon(&self) -> &'static str {
@@ -57,6 +60,7 @@ impl AssetTab {
             Self::Text => "T",
             Self::Plugins => ph::PLUG,
             Self::Templates => "🧩",
+            Self::Sfx => "🔊",
         }
     }
     pub fn id(&self) -> &'static str {
@@ -68,6 +72,7 @@ impl AssetTab {
             Self::Text => "text",
             Self::Templates => "templates",
             Self::Plugins => "plugins",
+            Self::Sfx => "sfx",
         }
     }
     pub fn from_id(id: &str) -> Option<Self> {
@@ -79,6 +84,7 @@ impl AssetTab {
             "text" => Self::Text,
             "templates" => Self::Templates,
             "plugins" => Self::Plugins,
+            "sfx" => Self::Sfx,
             _ => return None,
         })
     }
@@ -129,6 +135,13 @@ pub struct AssetBrowserState {
     /// Selected tab layout mode (NoFilter/Filtered).
     pub tab_layout: TabLayout,
     pub plugin_browser: crate::panels::plugin_browser::PluginBrowserState,
+    /// SFX tab: search text (matches name + category, case-insensitive).
+    pub sfx_search: String,
+    /// SFX tab: selected category ("all" = no filter).
+    pub sfx_cat: String,
+    /// SFX entry id currently downloading (set by app.rs drain loop).
+    /// None when idle. Only one download at a time in v1.
+    pub sfx_downloading: Option<String>,
 }
 
 impl AssetBrowserState {
@@ -143,6 +156,9 @@ impl AssetBrowserState {
             sidebar_width: 104.0,
             tab_layout: TabLayout::default(),
             plugin_browser: Default::default(),
+            sfx_search: String::new(),
+            sfx_cat: "all".to_string(),
+            sfx_downloading: None,
         }
     }
 }
@@ -1063,6 +1079,10 @@ pub struct AssetBrowserOutput {
     /// User clicked Delete on a user template (path). app.rs deletes
     /// and toasts; the list refreshes next frame.
     pub template_delete_requested: Option<std::path::PathBuf>,
+    /// SFX entry id the user asked to download. app.rs spawns the
+    /// background download; the row shows progress via
+    /// `AssetBrowserState::sfx_downloading`.
+    pub sfx_download_requested: Option<&'static str>,
 }
 
 /// Which template the user wants to apply.
@@ -1219,6 +1239,9 @@ pub fn render_tab_content(
         AssetTab::Templates => {
             show_templates_tab(ui, &mut out);
         }
+        AssetTab::Sfx => {
+            show_sfx_tab(ui, state, &mut out);
+        }
     }
     out
 }
@@ -1279,6 +1302,79 @@ fn show_templates_tab(ui: &mut Ui, out: &mut AssetBrowserOutput) {
     });
     ui.label(
         RichText::new(tr("asset-templates-contrib"))
+            .small()
+            .color(Color32::from_gray(140)),
+    );
+}
+
+/// SFX tab: searchable, category-filtered Mixkit catalog with
+/// per-row Download. Downloads run in app.rs (panels can't spawn
+/// threads); rows read progress through `state.sfx_downloading`.
+/// Downloaded files auto-import into the media bin, so drag to the
+/// timeline works through the existing bin DnD path.
+fn show_sfx_tab(ui: &mut Ui, state: &mut AssetBrowserState, out: &mut AssetBrowserOutput) {
+    ui.label(RichText::new(tr("asset-tab-sfx")).strong());
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label(tr("asset-sfx-search"));
+        ui.add(
+            egui::TextEdit::singleline(&mut state.sfx_search)
+                .desired_width(140.0)
+                .hint_text(tr("asset-sfx-search-hint")),
+        );
+    });
+    ui.add_space(4.0);
+
+    ui.horizontal_wrapped(|ui| {
+        let all = state.sfx_cat == "all";
+        if ui.selectable_label(all, tr("asset-cat-all")).clicked() {
+            state.sfx_cat = "all".to_string();
+        }
+        for cat in caprust_core::sfx::categories() {
+            let selected = state.sfx_cat == cat;
+            if ui.selectable_label(selected, cat).clicked() {
+                state.sfx_cat = cat.to_string();
+            }
+        }
+    });
+    ui.separator();
+
+    let q = state.sfx_search.to_lowercase();
+    let downloading = state.sfx_downloading.clone();
+    egui::ScrollArea::vertical()
+        .id_salt("sfx_list")
+        .show(ui, |ui| {
+            for e in caprust_core::sfx::CATALOG {
+                if state.sfx_cat != "all" && e.category != state.sfx_cat {
+                    continue;
+                }
+                if !q.is_empty() && !e.name.to_lowercase().contains(&q) && !e.category.contains(&q)
+                {
+                    continue;
+                }
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}  ", e.name));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if caprust_core::sfx::is_downloaded(e) {
+                            ui.label(
+                                RichText::new(tr("asset-sfx-downloaded"))
+                                    .small()
+                                    .color(Color32::from_gray(140)),
+                            );
+                        } else if downloading.as_deref() == Some(e.id) {
+                            ui.spinner();
+                        } else if ui.small_button(tr("asset-sfx-download")).clicked() {
+                            out.sfx_download_requested = Some(e.id);
+                        }
+                    });
+                });
+            }
+        });
+
+    ui.separator();
+    ui.label(
+        RichText::new(tr("asset-sfx-license"))
             .small()
             .color(Color32::from_gray(140)),
     );

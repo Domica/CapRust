@@ -420,6 +420,12 @@ pub struct CapRustApp {
     pub template_confirm: Option<crate::panels::asset_browser::TemplateRequest>,
     /// Pending save-as-template: name buffer. Some while the modal is open.
     pub template_save: Option<String>,
+    /// In-flight SFX download: (entry id, result channel). Single
+    /// download at a time in v1; the row shows a spinner meanwhile.
+    pub sfx_download: Option<(
+        String,
+        std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>,
+    )>,
     /// Clips waiting to be transcribed, in order. Populated by
     /// "caption all in track"; drained sequentially because only one
     /// caption_rx slot exists at a time.
@@ -734,6 +740,7 @@ impl CapRustApp {
             clip_rename: None,
             template_confirm: None,
             template_save: None,
+            sfx_download: None,
             caption_queue: std::collections::VecDeque::new(),
             caption_batch_total: 0,
             caption_batch_current: 0,
@@ -777,6 +784,12 @@ impl CapRustApp {
         app.project
             .models
             .scan_local(&app.settings.effective_models_dir());
+        // Extract embedded LUTs so built-in grades work on installed
+        // builds (installer ships only the exe). Best-effort: a
+        // failure only logs, custom .cube paths are unaffected.
+        if let Err(e) = caprust_media_io::export_graph::ensure_builtin_luts() {
+            tracing::warn!("builtin LUT extract failed: {e:#}");
+        }
         app
     }
 
@@ -3750,6 +3763,85 @@ impl CapRustApp {
             aux_url,
         );
         self.model_download = Some((model_id.to_string(), rx));
+    }
+
+    /// Start a background download for one SFX catalog entry. No-op
+    /// while another SFX download is in flight or the file is already
+    /// cached. Uses the shared streaming downloader (`.part` + rename,
+    /// no SHA pinning — Mixkit serves no published hashes).
+    fn start_sfx_download(&mut self, entry_id: &'static str) {
+        if self.sfx_download.is_some() {
+            return;
+        }
+        let Some(entry) = caprust_core::sfx::CATALOG.iter().find(|e| e.id == entry_id) else {
+            return;
+        };
+        if caprust_core::sfx::is_downloaded(entry) {
+            return;
+        }
+        let url = entry.url.to_string();
+        let dest = caprust_core::sfx::local_path(entry);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name(format!("caprust-sfx-{entry_id}"))
+            .spawn(move || {
+                let r = caprust_core::models::download::download_file(&url, &dest, "", None)
+                    .map(|()| dest)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(r);
+            })
+            .ok();
+        self.sfx_download = Some((entry_id.to_string(), rx));
+        self.asset_browser.sfx_downloading = Some(entry_id.to_string());
+    }
+
+    /// Poll the in-flight SFX download. On success the file is
+    /// imported into the media bin (deduped by path) and probe +
+    /// thumbnail jobs are enqueued through the standard path, so
+    /// drag-to-timeline works immediately.
+    fn drain_sfx_download(&mut self) {
+        let Some((entry_id, rx)) = self.sfx_download.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(path)) => {
+                let path_str = path.to_string_lossy().to_string();
+                if self.project.media.find_by_path(&path_str).is_none() {
+                    let id = self
+                        .project
+                        .media
+                        .add(&path_str, caprust_core::MediaKind::Audio);
+                    if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
+                        let item_clone = item.clone();
+                        self.job_runner.enqueue(
+                            &item_clone,
+                            self.ffmpeg_status
+                                .ffmpeg
+                                .clone()
+                                .map(std::path::PathBuf::from),
+                            self.ffmpeg_status
+                                .ffprobe
+                                .clone()
+                                .map(std::path::PathBuf::from),
+                        );
+                    }
+                }
+                tracing::info!("sfx downloaded: {entry_id}");
+                self.toast(format!("{}: {entry_id}", tr("toast-sfx-ready")));
+            }
+            Ok(Err(msg)) => {
+                tracing::error!("sfx download {entry_id} failed: {msg}");
+                self.toast_error(format!("{}: {msg}", tr("toast-sfx-failed")));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.sfx_download = Some((entry_id, rx));
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::warn!("sfx download thread vanished");
+            }
+        }
+        self.asset_browser.sfx_downloading = None;
     }
 
     /// Poll the update-check thread. On success with Some(info), store
@@ -7369,6 +7461,9 @@ impl CapRustApp {
         if let Some(req) = out.template_apply_requested {
             self.template_confirm = Some(req);
         }
+        if let Some(id) = out.sfx_download_requested {
+            self.start_sfx_download(id);
+        }
 
         // Master-chain plugin add request from the browser.
         if let Some(info) = out.plugin_add_requested {
@@ -7528,7 +7623,7 @@ impl CapRustApp {
                             tracing::info!("inserted TextOverlay clip with style '{preset_id}'");
                         }
                     }
-                    AssetTab::Media | AssetTab::Templates | AssetTab::Plugins => {}
+                    AssetTab::Media | AssetTab::Templates | AssetTab::Plugins | AssetTab::Sfx => {}
                 }
             } else {
                 tracing::warn!("preset '{preset_id}' clicked but no clip selected");
@@ -10224,6 +10319,7 @@ impl eframe::App for CapRustApp {
         // Drain background jobs (ffprobe results, thumbnails ready).
         self.drain_update_check();
         self.drain_model_download();
+        self.drain_sfx_download();
         self.drain_translate_job();
         self.drain_caption_job();
         self.drain_narration_job();
