@@ -26,7 +26,12 @@ pub fn run_export(
     output: &Path,
     events: Sender<ExportEvent>,
 ) -> Result<()> {
-    let args = plan.build_command(ffmpeg, output);
+    // Long commands blow past Windows' 32767-char CreateProcess limit
+    // (OS error 206) on projects with dozens of inputs: move the
+    // filtergraph into a script file. The guard deletes it on drop,
+    // including when the spawn below fails.
+    let mut args = plan.build_command(ffmpeg, output);
+    let _script_guard = crate::filter_script::swap_filter_complex(&mut args)?;
 
     let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(&args)
@@ -81,7 +86,10 @@ pub fn spawn_export(
     let (tx, rx) = channel::<ExportEvent>();
     std::thread::spawn(move || {
         if let Err(e) = run_export(&ffmpeg, &plan, &output, tx.clone()) {
-            let _ = tx.send(ExportEvent::Failed(e.to_string()));
+            // `{e:#}` keeps the whole cause chain: `{e}` alone showed
+            // only "spawn ffmpeg at ..." and swallowed the OS error,
+            // which is how the 32K command-line limit stayed hidden.
+            let _ = tx.send(ExportEvent::Failed(format!("{e:#}")));
         }
     });
     rx

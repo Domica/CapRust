@@ -81,6 +81,10 @@ pub struct PreviewRenderer {
     pub started_at_ms: u64,
     /// Path to the s16le PCM file written by ffmpeg (None if no audio track).
     pub pcm_path: Option<PathBuf>,
+    /// Owns the `-filter_complex_script` tempfile while the child runs.
+    /// Must outlive `child`: ffmpeg reads the script at startup, after
+    /// spawn() already returned.
+    _filter_script: Option<crate::filter_script::FilterScript>,
 }
 
 /// Shared input block for preview-family renders: images get
@@ -179,13 +183,18 @@ pub fn render_single_frame(
             .join(" ")
     );
 
-    let output = crate::silent_cmd::silent_command(ffmpeg)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| "spawn frame-capture ffmpeg".to_string())?;
+    let output = {
+        // Same 32K argv protection as export (big non-seek-optimized
+        // previews carry every input).
+        let _script_guard = crate::filter_script::swap_filter_complex(&mut args)?;
+        crate::silent_cmd::silent_command(ffmpeg)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .with_context(|| "spawn frame-capture ffmpeg".to_string())?
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         tracing::error!(
@@ -316,6 +325,11 @@ impl PreviewRenderer {
             std::env::temp_dir().join("caprust-last-preview-filtergraph.txt"),
             &fg,
         );
+        // Same 32K argv protection as export: non-seek-optimized plans
+        // carry every input. The guard MUST outlive the child — ffmpeg
+        // reads the script at startup, after spawn() already returned —
+        // so it is stored on the renderer, not dropped here.
+        let script_guard = crate::filter_script::swap_filter_complex(&mut args)?;
         let mut child = crate::silent_cmd::silent_command(ffmpeg)
             .args(&args)
             .stdin(Stdio::null())
@@ -441,6 +455,7 @@ impl PreviewRenderer {
             seek_optimized: plan.seek_optimized,
             fps,
             started_at_ms: start_ms,
+            _filter_script: script_guard,
         })
     }
 
