@@ -152,6 +152,106 @@ impl Default for ChromaKeySpec {
     }
 }
 
+/// Per-clip color grade (lift / gamma / gain + white balance).
+/// All fields are neutral at default, so `is_identity()` grades
+/// render nothing and the filtergraph stays byte-identical.
+///
+/// Mapping to ffmpeg (see `build_color_grade_chain` in media-io):
+/// lift → colorbalance shadows, gain → highlights as (gain − 1),
+/// gamma → midtones as (1 − gamma), temperature → colortemperature
+/// (Kelvin), tint → green/magenta midtones, saturation + contrast
+/// → eq. Ranges are clamped at the UI; the renderer clamps again.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ColorGrade {
+    /// Shadows offset per channel, -1..=1. 0 = neutral.
+    #[serde(default)]
+    pub lift: [f32; 3],
+    /// Midtones multiplier per channel, 1 = neutral.
+    #[serde(default = "default_grade_gamma")]
+    pub gamma: [f32; 3],
+    /// Highlights multiplier per channel, 1 = neutral.
+    #[serde(default = "default_grade_gain")]
+    pub gain: [f32; 3],
+    /// White balance in Kelvin. 6500 = neutral.
+    #[serde(default = "default_grade_temperature")]
+    pub temperature: f32,
+    /// Green (+) / magenta (−) balance, -1..=1. 0 = neutral.
+    #[serde(default)]
+    pub tint: f32,
+    /// Saturation multiplier, 1 = neutral.
+    #[serde(default = "default_grade_unit")]
+    pub saturation: f32,
+    /// Contrast multiplier, 1 = neutral.
+    #[serde(default = "default_grade_unit")]
+    pub contrast: f32,
+}
+
+fn default_grade_gamma() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
+}
+fn default_grade_gain() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
+}
+fn default_grade_temperature() -> f32 {
+    6500.0
+}
+fn default_grade_unit() -> f32 {
+    1.0
+}
+
+impl Default for ColorGrade {
+    fn default() -> Self {
+        Self {
+            lift: [0.0, 0.0, 0.0],
+            gamma: default_grade_gamma(),
+            gain: default_grade_gain(),
+            temperature: default_grade_temperature(),
+            tint: 0.0,
+            saturation: 1.0,
+            contrast: 1.0,
+        }
+    }
+}
+
+impl ColorGrade {
+    /// True when every field is neutral — the render emits nothing.
+    pub fn is_identity(&self) -> bool {
+        self.lift == [0.0, 0.0, 0.0]
+            && self.gamma == [1.0, 1.0, 1.0]
+            && self.gain == [1.0, 1.0, 1.0]
+            && (self.temperature - 6500.0).abs() < 1.0
+            && self.tint == 0.0
+            && self.saturation == 1.0
+            && self.contrast == 1.0
+    }
+
+    /// Cinematic starter: warm highlights, cool shadows, snap + sat.
+    pub fn preset_cinematic() -> Self {
+        Self {
+            lift: [0.0, 0.0, 0.06],
+            gamma: [1.0, 1.0, 1.0],
+            gain: [1.08, 1.0, 0.94],
+            temperature: 5600.0,
+            tint: 0.0,
+            saturation: 1.12,
+            contrast: 1.1,
+        }
+    }
+
+    /// Warm starter: golden-hour white balance + gentle lift.
+    pub fn preset_warm() -> Self {
+        Self {
+            lift: [0.03, 0.01, 0.0],
+            gamma: [1.0, 1.0, 1.0],
+            gain: [1.05, 1.0, 0.96],
+            temperature: 7500.0,
+            tint: 0.0,
+            saturation: 1.05,
+            contrast: 1.0,
+        }
+    }
+}
+
 /// One word inside a caption segment, with its own timing. Used by
 /// the P1 progressive-reveal render path: the segment is expanded into
 /// one drawtext per word, each showing the accumulated text up to that
@@ -675,6 +775,10 @@ pub struct Clip {
     /// `blend_mode_name`); mixed-mode runs use the first clip's mode.
     #[serde(default)]
     pub blend_mode: Option<String>,
+    /// Per-clip color grade. None = ungraded (no filter stages).
+    /// Some(g) with g.is_identity() also renders nothing.
+    #[serde(default)]
+    pub color_grade: Option<ColorGrade>,
 }
 
 impl Clip {
@@ -726,6 +830,7 @@ impl Clip {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -779,6 +884,7 @@ impl Clip {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -832,6 +938,7 @@ impl Clip {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -889,6 +996,7 @@ impl Clip {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -952,6 +1060,7 @@ impl Clip {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -1013,6 +1122,7 @@ impl Clip {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             source_duration_ms: 0,
             media_id: None,
         }

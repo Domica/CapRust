@@ -126,6 +126,8 @@ pub enum PendingEdit {
     /// Some(id) = composite this clip's run with that blend mode,
     /// None = plain overlay.
     BlendMode(Option<String>),
+    /// Replace the color grade on the selected clip.
+    ColorGrade(caprust_core::clip::ColorGrade),
     /// Start an auto-reframe analysis for the currently-selected
     /// clip. The dispatcher resolves the clip id from the selection
     /// and hands it to start_reframe_job. No payload because the
@@ -932,6 +934,117 @@ fn speed_range_n(r: &caprust_core::clip::SpeedRampRange) -> u64 {
     }
 }
 
+fn show_color_grade(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+    let grade_supported = matches!(
+        clip.clip_type,
+        ClipType::Video { .. } | ClipType::Image { .. }
+    );
+    if !grade_supported {
+        ui.label(
+            egui::RichText::new(tr("props-grade-not-video"))
+                .small()
+                .color(egui::Color32::from_gray(140)),
+        );
+        return;
+    }
+    let Some(g) = clip.color_grade else {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(tr("props-grade-none"))
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if button::primary(ui, tr("props-grade-enable")).clicked() {
+                    state.pending.push(PendingEdit::ColorGrade(
+                        caprust_core::clip::ColorGrade::default(),
+                    ));
+                }
+            });
+        });
+        return;
+    };
+
+    let mut next = g;
+    let mut changed = false;
+    for (label_key, vals, lo, hi) in [
+        ("props-grade-lift", &mut next.lift, -1.0_f32, 1.0_f32),
+        ("props-grade-gamma", &mut next.gamma, 0.2_f32, 2.5_f32),
+        ("props-grade-gain", &mut next.gain, 0.0_f32, 2.0_f32),
+    ] {
+        ui.label(tr(label_key));
+        for (i, v) in vals.iter_mut().enumerate() {
+            let chan = ["R", "G", "B"][i];
+            ui.horizontal(|ui| {
+                ui.label(chan);
+                if ui
+                    .add(
+                        egui::Slider::new(v, lo..=hi)
+                            .fixed_decimals(3)
+                            .show_value(true),
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
+            });
+        }
+    }
+    ui.label(tr("props-grade-temperature"));
+    if ui
+        .add(
+            egui::Slider::new(&mut next.temperature, 2000.0..=12000.0)
+                .fixed_decimals(0)
+                .suffix(" K"),
+        )
+        .changed()
+    {
+        changed = true;
+    }
+    ui.label(tr("props-grade-tint"));
+    if ui
+        .add(egui::Slider::new(&mut next.tint, -1.0..=1.0).fixed_decimals(3))
+        .changed()
+    {
+        changed = true;
+    }
+    ui.label(tr("props-grade-saturation"));
+    if ui
+        .add(egui::Slider::new(&mut next.saturation, 0.0..=2.0).fixed_decimals(3))
+        .changed()
+    {
+        changed = true;
+    }
+    ui.label(tr("props-grade-contrast"));
+    if ui
+        .add(egui::Slider::new(&mut next.contrast, 0.0..=2.0).fixed_decimals(3))
+        .changed()
+    {
+        changed = true;
+    }
+    if changed {
+        state.pending.push(PendingEdit::ColorGrade(next));
+    }
+    ui.add_space(space::XS);
+    ui.horizontal(|ui| {
+        if button::secondary(ui, tr("props-grade-preset-cinematic")).clicked() {
+            state.pending.push(PendingEdit::ColorGrade(
+                caprust_core::clip::ColorGrade::preset_cinematic(),
+            ));
+        }
+        if button::secondary(ui, tr("props-grade-preset-warm")).clicked() {
+            state.pending.push(PendingEdit::ColorGrade(
+                caprust_core::clip::ColorGrade::preset_warm(),
+            ));
+        }
+        if button::ghost(ui, tr("props-grade-clear")).clicked() {
+            state.pending.push(PendingEdit::ColorGrade(
+                caprust_core::clip::ColorGrade::default(),
+            ));
+        }
+    });
+}
+
 fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     // --- Main ---
     ui.label(egui::RichText::new(tr("props-video-main")).strong());
@@ -1176,6 +1289,11 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             });
         });
     }
+
+    // --- Color grade ---
+    ui.label(egui::RichText::new(tr("props-color-grade")).strong());
+    ui.add_space(space::XS);
+    show_color_grade(ui, clip, state);
 
     // --- Speed ---
     ui.label(egui::RichText::new(tr("props-video-speed")).strong());

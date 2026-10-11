@@ -7279,6 +7279,11 @@ impl CapRustApp {
                                 .blend_mode(m);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::ColorGrade(g) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .color_grade(Some(g));
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::Name(v) => {
                             let trimmed = v.trim().to_string();
                             let new_name = if trimmed.is_empty() {

@@ -1,6 +1,6 @@
 //! Generic command to edit any subset of clip fields.
 
-use crate::clip::{ChromaKeySpec, Clip};
+use crate::clip::{ChromaKeySpec, Clip, ColorGrade};
 use crate::commands::Command;
 use crate::project::ProjectState;
 use anyhow::Result;
@@ -76,6 +76,8 @@ pub struct SetClipCommand {
     pub split_display: Option<Option<bool>>,
     /// Some(v) = blend mode override. None = leave untouched.
     pub blend_mode: Option<Option<String>>,
+    /// Some(v) = color grade override. None = leave untouched.
+    pub color_grade: Option<Option<ColorGrade>>,
     before: Option<Clip>,
 }
 
@@ -122,6 +124,7 @@ impl SetClipCommand {
             lut: None,
             split_display: None,
             blend_mode: None,
+            color_grade: None,
             before: None,
         }
     }
@@ -309,6 +312,11 @@ impl SetClipCommand {
         self.blend_mode = Some(v);
         self
     }
+    /// Set or clear the color grade.
+    pub fn color_grade(mut self, v: Option<ColorGrade>) -> Self {
+        self.color_grade = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -459,6 +467,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.blend_mode.clone() {
             c.blend_mode = v;
+        }
+        if let Some(v) = self.color_grade {
+            c.color_grade = v;
         }
         Ok(())
     }

@@ -95,6 +95,8 @@ pub struct VideoClip {
     /// Blend mode for this clip's z-order run. `None` (or "normal") =
     /// plain overlay. See `blend_mode_name` for valid ids.
     pub blend_mode: Option<String>,
+    /// Per-clip color grade. None (or identity) renders nothing.
+    pub color_grade: Option<caprust_core::clip::ColorGrade>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -587,6 +589,11 @@ impl RenderPlan {
                         fg.push_str(&format!(",lut3d=file={escaped}"));
                     }
                 }
+            }
+            // Color grade after the LUT, before the effects stack:
+            // grade the source, then stylize. Identity renders nothing.
+            if let Some(g) = &c.color_grade {
+                fg.push_str(&build_color_grade_chain(g));
             }
             let effects_chain = build_effects_chain(&c.effects);
             fg.push_str(&effects_chain);
@@ -1523,6 +1530,51 @@ fn ease_curve_name(e: caprust_core::clip::EaseCurve) -> Option<&'static str> {
         EaseCurve::EaseOut => Some("par"),
         EaseCurve::EaseInOut => Some("qsin"),
     }
+}
+
+/// Build the color-grade filter stages for one clip. Empty string
+/// when the grade is None or identity (byte-identical output).
+/// Stage order: white balance (colortemperature), zone balance
+/// (colorbalance), then saturation/contrast (eq) — grade the source
+/// before LUTs and effects stylize it.
+fn build_color_grade_chain(g: &caprust_core::clip::ColorGrade) -> String {
+    if g.is_identity() {
+        return String::new();
+    }
+    let mut out = String::new();
+    // White balance. Kelvin clamped to the filter's valid range.
+    let k = g.temperature.clamp(1000.0, 40000.0);
+    if (k - 6500.0).abs() >= 1.0 {
+        out.push_str(&format!(",colortemperature=temperature={k:.0}"));
+    }
+    // Zone balance: lift → shadows, (gain − 1) → highlights,
+    // (1 − gamma) → midtones, plus green/magenta tint on the mids.
+    // Everything clamped to colorbalance's -1..=1 range.
+    let cl = |v: f32| v.clamp(-1.0, 1.0);
+    let rs = cl(g.lift[0]);
+    let gs = cl(g.lift[1]);
+    let bs = cl(g.lift[2]);
+    let rh = cl(g.gain[0] - 1.0);
+    let gh = cl(g.gain[1] - 1.0);
+    let bh = cl(g.gain[2] - 1.0);
+    let rm = cl((1.0 - g.gamma[0]) - g.tint * 0.5);
+    let gm = cl((1.0 - g.gamma[1]) + g.tint);
+    let bm = cl((1.0 - g.gamma[2]) - g.tint * 0.5);
+    if [rs, gs, bs, rh, gh, bh, rm, gm, bm]
+        .iter()
+        .any(|v| v.abs() > 0.0005)
+    {
+        out.push_str(&format!(
+            ",colorbalance=rs={rs:.3}:gs={gs:.3}:bs={bs:.3}:rm={rm:.3}:gm={gm:.3}:bm={bm:.3}:rh={rh:.3}:gh={gh:.3}:bh={bh:.3}"
+        ));
+    }
+    // Saturation / contrast. eq defaults are 1; skip when neutral.
+    let sat = g.saturation.clamp(0.0, 3.0);
+    let con = g.contrast.clamp(0.0, 3.0);
+    if (sat - 1.0).abs() > 0.0005 || (con - 1.0).abs() > 0.0005 {
+        out.push_str(&format!(",eq=saturation={sat:.3}:contrast={con:.3}"));
+    }
+    out
 }
 
 /// Map a blend mode id to the ffmpeg `blend=all_mode=` keyword.
@@ -3039,6 +3091,7 @@ pub fn plan_from_project(
                         chroma_key: c.chroma_key,
                         lut: c.lut.clone(),
                         blend_mode: c.blend_mode.clone(),
+                        color_grade: c.color_grade,
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -3084,6 +3137,7 @@ pub fn plan_from_project(
                         chroma_key: c.chroma_key,
                         lut: c.lut.clone(),
                         blend_mode: c.blend_mode.clone(),
+                        color_grade: c.color_grade,
                     });
                 }
                 ClipType::TextOverlay {
@@ -3858,6 +3912,7 @@ mod tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4036,6 +4091,7 @@ mod tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4500,6 +4556,7 @@ mod tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4557,6 +4614,7 @@ mod tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4780,6 +4838,7 @@ mod tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5116,6 +5175,50 @@ mod chroma_key_filter_tests {
             "unknown mode must fall back to overlay: {fg}"
         );
     }
+
+    #[test]
+    fn grade_identity_renders_nothing() {
+        let g = caprust_core::clip::ColorGrade::default();
+        assert!(g.is_identity());
+        assert!(build_color_grade_chain(&g).is_empty());
+        assert!(build_color_grade_chain(&caprust_core::clip::ColorGrade {
+            temperature: 6500.4,
+            ..caprust_core::clip::ColorGrade::default()
+        })
+        .is_empty());
+    }
+
+    #[test]
+    fn grade_full_renders_three_stages() {
+        let g = caprust_core::clip::ColorGrade::preset_cinematic();
+        assert!(!g.is_identity());
+        let chain = build_color_grade_chain(&g);
+        assert!(
+            chain.contains("colortemperature=temperature=5600"),
+            "{chain}"
+        );
+        assert!(chain.contains("colorbalance="), "{chain}");
+        assert!(
+            chain.contains("eq=saturation=1.120:contrast=1.100"),
+            "{chain}"
+        );
+    }
+
+    #[test]
+    fn grade_plan_emits_stages_in_video_chain() {
+        let mut plan = single_video_plan_with_mask(None);
+        plan.video_clips[0].color_grade = Some(caprust_core::clip::ColorGrade::preset_warm());
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(fg.contains("colortemperature=temperature=7500"), "{fg}");
+    }
+
+    #[test]
+    fn ungraded_plan_stays_clean() {
+        let plan = single_video_plan_with_mask(None);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(!fg.contains("colortemperature="), "{fg}");
+        assert!(!fg.contains("colorbalance="), "{fg}");
+    }
 }
 
 /// Clips that must not contribute to the render because they belong
@@ -5442,6 +5545,7 @@ mod flip_filtergraph_tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5539,6 +5643,7 @@ mod reverse_filtergraph_tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5791,6 +5896,7 @@ mod stab_tests {
                 chroma_key: None,
                 lut: None,
                 blend_mode: None,
+                color_grade: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
