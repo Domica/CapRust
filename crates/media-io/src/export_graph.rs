@@ -13,7 +13,7 @@
 //!
 //! Output is a single ffmpeg invocation; no intermediate files.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 use crate::export::RateMode;
@@ -1691,6 +1691,52 @@ fn build_effects_chain(effects: &[caprust_core::clip::EffectInstance]) -> String
 /// `lut_id` is either a built-in LUT id (e.g. "film_kodak") mapped to a
 /// bundled asset, or an absolute path to a user-uploaded `.cube` file.
 /// Returns `None` when the id is unknown or the path does not exist.
+///
+/// Built-in LUTs embedded in the binary (see `EMBEDDED_LUTS` below):
+/// the installer ships only the exe, so exe-relative `assets/luts/`
+/// does not exist on installed machines — the bytes are extracted to
+/// the default cache dir on startup instead (see
+/// `ensure_builtin_luts`).
+const EMBEDDED_LUTS: &[(&str, &str, &[u8])] = &[
+    (
+        "film_kodak",
+        "film_kodak.cube",
+        include_bytes!("../../app/assets/luts/film_kodak.cube"),
+    ),
+    (
+        "film_fuji",
+        "film_fuji.cube",
+        include_bytes!("../../app/assets/luts/film_fuji.cube"),
+    ),
+    (
+        "bw_contrast",
+        "bw_contrast.cube",
+        include_bytes!("../../app/assets/luts/bw_contrast.cube"),
+    ),
+    (
+        "vintage_sepia",
+        "vintage_sepia.cube",
+        include_bytes!("../../app/assets/luts/vintage_sepia.cube"),
+    ),
+];
+
+/// Extract embedded built-in LUTs into the default cache dir,
+/// skipping files that already exist. Idempotent; runs once at
+/// startup. ~550 KB total, written once, never re-downloaded.
+pub fn ensure_builtin_luts() -> anyhow::Result<()> {
+    let dir = caprust_core::settings::default_lut_cache_dir();
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("create LUT cache dir {}", dir.display()))?;
+    for (_id, filename, bytes) in EMBEDDED_LUTS {
+        let path = dir.join(filename);
+        if !path.exists() {
+            std::fs::write(&path, bytes)
+                .with_context(|| format!("extract built-in LUT {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
     // Built-in LUTs: bundled in assets/luts/. The id maps to a filename.
     let builtins = [
@@ -1704,7 +1750,7 @@ fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
             // assets/luts/ is bundled next to the exe in release builds
             // and in the workspace in dev. Walk up from the current exe.
             let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-            let candidates = [
+            let candidates = vec![
                 exe_dir.join("assets").join("luts").join(filename),
                 exe_dir
                     .join("..")
@@ -1720,6 +1766,9 @@ fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
                 std::path::PathBuf::from("assets")
                     .join("luts")
                     .join(filename),
+                // Installed builds ship only the exe: built-ins are
+                // extracted here on startup (see ensure_builtin_luts).
+                caprust_core::settings::default_lut_cache_dir().join(filename),
             ];
             for c in &candidates {
                 if c.exists() {
@@ -5123,6 +5172,19 @@ mod chroma_key_filter_tests {
             !fg.contains("lut3d="),
             "plain plan must not emit lut3d: {fg}"
         );
+    }
+
+    #[test]
+    fn embedded_builtin_luts_are_valid_cubes() {
+        // Guards the committed .cube assets: a corrupt embed would
+        // fail every lut3d render at runtime instead.
+        for (id, filename, bytes) in EMBEDDED_LUTS {
+            let text = std::str::from_utf8(bytes).expect("cube must be UTF-8");
+            let lut = caprust_core::settings::CubeLut::parse(text)
+                .unwrap_or_else(|e| panic!("builtin {id} ({filename}) invalid: {e:#}"));
+            assert_eq!(lut.size, 17, "builtin {id} must stay 17^3");
+            assert_eq!(lut.data.len(), 17 * 17 * 17);
+        }
     }
 
     #[test]

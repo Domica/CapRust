@@ -195,7 +195,11 @@ fn default_recordings_dir() -> std::path::PathBuf {
     base.join("CapRust").join("recordings")
 }
 
-fn default_lut_cache_dir() -> std::path::PathBuf {
+/// Default LUT cache dir (`%APPDATA%/CapRust/luts`). Built-in LUTs
+/// are always extracted here on startup (see media-io
+/// `ensure_builtin_luts`); the user-overridable `lut_cache_dir`
+/// setting is reserved for future user-LUT imports.
+pub fn default_lut_cache_dir() -> std::path::PathBuf {
     let base = std::env::var("APPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
