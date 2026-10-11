@@ -2,6 +2,18 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.15] — 2026-10-11
+
+### Added
+
+- **Timeline templates.** Bundled starters (intro, lower third, outro) plus save-as-template, file import and one-click apply with confirm; missing media flows through the relink dialog. Community templates via PR in `templates/`.
+- **Theme save/load files.** Appearance tab bottom exports/imports the full theme as JSON.
+
+### Fixed
+
+- **Export on big projects (Windows 32K limit).** 78 long-path inputs plus the filtergraph exceeded the command-line cap (OS error 206). The graph now travels via `-filter_complex_script`; export, preview and save-frame all use it.
+- **Seek-while-playing A/V desync.** Seeks now do a full restart (audio dropped, anchor cleared) so the first new frame re-syncs audio instead of playing stale sound under new video.
+
 ## [0.9.14] — 2026-10-10
 
 ### Added
