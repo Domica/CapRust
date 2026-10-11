@@ -7712,6 +7712,18 @@ impl CapRustApp {
                 // Where to start the renderer from.
                 let start_from = self.explicit_seek_ms.take().unwrap_or(self.playhead_ms);
 
+                // Full A/V restart on every seek (not just video):
+                // drop the old audio player so it stops playing the
+                // pre-seek position during the 0.5-4 s video re-prime,
+                // and clear the anchor so the first new frame re-anchors
+                // the wall clock and fires the deferred audio start.
+                // Without this the old audio kept playing against the
+                // new video (or the new PCM never started at all),
+                // which is exactly the scrub-while-playing desync.
+                self.audio_player = None;
+                self.play_anchor_set = false;
+                self.audio_baseline_ms = 0;
+
                 // Kill old one
                 if let Some(mut r) = self.preview_renderer.take() {
                     r.kill();
