@@ -903,3 +903,25 @@ recovery-prompt-later = Decide later
 recovery-prompt-discard = Discard
 toast-recovery-restored = Recovered your unsaved session. Press Ctrl+S to keep it.
 toast-recovery-failed = Could not read the recovery snapshot.
+
+# --- Caption segment editing (#1) ---
+props-captions-add = Add
+props-captions-add-hint = Type a caption by hand and press Add
+props-captions-empty = No speech detected. Type a caption above, or delete this clip.
+props-captions-segment-one = 1 segment
+props-captions-segment-many = { $n } segments
+props-captions-edit-hint = Edit any text and press Enter (or click away) to save.
+props-captions-split = Split
+props-captions-split-hint = Cut this segment in two at the point below. The cut lands on a word boundary.
+props-captions-split-at = Split at
+props-captions-merge = Merge
+props-captions-merge-hint = Join this segment with the one below it.
+props-captions-remove = Remove this segment
+
+# --- Caption panel labels (#1) ---
+props-captions-model = Model
+props-captions-language = Language
+
+# --- Caption reveal mode (#1) ---
+props-captions-style-karaoke = Word-by-word reveal
+props-captions-style-karaoke-hint = Types the caption in time with the speech. Off = the whole line stays on screen for the whole segment.

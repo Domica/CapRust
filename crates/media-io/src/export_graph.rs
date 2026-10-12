@@ -4097,7 +4097,7 @@ mod tests {
     /// `drawtext` passes in front of the encoder, which starved NVENC.
     #[test]
     fn caption_filter_count_is_independent_of_word_count() {
-        use caprust_core::clip::{CaptionSegment, WordTiming};
+        use caprust_core::clip::{CaptionSegment, ClipType, WordTiming};
         let words = |n: u64| -> Vec<WordTiming> {
             (0..n)
                 .map(|i| WordTiming {
@@ -4114,8 +4114,56 @@ mod tests {
             words: words(n),
         };
 
+        // Karaoke on, so the word timings actually reach the ASS file.
+        // The planner takes the style from the clip, so this has to
+        // come through the project rather than a local variable.
         for n in [3_u64, 40, 150] {
-            let plan = plan_with_caption_segments(vec![mk(n)]);
+            let mut project = caprust_core::ProjectState::default();
+            let cap_track = project
+                .tracks
+                .iter()
+                .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
+                .expect("captions track");
+            let vid_track = project
+                .tracks
+                .iter()
+                .position(|t| t.kind == caprust_core::track::TrackKind::Video)
+                .expect("video track");
+            let mut clip = caprust_core::Clip::new_video("placeholder.mp4", cap_track, 0, n * 400);
+            clip.clip_type = ClipType::Captions {
+                style: caprust_core::clip::CaptionStyle {
+                    karaoke: true,
+                    ..Default::default()
+                },
+                language: "en".into(),
+                model_id: "test".into(),
+                motion: Default::default(),
+                effect: None,
+                segments: vec![mk(n)],
+            };
+            project.add_clip(clip);
+            let mut placeholder =
+                caprust_core::Clip::new_video("placeholder.mp4", vid_track, 0, n * 400);
+            placeholder.clip_type = ClipType::Video {
+                path: "placeholder.mp4".into(),
+                duration_ms: n * 400,
+            };
+            project.add_clip(placeholder);
+            let plan = plan_from_project(
+                &project,
+                320,
+                240,
+                30,
+                1,
+                23,
+                RateMode::Vbr,
+                8000,
+                "veryfast",
+                std::path::Path::new("."),
+                0,
+                caprust_core::project::VideoEncoder::H264Cpu,
+            )
+            .expect("plan built");
             let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
             assert_eq!(
                 fg.matches("subtitles=filename=").count(),
@@ -4144,7 +4192,7 @@ mod tests {
     #[test]
     fn tight_word_timings_reach_the_ass_file() {
         use caprust_core::clip::{CaptionSegment, WordTiming};
-        let plan = plan_with_caption_segments(vec![CaptionSegment {
+        let plan = plan_with_karaoke_segments(vec![CaptionSegment {
             start_ms: 0,
             end_ms: 200,
             text: "the quick brown fox".into(),
@@ -4244,6 +4292,59 @@ mod tests {
     /// 2 s placeholder video, then run the real planner.
     fn plan_with_caption_segments(segments: Vec<caprust_core::clip::CaptionSegment>) -> RenderPlan {
         plan_with_caption_segments_at(0, segments)
+    }
+
+    /// Same, but the Captions clip opts into karaoke so word timings
+    /// reach the ASS file.
+    fn plan_with_karaoke_segments(
+        segments: Vec<caprust_core::clip::CaptionSegment>,
+    ) -> RenderPlan {
+        use caprust_core::clip::ClipType;
+        let mut project = caprust_core::ProjectState::default();
+        let cap_track = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
+            .expect("captions track");
+        let vid_track = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::track::TrackKind::Video)
+            .expect("video track");
+        let mut clip = caprust_core::Clip::new_video("placeholder.mp4", cap_track, 0, 40_000);
+        clip.clip_type = ClipType::Captions {
+            style: caprust_core::clip::CaptionStyle {
+                karaoke: true,
+                ..Default::default()
+            },
+            language: "en".into(),
+            model_id: "test".into(),
+            motion: Default::default(),
+            effect: None,
+            segments,
+        };
+        project.add_clip(clip);
+        let mut placeholder = caprust_core::Clip::new_video("placeholder.mp4", vid_track, 0, 40_000);
+        placeholder.clip_type = ClipType::Video {
+            path: "placeholder.mp4".into(),
+            duration_ms: 40_000,
+        };
+        project.add_clip(placeholder);
+        plan_from_project(
+            &project,
+            320,
+            240,
+            30,
+            1,
+            23,
+            RateMode::Vbr,
+            8000,
+            "veryfast",
+            std::path::Path::new("."),
+            0,
+            caprust_core::project::VideoEncoder::H264Cpu,
+        )
+        .expect("plan built")
     }
 
     fn plan_with_caption_segments_at(

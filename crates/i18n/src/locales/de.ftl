@@ -903,3 +903,25 @@ recovery-prompt-later = Später entscheiden
 recovery-prompt-discard = Verwerfen
 toast-recovery-restored = Deine ungespeicherte Sitzung ist wiederhergestellt. Mit Strg+S dauerhaft speichern.
 toast-recovery-failed = Die Wiederherstellungskopie konnte nicht gelesen werden.
+
+# --- Untertitel-Segmentbearbeitung (#1) ---
+props-captions-add = Hinzufugen
+props-captions-add-hint = Schreibe einen Untertitel von Hand und drucke Hinzufugen
+props-captions-empty = Keine Sprache erkannt. Schreibe oben einen Untertitel oder losche diesen Clip.
+props-captions-segment-one = 1 Segment
+props-captions-segment-many = { $n } Segmente
+props-captions-edit-hint = Beliebigen Text bearbeiten und Enter drucken (oder woanders klicken), um zu speichern.
+props-captions-split = Teilen
+props-captions-split-hint = Schneidet dieses Segment an der untenliegenden Stelle in zwei. Der Schnitt fallt auf eine Wortgrenze.
+props-captions-split-at = Teilen bei
+props-captions-merge = Zusammenfuhren
+props-captions-merge-hint = Verbindet dieses Segment mit dem darunter.
+props-captions-remove = Dieses Segment entfernen
+
+# --- Beschriftungen des Untertitel-Panels (#1) ---
+props-captions-model = Modell
+props-captions-language = Sprache
+
+# --- Untertitel-Einblendmodus (#1) ---
+props-captions-style-karaoke = Wortweise Einblendung
+props-captions-style-karaoke-hint = Der Untertitel wird im Rhythmus der Sprache getippt. Aus = die ganze Zeile bleibt das Segment lang stehen.

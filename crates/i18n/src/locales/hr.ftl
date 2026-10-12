@@ -903,3 +903,25 @@ recovery-prompt-later = Odluči kasnije
 recovery-prompt-discard = Odbaci
 toast-recovery-restored = Vratio sam tvoju nespremljenu sesiju. Pritisni Ctrl+S da je zadržiš.
 toast-recovery-failed = Kopiju za oporavak nije bilo moguće pročitati.
+
+# --- Uređivanje caption segmenata (#1) ---
+props-captions-add = Dodaj
+props-captions-add-hint = Upiši titul ručno i pritisni Dodaj
+props-captions-empty = Nema govora. Upiši titul gore ili obriši ovaj clip.
+props-captions-segment-one = 1 segment
+props-captions-segment-many = { $n } segmenata
+props-captions-edit-hint = Uredi bilo koji tekst i pritisni Enter (ili klikni drugamo) da spremiš.
+props-captions-split = Razdvoji
+props-captions-split-hint = Presjeci ovaj segment na dva dijela na donjoj točki. Rez pada na granicu riječi.
+props-captions-split-at = Rez na
+props-captions-merge = Spoji
+props-captions-merge-hint = Spoji ovaj segment s onim ispod.
+props-captions-remove = Ukloni ovaj segment
+
+# --- Oznake caption panela (#1) ---
+props-captions-model = Model
+props-captions-language = Jezik
+
+# --- Nacin prikaza titlova (#1) ---
+props-captions-style-karaoke = Postupno po rijecima
+props-captions-style-karaoke-hint = Titl se tipka sinkrono s govorom. Iskljuceno = cijela linija ostaje na ekranu kroz cijeli segment.

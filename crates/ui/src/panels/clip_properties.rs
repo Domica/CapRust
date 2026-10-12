@@ -30,6 +30,13 @@ pub struct PropertiesState {
     /// The (clip_id, idx) currently holding keyboard focus in a caption
     /// editor. Used to detect blur → commit.
     pub caption_edit_focus: Option<(Uuid, usize)>,
+    /// Draft text for adding a caption segment by hand, keyed by
+    /// clip_id. Lets a clip whisper found no speech in be captioned
+    /// without re-running transcription.
+    pub caption_new_segment: std::collections::HashMap<Uuid, String>,
+    /// Dragged split point in ms relative to the clip, keyed by
+    /// (clip_id, segment_idx). Only a click on Split applies it.
+    pub caption_split_at: std::collections::HashMap<(Uuid, usize), u64>,
     /// Text buffer for the name field while it has focus.
     pub name_buffer: Option<String>,
     /// True while the name field holds focus (used to detect blur).
@@ -71,6 +78,28 @@ pub enum PendingEdit {
     CaptionSegmentText {
         idx: usize,
         text: String,
+    },
+    /// Insert a new caption segment at `idx` with the given span,
+    /// relative to the clip. Used for hand-typed captions on a clip
+    /// whisper found no speech in.
+    CaptionSegmentAdd {
+        idx: usize,
+        start_ms: u64,
+        end_ms: u64,
+        text: String,
+    },
+    /// Remove caption segment `idx`.
+    CaptionSegmentRemove {
+        idx: usize,
+    },
+    /// Split caption segment `idx` at `at_ms` (relative to the clip).
+    CaptionSegmentSplit {
+        idx: usize,
+        at_ms: u64,
+    },
+    /// Merge caption segment `idx` with the one after it.
+    CaptionSegmentMerge {
+        idx: usize,
     },
     /// Set or clear the clip's display name. Empty string = clear.
     Name(String),
@@ -486,17 +515,19 @@ pub fn show(
         effect,
     } = &clip.clip_type
     {
+        let mut local_edits: Vec<PendingEdit> = Vec::new();
+        let clip_id = clip.id;
         ui.add_space(space::XS);
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("Model")
+                egui::RichText::new(tr("props-captions-model"))
                     .small()
                     .color(egui::Color32::from_gray(140)),
             );
             ui.label(egui::RichText::new(model_id).monospace().size(text::S));
             ui.separator();
             ui.label(
-                egui::RichText::new("Language")
+                egui::RichText::new(tr("props-captions-language"))
                     .small()
                     .color(egui::Color32::from_gray(140)),
             );
@@ -505,23 +536,62 @@ pub fn show(
 
         let n = segments.len();
         ui.add_space(space::XXS);
+        // Hand-typed captions. A clip whisper found no speech in used
+        // to dead-end here with "delete this clip" and no way to enter
+        // anything, which made a silent clip unusable.
+        let mut new_text = state
+            .caption_new_segment
+            .get(&clip_id)
+            .cloned()
+            .unwrap_or_default();
+        let add_requested = ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut new_text)
+                    .id(egui::Id::new(("cap_add", clip_id)))
+                    .hint_text(tr("props-captions-add-hint"))
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_enabled_ui(!new_text.trim().is_empty(), |ui| {
+                ui.button(tr("props-captions-add")).clicked()
+            })
+            .inner
+        });
+        if add_requested.inner {
+            // New entries start where the previous one ended so they
+            // append in order instead of stacking at zero.
+            let start = segments.last().map(|s| s.end_ms).unwrap_or(0);
+            local_edits.push(PendingEdit::CaptionSegmentAdd {
+                idx: segments.len(),
+                start_ms: start,
+                end_ms: start.saturating_add(2000),
+                text: new_text.clone(),
+            });
+            new_text.clear();
+        }
+        state.caption_new_segment.insert(clip_id, new_text);
+        ui.add_space(space::XXS);
+
         if n == 0 {
             ui.label(
-                egui::RichText::new("No speech detected. (Empty segments — the clip can be deleted from the timeline.)")
+                egui::RichText::new(tr("props-captions-empty"))
                     .italics()
                     .color(egui::Color32::from_gray(150)),
             );
-            return;
-        }
-        ui.label(
-            egui::RichText::new(format!("{n} segment{}", if n == 1 { "" } else { "s" }))
+        } else {
+            ui.label(
+                egui::RichText::new(if n == 1 {
+                    tr("props-captions-segment-one")
+                } else {
+                    tr("props-captions-segment-many").replace("{n}", &n.to_string())
+                })
                 .color(egui::Color32::from_gray(200)),
-        );
-        ui.label(
-            egui::RichText::new("Edit any text and press Enter (or click away) to save.")
-                .small()
-                .color(egui::Color32::from_gray(140)),
-        );
+            );
+            ui.label(
+                egui::RichText::new(tr("props-captions-edit-hint"))
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+        }
         // --- Style editor ---
         ui.add_space(space::S);
         ui.label(egui::RichText::new(tr("props-captions-style-header")).strong());
@@ -631,6 +701,23 @@ pub fn show(
                         .add(egui::Slider::new(&mut cs.bg_opacity, 0.0..=1.0).fixed_decimals(2))
                         .changed();
                 });
+            }
+
+            // Word-by-word reveal. Off by default: the whole segment is held
+            // for its duration, which is what a subtitle is supposed
+            // to do. Karaoke is opt-in for social-video captions.
+            ui.horizontal(|ui| {
+                changed |=
+                    switch::switch_labeled(ui, &mut cs.karaoke, tr("props-captions-style-karaoke"))
+                        .changed();
+            });
+            if cs.karaoke {
+                ui.label(
+                    egui::RichText::new(tr("props-captions-style-karaoke-hint"))
+                        .small()
+                        .italics()
+                        .color(egui::Color32::from_gray(130)),
+                );
             }
 
             if changed {
@@ -757,8 +844,8 @@ pub fn show(
         ui.separator();
         ui.add_space(space::XS);
 
-        let clip_id = clip.id;
-        let mut local_edits: Vec<PendingEdit> = Vec::new();
+        // local_edits and clip_id are declared at the top of the captions
+        // block because the hand-typed-caption field uses both.
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -832,6 +919,71 @@ pub fn show(
                         state.caption_edit_buffers.insert(key, buf);
                     }
 
+                    ui.add_space(space::XS);
+                    // Split point, dragged in seconds relative to the
+                    // clip. Only a click on Split applies it, so
+                    // dragging never mutates the project.
+                    let split_key = (clip_id, i);
+                    let mut split_at = *state
+                        .caption_split_at
+                        .get(&split_key)
+                        .unwrap_or(&((seg.start_ms + seg.end_ms) / 2));
+                    split_at = split_at.clamp(seg.start_ms, seg.end_ms);
+                    let can_split =
+                        caprust_core::commands::caption_segments::SplitCaptionSegmentCommand::can_split(
+                            seg, split_at,
+                        );
+                    let can_merge = i + 1 < segments.len();
+
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(tr("props-captions-split-at"))
+                                .small()
+                                .color(egui::Color32::from_gray(140)),
+                        );
+                        let mut secs = split_at as f32 / 1000.0;
+                        let r = ui.add(
+                            egui::DragValue::new(&mut secs)
+                                .speed(0.05)
+                                .range(0.0..=(seg.end_ms as f32 / 1000.0))
+                                .fixed_decimals(2)
+                                .suffix(" s"),
+                        );
+                        if r.changed() {
+                            split_at = (secs * 1000.0).round() as u64;
+                            state.caption_split_at.insert(split_key, split_at);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .small_button(ph::X)
+                                .on_hover_text(tr("props-captions-remove"))
+                                .clicked()
+                            {
+                                local_edits.push(PendingEdit::CaptionSegmentRemove { idx: i });
+                            }
+                            if ui
+                                .small_button(tr("props-captions-merge"))
+                                .on_hover_text(tr("props-captions-merge-hint"))
+                                .clicked()
+                                && can_merge
+                            {
+                                local_edits.push(PendingEdit::CaptionSegmentMerge { idx: i });
+                            }
+                            let split_clicked = ui
+                                .add_enabled_ui(can_split, |ui| {
+                                    ui.small_button(tr("props-captions-split"))
+                                        .on_hover_text(tr("props-captions-split-hint"))
+                                })
+                                .inner
+                                .clicked();
+                            if split_clicked {
+                                local_edits.push(PendingEdit::CaptionSegmentSplit {
+                                    idx: i,
+                                    at_ms: split_at,
+                                });
+                            }
+                        });
+                    });
                     ui.add_space(space::XS);
                     ui.separator();
                     ui.add_space(space::XS);
@@ -2016,210 +2168,224 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(space::S);
 
-    // --- Color LUT ---
-    ui.label(egui::RichText::new(tr("props-lut")).strong());
-    ui.add_space(space::XS);
-    let lut_id = clip.lut.clone().unwrap_or_default();
-    let lut_label = if lut_id.is_empty() {
-        tr("props-lut-none")
-    } else {
-        builtin_lut_label(&lut_id)
-    };
-    egui::Grid::new("clip_lut")
-        .num_columns(3)
-        .spacing([space::S, space::XS])
-        .show(ui, |ui| {
-            ui.label(lut_label);
-            if ui.small_button(tr("props-lut-clear")).clicked() && clip.lut.is_some() {
-                state.pending.push(PendingEdit::ClearLut);
-            }
-            ui.end_row();
-
-            ui.label("");
-            ui.label("");
-            ui.end_row();
-
-            // Built-in picker.
-            ui.label(tr("props-lut-builtin"));
-            egui::ComboBox::from_id_salt("lut_builtin_combo")
-                .selected_text(if lut_id.is_empty() {
-                    tr("props-lut-none")
-                } else {
-                    builtin_lut_label(&lut_id)
-                })
-                .width(160.0)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(lut_id.is_empty(), tr("props-lut-none"))
-                        .clicked()
-                    {
-                        state.pending.push(PendingEdit::ClearLut);
-                    }
-                    for (id, label) in builtin_luts() {
-                        let selected = lut_id == id;
-                        if ui.selectable_label(selected, label).clicked() && !selected {
-                            state.pending.push(PendingEdit::SetLut(id.to_string()));
-                        }
-                    }
-                });
-            ui.end_row();
-
-            // Custom .cube upload.
-            ui.label(tr("props-lut-custom"));
-            if ui.button(tr("props-lut-upload")).clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Cube LUT", &["cube"])
-                    .pick_file()
-                {
-                    let path_str = path.to_string_lossy().to_string();
-                    state.pending.push(PendingEdit::SetLut(path_str));
-                }
-            }
-            ui.label("");
-            ui.end_row();
-        });
-
-    ui.add_space(space::S);
-
-    // --- Blend mode ---
-    ui.label(egui::RichText::new(tr("props-blend-mode")).strong());
-    ui.add_space(space::XS);
-    let blend_id = clip.blend_mode.clone().unwrap_or_default();
-    egui::ComboBox::from_id_salt("clip_blend_combo")
-        .selected_text(if blend_id.is_empty() || blend_id == "normal" {
-            tr("props-blend-none")
+    // Audio and Narration clips have no picture. Color LUT, blend mode
+    // and transitions are meaningless for them and used to render as
+    // dead controls on an audio clip, so all three sections are gated
+    // off below. Only the Effects list applies.
+    let clip_is_audio = matches!(
+        clip.clip_type,
+        ClipType::Audio { .. } | ClipType::Narration { .. }
+    );
+    if !clip_is_audio {
+        // --- Color LUT ---
+        ui.label(egui::RichText::new(tr("props-lut")).strong());
+        ui.add_space(space::XS);
+        let lut_id = clip.lut.clone().unwrap_or_default();
+        let lut_label = if lut_id.is_empty() {
+            tr("props-lut-none")
         } else {
-            blend_id.clone()
-        })
-        .width(160.0)
-        .show_ui(ui, |ui| {
-            if ui
-                .selectable_label(
-                    blend_id.is_empty() || blend_id == "normal",
-                    tr("props-blend-none"),
-                )
-                .clicked()
-            {
-                state.pending.push(PendingEdit::BlendMode(None));
-            }
-            for id in [
-                "multiply",
-                "screen",
-                "overlay",
-                "darken",
-                "lighten",
-                "difference",
-                "exclusion",
-                "dodge",
-                "burn",
-                "hardlight",
-                "softlight",
-                "addition",
-                "subtract",
-                "average",
-            ] {
-                let selected = blend_id == id;
-                if ui.selectable_label(selected, id).clicked() && !selected {
-                    state
-                        .pending
-                        .push(PendingEdit::BlendMode(Some(id.to_string())));
+            builtin_lut_label(&lut_id)
+        };
+        egui::Grid::new("clip_lut")
+            .num_columns(3)
+            .spacing([space::S, space::XS])
+            .show(ui, |ui| {
+                ui.label(lut_label);
+                if ui.small_button(tr("props-lut-clear")).clicked() && clip.lut.is_some() {
+                    state.pending.push(PendingEdit::ClearLut);
                 }
-            }
-        });
+                ui.end_row();
 
-    ui.add_space(space::S);
-
-    // --- Transitions ---
-    ui.label(egui::RichText::new("Transitions").strong());
-    egui::Grid::new("clip_transitions")
-        .num_columns(3)
-        .spacing([space::S, space::XS])
-        .show(ui, |ui| {
-            ui.label("In");
-            ui.label(clip.transition_in.clone().unwrap_or_else(|| "—".into()));
-            if clip.transition_in.is_some() && ui.small_button(ph::X).clicked() {
-                state.pending.push(PendingEdit::ClearTransitionIn);
-            }
-            ui.end_row();
-
-            // Easing row for the in transition. Visible only when
-            // there is a transition, and only enabled for the
-            // transitions that support easing (currently `fade`).
-            if clip.transition_in.is_some() {
-                ui.label(tr("props-transition-easing"));
-                let supports_easing = clip.transition_in.as_deref() == Some("fade");
-                ui.add_enabled_ui(supports_easing, |ui| {
-                    egui::ComboBox::from_id_salt("trans_in_ease_combo")
-                        .selected_text(ease_label(clip.transition_in_easing))
-                        .width(140.0)
-                        .show_ui(ui, |ui| {
-                            for e in [
-                                caprust_core::clip::EaseCurve::Linear,
-                                caprust_core::clip::EaseCurve::EaseIn,
-                                caprust_core::clip::EaseCurve::EaseOut,
-                                caprust_core::clip::EaseCurve::EaseInOut,
-                            ] {
-                                let selected = clip.transition_in_easing == e;
-                                if chip::chip(ui, ease_label(e), selected).clicked() && !selected {
-                                    state.pending.push(PendingEdit::TransitionInEasing(e));
-                                }
-                            }
-                        });
-                });
+                ui.label("");
                 ui.label("");
                 ui.end_row();
 
-                // Shared duration slider on the in row. Applies to
-                // both edges; not duplicated on the out side.
-                ui.label(tr("props-transition-duration"));
-                let mut dur = clip.transition_duration_ms;
-                let resp = ui.add(
-                    egui::Slider::new(&mut dur, 100..=3000)
-                        .suffix(" ms")
-                        .step_by(10.0),
-                );
-                if resp.changed() && dur != clip.transition_duration_ms {
-                    state.pending.push(PendingEdit::TransitionDuration(dur));
+                // Built-in picker.
+                ui.label(tr("props-lut-builtin"));
+                egui::ComboBox::from_id_salt("lut_builtin_combo")
+                    .selected_text(if lut_id.is_empty() {
+                        tr("props-lut-none")
+                    } else {
+                        builtin_lut_label(&lut_id)
+                    })
+                    .width(160.0)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(lut_id.is_empty(), tr("props-lut-none"))
+                            .clicked()
+                        {
+                            state.pending.push(PendingEdit::ClearLut);
+                        }
+                        for (id, label) in builtin_luts() {
+                            let selected = lut_id == id;
+                            if ui.selectable_label(selected, label).clicked() && !selected {
+                                state.pending.push(PendingEdit::SetLut(id.to_string()));
+                            }
+                        }
+                    });
+                ui.end_row();
+
+                // Custom .cube upload.
+                ui.label(tr("props-lut-custom"));
+                if ui.button(tr("props-lut-upload")).clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Cube LUT", &["cube"])
+                        .pick_file()
+                    {
+                        let path_str = path.to_string_lossy().to_string();
+                        state.pending.push(PendingEdit::SetLut(path_str));
+                    }
                 }
                 ui.label("");
                 ui.end_row();
-            }
+            });
 
-            ui.label("Out");
-            ui.label(clip.transition_out.clone().unwrap_or_else(|| "—".into()));
-            if clip.transition_out.is_some() && ui.small_button(ph::X).clicked() {
-                state.pending.push(PendingEdit::ClearTransitionOut);
-            }
-            ui.end_row();
+        ui.add_space(space::S);
 
-            if clip.transition_out.is_some() {
-                ui.label(tr("props-transition-easing"));
-                let supports_easing = clip.transition_out.as_deref() == Some("fade");
-                ui.add_enabled_ui(supports_easing, |ui| {
-                    egui::ComboBox::from_id_salt("trans_out_ease_combo")
-                        .selected_text(ease_label(clip.transition_out_easing))
-                        .width(140.0)
-                        .show_ui(ui, |ui| {
-                            for e in [
-                                caprust_core::clip::EaseCurve::Linear,
-                                caprust_core::clip::EaseCurve::EaseIn,
-                                caprust_core::clip::EaseCurve::EaseOut,
-                                caprust_core::clip::EaseCurve::EaseInOut,
-                            ] {
-                                let selected = clip.transition_out_easing == e;
-                                if chip::chip(ui, ease_label(e), selected).clicked() && !selected {
-                                    state.pending.push(PendingEdit::TransitionOutEasing(e));
-                                }
-                            }
-                        });
-                });
-                ui.label("");
+        // --- Blend mode ---
+        ui.label(egui::RichText::new(tr("props-blend-mode")).strong());
+        ui.add_space(space::XS);
+        let blend_id = clip.blend_mode.clone().unwrap_or_default();
+        egui::ComboBox::from_id_salt("clip_blend_combo")
+            .selected_text(if blend_id.is_empty() || blend_id == "normal" {
+                tr("props-blend-none")
+            } else {
+                blend_id.clone()
+            })
+            .width(160.0)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(
+                        blend_id.is_empty() || blend_id == "normal",
+                        tr("props-blend-none"),
+                    )
+                    .clicked()
+                {
+                    state.pending.push(PendingEdit::BlendMode(None));
+                }
+                for id in [
+                    "multiply",
+                    "screen",
+                    "overlay",
+                    "darken",
+                    "lighten",
+                    "difference",
+                    "exclusion",
+                    "dodge",
+                    "burn",
+                    "hardlight",
+                    "softlight",
+                    "addition",
+                    "subtract",
+                    "average",
+                ] {
+                    let selected = blend_id == id;
+                    if ui.selectable_label(selected, id).clicked() && !selected {
+                        state
+                            .pending
+                            .push(PendingEdit::BlendMode(Some(id.to_string())));
+                    }
+                }
+            });
+
+        ui.add_space(space::S);
+
+        // --- Transitions ---
+        ui.label(egui::RichText::new("Transitions").strong());
+        egui::Grid::new("clip_transitions")
+            .num_columns(3)
+            .spacing([space::S, space::XS])
+            .show(ui, |ui| {
+                ui.label("In");
+                ui.label(clip.transition_in.clone().unwrap_or_else(|| "—".into()));
+                if clip.transition_in.is_some() && ui.small_button(ph::X).clicked() {
+                    state.pending.push(PendingEdit::ClearTransitionIn);
+                }
                 ui.end_row();
-            }
-        });
 
-    ui.add_space(space::M_PLUS);
-    ui.separator();
+                // Easing row for the in transition. Visible only when
+                // there is a transition, and only enabled for the
+                // transitions that support easing (currently `fade`).
+                if clip.transition_in.is_some() {
+                    ui.label(tr("props-transition-easing"));
+                    let supports_easing = clip.transition_in.as_deref() == Some("fade");
+                    ui.add_enabled_ui(supports_easing, |ui| {
+                        egui::ComboBox::from_id_salt("trans_in_ease_combo")
+                            .selected_text(ease_label(clip.transition_in_easing))
+                            .width(140.0)
+                            .show_ui(ui, |ui| {
+                                for e in [
+                                    caprust_core::clip::EaseCurve::Linear,
+                                    caprust_core::clip::EaseCurve::EaseIn,
+                                    caprust_core::clip::EaseCurve::EaseOut,
+                                    caprust_core::clip::EaseCurve::EaseInOut,
+                                ] {
+                                    let selected = clip.transition_in_easing == e;
+                                    if chip::chip(ui, ease_label(e), selected).clicked()
+                                        && !selected
+                                    {
+                                        state.pending.push(PendingEdit::TransitionInEasing(e));
+                                    }
+                                }
+                            });
+                    });
+                    ui.label("");
+                    ui.end_row();
+
+                    // Shared duration slider on the in row. Applies to
+                    // both edges; not duplicated on the out side.
+                    ui.label(tr("props-transition-duration"));
+                    let mut dur = clip.transition_duration_ms;
+                    let resp = ui.add(
+                        egui::Slider::new(&mut dur, 100..=3000)
+                            .suffix(" ms")
+                            .step_by(10.0),
+                    );
+                    if resp.changed() && dur != clip.transition_duration_ms {
+                        state.pending.push(PendingEdit::TransitionDuration(dur));
+                    }
+                    ui.label("");
+                    ui.end_row();
+                }
+
+                ui.label("Out");
+                ui.label(clip.transition_out.clone().unwrap_or_else(|| "—".into()));
+                if clip.transition_out.is_some() && ui.small_button(ph::X).clicked() {
+                    state.pending.push(PendingEdit::ClearTransitionOut);
+                }
+                ui.end_row();
+
+                if clip.transition_out.is_some() {
+                    ui.label(tr("props-transition-easing"));
+                    let supports_easing = clip.transition_out.as_deref() == Some("fade");
+                    ui.add_enabled_ui(supports_easing, |ui| {
+                        egui::ComboBox::from_id_salt("trans_out_ease_combo")
+                            .selected_text(ease_label(clip.transition_out_easing))
+                            .width(140.0)
+                            .show_ui(ui, |ui| {
+                                for e in [
+                                    caprust_core::clip::EaseCurve::Linear,
+                                    caprust_core::clip::EaseCurve::EaseIn,
+                                    caprust_core::clip::EaseCurve::EaseOut,
+                                    caprust_core::clip::EaseCurve::EaseInOut,
+                                ] {
+                                    let selected = clip.transition_out_easing == e;
+                                    if chip::chip(ui, ease_label(e), selected).clicked()
+                                        && !selected
+                                    {
+                                        state.pending.push(PendingEdit::TransitionOutEasing(e));
+                                    }
+                                }
+                            });
+                    });
+                    ui.label("");
+                    ui.end_row();
+                }
+            });
+
+        ui.add_space(space::M_PLUS);
+        ui.separator();
+    }
 
     // --- Applied effects ---
     ui.label(egui::RichText::new("Applied Effects").strong());

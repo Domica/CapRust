@@ -903,3 +903,25 @@ recovery-prompt-later = Decidir luego
 recovery-prompt-discard = Descartar
 toast-recovery-restored = Se recupero tu sesion sin guardar. Pulsa Ctrl+S para conservarla.
 toast-recovery-failed = No se pudo leer la copia de recuperacion.
+
+# --- Edicion de segmentos de subtitulos (#1) ---
+props-captions-add = Anadir
+props-captions-add-hint = Escribe un subtitulo a mano y pulsa Anadir
+props-captions-empty = No se detecto voz. Escribe un subtitulo arriba o elimina este clip.
+props-captions-segment-one = 1 segmento
+props-captions-segment-many = { $n } segmentos
+props-captions-edit-hint = Edita cualquier texto y pulsa Intro (o haz clic fuera) para guardar.
+props-captions-split = Dividir
+props-captions-split-hint = Corta este segmento en dos en el punto de abajo. El corte cae en un limite de palabra.
+props-captions-split-at = Cortar en
+props-captions-merge = Unir
+props-captions-merge-hint = Une este segmento con el de abajo.
+props-captions-remove = Quitar este segmento
+
+# --- Etiquetas del panel de subtitulos (#1) ---
+props-captions-model = Modelo
+props-captions-language = Idioma
+
+# --- Modo de revelado de subtitulos (#1) ---
+props-captions-style-karaoke = Revelado palabra a palabra
+props-captions-style-karaoke-hint = El subtitulo se escribe al ritmo de la voz. Desactivado = la linea completa permanece en pantalla durante todo el segmento.

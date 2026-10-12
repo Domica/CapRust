@@ -2,6 +2,7 @@
 
 pub mod add_master_plugin;
 pub mod add_media;
+pub mod caption_segments;
 pub mod create_multicam_group;
 pub mod delete_clip;
 pub mod duplicate_track;

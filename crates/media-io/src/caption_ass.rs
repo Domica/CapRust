@@ -271,10 +271,13 @@ pub fn build(
         if end <= 0.0 {
             continue;
         }
-        let text = if seg.words.is_empty() {
-            escape_ass_text(seg.text.trim())
-        } else {
+        // Default is the whole segment held for its duration. Karaoke only
+        // when the clip opts in: the word timings drive the reveal,
+        // and a reader expects a subtitle to sit still.
+        let text = if style.karaoke && seg.words.len() >= 2 {
             karaoke(seg, time_offset_sec)
+        } else {
+            escape_ass_text(seg.text.trim())
         };
         if text.is_empty() {
             continue;
@@ -292,6 +295,13 @@ pub fn build(
 mod tests {
     use super::*;
     use caprust_core::clip::WordTiming;
+
+    fn karaoke_style() -> CaptionStyle {
+        CaptionStyle {
+            karaoke: true,
+            ..Default::default()
+        }
+    }
 
     fn seg_with_words() -> CaptionSegment {
         CaptionSegment {
@@ -322,7 +332,7 @@ mod tests {
     /// produce one Dialogue line, not one per word.
     #[test]
     fn word_count_does_not_change_dialogue_count() {
-        let style = CaptionStyle::default();
+        let style = karaoke_style();
         let body = build(&[seg_with_words()], &style, "Arial", 1920, 1080, 0.0);
         let lines = body.lines().filter(|l| l.starts_with("Dialogue:")).count();
         assert_eq!(lines, 1, "one segment must be one dialogue line: {body}");
@@ -335,7 +345,7 @@ mod tests {
     /// A long segment is the export-speed case; it must not explode.
     #[test]
     fn long_segment_stays_single_line() {
-        let style = CaptionStyle::default();
+        let style = karaoke_style();
         let words: Vec<WordTiming> = (0..120)
             .map(|i| WordTiming {
                 start_ms: i * 400,
@@ -360,7 +370,7 @@ mod tests {
     /// libass stutters on those.
     #[test]
     fn repeated_word_times_are_floored() {
-        let style = CaptionStyle::default();
+        let style = karaoke_style();
         let seg = CaptionSegment {
             start_ms: 0,
             end_ms: 1000,
@@ -445,6 +455,40 @@ mod tests {
         assert!(body.contains("0:00:02.50,CapRust"), "end shifted: {body}");
     }
 
+    /// Default is the plain subtitle: the whole segment held on screen
+    /// for its duration. Karaoke is opt-in, because a reader expects a
+    /// subtitle to sit still and the word-by-word reveal is a deliberate
+    /// style choice for social-video captions.
+    #[test]
+    fn karaoke_is_opt_in() {
+        let style = CaptionStyle::default();
+        assert!(!style.karaoke, "karaoke must default to off");
+        let body = build(&[seg_with_words()], &style, "Arial", 1920, 1080, 0.0);
+        let line = body
+            .lines()
+            .find(|l| l.starts_with("Dialogue:"))
+            .expect("dialogue line");
+        assert!(
+            !line.contains("\\k"),
+            "default must not emit karaoke tags: {line}"
+        );
+        assert!(
+            line.contains("hello brave world"),
+            "default shows the whole segment: {line}"
+        );
+
+        let karaoke = CaptionStyle {
+            karaoke: true,
+            ..Default::default()
+        };
+        let body = build(&[seg_with_words()], &karaoke, "Arial", 1920, 1080, 0.0);
+        assert!(
+            body.lines()
+                .any(|l| l.starts_with("Dialogue:") && l.contains("\\k")),
+            "opting in must produce karaoke tags: {body}"
+        );
+    }
+
     /// ASS stores opacity inverted in the leading byte (`00` opaque, `FF`
     /// transparent). Getting that backwards renders the caption in a
     /// fully transparent colour, which is indistinguishable from "there
@@ -518,7 +562,7 @@ mod tests {
     /// spelled out on screen, which is exactly what a user reported.
     #[test]
     fn karaoke_tags_are_wrapped_in_override_blocks() {
-        let style = CaptionStyle::default();
+        let style = karaoke_style();
         let body = build(&[seg_with_words()], &style, "Arial", 1920, 1080, 0.0);
         let line = body
             .lines()

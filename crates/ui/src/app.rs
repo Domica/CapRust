@@ -7662,6 +7662,35 @@ impl CapRustApp {
                                     );
                             let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
                         }
+                        PendingEdit::CaptionSegmentAdd {
+                            idx,
+                            start_ms,
+                            end_ms,
+                            text,
+                        } => {
+                            let c = caprust_core::commands::caption_segments::AddCaptionSegmentCommand::new(
+                                id, idx, start_ms, end_ms, text,
+                            );
+                            let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                        }
+                        PendingEdit::CaptionSegmentRemove { idx } => {
+                            let c = caprust_core::commands::caption_segments::RemoveCaptionSegmentCommand::new(
+                                id, idx,
+                            );
+                            let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                        }
+                        PendingEdit::CaptionSegmentSplit { idx, at_ms } => {
+                            let c = caprust_core::commands::caption_segments::SplitCaptionSegmentCommand::new(
+                                id, idx, at_ms,
+                            );
+                            let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                        }
+                        PendingEdit::CaptionSegmentMerge { idx } => {
+                            let c = caprust_core::commands::caption_segments::MergeCaptionSegmentsCommand::new(
+                                id, idx,
+                            );
+                            let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                        }
                         PendingEdit::TextStyle(v) => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .text_style(v);

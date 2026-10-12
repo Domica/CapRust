@@ -79,6 +79,14 @@ pub struct CaptionStyle {
     pub bg_enabled: bool,
     #[serde(default = "default_caption_bg_opacity")]
     pub bg_opacity: f32,
+    /// Reveal the caption word by word in step with the speech.
+    ///
+    /// Off by default: the plain behaviour is to hold the whole
+    /// segment text on screen for its duration, which is what a reader
+    /// expects from a subtitle. Karaoke is there for social-video
+    /// captions where the tracking effect is the point.
+    #[serde(default)]
+    pub karaoke: bool,
 }
 
 fn default_caption_font_size() -> f32 {
@@ -107,6 +115,7 @@ impl Default for CaptionStyle {
             outline_width: default_caption_outline_width(),
             bg_enabled: false,
             bg_opacity: default_caption_bg_opacity(),
+            karaoke: false,
         }
     }
 }
