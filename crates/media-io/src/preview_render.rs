@@ -85,6 +85,14 @@ pub struct PreviewRenderer {
     /// Must outlive `child`: ffmpeg reads the script at startup, after
     /// spawn() already returned.
     _filter_script: Option<crate::filter_script::FilterScript>,
+    /// Owns the ASS files the filtergraph references.
+    ///
+    /// `spawn` takes the plan by reference and the caller drops it as
+    /// soon as this returns, so without taking the guards here the
+    /// `RenderPlan` would delete the .ass files mid-flight and ffmpeg
+    /// would fail with "Unable to open ...ass", killing the preview as
+    /// soon as any caption clip exists.
+    _caption_ass: Vec<crate::caption_ass::AssScript>,
 }
 
 /// Shared input block for preview-family renders: images get
@@ -446,6 +454,14 @@ impl PreviewRenderer {
             plan.inputs.len()
         );
 
+        // Take ownership of every ASS guard the filtergraph references so the
+        // temp files survive as long as the child process.
+        let caption_ass = plan
+            .text_clips
+            .iter()
+            .filter_map(|t| t.ass.clone())
+            .collect();
+
         Ok(Self {
             child,
             rx,
@@ -456,6 +472,7 @@ impl PreviewRenderer {
             fps,
             started_at_ms: start_ms,
             _filter_script: script_guard,
+            _caption_ass: caption_ass,
         })
     }
 

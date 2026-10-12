@@ -458,4 +458,27 @@ mod tests {
         };
         assert!(!path.exists(), "ASS file must be deleted on drop");
     }
+
+    /// Regression for #50: `PreviewRenderer::spawn` takes the plan by
+    /// reference and the caller drops it immediately, so the renderer
+    /// holds a clone. If dropping the original removed the file, ffmpeg
+    /// failed with "Unable to open ...ass" and the preview died as soon
+    /// as any caption clip existed.
+    #[test]
+    fn clone_keeps_the_file_alive_for_the_other_owner() {
+        let (path, clone) = {
+            let original = AssScript::write("[Script Info]\n").unwrap();
+            let path = original.path().to_path_buf();
+            // This is what PreviewRenderer::spawn does with the guards
+            // it finds on the plan.
+            (path.clone(), original.clone())
+        };
+        assert!(
+            path.exists(),
+            "dropping the plan must not delete a file the renderer still references"
+        );
+
+        drop(clone);
+        assert!(!path.exists(), "the last owner dropping must clean up");
+    }
 }
