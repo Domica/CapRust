@@ -843,6 +843,16 @@ impl VideoEncoder {
     pub fn probe(self, ffmpeg: &std::path::Path) -> bool {
         use std::process::{Command, Stdio};
         let mut cmd = Command::new(ffmpeg);
+        // Same window suppression as media-io's silent_command, which
+        // this crate cannot call because media-io depends on core.
+        // Without it the probe flashes a console window nine times as
+        // the export dialog opens.
+        #[cfg(all(windows, not(debug_assertions)))]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW = 0x08000000
+            cmd.creation_flags(0x0800_0000);
+        }
         cmd.args([
             "-hide_banner",
             "-loglevel",

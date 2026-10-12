@@ -925,3 +925,6 @@ props-captions-language = Jezik
 # --- Nacin prikaza titlova (#1) ---
 props-captions-style-karaoke = Postupno po rijecima
 props-captions-style-karaoke-hint = Titl se tipka sinkrono s govorom. Iskljuceno = cijela linija ostaje na ekranu kroz cijeli segment.
+
+# --- Export prozor (#51) ---
+exp-codec-probing = Provjeravam hardverske encodere...

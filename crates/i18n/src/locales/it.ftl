@@ -925,3 +925,6 @@ props-captions-language = Lingua
 # --- Modalita di comparsa dei sottotitoli (#1) ---
 props-captions-style-karaoke = Comparsa parola per parola
 props-captions-style-karaoke-hint = Il sottotitolo viene digitato in sincrono con la voce. Disattivato = l'intera riga resta a schermo per tutto il segmento.
+
+# --- Finestra di esportazione (#51) ---
+exp-codec-probing = Controllo i codificatori hardware...

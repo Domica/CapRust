@@ -925,3 +925,6 @@ props-captions-language = Language
 # --- Caption reveal mode (#1) ---
 props-captions-style-karaoke = Word-by-word reveal
 props-captions-style-karaoke-hint = Types the caption in time with the speech. Off = the whole line stays on screen for the whole segment.
+
+# --- Export window (#51) ---
+exp-codec-probing = Checking hardware encoders...

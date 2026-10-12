@@ -925,3 +925,6 @@ props-captions-language = Sprache
 # --- Untertitel-Einblendmodus (#1) ---
 props-captions-style-karaoke = Wortweise Einblendung
 props-captions-style-karaoke-hint = Der Untertitel wird im Rhythmus der Sprache getippt. Aus = die ganze Zeile bleibt das Segment lang stehen.
+
+# --- Exportfenster (#51) ---
+exp-codec-probing = Hardware-Encoder werden geprueft...

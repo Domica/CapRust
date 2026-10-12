@@ -4288,17 +4288,9 @@ mod tests {
         );
     }
 
-    /// Build a project with one Captions clip holding `segments` and a
-    /// 2 s placeholder video, then run the real planner.
-    fn plan_with_caption_segments(segments: Vec<caprust_core::clip::CaptionSegment>) -> RenderPlan {
-        plan_with_caption_segments_at(0, segments)
-    }
-
     /// Same, but the Captions clip opts into karaoke so word timings
     /// reach the ASS file.
-    fn plan_with_karaoke_segments(
-        segments: Vec<caprust_core::clip::CaptionSegment>,
-    ) -> RenderPlan {
+    fn plan_with_karaoke_segments(segments: Vec<caprust_core::clip::CaptionSegment>) -> RenderPlan {
         use caprust_core::clip::ClipType;
         let mut project = caprust_core::ProjectState::default();
         let cap_track = project
@@ -4324,7 +4316,8 @@ mod tests {
             segments,
         };
         project.add_clip(clip);
-        let mut placeholder = caprust_core::Clip::new_video("placeholder.mp4", vid_track, 0, 40_000);
+        let mut placeholder =
+            caprust_core::Clip::new_video("placeholder.mp4", vid_track, 0, 40_000);
         placeholder.clip_type = ClipType::Video {
             path: "placeholder.mp4".into(),
             duration_ms: 40_000,

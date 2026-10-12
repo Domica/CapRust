@@ -925,3 +925,6 @@ props-captions-language = Idioma
 # --- Modo de revelado de subtitulos (#1) ---
 props-captions-style-karaoke = Revelado palabra a palabra
 props-captions-style-karaoke-hint = El subtitulo se escribe al ritmo de la voz. Desactivado = la linea completa permanece en pantalla durante todo el segmento.
+
+# --- Ventana de exportacion (#51) ---
+exp-codec-probing = Comprobando codificadores de hardware...

@@ -246,6 +246,11 @@ pub struct CapRustApp {
     pub export_state: ExportState,
     /// Hardware encoders confirmed to work at runtime.
     pub available_encoders: Option<Vec<caprust_core::project::VideoEncoder>>,
+    /// Receiver for the background encoder-capability probe. `Some`
+    /// while a probe is in flight. Nine ffmpeg spawns cannot run on
+    /// the UI thread without freezing the window before it paints.
+    pub encoder_probe_rx:
+        Option<std::sync::mpsc::Receiver<Vec<caprust_core::project::VideoEncoder>>>,
     pub media_bin: MediaBinState,
     pub preview_size: PreviewSize,
     /// Media tab layout mode: "no-filter" (legacy flat list) or "filtered" (with sidebar).
@@ -691,6 +696,7 @@ impl CapRustApp {
             export_open: false,
             export_state: ExportState::default(),
             available_encoders: None,
+            encoder_probe_rx: None,
             media_bin,
             preview_size: PreviewSize::Medium,
             tab_layout: media_bin_layout.tab_layout,
@@ -9008,6 +9014,75 @@ impl CapRustApp {
         }
     }
 
+    /// Start the encoder-capability probe if it has not run yet, and
+    /// collect its result when it lands.
+    ///
+    /// Each candidate encoder costs one ffmpeg spawn (a 1-frame test
+    /// encode). Nine of those inline blocked the UI thread for long
+    /// enough that the export window never appeared, so the work
+    /// happens on a detached thread and the panel simply shows a
+    /// placeholder until the list arrives.
+    fn poll_encoder_probe(&mut self) {
+        use caprust_core::project::VideoEncoder;
+
+        if let Some(rx) = &self.encoder_probe_rx {
+            match rx.try_recv() {
+                Ok(list) => {
+                    tracing::info!("export: probed encoders available: {list:?}");
+                    self.available_encoders = Some(list);
+                    self.encoder_probe_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Probe thread died; fall back to the CPU codecs
+                    // so the export is still usable.
+                    self.available_encoders = Some(vec![
+                        VideoEncoder::H264Cpu,
+                        VideoEncoder::H265Cpu,
+                        VideoEncoder::Av1Cpu,
+                    ]);
+                    self.encoder_probe_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+            return;
+        }
+
+        if self.available_encoders.is_some() {
+            return;
+        }
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.available_encoders = Some(vec![
+                VideoEncoder::H264Cpu,
+                VideoEncoder::H265Cpu,
+                VideoEncoder::Av1Cpu,
+            ]);
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.encoder_probe_rx = Some(rx);
+        std::thread::spawn(move || {
+            let mut available = vec![
+                VideoEncoder::H264Cpu,
+                VideoEncoder::H265Cpu,
+                VideoEncoder::Av1Cpu,
+            ];
+            let path = std::path::Path::new(&ffmpeg);
+            for enc in [
+                VideoEncoder::H264Nvenc,
+                VideoEncoder::H265Nvenc,
+                VideoEncoder::Av1Nvenc,
+                VideoEncoder::H264Amf,
+                VideoEncoder::H265Amf,
+                VideoEncoder::Av1Amf,
+            ] {
+                if enc.probe(path) {
+                    available.push(enc);
+                }
+            }
+            let _ = tx.send(available);
+        });
+    }
+
     fn show_export_window(&mut self, ctx: &egui::Context) {
         let total_ms = self.total_duration_ms();
         let mut open = self.export_open;
@@ -9022,32 +9097,13 @@ impl CapRustApp {
             .show(ctx, |ui| {
                 let clip_count = self.project.clips.len();
                 let project_dims = self.project.project_dimensions();
-                if self.available_encoders.is_none() {
-                    use caprust_core::project::VideoEncoder;
-                    let mut available = vec![
-                        VideoEncoder::H264Cpu,
-                        VideoEncoder::H265Cpu,
-                        VideoEncoder::Av1Cpu,
-                    ];
-                    if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
-                        let path = std::path::Path::new(&ffmpeg);
-                        for enc in [
-                            VideoEncoder::H264Nvenc,
-                            VideoEncoder::H265Nvenc,
-                            VideoEncoder::Av1Nvenc,
-                            VideoEncoder::H264Amf,
-                            VideoEncoder::H265Amf,
-                            VideoEncoder::Av1Amf,
-                        ] {
-                            if enc.probe(path) {
-                                available.push(enc);
-                            }
-                        }
-                    }
-                    tracing::info!("export: probed encoders available: {available:?}");
-                    self.available_encoders = Some(available);
-                }
+                // Encoder detection spawns ffmpeg once per candidate.
+                // Doing that inline froze the UI for the whole probe and
+                // the window never painted, so it runs on a worker and
+                // the panel renders as soon as the result lands.
+                self.poll_encoder_probe();
                 let available = self.available_encoders.clone().unwrap_or_default();
+                let probing = self.encoder_probe_rx.is_some();
 
                 start_clicked = crate::panels::export_window::show(
                     ui,
@@ -9056,6 +9112,7 @@ impl CapRustApp {
                     total_ms,
                     clip_count,
                     project_dims,
+                    probing,
                 );
 
                 // Progress section

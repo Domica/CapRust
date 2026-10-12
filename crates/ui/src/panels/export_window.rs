@@ -145,6 +145,7 @@ pub fn show(
     duration_ms: u64,
     clip_count: usize,
     project_dims: (u32, u32),
+    probing_encoders: bool,
 ) -> bool {
     let mut clicked_export = false;
 
@@ -216,6 +217,14 @@ pub fn show(
                 }
             });
     });
+    if probing_encoders {
+        ui.label(
+            egui::RichText::new(tr("exp-codec-probing"))
+                .small()
+                .italics()
+                .color(egui::Color32::from_gray(140)),
+        );
+    }
 
     ui.add_space(space::L);
     ui.separator();
