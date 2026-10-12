@@ -123,6 +123,14 @@ pub struct AppSettings {
     /// 0 disables autosave entirely. See `crate::recovery`.
     #[serde(default = "default_autosave_minutes")]
     pub autosave_minutes: Option<u64>,
+    /// Whether the autosave interval came from the custom spinner
+    /// rather than a preset row.
+    ///
+    /// Without this the dropdown had no "Custom" entry: a hand-typed
+    /// interval still worked, but nothing in the list was selected
+    /// and re-opening the dialog gave no sign the value had stuck.
+    #[serde(default)]
+    pub autosave_custom: bool,
     /// When true, opening a project that has a newer recovery snapshot
     /// prompts to restore the unsaved session.
     #[serde(default = "default_true")]
@@ -182,6 +190,7 @@ impl Default for AppSettings {
             lut_cache_dir: None,
             clap_dir: None,
             autosave_minutes: default_autosave_minutes(),
+            autosave_custom: false,
             autosave_recovery: true,
         }
     }

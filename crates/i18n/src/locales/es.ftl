@@ -939,3 +939,6 @@ props-captions-style-size-unit-pct = % de altura
 
 # --- Fila personalizada en la lista de intervalos (#49)
 set-autosave-custom-value = Personalizado: { $v } min
+
+# --- Fila personalizada en la lista de intervalos (#49)
+set-autosave-custom-row = Personalizado: { $v } min

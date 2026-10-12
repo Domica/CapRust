@@ -6211,6 +6211,38 @@ mod reverse_filtergraph_tests {
         plan
     }
 
+    /// Pins the shape of a sped-up clip's audio leg.
+    ///
+    /// `AudioClip::duration_sec` holds the timeline window: the UI
+    /// speed menu writes `Clip::speed` and leaves
+    /// `Clip::duration_ms` alone, and every consumer that places a
+    /// clip on the timeline (split, ruler, `total_duration_sec`) reads
+    /// `duration_ms` as the length. So the source window has to be
+    /// `duration_sec * speed` for atempo to land back on `duration_sec`
+    /// of output. This test records the current behaviour so a change
+    /// to either side is a deliberate edit, not a silent drift.
+    #[test]
+    fn sped_up_audio_chain_shape() {
+        let mut plan = base_plan_audio(false);
+        plan.audio_clips[0].speed = 2.0;
+        let (fg, _, _) = plan.build_filtergraph().unwrap();
+        let audio: Vec<&str> = fg
+            .split(';')
+            .filter(|s| s.contains("atrim") && s.contains("atempo"))
+            .collect();
+        assert_eq!(audio.len(), 1, "expected one sped-up audio leg: {fg}");
+        assert!(
+            audio[0].contains("atrim=duration=2.000000"),
+            "trim window: {}",
+            audio[0]
+        );
+        assert!(
+            audio[0].contains("atempo=2.000000"),
+            "compression: {}",
+            audio[0]
+        );
+    }
+
     #[test]
     fn no_reverse_means_no_filter() {
         let (fg, _, _) = base_plan_video(false).build_filtergraph().unwrap();

@@ -939,3 +939,6 @@ props-captions-style-size-unit-pct = % der Hoehe
 
 # --- Eigener Eintrag in der Intervallliste (#49)
 set-autosave-custom-value = Benutzerdefiniert: { $v } Min
+
+# --- Eigener Eintrag in der Intervallliste (#49)
+set-autosave-custom-row = Benutzerdefiniert: { $v } Min

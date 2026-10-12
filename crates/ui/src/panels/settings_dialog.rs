@@ -948,18 +948,23 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
     // passes the value through Fluent instead.
     let current = settings.autosave_minutes.unwrap_or(0);
 
-    // A hand-typed interval has no preset row, so the list used to show
-    // nothing selected and the user could not tell the value had been
-    // accepted. Add the current value as a row when it is off-preset,
-    // so the dropdown always has a selected entry.
+    // The "Custom" row is always present, below the presets. Before it
+    // existed, a hand-typed interval had no selected row, so there was
+    // no visible confirmation that the value had been accepted. Picking
+    // Custom is what enables the spinner underneath.
     let mut rows: Vec<u64> = AUTOSAVE_PRESETS.to_vec();
-    let is_custom = current > 0 && !AUTOSAVE_PRESETS.contains(&current);
-    if is_custom {
-        rows.push(current);
+    let is_custom =
+        settings.autosave_custom || (current > 0 && !AUTOSAVE_PRESETS.contains(&current));
+    let custom_row = if is_custom { current.max(1) } else { 0 };
+    // Avoid duplicating a preset when the stored custom value happens
+    // to equal one.
+    if custom_row > 0 && !rows.contains(&custom_row) {
+        rows.push(custom_row);
     }
-    let label_for_row = |m: u64| {
-        if is_custom && m == current {
-            tr_with("set-autosave-custom-value", &[("v", &m.to_string())])
+
+    let label_for_row = |m: u64, is_custom_row: bool| {
+        if is_custom_row {
+            tr_with("set-autosave-custom-row", &[("v", &m.to_string())])
         } else if m == 0 {
             tr("set-autosave-off")
         } else {
@@ -968,25 +973,43 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
     };
 
     egui::ComboBox::from_id_salt("autosave_interval")
-        .selected_text(label_for_row(current))
+        .selected_text(label_for_row(
+            current,
+            custom_row > 0 && current == custom_row,
+        ))
         .width(180.0)
         .show_ui(ui, |ui| {
             for &m in &rows {
-                ui.selectable_value(&mut settings.autosave_minutes, Some(m), label_for_row(m));
+                let is_custom_row = m == custom_row && custom_row > 0;
+                let label = label_for_row(m, is_custom_row);
+                if ui
+                    .selectable_value(&mut settings.autosave_minutes, Some(m), label)
+                    .clicked()
+                {
+                    settings.autosave_custom = is_custom_row;
+                }
             }
         });
 
+    // The spinner is the custom entry's editor, so it is only
+    // meaningful once Custom has been picked.
+    let spinner_enabled = is_custom;
     ui.horizontal(|ui| {
         ui.label(tr("set-autosave-custom"));
         let mut mins = if current == 0 { 5 } else { current };
-        ui.add(
+        ui.add_enabled(
+            spinner_enabled,
             egui::DragValue::new(&mut mins)
                 .range(1..=240)
                 .suffix(" min"),
         )
         .on_hover_text(tr("set-autosave-custom-hint"));
-        if ui.button(tr("set-autosave-set")).clicked() {
+        if ui
+            .add_enabled(spinner_enabled, egui::Button::new(tr("set-autosave-set")))
+            .clicked()
+        {
             settings.autosave_minutes = Some(mins);
+            settings.autosave_custom = true;
             // Nothing on screen changes otherwise, so the user had no
             // way to tell whether the click registered.
             *autosave_applied = Some(mins);

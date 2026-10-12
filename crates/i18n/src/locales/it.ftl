@@ -939,3 +939,6 @@ props-captions-style-size-unit-pct = % di altezza
 
 # --- Riga personalizzata nell'elenco degli intervalli (#49)
 set-autosave-custom-value = Personalizzato: { $v } min
+
+# --- Riga personalizzata nell'elenco degli intervalli (#49)
+set-autosave-custom-row = Personalizzato: { $v } min

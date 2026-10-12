@@ -939,3 +939,6 @@ props-captions-style-size-unit-pct = % visine
 
 # --- Redak Custom u padajucem listi intervala (#49)
 set-autosave-custom-value = Custom: { $v } min
+
+# --- Redak Custom u padajucem listi intervala (#49)
+set-autosave-custom-row = Custom: { $v } min

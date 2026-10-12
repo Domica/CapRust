@@ -939,3 +939,6 @@ props-captions-style-size-unit-pct = % of height
 
 # --- Custom autosave row in the preset dropdown (#49)
 set-autosave-custom-value = Custom: { $v } min
+
+# --- Custom autosave row in the preset dropdown (#49)
+set-autosave-custom-row = Custom: { $v } min
