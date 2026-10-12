@@ -4172,9 +4172,14 @@ mod tests {
             ],
         }]);
         let body = ass_body_of(&plan);
-        assert!(body.contains("\\k2the"), "20 ms word kept as \\k2: {body}");
-        assert!(body.contains("\\k2quick"), "15 ms word kept: {body}");
-        assert!(body.contains("\\k6brown"), "55 ms word kept: {body}");
+        // Each `\k` must be wrapped in an ASS override block, or it
+        // renders as literal text ("\k2the" on screen).
+        assert!(
+            body.contains("{\\k2}the"),
+            "20 ms word kept as {{\\k2}}: {body}"
+        );
+        assert!(body.contains("{\\k2}quick"), "15 ms word kept: {body}");
+        assert!(body.contains("{\\k6}brown"), "55 ms word kept: {body}");
         assert!(!body.contains("\\k0"), "no zero-length karaoke run: {body}");
     }
 

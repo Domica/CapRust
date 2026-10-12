@@ -186,7 +186,10 @@ fn karaoke(segment: &CaptionSegment, time_offset_sec: f64) -> String {
         if i > 0 {
             parts.push(' ');
         }
-        parts.push_str(&format!("\\k{dur_cs}"));
+        // Each karaoke tag must sit inside its own ASS override block.
+        // A bare `\k40` outside braces is literal text, and the caption
+        // renders as "\k25Yes, \k23you're" with the tag spelled out.
+        parts.push_str(&format!("{{\\k{dur_cs}}}"));
         parts.push_str(&escape_ass_text(w.text.trim()));
         prev_end_ms = Some(end_ms);
     }
@@ -508,6 +511,31 @@ mod tests {
                 .any(|l| l.starts_with("Dialogue:") && l.contains("Yes.")),
             "a one-word caption must not vanish: {body}"
         );
+    }
+
+    /// A `\k` tag outside an ASS override block is literal text. The
+    /// caption then renders as "\k25Yes, \k23you're" with the tag
+    /// spelled out on screen, which is exactly what a user reported.
+    #[test]
+    fn karaoke_tags_are_wrapped_in_override_blocks() {
+        let style = CaptionStyle::default();
+        let body = build(&[seg_with_words()], &style, "Arial", 1920, 1080, 0.0);
+        let line = body
+            .lines()
+            .find(|l| l.starts_with("Dialogue:"))
+            .expect("dialogue line");
+        assert!(
+            line.contains("{\\k30}hello {\\k40}brave {\\k30}world"),
+            "every \\k must be inside {{...}}: {line}"
+        );
+        // A bare tag (not preceded by '{') is what renders literally.
+        let text_part = line.split(",,,").nth(1).unwrap_or_default();
+        for tag in text_part.split("{\\k").skip(1) {
+            assert!(
+                !tag.starts_with('}') || tag.contains('}'),
+                "malformed override block: {tag}"
+            );
+        }
     }
 
     #[test]
