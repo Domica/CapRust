@@ -405,6 +405,31 @@ mod tests {
         }
     }
 
+    /// Two projects that share a file name but live in different
+    /// folders. Before each project got its own subdirectory, both
+    /// wrote the same temp filename into one shared folder, so a
+    /// clear for one could delete the temp file the other was about
+    /// to rename into place.
+    #[test]
+    fn same_named_projects_get_separate_recovery_dirs() {
+        let a = tmp_project_dir("same-a").join("Clip.caprust");
+        let b = tmp_project_dir("same-b").join("Clip.caprust");
+        assert_ne!(
+            slot_paths(&a),
+            slot_paths(&b),
+            "same-named projects in different folders must not share slots"
+        );
+        assert_ne!(slot_dir(&a), slot_dir(&b));
+        // Clearing one leaves the other's newest slot readable.
+        write_snapshot(&a, &project("same", "a"), 1_000).unwrap();
+        clear_snapshots(&b);
+        assert!(
+            newest_snapshot(&a).is_some(),
+            "clearing an unrelated project must not disturb this one"
+        );
+        clear_snapshots(&a);
+    }
+
     /// The ring must not grow without bound across many autosaves.
     #[test]
     fn ring_is_bounded() {
