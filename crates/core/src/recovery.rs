@@ -107,12 +107,22 @@ fn slot_stem(project_file: &Path) -> String {
 }
 
 /// All snapshot paths for a project, newest slot first.
+///
+/// Each project gets its own subdirectory named after
+/// [`slot_stem`]. The slots live inside it, so one project's temp
+/// file can never collide with another project's, and clearing one
+/// project cannot disturb a snapshot belonging to a different one.
 fn slot_paths(project_file: &Path) -> Vec<PathBuf> {
-    let dir = recovery_dir();
     let stem = slot_stem(project_file);
+    let dir = recovery_dir().join(&stem);
     (0..KEEP_SNAPSHOTS)
         .map(|i| dir.join(format!("{stem}.{i}.recovery")))
         .collect()
+}
+
+/// The per-project subdirectory holding every slot for `project_file`.
+fn slot_dir(project_file: &Path) -> PathBuf {
+    recovery_dir().join(slot_stem(project_file))
 }
 
 /// Write a snapshot, rotating older ones down the ring.
@@ -123,7 +133,7 @@ fn slot_paths(project_file: &Path) -> Vec<PathBuf> {
 /// rather than a truncated slot 0.
 pub fn write_snapshot(project_file: &Path, state: &ProjectState, saved_at: u64) -> Result<PathBuf> {
     let paths = slot_paths(project_file);
-    let dir = recovery_dir();
+    let dir = slot_dir(project_file);
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("create recovery dir {}", dir.display()))?;
 
@@ -181,11 +191,17 @@ pub fn newest_snapshot(project_file: &Path) -> Option<RecoverySnapshot> {
 /// Delete every snapshot for a project. Called after a real Save and
 /// when the user discards a recovery prompt.
 pub fn clear_snapshots(project_file: &Path) {
-    for path in slot_paths(project_file) {
-        std::fs::remove_file(&path).ok();
-    }
-    let dir = recovery_dir();
-    std::fs::remove_dir(&dir).ok();
+    // The whole per-project directory, slots and temp file together.
+    //
+    // This used to remove the *shared* recovery folder instead, which
+    // deleted every other project's snapshots and raced with a
+    // concurrent `write_snapshot`: a clear landing between the
+    // writer's `create_dir_all` and its first write surfaced as
+    // ENOENT on the temp file. It failed on Ubuntu CI while Windows
+    // and macOS passed on timing. With one directory per project,
+    // removing it only ever disturbs this project.
+    let dir = slot_dir(project_file);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// A recovery worth offering to the user.
@@ -294,6 +310,101 @@ mod tests {
         clear_snapshots(&pf);
     }
 
+    /// `clear_snapshots` used to `remove_dir` the shared recovery
+    /// folder. On Linux the folder lands in `/tmp`, where another
+    /// test's `write_snapshot` could be between `create_dir_all` and
+    /// its first write, and the removal surfaced as ENOENT on the
+    /// temp file. Windows and macOS passed on timing, so this is
+    /// deterministic: clear, then write, and the write must succeed.
+    #[test]
+    fn write_survives_clearing_a_different_project() {
+        let clearer = tmp_project_dir("clearer");
+        let writer = tmp_project_dir("writer");
+        write_snapshot(&writer, &project("writer", "first"), 1_000).unwrap();
+
+        clear_snapshots(&clearer);
+
+        let state = project("writer", "second");
+        write_snapshot(&writer, &state, 2_000)
+            .expect("write after clearing another project must still work");
+        assert_eq!(restore(&writer).unwrap().name, "second");
+        clear_snapshots(&writer);
+        clear_snapshots(&clearer);
+    }
+
+    /// One project's directory being cleared must not disturb any
+    /// other project's snapshots.
+    ///
+    /// The reported CI failure was this in reverse: `clear_snapshots`
+    /// removed the shared recovery folder, so a clear landing between
+    /// another project's `create_dir_all` and its first write produced
+    /// ENOENT on the temp file. Ubuntu failed while Windows and macOS
+    /// passed on timing. Every project now has its own subdirectory, so
+    /// a clear only ever touches one project.
+    ///
+    /// Writers and clearers run at the same time but never on the same
+    /// project: the app serialises both onto the UI thread, so that
+    /// combination is not reachable and is deliberately not asserted.
+    #[test]
+    fn clearing_one_project_leaves_others_intact() {
+        use std::sync::Arc;
+        use std::sync::Mutex;
+
+        let writers: Vec<PathBuf> = (0..4u32)
+            .map(|w| tmp_project_dir(&format!("iso{w}")))
+            .collect();
+        let victim = tmp_project_dir("iso-victim");
+        // Give the victim a snapshot to lose, then leave it alone.
+        write_snapshot(&victim, &project("iso-victim", "keep"), 1_000).unwrap();
+
+        let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut handles = Vec::new();
+        for (w, path) in writers.iter().enumerate() {
+            let errors = Arc::clone(&errors);
+            let path = path.clone();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..25 {
+                    let state = project(&format!("iso{w}"), &format!("v{i}"));
+                    if let Err(e) = write_snapshot(&path, &state, 1_000 + i as u64) {
+                        errors.lock().unwrap().push(format!("w{w}-{i}: {e:#}"));
+                    }
+                }
+            }));
+        }
+        for _ in 0..2 {
+            let path = victim.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..25 {
+                    clear_snapshots(&path);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let msgs = errors.lock().unwrap();
+        assert!(
+            msgs.is_empty(),
+            "{} write(s) failed while another project was cleared: {}",
+            msgs.len(),
+            msgs.iter()
+                .take(3)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+        // The victim really did lose its snapshot, which is the point.
+        assert!(
+            newest_snapshot(&victim).is_none(),
+            "clearing the victim must remove its snapshots"
+        );
+        for p in &writers {
+            assert!(newest_snapshot(p).is_some(), "writer snapshot survived");
+            clear_snapshots(p);
+        }
+    }
+
     /// The ring must not grow without bound across many autosaves.
     #[test]
     fn ring_is_bounded() {
@@ -302,16 +413,11 @@ mod tests {
             let state = project("bounded", &format!("v{i}"));
             write_snapshot(&pf, &state, 1_000 + i as u64).unwrap();
         }
-        let dir = recovery_dir();
-        let stem = slot_stem(&pf);
+        let dir = slot_dir(&pf);
         let on_disk = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(&format!("{stem}."))
-            })
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".recovery"))
             .count();
         assert_eq!(on_disk, KEEP_SNAPSHOTS);
         // KEEP_SNAPSHOTS + 4 writes means the last one is v6.
