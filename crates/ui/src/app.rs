@@ -2838,27 +2838,38 @@ impl CapRustApp {
         }
         let t_start_ms = clip.source_offset_ms;
 
-        // Model: YuNet face detector from the registry.
+        // Model: prefer SCRFD (working decoder, same preference as
+        // auto-reframe), fall back to YuNet (its 2022mar decode is a
+        // stub, so a YuNet-only setup yields empty masks).
         self.project
             .models
             .scan_local(&self.settings.effective_models_dir());
         let models_dir = self.settings.effective_models_dir();
-        let model_path = self
-            .project
-            .models
-            .models
-            .iter()
-            .find(|m| m.kind == caprust_core::ModelKind::FaceDetector)
-            .map(|m| {
-                caprust_core::models::ModelRegistry::local_path_static(
-                    &self.project.models.models,
-                    &models_dir,
-                    &m.id,
-                )
-            });
-        let Some(model_path) = model_path.filter(|p| p.is_file()) else {
-            self.toast(tr("toast-anon-needs-model"));
-            return;
+        let find_model = |kind: caprust_core::ModelKind| {
+            self.project
+                .models
+                .models
+                .iter()
+                .find(|m| m.kind == kind)
+                .map(|m| {
+                    caprust_core::models::ModelRegistry::local_path_static(
+                        &self.project.models.models,
+                        &models_dir,
+                        &m.id,
+                    )
+                })
+                .filter(|p| p.is_file())
+        };
+        let (model_path, use_scrfd) = match (
+            find_model(caprust_core::ModelKind::ScrfdDetector),
+            find_model(caprust_core::ModelKind::FaceDetector),
+        ) {
+            (Some(p), _) => (p, true),
+            (None, Some(p)) => (p, false),
+            (None, None) => {
+                self.toast(tr("toast-anon-needs-model"));
+                return;
+            }
         };
 
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
@@ -2900,6 +2911,7 @@ impl CapRustApp {
             duration_ms,
             fps,
             model_path,
+            use_scrfd,
             mask_output: abs,
             max_side: 480,
         };

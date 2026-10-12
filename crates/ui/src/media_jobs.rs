@@ -1086,8 +1086,13 @@ pub struct AnonRequest {
     /// Frame rate to sample and encode at. Must match the project's
     /// frame rate so the mask aligns with the render output 1:1.
     pub fps: f64,
-    /// Path to the YuNet ONNX model on disk.
+    /// Path to the face detector ONNX model on disk.
     pub model_path: std::path::PathBuf,
+    /// True = SCRFD model (working decoder, preferred). False = YuNet
+    /// (its 2022mar decoder is still a stub returning no boxes — kept
+    /// as a fallback so a YuNet-only setup degrades to empty masks
+    /// instead of erroring).
+    pub use_scrfd: bool,
     /// Where to write the FFV1 MKV mask. Resolved by the caller via
     /// `caprust_core::cache::anon_path`.
     pub mask_output: std::path::PathBuf,
@@ -1184,18 +1189,44 @@ fn run_anon_inner(
         total_frames: total,
     });
 
-    // 3. Load the YuNet model once.
-    let detector = caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
-        .map_err(|e| format!("load YuNet: {e}"))?;
+    // 3. Load the face detector once. SCRFD has a real decoder and
+    // is preferred (same preference as auto-reframe); YuNet 2022mar
+    // decode is still a stub returning no boxes, kept as fallback.
+    enum Detector {
+        Scrfd(caprust_media_io::scrfd::ScrfdDetector),
+        YuNet(caprust_media_io::face_detect::FaceDetector),
+    }
+    let detector = if req.use_scrfd {
+        Detector::Scrfd(
+            caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
+                .map_err(|e| format!("load SCRFD: {e}"))?,
+        )
+    } else {
+        Detector::YuNet(
+            caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+                .map_err(|e| format!("load YuNet: {e}"))?,
+        )
+    };
 
     // 4. Open the FFV1 writer on the output path.
     let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
 
     // 5. Per-frame detection + box paint.
     for (i, frame) in frames.iter().enumerate() {
-        let boxes = detector
-            .detect(&frame.rgb, frame.width, frame.height)
-            .map_err(|e| format!("detect frame {i}: {e}"))?;
+        let boxes: Vec<(f32, f32, f32, f32)> = match &detector {
+            Detector::Scrfd(d) => d
+                .detect(&frame.rgb, frame.width, frame.height)
+                .map_err(|e| format!("detect frame {i}: {e}"))?
+                .into_iter()
+                .map(|b| (b.x, b.y, b.w, b.h))
+                .collect(),
+            Detector::YuNet(d) => d
+                .detect(&frame.rgb, frame.width, frame.height)
+                .map_err(|e| format!("detect frame {i}: {e}"))?
+                .into_iter()
+                .map(|b| (b.x, b.y, b.w, b.h))
+                .collect(),
+        };
         let mask = paint_face_boxes(&boxes, frame.width, frame.height);
         writer
             .write_frame(&mask)
@@ -1222,21 +1253,17 @@ fn run_anon_inner(
 /// Paint detected face boxes onto a black canvas (white = blur here).
 /// Boxes are expanded ~25% so hairline and chin stay covered, then
 /// clamped to the frame. Frames with no faces stay black.
-fn paint_face_boxes(
-    boxes: &[caprust_media_io::face_detect::FaceBox],
-    width: u32,
-    height: u32,
-) -> Vec<u8> {
+fn paint_face_boxes(boxes: &[(f32, f32, f32, f32)], width: u32, height: u32) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
     let mut mask = vec![0u8; w * h];
-    for b in boxes {
-        let pad_w = b.w * 0.25;
-        let pad_h = b.h * 0.25;
-        let x0 = ((b.x - pad_w).max(0.0) * width as f32) as usize;
-        let y0 = ((b.y - pad_h).max(0.0) * height as f32) as usize;
-        let x1 = ((b.x + b.w + pad_w).min(1.0) * width as f32) as usize;
-        let y1 = ((b.y + b.h + pad_h).min(1.0) * height as f32) as usize;
+    for &(bx, by, bw, bh) in boxes {
+        let pad_w = bw * 0.25;
+        let pad_h = bh * 0.25;
+        let x0 = ((bx - pad_w).max(0.0) * width as f32) as usize;
+        let y0 = ((by - pad_h).max(0.0) * height as f32) as usize;
+        let x1 = ((bx + bw + pad_w).min(1.0) * width as f32) as usize;
+        let y1 = ((by + bh + pad_h).min(1.0) * height as f32) as usize;
         for y in y0..y1.min(h) {
             for x in x0..x1.min(w) {
                 mask[y * w + x] = 255;
