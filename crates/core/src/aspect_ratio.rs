@@ -15,6 +15,7 @@ pub enum AspectRatio {
 }
 
 impl AspectRatio {
+    /// Human-readable label shown in the UI.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Landscape16x9 => "16:9 Landscape",
@@ -24,6 +25,20 @@ impl AspectRatio {
             Self::Cinema2x1 => "Cinema 2:1",
             Self::Widescreen21x9 => "Widescreen 21:9",
             Self::Custom(_, _) => "Custom",
+        }
+    }
+
+    /// Short platform/use-case description for tooltips and hints.
+    /// Returned in italic style when rendered.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Landscape16x9 => "YouTube, desktop, standard video",
+            Self::Portrait9x16 => "Reels, Shorts, TikTok",
+            Self::Portrait4x5 => "Instagram feed, LinkedIn",
+            Self::Square1x1 => "Instagram feed, profile posts",
+            Self::Cinema2x1 => "Cinematic widescreen, films",
+            Self::Widescreen21x9 => "Ultra-wide, anamorphic",
+            Self::Custom(_, _) => "custom dimensions",
         }
     }
 

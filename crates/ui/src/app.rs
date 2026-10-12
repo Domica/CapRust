@@ -857,12 +857,31 @@ impl CapRustApp {
     }
 
     fn create_project(&mut self) {
+        // The selected location is the parent folder; the project gets its
+        // own subdirectory named after the project. The file will be
+        // <location>/<name>/<name>.caprust.
+        let mut project_folder = std::path::PathBuf::from(&self.draft.location);
+        let safe_name: String = self
+            .draft
+            .name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        project_folder.push(&safe_name);
+        std::fs::create_dir_all(&project_folder).ok();
+
         self.project = ProjectState {
             name: self.draft.name.clone(),
             aspect_ratio: self.draft.aspect_ratio.clone(),
             base_resolution: self.draft.base_resolution,
             frame_rate: self.draft.frame_rate,
-            project_path: Some(self.draft.location.clone()),
+            project_path: Some(project_folder.to_string_lossy().to_string()),
             ..ProjectState::default()
         };
         // Fresh registry from Default is all NotDownloaded; rescan so
@@ -1666,7 +1685,7 @@ impl CapRustApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.set_min_width(460.0);
+                ui.set_min_width(560.0);
                 egui::Grid::new("new_project_modal_grid")
                     .num_columns(2)
                     .spacing([space::L, space::M_PLUS])
@@ -1695,9 +1714,21 @@ impl CapRustApp {
                                         &mut self.draft.aspect_ratio,
                                         preset.clone(),
                                         preset.label(),
-                                    );
+                                    )
+                                    .on_hover_text(format!(
+                                        "{} — {}",
+                                        preset.label(),
+                                        preset.description()
+                                    ));
                                 }
                             });
+                        // Show the description of the currently selected format
+                        ui.label(
+                            egui::RichText::new(self.draft.aspect_ratio.description())
+                                .small()
+                                .italics()
+                                .color(egui::Color32::from_gray(150)),
+                        );
                         ui.end_row();
 
                         ui.label(tr("new-field-resolution"));
