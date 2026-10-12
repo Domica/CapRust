@@ -312,6 +312,20 @@ pub struct CapRustApp {
     /// the restore / discard / later buttons in
     /// `show_recovery_prompt_window`.
     pub recovery_prompt: Option<(std::path::PathBuf, caprust_core::recovery::RecoveryOffer)>,
+    /// Project file the recovery snapshots belong to.
+    ///
+    /// `tick_autosave` used to derive this from `project_file_path()`
+    /// (`<project_path>/<name>.caprust`) while `offer_recovery` was
+    /// handed the path the user actually opened. Those agree for a
+    /// project this app saved, but not for one whose file stem differs
+    /// from its stored `name`, and the recovery slot key is a hash of
+    /// the whole path. The two sides then wrote and read different
+    /// slots, so a snapshot existed and was never offered. Recording
+    /// the path once, at load and at save, removes the class of bug.
+    pub recovery_slot_path: Option<std::path::PathBuf>,
+    /// A missing-media scan that was postponed because a recovery
+    /// offer was on screen. Runs as soon as that offer is answered.
+    pub pending_missing_scan: bool,
     #[cfg(windows)]
     pub screen_record: crate::panels::screen_record::ScreenRecordState,
     #[cfg(windows)]
@@ -723,6 +737,8 @@ impl CapRustApp {
             last_autosave_hash: None,
             last_saved_hash: None,
             recovery_prompt: None,
+            recovery_slot_path: None,
+            pending_missing_scan: false,
             #[cfg(windows)]
             screen_record: crate::panels::screen_record::ScreenRecordState::new_defaults(),
             #[cfg(windows)]
@@ -883,6 +899,7 @@ impl CapRustApp {
                 // re-writing what we just saved, and stops a restore
                 // prompt from offering to undo a manual Save.
                 self.last_saved_hash = Some(self.project.render_hash());
+                self.recovery_slot_path = Some(path.clone());
                 caprust_core::recovery::clear_snapshots(&path);
                 tracing::info!("Saved project to {}", path.display());
             }
@@ -909,7 +926,9 @@ impl CapRustApp {
         let Some(interval_min) = self.settings.autosave_minutes.filter(|m| *m > 0) else {
             return;
         };
-        let Some(path) = self.project_file_path() else {
+        // Same slot the offer will be read from. Falling back to
+        // `project_file_path` would reintroduce a write/read mismatch.
+        let Some(path) = self.recovery_slot_path.clone() else {
             return;
         };
         let now = std::time::Instant::now();
@@ -1015,6 +1034,16 @@ impl CapRustApp {
                                 self.last_saved_hash = None;
                                 self.last_autosave_hash = None;
                                 self.last_autosave_at = None;
+                                // Clear the prompt before rescanning, or
+                                // the scan defers itself behind a prompt
+                                // that no longer exists.
+                                self.recovery_prompt = None;
+                                // The restored session is a different set
+                                // of clips pointing at a different set of
+                                // media, so the missing-file scan from
+                                // load time describes a project that is no
+                                // longer on screen.
+                                self.check_missing_media_on_load();
                                 tracing::info!("recovery: restored session, hash {hash}");
                                 self.toast(tr("toast-recovery-restored"));
                             }
@@ -1074,6 +1103,10 @@ impl CapRustApp {
                 self.last_saved_hash = Some(loaded_hash);
                 self.last_autosave_hash = Some(loaded_hash);
                 self.last_autosave_at = None;
+                // Snapshots for this file are read from and written
+                // to this exact path, so the autosave slot and the
+                // offer slot cannot drift apart.
+                self.recovery_slot_path = Some(std::path::PathBuf::from(path));
                 // Offer to restore a newer crash-recovery snapshot, if
                 // one exists and actually differs from this file.
                 self.offer_recovery(std::path::Path::new(path), loaded_hash);
@@ -10283,6 +10316,16 @@ impl CapRustApp {
     /// Synchronous scan of the media library; opens the dialog when
     /// any file is missing. No-op on clean projects.
     fn check_missing_media_on_load(&mut self) {
+        // A recovery offer is a decision about which session the user
+        // ends up editing. Opening the relink dialog at the same time
+        // gave the user two modals stacked on the centre of the
+        // screen, and relinking first then restoring threw the relink
+        // away. Hold the scan until the offer is resolved.
+        if self.recovery_prompt.is_some() {
+            tracing::info!("relink: deferring scan behind recovery prompt");
+            self.pending_missing_scan = true;
+            return;
+        }
         let missing = caprust_core::commands::relink_many::find_missing_media_items(&self.project);
         if missing.is_empty() {
             return;
@@ -11068,6 +11111,9 @@ impl eframe::App for CapRustApp {
         self.tick_autosave();
         if self.recovery_prompt.is_some() {
             self.show_recovery_prompt_window(ctx);
+        } else if self.pending_missing_scan {
+            self.pending_missing_scan = false;
+            self.check_missing_media_on_load();
         }
         if self.export_open {
             self.show_export_window(ctx);

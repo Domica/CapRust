@@ -246,11 +246,9 @@ pub fn build(
         // render target: the preview often renders at half
         // resolution and is then scaled up for display, which made
         // captions look right there and noticeably too small in a
-        // full-resolution export. `font_size` is authored against
-        // 1080p and scaled from there.
-        size = (style.font_size.max(4.0) * height as f32 / 1080.0)
-            .round()
-            .max(4.0),
+        // full-resolution export. `CaptionStyle::resolved_font_size`
+        // owns the resolution of both unit modes.
+        size = style.resolved_font_size(height).round(),
         primary = ass_color(style.color, 1.0),
         // ASS karaoke paints the not-yet-sung part in SecondaryColour.
         // Making it fully transparent turns `\k` into a typewriter
@@ -619,6 +617,48 @@ mod tests {
             (at_540 - at_1080 / 2.0).abs() <= 1.0,
             "size must be proportional to height: {at_540} vs {at_1080}"
         );
+    }
+
+    /// The percent mode is resolution-independent by construction: the
+    /// same number renders the same apparent size anywhere, which is
+    /// the whole point of the option. Pixel mode at 1080 lines has to
+    /// agree with the percentage the UI derives from it, otherwise
+    /// switching units would resize the caption under the user.
+    #[test]
+    fn percent_font_size_matches_pixels_at_every_height() {
+        let px_value = 32.0f32;
+        // Same derivation the Clip Properties unit switch uses.
+        let pct = CaptionStyle {
+            font_size_pct: Some(px_value * 100.0 / 1080.0),
+            ..Default::default()
+        };
+        let px = CaptionStyle {
+            font_size_pct: None,
+            font_size: px_value,
+            ..Default::default()
+        };
+
+        for h in [720u32, 1080, 1440, 2160] {
+            let a = pct.resolved_font_size(h);
+            let b = px.resolved_font_size(h);
+            assert!(
+                (a - b).abs() <= 0.05,
+                "{h} lines: percent mode gave {a}, pixel mode gave {b}"
+            );
+        }
+        // And the ratios track the height, not a fixed pixel count.
+        assert!((pct.resolved_font_size(2160) / pct.resolved_font_size(1080) - 2.0).abs() < 0.01);
+    }
+
+    /// A 0% entry would otherwise blank the caption entirely, since
+    /// libass renders Fontsize 0 as nothing at all.
+    #[test]
+    fn font_size_has_a_floor() {
+        let s = CaptionStyle {
+            font_size_pct: Some(0.0),
+            ..Default::default()
+        };
+        assert!(s.resolved_font_size(1080) >= 4.0);
     }
 
     #[test]

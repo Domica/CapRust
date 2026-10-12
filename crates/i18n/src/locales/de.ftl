@@ -931,3 +931,11 @@ exp-codec-probing = Hardware-Encoder werden geprueft...
 
 # --- Bestaetigung des Autosave-Intervalls (#49) ---
 set-autosave-applied = Auf alle { $v } Min gesetzt.
+
+# --- Groesse der Untertitel (#1)
+props-captions-style-size-unit = Groesseneinheit
+props-captions-style-size-unit-px = Pixel
+props-captions-style-size-unit-pct = % der Hoehe
+
+# --- Eigener Eintrag in der Intervallliste (#49)
+set-autosave-custom-value = Benutzerdefiniert: { $v } Min

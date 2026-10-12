@@ -931,3 +931,11 @@ exp-codec-probing = Comprobando codificadores de hardware...
 
 # --- Confirmacion del intervalo de autoguardado (#49) ---
 set-autosave-applied = Configurado cada { $v } min.
+
+# --- Unidad de tamano del subtitulo (#1)
+props-captions-style-size-unit = Unidad de tamano
+props-captions-style-size-unit-px = Pixeles
+props-captions-style-size-unit-pct = % de altura
+
+# --- Fila personalizada en la lista de intervalos (#49)
+set-autosave-custom-value = Personalizado: { $v } min

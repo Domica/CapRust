@@ -931,3 +931,11 @@ exp-codec-probing = Checking hardware encoders...
 
 # --- Autosave interval feedback (#49) ---
 set-autosave-applied = Set to every { $v } min.
+
+# --- Caption size unit (#1)
+props-captions-style-size-unit = Size unit
+props-captions-style-size-unit-px = Pixels
+props-captions-style-size-unit-pct = % of height
+
+# --- Custom autosave row in the preset dropdown (#49)
+set-autosave-custom-value = Custom: { $v } min

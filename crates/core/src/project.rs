@@ -386,7 +386,16 @@ impl ProjectState {
     /// Included: clip timing, clip_type Debug (source path),
     /// speed/reverse, volume_db, source_duration_ms, audio_detached,
     /// fades, transitions, duck_against, speed ramp params,
-    /// volume_keyframes, track kind + muted.
+    /// volume_keyframes, track kind + muted, and every audio effect
+    /// toggle.
+    ///
+    /// The effect flags used to be missing here, which meant toggling
+    /// denoise / normalize / telephone / bass / echo / chipmunk /
+    /// voice boost produced an unchanged hash. The preview audio cache
+    /// keys off this hash, so the PCM was never re-rendered and the
+    /// effect stayed silent in the preview while appearing in the
+    /// export, which builds a fresh plan. Same for video clips and
+    /// detached audio clips, not just audio-only ones.
     ///
     /// Excluded (video-only): flip_h/flip_v, effects, auto_reframe,
     /// bg_removal, text/caption styling, visible, pinned, locked,
@@ -421,6 +430,17 @@ impl ProjectState {
                 k.t_ms.hash(&mut h);
                 k.gain_db.to_bits().hash(&mut h);
             }
+            // Audio effect toggles. These change what the rendered PCM
+            // sounds like, so the cache must be invalidated when they
+            // flip. Without them an effect is audible in the export
+            // (fresh plan) and silent in the preview (stale cache).
+            c.audio_normalize.hash(&mut h);
+            c.audio_denoise.hash(&mut h);
+            c.audio_voice_boost.hash(&mut h);
+            c.audio_telephone.hash(&mut h);
+            c.audio_bass.hash(&mut h);
+            c.audio_echo.hash(&mut h);
+            c.audio_chipmunk.hash(&mut h);
         }
 
         self.tracks.len().hash(&mut h);
@@ -731,6 +751,43 @@ mod tests {
         }
         let h2 = p.audio_render_hash();
         assert_eq!(h1, h2, "video effect must not invalidate the audio hash");
+    }
+
+    /// Toggling an audio effect has to invalidate the preview PCM
+    /// cache. It did not, so the effect played in the export (which
+    /// builds a fresh plan) and stayed silent in the preview (which
+    /// reuses the cached file for an unchanged hash). Covered video
+    /// clips, detached audio clips and audio-only clips alike, since
+    /// they all land in the same audio chain.
+    #[test]
+    fn audio_render_hash_changes_on_every_audio_effect() {
+        /// Name and the toggle to flip, so one test covers all seven.
+        type EffectToggle = (&'static str, fn(&mut Clip));
+        let toggles: Vec<EffectToggle> = vec![
+            ("normalize", |c| c.audio_normalize = true),
+            ("denoise", |c| c.audio_denoise = true),
+            ("voice boost", |c| c.audio_voice_boost = true),
+            ("telephone", |c| c.audio_telephone = true),
+            ("bass", |c| c.audio_bass = true),
+            ("echo", |c| c.audio_echo = true),
+            ("chipmunk", |c| c.audio_chipmunk = true),
+        ];
+        for (name, toggle) in toggles {
+            let mut p = ProjectState::default();
+            let clip = Clip::new_video("a.mp4", 0, 0, 1000);
+            let id = clip.id;
+            p.add_clip(clip);
+
+            let before = p.audio_render_hash();
+            if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
+                toggle(c);
+            }
+            let after = p.audio_render_hash();
+            assert_ne!(
+                before, after,
+                "audio effect `{name}` must invalidate the audio render hash"
+            );
+        }
     }
 
     #[test]

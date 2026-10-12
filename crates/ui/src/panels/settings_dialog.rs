@@ -946,21 +946,33 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
     // Dropdown of presets. `tr` cannot interpolate, so every label
     // used to render as the literal "Every { $v } min"; `tr_with`
     // passes the value through Fluent instead.
-    let label_for = |m: u64| {
-        if m == 0 {
+    let current = settings.autosave_minutes.unwrap_or(0);
+
+    // A hand-typed interval has no preset row, so the list used to show
+    // nothing selected and the user could not tell the value had been
+    // accepted. Add the current value as a row when it is off-preset,
+    // so the dropdown always has a selected entry.
+    let mut rows: Vec<u64> = AUTOSAVE_PRESETS.to_vec();
+    let is_custom = current > 0 && !AUTOSAVE_PRESETS.contains(&current);
+    if is_custom {
+        rows.push(current);
+    }
+    let label_for_row = |m: u64| {
+        if is_custom && m == current {
+            tr_with("set-autosave-custom-value", &[("v", &m.to_string())])
+        } else if m == 0 {
             tr("set-autosave-off")
         } else {
             tr_with("set-autosave-interval", &[("v", &m.to_string())])
         }
     };
-    let current = settings.autosave_minutes.unwrap_or(0);
 
     egui::ComboBox::from_id_salt("autosave_interval")
-        .selected_text(label_for(current))
+        .selected_text(label_for_row(current))
         .width(180.0)
         .show_ui(ui, |ui| {
-            for &m in AUTOSAVE_PRESETS {
-                ui.selectable_value(&mut settings.autosave_minutes, Some(m), label_for(m));
+            for &m in &rows {
+                ui.selectable_value(&mut settings.autosave_minutes, Some(m), label_for_row(m));
             }
         });
 

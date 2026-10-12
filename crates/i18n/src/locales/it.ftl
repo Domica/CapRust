@@ -931,3 +931,11 @@ exp-codec-probing = Controllo i codificatori hardware...
 
 # --- Conferma intervallo salvataggio automatico (#49) ---
 set-autosave-applied = Impostato ogni { $v } min.
+
+# --- Unita di misura del sottotitolo (#1)
+props-captions-style-size-unit = Unita di misura
+props-captions-style-size-unit-px = Pixel
+props-captions-style-size-unit-pct = % di altezza
+
+# --- Riga personalizzata nell'elenco degli intervalli (#49)
+set-autosave-custom-value = Personalizzato: { $v } min

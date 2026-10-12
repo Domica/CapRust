@@ -63,6 +63,21 @@ pub enum ClipType {
 /// the frame, size 32).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct CaptionStyle {
+    /// Caption height as a percentage of frame height, when set.
+    ///
+    /// `Some(p)` means "this many percent of the frame height" and
+    /// wins over `font_size`. `None` is the pixel mode, where
+    /// `font_size` is authored against a 1080-line frame and scaled
+    /// proportionally from there, so a 720-line export renders at
+    /// 2/3 the size and a 2160-line export at twice.
+    ///
+    /// Both modes produce the same on-screen size at 1080 lines;
+    /// percent just makes the intent explicit and stops the number
+    /// from silently meaning something different per project.
+    #[serde(default)]
+    pub font_size_pct: Option<f32>,
+    /// Caption height in pixels at a 1080-line frame. Ignored when
+    /// `font_size_pct` is set.
     #[serde(default = "default_caption_font_size")]
     pub font_size: f32,
     #[serde(default)]
@@ -108,6 +123,7 @@ fn default_caption_bg_opacity() -> f32 {
 impl Default for CaptionStyle {
     fn default() -> Self {
         Self {
+            font_size_pct: None,
             font_size: default_caption_font_size(),
             position: CaptionPosition::default(),
             color: default_caption_color(),
@@ -117,6 +133,26 @@ impl Default for CaptionStyle {
             bg_opacity: default_caption_bg_opacity(),
             karaoke: false,
         }
+    }
+}
+
+impl CaptionStyle {
+    /// The authored size expressed in pixels for a frame of `height`
+    /// lines.
+    ///
+    /// This is what makes preview and export agree. The preview
+    /// renders at a reduced size and is then scaled up for display,
+    /// while the export renders at full size and is not, so an
+    /// absolute pixel value used to come out visibly smaller in the
+    /// export. Every path goes through here.
+    pub fn resolved_font_size(&self, height: u32) -> f32 {
+        let px = match self.font_size_pct {
+            Some(pct) => height as f32 * pct / 100.0,
+            None => self.font_size * height as f32 / 1080.0,
+        };
+        // libass chokes on Fontsize 0 and renders nothing at all, so
+        // keep a floor rather than letting a 0% entry blank the text.
+        px.max(4.0)
     }
 }
 

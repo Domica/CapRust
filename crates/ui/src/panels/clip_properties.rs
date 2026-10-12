@@ -600,16 +600,66 @@ pub fn show(
             let mut cs: CaptionStyle = *caption_style;
             let mut changed = false;
 
+            // Size is authored in one of two units. Pixel mode means "at a
+            // 1080-line frame", which is what every project used
+            // before percent mode existed; percent mode means "this
+            // much of the frame height" and is resolution-proof.
+            // Switching carries the current value across so the
+            // caption does not jump under the user.
             ui.horizontal(|ui| {
                 ui.label(tr("props-captions-style-font-size"));
-                changed |= ui
-                    .add(
+                let pct_mode = cs.font_size_pct.is_some();
+                let mut want_pct = pct_mode;
+                egui::ComboBox::from_id_salt("cap_size_unit")
+                    .selected_text(if pct_mode {
+                        tr("props-captions-style-size-unit-pct")
+                    } else {
+                        tr("props-captions-style-size-unit-px")
+                    })
+                    .width(96.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut want_pct,
+                            false,
+                            tr("props-captions-style-size-unit-px"),
+                        );
+                        ui.selectable_value(
+                            &mut want_pct,
+                            true,
+                            tr("props-captions-style-size-unit-pct"),
+                        );
+                    });
+                if want_pct != pct_mode {
+                    // Seed the incoming unit from the outgoing one at
+                    // the 1080-line reference, the only frame height
+                    // both units are defined against.
+                    cs.font_size_pct = if want_pct {
+                        Some((cs.font_size * 100.0 / 1080.0).clamp(0.5, 20.0))
+                    } else {
+                        let pct = cs.font_size_pct.unwrap_or(3.0);
+                        cs.font_size = (pct * 10.8).clamp(8.0, 200.0);
+                        None
+                    };
+                    changed = true;
+                }
+                changed |= if cs.font_size_pct.is_some() {
+                    ui.add(
+                        egui::DragValue::new(cs.font_size_pct.as_mut().unwrap())
+                            .speed(0.1)
+                            .range(0.5..=20.0)
+                            .fixed_decimals(1)
+                            .suffix(" %"),
+                    )
+                    .changed()
+                } else {
+                    ui.add(
                         egui::DragValue::new(&mut cs.font_size)
                             .speed(0.5)
                             .range(8.0..=200.0)
                             .fixed_decimals(0),
                     )
-                    .changed();
+                    .changed()
+                };
             });
 
             ui.horizontal(|ui| {

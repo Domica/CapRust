@@ -931,3 +931,11 @@ exp-codec-probing = Provjeravam hardverske encodere...
 
 # --- Potvrda intervala autosavea (#49) ---
 set-autosave-applied = Postavljeno na svakih { $v } min.
+
+# --- Mjernajedinica veličine titlova (#1)
+props-captions-style-size-unit = Mjerna jedinica
+props-captions-style-size-unit-px = Pikseli
+props-captions-style-size-unit-pct = % visine
+
+# --- Redak Custom u padajucem listi intervala (#49)
+set-autosave-custom-value = Custom: { $v } min
