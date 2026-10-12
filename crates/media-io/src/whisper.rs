@@ -71,11 +71,18 @@ impl WhisperEngine {
         params.set_print_timestamps(false);
         params.set_translate(false);
         params.set_language(lang);
-        // P1: per-word timing for progressive-reveal captions. whisper
+        // Per-word timing for progressive-reveal captions. whisper
         // still reports segment times; token times are extra data we
         // fold into WordTiming below. Cheap on CPU.
-        // TEMP: disabled to diagnose Windows crash.
-        params.set_token_timestamps(false);
+        //
+        // This was turned off in 2038823 to "isolate a Windows crash".
+        // Re-tested in #49: six runs across music-only and speech input
+        // (up to 65 s, 13 segments, 220 tokens), both whisper-tiny and
+        // whisper-base, all clean on the same crate and toolchain
+        // versions. The flag was not the cause; the most likely culprit
+        // was the stale whisper-rs-sys C++ build left by the Rust 1.91
+        // bump in the same window. Re-enabled.
+        params.set_token_timestamps(true);
 
         let mut state = self
             .ctx
@@ -114,7 +121,8 @@ impl WhisperEngine {
             // word, "lo" continues it). If token access fails on a given
             // backend, fall back to an empty Vec and the pre-P1 single-
             // drawtext render still works.
-            let words = collect_segment_words(&state, i).unwrap_or_default();
+            let eot = self.ctx.token_eot();
+            let words = collect_segment_words(&state, i, eot).unwrap_or_default();
 
             out.push(CaptionSegment {
                 start_ms,
@@ -147,6 +155,7 @@ impl WhisperEngine {
 fn collect_segment_words(
     state: &whisper_rs::WhisperState,
     seg_idx: i32,
+    eot: whisper_rs::WhisperToken,
 ) -> Result<Vec<caprust_core::clip::WordTiming>> {
     let n_tokens = state
         .full_n_tokens(seg_idx)
@@ -173,6 +182,19 @@ fn collect_segment_words(
     };
 
     for j in 0..n_tokens {
+        // Control tokens (`[_BEG_]`, `[_TT_500]`, timestamps, EOT)
+        // live at or above the EOT id. They are metadata, not words,
+        // and whisper attaches some of them to the preceding token
+        // without a separating space -- without this filter a caption
+        // renders the literal string "dog.[_TT_200]".
+        if state
+            .full_get_token_id(seg_idx, j)
+            .map_err(|e| anyhow!("whisper token id ({seg_idx},{j}): {e}"))?
+            >= eot
+        {
+            continue;
+        }
+
         let tok = state
             .full_get_token_text(seg_idx, j)
             .map_err(|e| anyhow!("whisper token text ({seg_idx},{j}): {e}"))?;
