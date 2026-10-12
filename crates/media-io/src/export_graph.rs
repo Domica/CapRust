@@ -540,7 +540,7 @@ impl RenderPlan {
                     v_out.clone()
                 };
                 fg.push_str(&format!(
-                    "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,boxblur=3:1,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{a_label}];",
+                    "movie={mask}:loop=1,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,boxblur=3:1,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{a_label}];",
                     num = self.fps_num,
                     den = self.fps_den,
                     w = self.width,
@@ -558,9 +558,15 @@ impl RenderPlan {
                 // Mask chain: read the FFV1 gray sequence, reset PTS,
                 // force the project fps so the merge samples 1:1, and
                 // convert to a pixel format maskedmerge accepts.
-                // loop=0 holds the last frame if the sequence is
-                // shorter than the clip; the colour base below
-                // defines the clip's true length.
+                //
+                // loop=1 plays the mask once. It used to be loop=0,
+                // read as "hold the last frame". In the `movie` filter
+                // 0 means loop *forever* (`loop count, default 1`), so
+                // the mask stream never reached EOF, the downstream
+                // `overlay shortest=0` waited on it indefinitely, and
+                // the export spun on CPU forever at ~75% with nothing
+                // written. Both encoders were affected; it had nothing
+                // to do with hardware encoding.
                 let mask_label = format!("m_b{i}");
                 let bg_label = format!("bg_b{i}");
                 // The mask comes from the extraction pass at a
@@ -569,7 +575,7 @@ impl RenderPlan {
                 // chain was, otherwise maskedmerge rejects the pair
                 // with "input link size mismatch".
                 fg.push_str(&format!(
-                    "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{mask_label}];",
+                    "movie={mask}:loop=1,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{mask_label}];",
                     num = self.fps_num,
                     den = self.fps_den,
                     w = self.width,
@@ -4403,6 +4409,26 @@ mod tests {
             caprust_core::project::VideoEncoder::H264Cpu,
         )
         .expect("plan built")
+    }
+
+    /// Regression for #51: `movie=...:loop=0` means loop FOREVER, not
+    /// "hold the last frame". The mask stream never reached EOF, the
+    /// `overlay shortest=0` below it waited indefinitely, and the export
+    /// spun at ~75% with nothing written. Both CPU and NVENC hung, so it
+    /// looked like an encoder problem.
+    #[test]
+    fn mask_movie_filters_do_not_loop_forever() {
+        for (tag, plan) in [
+            ("anon", single_video_plan_with_anon(Some("/tmp/anon.mkv"))),
+            ("bg", single_video_plan_with_mask(Some("/tmp/mask.mkv"))),
+        ] {
+            let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+            assert!(fg.contains("movie="), "{tag}: expected a mask chain: {fg}");
+            assert!(
+                !fg.contains("loop=0"),
+                "{tag}: loop=0 is an infinite movie loop and hangs the export: {fg}"
+            );
+        }
     }
 
     #[test]
