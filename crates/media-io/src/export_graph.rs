@@ -631,7 +631,15 @@ impl RenderPlan {
             // bg-removal stage below (or v_out when no bg mask).
             let anon_in = if let Some(mask) = anon_escaped {
                 let a_label = format!("m_a{i}");
-                let an_out = format!("v_an{i}");
+                // Without a bg mask following, merge straight into
+                // v_out — otherwise v_out would stay undefined and the
+                // whole filtergraph fails (this broke preview after
+                // anonymize ran without bg-removal).
+                let an_out = if mask_active {
+                    format!("v_an{i}")
+                } else {
+                    v_out.clone()
+                };
                 fg.push_str(&format!(
                     "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,boxblur=3:1,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{a_label}];",
                     num = self.fps_num,
@@ -4355,6 +4363,38 @@ mod tests {
         assert!(
             !fg.contains("boxblur=12:3"),
             "plain plan must not emit the anon blur: {fg}"
+        );
+    }
+
+    #[test]
+    fn anon_without_bg_merges_straight_into_clip_output() {
+        // Regression: the anon merge wrote [v_an0] while Phase 2 reads
+        // [v_b0], leaving v_out undefined and killing preview/export
+        // whenever anonymize ran without bg-removal.
+        let plan = single_video_plan_with_anon(Some("/tmp/anon.mkv"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("maskedmerge[v_b0]"),
+            "anon-only merge must target the clip output: {fg}"
+        );
+        assert!(
+            !fg.contains("v_an0"),
+            "no intermediate label without a bg stage: {fg}"
+        );
+    }
+
+    #[test]
+    fn anon_with_bg_stacks_through_intermediate() {
+        let mut plan = single_video_plan_with_mask(Some("/tmp/mask.mkv"));
+        plan.video_clips[0].anon_mask_path = Some(std::path::PathBuf::from("/tmp/anon.mkv"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("maskedmerge[v_an0]"),
+            "anon merge must feed the bg stage: {fg}"
+        );
+        assert!(
+            fg.contains("maskedmerge[v_b0]"),
+            "bg merge must finish into the clip output: {fg}"
         );
     }
 

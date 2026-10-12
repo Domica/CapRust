@@ -1309,7 +1309,7 @@ fn spawn_mask_writer(
         output.to_string_lossy().into_owned(),
     ];
     tracing::debug!("bg-removal: mask writer args: {:?}", args);
-    let mut child = std::process::Command::new(ffmpeg)
+    let mut child = caprust_media_io::silent_cmd::silent_command(ffmpeg)
         .args(&args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -1451,7 +1451,7 @@ fn run_stab_inner(
         total_frames: total,
     });
 
-    let mut child = std::process::Command::new(ffmpeg)
+    let mut child = caprust_media_io::silent_cmd::silent_command(ffmpeg)
         .arg("-hide_banner")
         .arg("-ss")
         .arg(format!("{start_sec:.3}"))
