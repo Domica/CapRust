@@ -583,6 +583,26 @@ pub fn detect_ffmpeg(settings: &AppSettings) -> FfmpegStatus {
 mod tests {
     use super::*;
 
+    /// The custom autosave interval has to survive a save/reload.
+    /// Without the flag, a hand-typed interval left no row selected in
+    /// the preset dropdown and re-opening Settings gave no sign the
+    /// value had stuck.
+    #[test]
+    fn autosave_custom_flag_round_trips() {
+        let mut s = AppSettings::default();
+        assert!(!s.autosave_custom, "a fresh install is on a preset");
+        s.autosave_custom = true;
+        s.autosave_minutes = Some(7);
+
+        let json = serde_json::to_string(&s).expect("serialise settings");
+        let back: AppSettings = serde_json::from_str(&json).expect("reload settings");
+        assert!(
+            back.autosave_custom,
+            "the custom flag must survive a round trip"
+        );
+        assert_eq!(back.autosave_minutes, Some(7));
+    }
+
     fn tmp_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "caprust_settings_{}_{}.json",

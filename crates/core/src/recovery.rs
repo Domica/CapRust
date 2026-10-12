@@ -405,6 +405,31 @@ mod tests {
         }
     }
 
+    /// Clearing one project must leave every other project's directory
+    /// and snapshots alone. The old code deleted the shared recovery
+    /// folder, so one project's clear removed the directory out from
+    /// under another project's in-flight write.
+    #[test]
+    fn clearing_one_project_leaves_the_other_intact() {
+        let a = tmp_project_dir("keepdir-a");
+        let b = tmp_project_dir("keepdir-b");
+        write_snapshot(&a, &project("keepdir", "a"), 1_000).unwrap();
+        write_snapshot(&b, &project("keepdir", "b"), 1_000).unwrap();
+
+        clear_snapshots(&a);
+
+        assert!(
+            slot_dir(&b).exists(),
+            "clearing one project must not remove another's directory"
+        );
+        assert_eq!(
+            newest_snapshot(&b).expect("b survives").state.name,
+            "b",
+            "clearing one project must not disturb another's snapshot"
+        );
+        clear_snapshots(&b);
+    }
+
     /// Two projects that share a file name but live in different
     /// folders. Before each project got its own subdirectory, both
     /// wrote the same temp filename into one shared folder, so a
