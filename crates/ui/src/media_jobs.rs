@@ -1071,6 +1071,181 @@ fn run_bg_removal_inner(
     Ok(())
 }
 
+/// Request for a face-anonymize job. Mirrors `BgRemovalRequest`:
+/// detect faces per extracted frame with YuNet, paint expanded
+/// filled boxes onto a black canvas, encode the sequence as FFV1.
+/// Everything the worker needs, no back-reference into the project.
+#[derive(Debug)]
+pub struct AnonRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: std::path::PathBuf,
+    /// Offset inside the source where the clip begins.
+    pub t_start_ms: u64,
+    /// Length of the source window to process.
+    pub duration_ms: u64,
+    /// Frame rate to sample and encode at. Must match the project's
+    /// frame rate so the mask aligns with the render output 1:1.
+    pub fps: f64,
+    /// Path to the YuNet ONNX model on disk.
+    pub model_path: std::path::PathBuf,
+    /// Where to write the FFV1 MKV mask. Resolved by the caller via
+    /// `caprust_core::cache::anon_path`.
+    pub mask_output: std::path::PathBuf,
+    /// Downscale the longer side of each extracted frame to at most
+    /// this before running inference. YuNet runs at 320x320
+    /// internally, so 480 keeps box precision without dominating
+    /// memory.
+    pub max_side: u32,
+}
+
+/// Progress events emitted by a face-anonymize job. Same shape as
+/// `BgRemovalEvent`.
+#[derive(Debug)]
+pub enum AnonEvent {
+    /// Emitted after probe + extraction, before the per-frame loop.
+    Started { total_frames: usize },
+    /// Emitted every N frames (see PROGRESS_STRIDE).
+    Progress { done: usize, total: usize },
+    /// Terminal success. `mask_path` is the FFV1 MKV on disk.
+    Finished {
+        clip_id: uuid::Uuid,
+        mask_path: std::path::PathBuf,
+        frame_count: usize,
+    },
+    /// Terminal failure. `reason` is a user-readable string.
+    Failed(String),
+}
+
+/// Spawn a background thread that runs the full anonymize pipeline.
+/// Returns immediately with a receiver. `ffmpeg` and `ffprobe` must
+/// be valid paths.
+pub fn spawn_anon_job(
+    ffmpeg: std::path::PathBuf,
+    ffprobe: std::path::PathBuf,
+    req: AnonRequest,
+) -> std::sync::mpsc::Receiver<AnonEvent> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-anon".into())
+        // Same stack-hungry tract inference as the other jobs.
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            if let Err(reason) = run_anon_inner(&ffmpeg, &ffprobe, &req, &tx) {
+                tracing::error!("anon: {reason}");
+                let _ = tx.send(AnonEvent::Failed(reason));
+            }
+        })
+        .expect("spawn anon thread");
+
+    rx
+}
+
+fn run_anon_inner(
+    ffmpeg: &std::path::Path,
+    ffprobe: &std::path::Path,
+    req: &AnonRequest,
+    tx: &std::sync::mpsc::Sender<AnonEvent>,
+) -> Result<(), String> {
+    // 1. Probe for native dimensions.
+    let probe = caprust_media_io::ffprobe::probe(ffprobe, &req.source_path)
+        .map_err(|e| format!("probe {}: {e}", req.source_path.display()))?;
+    if !probe.has_video {
+        return Err("source has no video stream".into());
+    }
+    let src_w = probe
+        .width
+        .ok_or_else(|| "probe: missing width".to_string())?;
+    let src_h = probe
+        .height
+        .ok_or_else(|| "probe: missing height".to_string())?;
+    if src_w < 2 || src_h < 2 {
+        return Err(format!("invalid source dimensions {src_w}x{src_h}"));
+    }
+
+    // 2. Extract sampled frames at the project's frame rate.
+    let frames = caprust_media_io::frame_extract::extract_rgb_frames(
+        ffmpeg,
+        &req.source_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("frame extraction: {e}"))?;
+
+    let total = frames.len();
+    if total == 0 {
+        return Err("no frames extracted".into());
+    }
+    let _ = tx.send(AnonEvent::Started {
+        total_frames: total,
+    });
+
+    // 3. Load the YuNet model once.
+    let detector = caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+        .map_err(|e| format!("load YuNet: {e}"))?;
+
+    // 4. Open the FFV1 writer on the output path.
+    let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
+
+    // 5. Per-frame detection + box paint.
+    for (i, frame) in frames.iter().enumerate() {
+        let boxes = detector
+            .detect(&frame.rgb, frame.width, frame.height)
+            .map_err(|e| format!("detect frame {i}: {e}"))?;
+        let mask = paint_face_boxes(&boxes, frame.width, frame.height);
+        writer
+            .write_frame(&mask)
+            .map_err(|e| format!("write frame {i}: {e}"))?;
+
+        if (i + 1) % PROGRESS_STRIDE == 0 || i + 1 == total {
+            let _ = tx.send(AnonEvent::Progress { done: i + 1, total });
+        }
+    }
+
+    // 6. Flush and close the writer.
+    writer
+        .finish()
+        .map_err(|e| format!("flush mask writer: {e}"))?;
+
+    let _ = tx.send(AnonEvent::Finished {
+        clip_id: req.clip_id,
+        mask_path: req.mask_output.clone(),
+        frame_count: total,
+    });
+    Ok(())
+}
+
+/// Paint detected face boxes onto a black canvas (white = blur here).
+/// Boxes are expanded ~25% so hairline and chin stay covered, then
+/// clamped to the frame. Frames with no faces stay black.
+fn paint_face_boxes(
+    boxes: &[caprust_media_io::face_detect::FaceBox],
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    let mut mask = vec![0u8; w * h];
+    for b in boxes {
+        let pad_w = b.w * 0.25;
+        let pad_h = b.h * 0.25;
+        let x0 = ((b.x - pad_w).max(0.0) * width as f32) as usize;
+        let y0 = ((b.y - pad_h).max(0.0) * height as f32) as usize;
+        let x1 = ((b.x + b.w + pad_w).min(1.0) * width as f32) as usize;
+        let y1 = ((b.y + b.h + pad_h).min(1.0) * height as f32) as usize;
+        for y in y0..y1.min(h) {
+            for x in x0..x1.min(w) {
+                mask[y * w + x] = 255;
+            }
+        }
+    }
+    mask
+}
+
 /// Subprocess wrapper for the ffmpeg that writes the mask sequence.
 /// Raw grayscale frames are piped on stdin; ffmpeg encodes them as
 /// FFV1 in Matroska, lossless, single channel.

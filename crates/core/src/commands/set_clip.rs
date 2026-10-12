@@ -78,6 +78,8 @@ pub struct SetClipCommand {
     pub blend_mode: Option<Option<String>>,
     /// Some(v) = color grade override. None = leave untouched.
     pub color_grade: Option<Option<ColorGrade>>,
+    /// Some(v) = anonymize mask override. None = leave untouched.
+    pub anon_mask: Option<Option<String>>,
     before: Option<Clip>,
 }
 
@@ -125,6 +127,7 @@ impl SetClipCommand {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             before: None,
         }
     }
@@ -317,6 +320,11 @@ impl SetClipCommand {
         self.color_grade = Some(v);
         self
     }
+    /// Set or clear the anonymize mask path.
+    pub fn anon_mask(mut self, v: Option<String>) -> Self {
+        self.anon_mask = Some(v);
+        self
+    }
 }
 
 impl Command for SetClipCommand {
@@ -470,6 +478,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.color_grade {
             c.color_grade = v;
+        }
+        if let Some(v) = self.anon_mask.clone() {
+            c.anon_mask = v;
         }
         Ok(())
     }

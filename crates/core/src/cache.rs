@@ -55,6 +55,26 @@ pub fn mask_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
     p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
 }
 
+/// Path: <project>/cache/anon/<clip_id>.mkv
+///
+/// One face-box mask sequence per clip (white filled rects on black),
+/// encoded as FFV1 in Matroska like the bg-removal masks. Consumed by
+/// the render graph, which blurs the video and merges the blurred copy
+/// back through this mask. Keyed by clip id for the same reason as
+/// `mask_path` (per-clip trim window).
+pub fn anon_path(project_path: &Path, clip_id: uuid::Uuid) -> std::path::PathBuf {
+    project_path
+        .join("cache")
+        .join("anon")
+        .join(format!("{clip_id}.mkv"))
+}
+
+/// Best-effort: does a non-empty anonymize mask already exist?
+pub fn anon_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
+    let p = anon_path(project_path, clip_id);
+    p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+}
+
 /// Path: <project>/cache/stab/<clip_id>.trf
 ///
 /// One vidstab transforms file per clip, written by the stabilization

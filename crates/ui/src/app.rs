@@ -198,6 +198,9 @@ pub enum JobKind {
     /// over the clip's source window, transforms file written into
     /// the project cache.
     Stab,
+    /// Face anonymize: YuNet boxes per frame, mask written as FFV1
+    /// MKV into the project cache.
+    Anon,
 }
 
 /// One in-flight background job. `progress` < 0.0 means indeterminate
@@ -370,6 +373,14 @@ pub struct CapRustApp {
     /// write it into the clip without recomputing or consulting the
     /// filesystem.
     pub bg_removal_rel_path: Option<String>,
+    /// Receiver for an in-flight face-anonymize job.
+    /// Emits Started / Progress / Finished / Failed events.
+    pub anon_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::AnonEvent>>,
+    /// Job id for the anonymize bar entry.
+    pub anon_job_id: Option<u64>,
+    /// Relative mask path (e.g. "cache/anon/<clip>.mkv") for the
+    /// in-flight anonymize job.
+    pub anon_rel_path: Option<String>,
     /// Receiver for an in-flight stabilization detect job.
     /// Emits Started / Progress / Finished / Failed events.
     pub stab_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::StabEvent>>,
@@ -723,6 +734,9 @@ impl CapRustApp {
             beat_rx: None,
             beat_job_id: None,
             bg_removal_rel_path: None,
+            anon_rx: None,
+            anon_job_id: None,
+            anon_rel_path: None,
             stab_rx: None,
             stab_job_id: None,
             stab_rel_path: None,
@@ -2596,6 +2610,95 @@ impl CapRustApp {
         }
     }
 
+    fn drain_anon_job(&mut self) {
+        let Some(rx) = self.anon_rx.take() else {
+            return;
+        };
+        let mut still_live = true;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::media_jobs::AnonEvent::Started { total_frames }) => {
+                    tracing::info!("anon: started, {total_frames} frames to process");
+                    if let Some(id) = self.anon_job_id {
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+                    }
+                }
+                Ok(crate::media_jobs::AnonEvent::Progress { done, total }) => {
+                    let p = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    };
+                    if let Some(id) = self.anon_job_id {
+                        self.update_job_progress(id, p);
+                    }
+                }
+                Ok(crate::media_jobs::AnonEvent::Finished {
+                    clip_id,
+                    mask_path,
+                    frame_count,
+                }) => {
+                    let rel = self.anon_rel_path.take();
+                    let stored = match rel {
+                        Some(r) => Some(r),
+                        None => {
+                            let proj = self.project.project_path.clone();
+                            proj.and_then(|p| {
+                                mask_path
+                                    .strip_prefix(&p)
+                                    .ok()
+                                    .map(|r| r.to_string_lossy().into_owned())
+                            })
+                        }
+                    };
+                    if let Some(rel) = stored {
+                        let cmd = caprust_core::commands::set_clip::SetClipCommand::new(clip_id)
+                            .anon_mask(Some(rel));
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("anon: apply failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-anon-failed")));
+                        } else {
+                            tracing::info!(
+                                "anon: clip {} mask applied ({frame_count} frames)",
+                                clip_id
+                            );
+                            self.toast(tr("toast-anon-done"));
+                        }
+                    } else {
+                        tracing::warn!("anon: finished but no relative path available");
+                        self.toast_error(tr("toast-anon-failed"));
+                    }
+                    if let Some(id) = self.anon_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::AnonEvent::Failed(msg)) => {
+                    tracing::error!("anon: job failed: {msg}");
+                    self.toast_error(format!("{}: {msg}", tr("toast-anon-failed")));
+                    if let Some(id) = self.anon_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.anon_rel_path = None;
+                    still_live = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("anon: receiver disconnected unexpectedly");
+                    if let Some(id) = self.anon_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.anon_rel_path = None;
+                    still_live = false;
+                    break;
+                }
+            }
+        }
+        if still_live {
+            self.anon_rx = Some(rx);
+        }
+    }
+
     /// Kick off a background-removal job for the given clip. Requires
     /// the u2netp model on disk, ffmpeg + ffprobe, and a saved project
     /// (so the mask cache has somewhere to live). Silently no-ops with
@@ -2698,6 +2801,118 @@ impl CapRustApp {
         self.bg_removal_rel_path = Some(rel);
         self.toast(tr("toast-bg-removal-started"));
         tracing::info!("bg-removal: job spawned for clip {clip_id}");
+    }
+
+    /// Kick off a face-anonymize job for the given clip. Requires a
+    /// saved project (mask cache), the YuNet model on disk, and
+    /// ffmpeg + ffprobe. Video clips only, 1.0x non-reversed (the
+    /// mask is sampled at the clip's own frame rate and must align
+    /// 1:1). Reuses a cached mask when one exists.
+    fn start_anon_job(&mut self, clip_id: uuid::Uuid) {
+        if self.anon_rx.is_some() {
+            self.toast(tr("toast-anon-busy"));
+            return;
+        }
+        let Some(project_path) = self.project.project_path.clone() else {
+            self.toast(tr("toast-anon-needs-project"));
+            return;
+        };
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-anon-needs-video"));
+                return;
+            }
+        };
+        if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
+            self.toast(tr("toast-anon-unsupported"));
+            return;
+        }
+        let duration_ms = clip.duration_ms;
+        if duration_ms == 0 {
+            self.toast(tr("toast-anon-needs-video"));
+            return;
+        }
+        let t_start_ms = clip.source_offset_ms;
+
+        // Model: YuNet face detector from the registry.
+        self.project
+            .models
+            .scan_local(&self.settings.effective_models_dir());
+        let models_dir = self.settings.effective_models_dir();
+        let model_path = self
+            .project
+            .models
+            .models
+            .iter()
+            .find(|m| m.kind == caprust_core::ModelKind::FaceDetector)
+            .map(|m| {
+                caprust_core::models::ModelRegistry::local_path_static(
+                    &self.project.models.models,
+                    &models_dir,
+                    &m.id,
+                )
+            });
+        let Some(model_path) = model_path.filter(|p| p.is_file()) else {
+            self.toast(tr("toast-anon-needs-model"));
+            return;
+        };
+
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-anon-needs-ffmpeg"));
+            return;
+        };
+        let Some(ffprobe) = self.ffmpeg_status.ffprobe.clone() else {
+            self.toast(tr("toast-anon-needs-ffmpeg"));
+            return;
+        };
+
+        let fps = {
+            let fr = &self.project.frame_rate;
+            if fr.den == 0 {
+                30.0
+            } else {
+                fr.num as f64 / fr.den as f64
+            }
+        };
+
+        let rel = format!("cache/anon/{clip_id}.mkv");
+        if caprust_core::cache::anon_exists(std::path::Path::new(&project_path), clip_id) {
+            let cmd =
+                caprust_core::commands::set_clip::SetClipCommand::new(clip_id).anon_mask(Some(rel));
+            if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                tracing::error!("anon: apply cached failed: {e}");
+                self.toast_error(format!("{}: {e}", tr("toast-anon-failed")));
+            } else {
+                self.toast(tr("toast-anon-done"));
+            }
+            return;
+        }
+        let abs = caprust_core::cache::anon_path(std::path::Path::new(&project_path), clip_id);
+
+        let req = crate::media_jobs::AnonRequest {
+            clip_id,
+            source_path,
+            t_start_ms,
+            duration_ms,
+            fps,
+            model_path,
+            mask_output: abs,
+            max_side: 480,
+        };
+        let rx = crate::media_jobs::spawn_anon_job(
+            std::path::PathBuf::from(ffmpeg),
+            std::path::PathBuf::from(ffprobe),
+            req,
+        );
+        let job_id = self.begin_job(JobKind::Anon, tr("job-anon"));
+        self.anon_job_id = Some(job_id);
+        self.anon_rx = Some(rx);
+        self.anon_rel_path = Some(rel);
+        self.toast(tr("toast-anon-started"));
     }
 
     /// Kick off a stabilization detect job (vidstab pass 1) for the
@@ -7327,6 +7542,14 @@ impl CapRustApp {
                         PendingEdit::StartBeatAnalysis => {
                             self.start_beat_job(id);
                         }
+                        PendingEdit::StartAnon => {
+                            self.start_anon_job(id);
+                        }
+                        PendingEdit::ClearAnon => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .anon_mask(None);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::StartBeatAutocut => {
                             self.auto_cut_to_beats(id);
                         }
@@ -10326,6 +10549,7 @@ impl eframe::App for CapRustApp {
         self.drain_reframe_job();
         self.drain_beat_job();
         self.drain_bg_removal_job();
+        self.drain_anon_job();
         self.drain_stab_job();
         self.drain_save_frame();
         self.poll_audio_cache();

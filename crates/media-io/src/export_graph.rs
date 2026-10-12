@@ -97,6 +97,8 @@ pub struct VideoClip {
     pub blend_mode: Option<String>,
     /// Per-clip color grade. None (or identity) renders nothing.
     pub color_grade: Option<caprust_core::clip::ColorGrade>,
+    /// Resolved face-anonymize mask path. None = no anonymization.
+    pub anon_mask_path: Option<std::path::PathBuf>,
 }
 
 /// Text overlay clip (drawtext filter).
@@ -518,7 +520,12 @@ impl RenderPlan {
             // Otherwise the chain writes v_out directly.
             let mask_escaped = c.bg_removal_path.as_deref().and_then(escape_movie_path);
             let mask_active = mask_escaped.is_some();
-            let video_out = if mask_active {
+            // Optional face-anonymize stage (see below): splits the
+            // graded frame, blurs one leg, merges it back through the
+            // face-box mask. Runs before bg-removal so both stack.
+            let anon_escaped = c.anon_mask_path.as_deref().and_then(escape_movie_path);
+            let anon_active = anon_escaped.is_some();
+            let video_out = if mask_active || anon_active {
                 format!("v_pre{i}")
             } else {
                 v_out.clone()
@@ -617,6 +624,29 @@ impl RenderPlan {
             }
             fg.push_str(&format!("[{video_out}];"));
 
+            // Face-anonymize merge. The mask holds white face boxes on
+            // black; the blurred leg shows through the mask, the sharp
+            // leg everywhere else. The mask chain feathers boxes with
+            // boxblur so edges don't cut visibly. Output feeds the
+            // bg-removal stage below (or v_out when no bg mask).
+            let anon_in = if let Some(mask) = anon_escaped {
+                let a_label = format!("m_a{i}");
+                let an_out = format!("v_an{i}");
+                fg.push_str(&format!(
+                    "movie={mask}:loop=0,setpts=PTS-STARTPTS,fps={num}/{den},format=gray,boxblur=3:1,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[{a_label}];",
+                    num = self.fps_num,
+                    den = self.fps_den,
+                    w = self.width,
+                    h = self.height,
+                ));
+                fg.push_str(&format!(
+                    "[{video_out}]split[a{i}_s][a{i}_b];[a{i}_b]boxblur=12:3[a{i}_blur];[a{i}_s][a{i}_blur][{a_label}]maskedmerge[{an_out}];",
+                ));
+                an_out
+            } else {
+                video_out.clone()
+            };
+
             if let Some(mask) = mask_escaped {
                 // Mask chain: read the FFV1 gray sequence, reset PTS,
                 // force the project fps so the merge samples 1:1, and
@@ -650,7 +680,7 @@ impl RenderPlan {
                     dur = c.duration_sec,
                 ));
                 fg.push_str(&format!(
-                    "[{bg_label}][{video_out}][{mask_label}]maskedmerge[{v_out}];",
+                    "[{bg_label}][{anon_in}][{mask_label}]maskedmerge[{v_out}];",
                 ));
             }
 
@@ -2817,6 +2847,88 @@ fn resolve_bg_removal_path(
     Some(abs)
 }
 
+/// Resolve the face-anonymize mask for a clip. Same safety rules as
+/// `resolve_bg_removal_path`: the stored path is relative to the
+/// project directory (e.g. "cache/anon/<clip>.mkv") and must
+/// canonicalize to exactly `<project>/cache/anon/<clip_id>.mkv`.
+fn resolve_anon_path(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::Clip,
+) -> Option<std::path::PathBuf> {
+    let rel = clip.anon_mask.as_ref()?;
+    let proj = project.project_path.as_ref()?;
+
+    use std::path::Component;
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path.components().any(|c| {
+            matches!(
+                c,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        })
+    {
+        tracing::warn!(
+            "clip {} anon mask path is not a safe relative path: {rel}",
+            clip.id
+        );
+        return None;
+    }
+
+    let anon_dir = std::path::Path::new(proj).join("cache").join("anon");
+    let abs = std::path::Path::new(proj).join(rel_path);
+
+    if !abs.is_file() {
+        tracing::warn!(
+            "clip {} anon mask missing on disk: {}",
+            clip.id,
+            abs.display()
+        );
+        return None;
+    }
+
+    let canon = match abs.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("clip {} anon mask canonicalize failed: {e}", clip.id);
+            return None;
+        }
+    };
+    let canon_dir = match anon_dir.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("clip {} anon dir canonicalize failed: {e}", clip.id);
+            return None;
+        }
+    };
+    if canon.parent() != Some(canon_dir.as_path()) {
+        tracing::warn!(
+            "clip {} anon mask resolves outside <project>/cache/anon: {}",
+            clip.id,
+            canon.display()
+        );
+        return None;
+    }
+
+    let expected_stem = clip.id.to_string();
+    let stem_ok = canon.file_stem().and_then(|s| s.to_str()) == Some(expected_stem.as_str());
+    let ext_ok = canon
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("mkv"))
+        .unwrap_or(false);
+    if !stem_ok || !ext_ok {
+        tracing::warn!(
+            "clip {} anon mask must be <clip_id>.mkv, got {}",
+            clip.id,
+            canon.display()
+        );
+        return None;
+    }
+
+    Some(abs)
+}
+
 /// Resolve the vidstab transforms file for a clip. Same safety rules
 /// as `resolve_bg_removal_path`: the stored path is relative to the
 /// project directory (e.g. "cache/stab/<clip>.trf") and must
@@ -3141,6 +3253,7 @@ pub fn plan_from_project(
                         lut: c.lut.clone(),
                         blend_mode: c.blend_mode.clone(),
                         color_grade: c.color_grade,
+                        anon_mask_path: resolve_anon_path(project, c),
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -3187,6 +3300,7 @@ pub fn plan_from_project(
                         lut: c.lut.clone(),
                         blend_mode: c.blend_mode.clone(),
                         color_grade: c.color_grade,
+                        anon_mask_path: resolve_anon_path(project, c),
                     });
                 }
                 ClipType::TextOverlay {
@@ -3962,6 +4076,7 @@ mod tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4141,6 +4256,7 @@ mod tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4203,6 +4319,42 @@ mod tests {
         assert!(
             !fg.contains("v_pre0"),
             "plain plan must not emit an intermediate label: {fg}"
+        );
+    }
+
+    fn single_video_plan_with_anon(mask: Option<&str>) -> RenderPlan {
+        let mut plan = single_video_plan_with_mask(None);
+        plan.video_clips[0].anon_mask_path = mask.map(std::path::PathBuf::from);
+        plan
+    }
+
+    #[test]
+    fn anon_emits_blur_branch_and_merge() {
+        let plan = single_video_plan_with_anon(Some("/tmp/anon.mkv"));
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            fg.contains("boxblur=12:3"),
+            "expected anonymize blur leg: {fg}"
+        );
+        assert!(fg.contains("maskedmerge"), "expected anonymize merge: {fg}");
+        assert!(
+            fg.contains("/tmp/anon.mkv"),
+            "anon mask path missing from filtergraph: {fg}"
+        );
+        // Blurred leg merges over the sharp base through the mask.
+        assert!(
+            fg.contains("split["),
+            "expected split into sharp/blur legs: {fg}"
+        );
+    }
+
+    #[test]
+    fn anon_absent_has_no_blur_branch() {
+        let plan = single_video_plan_with_anon(None);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(
+            !fg.contains("boxblur=12:3"),
+            "plain plan must not emit the anon blur: {fg}"
         );
     }
 
@@ -4606,6 +4758,7 @@ mod tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4664,6 +4817,7 @@ mod tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -4888,6 +5042,7 @@ mod tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5608,6 +5763,7 @@ mod flip_filtergraph_tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5706,6 +5862,7 @@ mod reverse_filtergraph_tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5959,6 +6116,7 @@ mod stab_tests {
                 lut: None,
                 blend_mode: None,
                 color_grade: None,
+                anon_mask_path: None,
             }],
             audio_clips: vec![],
             text_clips: vec![],

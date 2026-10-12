@@ -751,6 +751,13 @@ pub struct Clip {
     /// the P3d render graph as an `alphamerge` input.
     #[serde(default)]
     pub bg_removal: Option<String>,
+    /// Path to the per-clip face-anonymize mask. Relative to the
+    /// project directory, e.g. "cache/anon/<clip_id>.mkv". None = no
+    /// anonymization. Populated by the anonymize job (YuNet boxes),
+    /// consumed by the render graph, which merges a blurred copy
+    /// through this mask.
+    #[serde(default)]
+    pub anon_mask: Option<String>,
     /// Path to the per-clip vidstab transforms file (stabilization
     /// pass 1). Relative to the project directory, e.g.
     /// "cache/stab/<clip_id>.trf". None = no stabilization.
@@ -831,6 +838,7 @@ impl Clip {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -885,6 +893,7 @@ impl Clip {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             source_duration_ms: dur_ms,
             media_id: None,
         }
@@ -939,6 +948,7 @@ impl Clip {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -997,6 +1007,7 @@ impl Clip {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -1061,6 +1072,7 @@ impl Clip {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
         }
@@ -1123,6 +1135,7 @@ impl Clip {
             split_display: None,
             blend_mode: None,
             color_grade: None,
+            anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
         }

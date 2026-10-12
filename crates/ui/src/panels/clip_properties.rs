@@ -137,6 +137,12 @@ pub enum PendingEdit {
     /// The dispatcher resolves the clip id from the selection, like
     /// StartReframe.
     StartBeatAnalysis,
+    /// Start a face-anonymize job for the currently-selected video
+    /// clip. Dispatcher resolves the clip id from the selection.
+    StartAnon,
+    /// Clear the anonymize mask path. The mask file itself stays in
+    /// cache until the user clears the project cache.
+    ClearAnon,
     /// Split every video clip at this audio clip's beat markers.
     /// One MacroCommand so Ctrl+Z is a single step. No-op with a toast
     /// when the clip has no analysed grid yet.
@@ -1202,6 +1208,53 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                         .clicked()
                     {
                         state.pending.push(PendingEdit::StartStab);
+                    }
+                });
+            });
+        });
+
+        ui.add_space(space::M_PLUS);
+        ui.separator();
+
+        // --- Face anonymize ---
+        // Video-only: still images have no moving faces worth a mask job.
+        ui.label(egui::RichText::new(tr("props-video-anonymize")).strong());
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new(tr("props-anon-hint"))
+                .small()
+                .color(egui::Color32::from_gray(150)),
+        );
+        ui.horizontal(|ui| {
+            let can_run = matches!(clip.clip_type, ClipType::Video { .. });
+            let has_mask = clip.anon_mask.is_some();
+            if has_mask {
+                ui.label(
+                    egui::RichText::new(tr("props-anon-done"))
+                        .small()
+                        .color(egui::Color32::from_gray(200)),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(tr("props-anon-none"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if has_mask
+                    && button::ghost(ui, tr("props-anon-clear"))
+                        .on_hover_text(tr("props-anon-clear-hint"))
+                        .clicked()
+                {
+                    state.pending.push(PendingEdit::ClearAnon);
+                }
+                ui.add_enabled_ui(can_run, |ui| {
+                    if button::primary(ui, tr("props-anon-run"))
+                        .on_hover_text(tr("props-anon-run-hint"))
+                        .clicked()
+                    {
+                        state.pending.push(PendingEdit::StartAnon);
                     }
                 });
             });
