@@ -3363,10 +3363,18 @@ pub fn plan_from_project(
                         continue;
                     }
 
-                    // Timestamps in the ASS file are absolute on
-                    // the output timeline; a seeked export starts
-                    // at zero, so subtract the seek.
-                    let offset = if do_input_seek { seek_sec } else { 0.0 };
+                    // CaptionSegment timings are RELATIVE to their Captions clip, but the
+                    // ASS file is keyed on absolute output-timeline
+                    // seconds. `build` subtracts `time_offset_sec`,
+                    // which for a clip at T with a seek at S has to be
+                    // S - T so that `seg_ms - (S - T)` lands on the
+                    // right output second. Using just S put every
+                    // caption in the first seconds of the timeline
+                    // instead of where its clip sits.
+                    // Output-side seek only happens when `do_input_seek`; with no seek
+                    // the output timeline is the project timeline.
+                    let seek = if do_input_seek { seek_sec } else { 0.0 };
+                    let offset = seek - clip_start_raw;
                     let owned: Vec<caprust_core::clip::CaptionSegment> =
                         visible.iter().map(|s| (*s).clone()).collect();
                     let ass_body = crate::caption_ass::build(
@@ -4170,9 +4178,81 @@ mod tests {
         assert!(!body.contains("\\k0"), "no zero-length karaoke run: {body}");
     }
 
+    /// Regression: `CaptionSegment.start_ms` is relative to its Captions
+    /// clip, but the ASS file is keyed on absolute output seconds. With
+    /// a clip parked at 25 s the subtitles were written at 0-4 s, so
+    /// they were invisible everywhere on the timeline except the very
+    /// start.
+    #[test]
+    fn caption_ass_times_include_the_clip_position() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        let segments = vec![CaptionSegment {
+            start_ms: 0,
+            end_ms: 2000,
+            text: "late".into(),
+            words: vec![WordTiming {
+                start_ms: 0,
+                end_ms: 900,
+                text: "late".into(),
+            }],
+        }];
+        let plan = plan_with_caption_segments_at(25_000, segments);
+        assert!(
+            !plan.text_clips.is_empty(),
+            "caption clip at 25 s produced no text clips at all"
+        );
+        let body = ass_body_of(&plan);
+        let line = body
+            .lines()
+            .find(|l| l.starts_with("Dialogue:"))
+            .unwrap_or_else(|| panic!("no dialogue line: {body}"));
+        assert!(
+            line.starts_with("Dialogue: 0,0:00:25.00,0:00:27.00,"),
+            "a clip at 25 s must emit 25-27 s, not 0-2 s: {line}"
+        );
+    }
+
+    /// Same, with the output seeked: the ASS file must land on
+    /// output-relative time, since output PTS restart at zero.
+    #[test]
+    fn caption_ass_times_shift_with_the_export_seek() {
+        use caprust_core::clip::CaptionSegment;
+        let segments = vec![CaptionSegment {
+            start_ms: 0,
+            end_ms: 2000,
+            text: "late".into(),
+            words: Vec::new(),
+        }];
+        let plan = plan_with_caption_segments_at_seek(25_000, 10_000, segments);
+        let body = ass_body_of(&plan);
+        let line = body
+            .lines()
+            .find(|l| l.starts_with("Dialogue:"))
+            .unwrap_or_else(|| panic!("no dialogue line: {body}"));
+        assert!(
+            line.starts_with("Dialogue: 0,0:00:15.00,0:00:17.00,"),
+            "clip at 25 s with a 10 s seek must emit 15-17 s: {line}"
+        );
+    }
+
     /// Build a project with one Captions clip holding `segments` and a
     /// 2 s placeholder video, then run the real planner.
     fn plan_with_caption_segments(segments: Vec<caprust_core::clip::CaptionSegment>) -> RenderPlan {
+        plan_with_caption_segments_at(0, segments)
+    }
+
+    fn plan_with_caption_segments_at(
+        start_ms: u64,
+        segments: Vec<caprust_core::clip::CaptionSegment>,
+    ) -> RenderPlan {
+        plan_with_caption_segments_at_seek(start_ms, 0, segments)
+    }
+
+    fn plan_with_caption_segments_at_seek(
+        start_ms: u64,
+        seek_ms: u64,
+        segments: Vec<caprust_core::clip::CaptionSegment>,
+    ) -> RenderPlan {
         use caprust_core::clip::{Clip, ClipType};
         let mut project = caprust_core::ProjectState::default();
 
@@ -4181,7 +4261,12 @@ mod tests {
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
             .expect("captions track exists in default_tracks()");
-        let mut clip = Clip::new_video("placeholder.mp4", captions_track, 0, 2000);
+        let mut clip = Clip::new_video(
+            "placeholder.mp4",
+            captions_track,
+            start_ms,
+            40_000 + start_ms,
+        );
         clip.clip_type = ClipType::Captions {
             style: Default::default(),
             language: "en".into(),
@@ -4197,10 +4282,10 @@ mod tests {
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Video)
             .expect("video track exists in default_tracks()");
-        let mut placeholder = Clip::new_video("placeholder.mp4", video_track, 0, 2000);
+        let mut placeholder = Clip::new_video("placeholder.mp4", video_track, 0, 40_000 + start_ms);
         placeholder.clip_type = ClipType::Video {
             path: "placeholder.mp4".into(),
-            duration_ms: 2000,
+            duration_ms: 40_000 + start_ms,
         };
         project.add_clip(placeholder);
 
@@ -4215,7 +4300,7 @@ mod tests {
             8000,
             "veryfast",
             std::path::Path::new("."),
-            0,
+            seek_ms,
             caprust_core::project::VideoEncoder::H264Cpu,
         )
         .expect("plan built")

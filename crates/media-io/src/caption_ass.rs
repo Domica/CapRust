@@ -100,17 +100,13 @@ pub fn ass_time(sec: f64) -> String {
     format!("{h}:{m:02}:{s:02}.{cc:02}")
 }
 
-/// ASS colours are `&HAABBGGRR`: alpha inverted (00 = opaque, FF =
-/// transparent) and channels reversed relative to RGB.
-fn ass_color(rgb: [u8; 3], alpha: f32) -> String {
-    let a = (1.0 - alpha.clamp(0.0, 1.0)) * 255.0;
-    format!(
-        "&H{:02X}{:02X}{:02X}{:02X}",
-        a.round() as u8,
-        rgb[2],
-        rgb[1],
-        rgb[0]
-    )
+/// ASS colours are `&HAABBGGRR`. The leading byte is **inverted
+/// transparency**: `00` is fully opaque and `FF` fully transparent.
+/// So the byte is `(1 - opacity) * 255`, which is easy to invert by
+/// accident and renders the whole caption invisible.
+fn ass_color(rgb: [u8; 3], opacity: f32) -> String {
+    let a = ((1.0 - opacity.clamp(0.0, 1.0)) * 255.0).round() as u8;
+    format!("&H{a:02X}{:02X}{:02X}{:02X}", rgb[2], rgb[1], rgb[0])
 }
 
 /// Escape caption text for an ASS dialogue line.
@@ -144,13 +140,16 @@ fn alignment(pos: CaptionPosition) -> u8 {
     }
 }
 
-/// Karaoke tag for a run of words, or an empty string when the segment
-/// carries no usable word timing.
+/// Karaoke tag for a run of words.
 ///
-/// SecondaryColour is set to fully transparent in the style, so a
-/// `\k` run reveals the text progressively instead of recolouring it:
-/// that reproduces the old "types itself as the speaker talks" look
-/// with a single filter.
+/// Falls back to the plain segment text when there are fewer than two
+/// words. A `\k` run needs something to reveal, and returning empty
+/// for a one-word segment ("Yes.") dropped that caption entirely.
+///
+/// The style's SecondaryColour is fully transparent, so a `\k` run
+/// reveals the text progressively instead of recolouring it: that
+/// reproduces the old "types itself as the speaker talks" look with a
+/// single filter.
 fn karaoke(segment: &CaptionSegment, time_offset_sec: f64) -> String {
     let words: Vec<_> = segment
         .words
@@ -158,7 +157,7 @@ fn karaoke(segment: &CaptionSegment, time_offset_sec: f64) -> String {
         .filter(|w| !w.text.trim().is_empty())
         .collect();
     if words.len() < 2 {
-        return String::new();
+        return escape_ass_text(segment.text.trim());
     }
 
     let mut parts = String::new();
@@ -212,9 +211,11 @@ pub fn build(
     // BorderStyle 3 paints the box in OutlineColour, so the "background"
     // colour moves there; with no box it stays the outline colour.
     let outline = if style.bg_enabled {
-        ass_color([0, 0, 0], 1.0 - style.bg_opacity)
+        // BorderStyle 3 paints the box in OutlineColour, so bg_opacity
+        // maps straight onto that colour's opacity.
+        ass_color([0, 0, 0], style.bg_opacity)
     } else {
-        ass_color(style.outline_color, 0.0)
+        ass_color(style.outline_color, 1.0)
     };
     let mut s = String::with_capacity(1024);
     s.push_str("[Script Info]\n");
@@ -234,12 +235,15 @@ pub fn build(
          BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n",
     );
     s.push_str(&format!(
-        "Style: CapRust,{font},{size},{primary},&H000000FF,{outline},&H80000000,0,0,0,0,100,100,0,0,{border_style},{outline_w},0,{align},10,10,{margin_v},1\n",
+        "Style: CapRust,{font},{size},{primary},{secondary},{outline},&H80000000,0,0,0,0,100,100,0,0,{border_style},{outline_w},0,{align},10,10,{margin_v},1\n",
         font = if font_family.trim().is_empty() { "sans-serif" } else { font_family },
         size = style.font_size.max(4.0).round(),
-        // SecondaryColour transparent => `\k` reveals instead of
-        // recolouring, matching the previous progressive-reveal look.
-        primary = ass_color(style.color, 0.0),
+        primary = ass_color(style.color, 1.0),
+        // ASS karaoke paints the not-yet-sung part in SecondaryColour.
+        // Making it fully transparent turns `\k` into a typewriter
+        // reveal instead of a colour change, which is what the old
+        // accumulated-drawtext chain did.
+        secondary = ass_color([0, 0, 0], 0.0),
         outline = outline,
         border_style = border_style,
         // Outline is the text outline when there is no box, and the box
@@ -436,6 +440,74 @@ mod tests {
             "start shifted: {body}"
         );
         assert!(body.contains("0:00:02.50,CapRust"), "end shifted: {body}");
+    }
+
+    /// ASS stores opacity inverted in the leading byte (`00` opaque, `FF`
+    /// transparent). Getting that backwards renders the caption in a
+    /// fully transparent colour, which is indistinguishable from "there
+    /// are no subtitles" -- the filter loads, libass is happy, and
+    /// nothing is painted.
+    #[test]
+    fn opaque_text_is_not_transparent() {
+        let style = CaptionStyle::default();
+        let body = build(&[seg_with_words()], &style, "Arial", 1920, 1080, 0.0);
+        let style_line = body.lines().find(|l| l.starts_with("Style:")).unwrap();
+        // `split(',')` keeps "Style: CapRust" as one leading field, then
+        // Fontname, Fontsize, PrimaryColour, SecondaryColour,
+        // OutlineColour, ...
+        let fields: Vec<&str> = style_line.split(',').collect();
+        let primary = fields[3];
+        let secondary = fields[4];
+        assert!(
+            primary.starts_with("&H00"),
+            "PrimaryColour must be fully opaque (AA=00): {style_line}"
+        );
+        assert!(
+            secondary.starts_with("&HFF"),
+            "SecondaryColour must be transparent so \\k reveals: {style_line}"
+        );
+    }
+
+    /// The background box colour carries bg_opacity directly.
+    #[test]
+    fn background_opacity_maps_to_the_box_colour() {
+        let style = CaptionStyle {
+            bg_enabled: true,
+            bg_opacity: 0.5,
+            ..Default::default()
+        };
+        let body = build(&[seg_with_words()], &style, "Arial", 1920, 1080, 0.0);
+        let style_line = body.lines().find(|l| l.starts_with("Style:")).unwrap();
+        let fields: Vec<&str> = style_line.split(',').collect();
+        // 0.5 opacity -> alpha byte (1-0.5)*255 ~= 128 = 0x80.
+        assert!(
+            fields[5].starts_with("&H80"),
+            "OutlineColour carries the box fill at 50%: {style_line}"
+        );
+    }
+
+    /// A one-word segment must still produce a caption. Returning empty
+    /// from the karaoke builder for `words.len() < 2` dropped "Yes."
+    /// and "Okay." entirely.
+    #[test]
+    fn single_word_segment_still_renders() {
+        let style = CaptionStyle::default();
+        let seg = CaptionSegment {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "Yes.".into(),
+            words: vec![WordTiming {
+                start_ms: 0,
+                end_ms: 900,
+                text: "Yes.".into(),
+            }],
+        };
+        let body = build(&[seg], &style, "Arial", 1920, 1080, 0.0);
+        assert!(
+            body.lines()
+                .any(|l| l.starts_with("Dialogue:") && l.contains("Yes.")),
+            "a one-word caption must not vanish: {body}"
+        );
     }
 
     #[test]
