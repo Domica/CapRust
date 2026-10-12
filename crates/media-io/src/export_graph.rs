@@ -133,103 +133,14 @@ pub struct TextClip {
     /// each other, so every window but the last must be half-open
     /// (`start <= t < end`). With a closed window the shared boundary
     /// instant satisfies two windows at once and the same text gets
-    /// drawn twice on top of itself for one frame, which reads on
-    /// screen as a flicker. The last window of a run is inclusive so
-    /// its final frame still shows.
-    pub window_end_inclusive: bool,
-}
-
-/// Effect option suffix for a drawtext body. Blink = hard on/off via
-/// `alpha`; Pulse = sinusoid on `alpha`; ColorCycle = `fontcolor_expr`
-/// using ffmpeg's text-expansion (`%{eif:EXPR:x:2}`) to rotate the RGB
-/// components. Backslash-colon inside the expansion survives the
-/// filter parser and lets the expansion see the inner colon.
-/// Build a Captions drawtext body using the user-editable CaptionStyle.
-/// Position maps to the same layout the legacy "caption" preset used,
-/// so bottom stays the default and existing projects look unchanged.
-fn build_caption_drawtext_body(
-    t: &TextClip,
-    escaped: &str,
-    cs: &caprust_core::clip::CaptionStyle,
-) -> String {
-    use caprust_core::clip::CaptionPosition;
-    let y_base: String = match cs.position {
-        CaptionPosition::Top => "h*0.08".to_string(),
-        CaptionPosition::Middle => "(h-text_h)/2".to_string(),
-        CaptionPosition::Bottom => "h*0.82".to_string(),
-    };
-    let mx = t.motion.x;
-    let my = t.motion.y;
-    let x_expr = if mx.abs() < 1e-4 {
-        "(w-text_w)/2".to_string()
-    } else {
-        format!("(w-text_w)/2+({mx:.4})*w")
-    };
-    let y_expr = if my.abs() < 1e-4 {
-        y_base
-    } else {
-        format!("{y_base}+({my:.4})*h")
-    };
-    let fs = ((cs.font_size as f64) * (t.motion.scale as f64))
-        .round()
-        .max(1.0) as i32;
-    let color = format!(
-        "0x{:02X}{:02X}{:02X}",
-        cs.color[0], cs.color[1], cs.color[2]
-    );
-    let outline = if cs.outline_width > 0.5 {
-        format!(
-            ":borderw={}:bordercolor=0x{:02X}{:02X}{:02X}",
-            cs.outline_width.round() as i32,
-            cs.outline_color[0],
-            cs.outline_color[1],
-            cs.outline_color[2]
-        )
-    } else {
-        String::new()
-    };
-    let bg = if cs.bg_enabled {
-        format!(
-            ":box=1:boxcolor=black@{:.2}:boxborderw=8",
-            cs.bg_opacity.clamp(0.0, 1.0)
-        )
-    } else {
-        String::new()
-    };
-    let effect_opts = build_text_effect_opts(t.effect.as_ref());
-    format!(
-        "drawtext=text='{escaped}':fontcolor={color}:fontsize={fs}:x={x_expr}:y={y_expr}{outline}{bg}{effect_opts}:enable='{enable}'",
-        escaped = escaped,
-        color = color,
-        fs = fs,
-        x_expr = x_expr,
-        y_expr = y_expr,
-        outline = outline,
-        bg = bg,
-        effect_opts = effect_opts,
-        enable = caption_enable_expr(t),
-    )
-}
-
-/// Enable expression for a caption's drawtext window.
-///
-/// `between(t,a,b)` is closed on both ends. Progressive-reveal captions
-/// emit one drawtext per word with windows that butt up against each
-/// other, so the shared boundary instant would enable two drawtexts at
-/// once and paint the caption twice in the same place for that frame --
-/// visible as the caption trembling. Half-open windows make the reveal
-/// tile exactly once per instant.
-///
-/// The end of a run stays inclusive so the last frame of the final
-/// word, and of a whole-segment fallback, still draws.
-fn caption_enable_expr(t: &TextClip) -> String {
-    let start = t.timeline_start_sec;
-    let end = start + t.duration_sec;
-    if t.window_end_inclusive {
-        format!("between(t,{start:.6},{end:.6})")
-    } else {
-        format!("gte(t,{start:.6})*lt(t,{end:.6})")
-    }
+    /// When Some, this stage is a libass subtitle burn-in rather than a
+    /// `drawtext`. The guard owns the temp `.ass` file, so it must stay
+    /// with the TextClip for as long as ffmpeg needs it.
+    ///
+    /// Captions go this way because one `subtitles=` filter handles any
+    /// number of words, while a per-word `drawtext` chain is a
+    /// full-frame CPU pass each and starves the hardware encoder.
+    pub ass: Option<crate::caption_ass::AssScript>,
 }
 
 /// Creative voice FX chain (telephone, bass, echo, chipmunk). Runs
@@ -251,59 +162,11 @@ fn build_voice_fx(telephone: bool, bass: bool, echo: bool, chipmunk: bool) -> St
     out
 }
 
-/// Clamp overlapping caption enable windows so stacked rows cannot
-/// appear. Whisper segments routinely overlap in time (segment N ends
-/// after segment N+1 starts), but enable windows were only ever
-/// clamped *within* a segment (next word), never *across* segments —
-/// two drawtexts then rendered different accumulated text at the same
-/// y simultaneously. Only caption-style clips are touched;
-/// TextOverlay clips may overlap intentionally. Fully covered windows
-/// are dropped. Must run before text_end_sec is computed.
-fn normalize_caption_text_clips(clips: &mut Vec<TextClip>) {
-    let mut idx: Vec<usize> = clips
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| t.caption_style.is_some())
-        .map(|(i, _)| i)
-        .collect();
-    idx.sort_by(|&a, &b| {
-        clips[a]
-            .timeline_start_sec
-            .partial_cmp(&clips[b].timeline_start_sec)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let mut remove = vec![false; clips.len()];
-    let mut last_end = f64::NEG_INFINITY;
-    for i in idx {
-        let start = clips[i].timeline_start_sec;
-        let end = start + clips[i].duration_sec;
-        if start < last_end {
-            if end <= last_end {
-                remove[i] = true;
-                continue;
-            }
-            clips[i].timeline_start_sec = last_end;
-            clips[i].duration_sec = end - last_end;
-            // Truncating the front of a window makes its new start a
-            // boundary it now shares with the previous window, so it
-            // has to become half-open or both draw at that instant.
-            if clips[i].duration_sec > 0.0 {
-                clips[i].window_end_inclusive = false;
-            }
-        }
-        last_end = last_end.max(end);
-    }
-    if remove.iter().any(|&d| d) {
-        let mut kept = Vec::with_capacity(clips.len());
-        for (i, t) in std::mem::take(clips).into_iter().enumerate() {
-            if !remove[i] {
-                kept.push(t);
-            }
-        }
-        *clips = kept;
-    }
-}
-
+/// Effect option suffix for a drawtext body. Blink = hard on/off via
+/// `alpha`; Pulse = sinusoid on `alpha`; ColorCycle = `fontcolor_expr`
+/// using ffmpeg's text-expansion (`%{eif:EXPR:x:2}`) to rotate the RGB
+/// components. Backslash-colon inside the expansion survives the
+/// filter parser and lets the expansion see the inner colon.
 fn build_text_effect_opts(effect: Option<&caprust_core::clip::TextEffect>) -> String {
     use caprust_core::clip::TextEffectKind;
     let Some(e) = effect else {
@@ -1013,12 +876,16 @@ impl RenderPlan {
             };
             // Captions path: user-editable CaptionStyle wins over the
             // preset string. TextOverlay path: classic preset layout.
-            if let Some(cs) = t.caption_style.as_ref() {
-                let body = build_caption_drawtext_body(t, &escaped, cs);
+            //
+            // A caption carrying an ASS script burns in through one
+            // `subtitles=` filter; that covers every word timing at a
+            // fixed cost. Per-clip EFFECTS still apply afterwards, same
+            // as the drawtext path.
+            if let Some(ass) = t.ass.as_ref() {
                 fg.push_str(&format!(
-                    "[{v_prev}]{body}{fx_suffix}[v_txt{t_i}];",
+                    "[{v_prev}]subtitles={value}{fx_suffix}[v_txt{t_i}];",
                     v_prev = v_prev,
-                    body = body,
+                    value = ass.filter_value(),
                     fx_suffix = fx_suffix,
                     t_i = t_i,
                 ));
@@ -3422,10 +3289,7 @@ pub fn plan_from_project(
                         effect: *effect,
                         caption_style: None,
                         effects: c.effects.clone(),
-                        // TextOverlay clips are placed by the user and
-                        // are meant to be independently visible, so a
-                        // closed window is fine.
-                        window_end_inclusive: true,
+                        ass: None,
                     });
                 }
                 ClipType::Captions {
@@ -3477,129 +3341,76 @@ pub fn plan_from_project(
                         // shortened output.
                         continue;
                     }
-                    // Seek-relative clip start in the output timeline.
-                    let clip_start_sec = if do_input_seek {
-                        (clip_start_raw - seek_sec).max(0.0)
-                    } else {
-                        clip_start_raw
-                    };
-                    for seg in segments {
-                        let seg_start_raw = clip_start_raw + seg.start_ms as f64 / 1000.0;
-                        let seg_end_raw = clip_start_raw + seg.end_ms as f64 / 1000.0;
-                        if do_input_seek && seg_end_raw <= seek_sec {
-                            // Segment sits entirely before the seek.
-                            continue;
-                        }
-                        // Map from original timeline to seek-relative
-                        // output. For a straddling segment this pulls
-                        // the enable window forward to t=0 of the
-                        // shortened output.
-                        let seg_start_sec = if do_input_seek {
-                            (seg_start_raw - seek_sec).max(0.0)
-                        } else {
-                            seg_start_raw
-                        };
-                        let seg_end_sec = seg_start_sec + (seg_end_raw - seg_start_raw).max(0.0);
-
-                        // Fallback to a single drawtext when either the
-                        // word list is empty, or every word carries a
-                        // zero-duration timing. Whisper tiny (and some
-                        // other configs) persist the word list but leave
-                        // all start_ms/end_ms at 0; the progressive-reveal
-                        // path would then stack every word on the same
-                        // frame with the same enable window, producing
-                        // a legible-but-overlapping pile.
-                        let words_have_timing = !seg.words.is_empty()
-                            && seg.words.iter().any(|w| w.start_ms != 0 || w.end_ms != 0);
-                        if !words_have_timing {
-                            let seg_dur = (seg_end_sec - seg_start_sec).max(0.05);
-                            text_clips.push(TextClip {
-                                content: seg.text.clone(),
-                                font_size: 32.0,
-                                timeline_start_sec: seg_start_sec,
-                                duration_sec: seg_dur,
-                                above: false,
-                                z_order: z,
-                                style: "caption".to_string(),
-                                motion: *motion,
-                                effect: *effect,
-                                caption_style: Some(*caption_style),
-                                effects: c.effects.clone(),
-                                // Whole-segment fallback: nothing tiles
-                                // against it, so a closed window is
-                                // safe and keeps the final frame.
-                                window_end_inclusive: true,
-                            });
-                        } else {
-                            let mut acc = String::new();
-                            for (wi, w) in seg.words.iter().enumerate() {
-                                // Skip whisper control tokens ([_BEG_],
-                                // [_EOT_], ...). They carry zero/negative
-                                // duration and would otherwise leave a
-                                // zero-width enable window that stacks on
-                                // the following real word.
-                                let word_text = w.text.trim();
-                                if word_text.starts_with('[') && word_text.ends_with(']') {
-                                    continue;
-                                }
-                                if !acc.is_empty() {
-                                    acc.push(' ');
-                                }
-                                acc.push_str(word_text);
-                                let word_start_sec = clip_start_sec + w.start_ms as f64 / 1000.0;
-                                // (clip_start_sec is already seek-shifted;
-                                // word.start_ms is source-relative to the
-                                // caption clip, so no further adjustment.)
-                                // Each drawtext is on screen until the
-                                // next word starts; the last one stays
-                                // until the segment end. Clamped so a
-                                // stray zero-duration word cannot
-                                // produce an invisible enable window.
-                                // Next non-control word's start time, so
-                                // the current word's enable window does
-                                // not collapse onto a zero-duration token.
-                                let next_real_start = seg.words[wi + 1..]
-                                    .iter()
-                                    .find(|x| {
-                                        let t = x.text.trim();
-                                        !(t.starts_with('[') && t.ends_with(']'))
-                                    })
-                                    .map(|x| x.start_ms);
-                                let word_end_raw = match next_real_start {
-                                    Some(ms) => clip_start_raw + ms as f64 / 1000.0,
-                                    None => seg_end_raw,
-                                };
-                                // Only the last real word of the segment
-                                // gets a closed window. Every other one
-                                // is half-open so consecutive windows
-                                // tile instead of both firing on their
-                                // shared boundary instant, which would
-                                // paint the caption twice and read as a
-                                // flicker.
-                                let is_last = next_real_start.is_none();
-                                let word_end_sec = if do_input_seek {
-                                    (word_end_raw - seek_sec).max(word_start_sec)
-                                } else {
-                                    word_end_raw
-                                };
-                                let dur = (word_end_sec - word_start_sec).max(0.05);
-                                text_clips.push(TextClip {
-                                    content: acc.clone(),
-                                    font_size: 32.0,
-                                    timeline_start_sec: word_start_sec,
-                                    duration_sec: dur,
-                                    above: false,
-                                    z_order: z,
-                                    style: "caption".to_string(),
-                                    motion: *motion,
-                                    effect: *effect,
-                                    caption_style: Some(*caption_style),
-                                    effects: c.effects.clone(),
-                                    window_end_inclusive: is_last,
-                                });
-                            }
-                        }
+                    // Whole-clip burn-in through libass. One `subtitles=` filter
+                    // covers every segment and every word timing,
+                    // so filter count no longer scales with word
+                    // count (see `caption_ass`). Segments that sit
+                    // entirely before the seek are dropped.
+                    //
+                    // `caption_style` is deliberately None: the
+                    // styling lives in the ASS file, and leaving it
+                    // None also opts this stage out of
+                    // normalize_caption_text_clips, which only
+                    // knows how to shift drawtext enable windows.
+                    let visible: Vec<&caprust_core::clip::CaptionSegment> = segments
+                        .iter()
+                        .filter(|seg| {
+                            !(do_input_seek
+                                && clip_start_raw + seg.end_ms as f64 / 1000.0 <= seek_sec)
+                        })
+                        .collect();
+                    if visible.is_empty() {
+                        continue;
                     }
+
+                    // Timestamps in the ASS file are absolute on
+                    // the output timeline; a seeked export starts
+                    // at zero, so subtract the seek.
+                    let offset = if do_input_seek { seek_sec } else { 0.0 };
+                    let owned: Vec<caprust_core::clip::CaptionSegment> =
+                        visible.iter().map(|s| (*s).clone()).collect();
+                    let ass_body = crate::caption_ass::build(
+                        &owned,
+                        caption_style,
+                        // libass resolves this through fontconfig,
+                        // which is what the old drawtext path used
+                        // when no explicit font was given.
+                        "sans-serif",
+                        width,
+                        height,
+                        offset,
+                    );
+                    let Ok(ass) = crate::caption_ass::AssScript::write(&ass_body) else {
+                        // No temp file means no captions, but the
+                        // export must still run.
+                        tracing::error!("caption ASS script could not be written");
+                        continue;
+                    };
+
+                    let first_start = visible.iter().map(|s| s.start_ms).min().unwrap_or(0);
+                    let last_end = visible.iter().map(|s| s.end_ms).max().unwrap_or(0);
+                    let span_start = if do_input_seek {
+                        (clip_start_raw + first_start as f64 / 1000.0 - seek_sec).max(0.0)
+                    } else {
+                        clip_start_raw + first_start as f64 / 1000.0
+                    };
+                    let span_end = (span_start
+                        + (last_end.saturating_sub(first_start) as f64) / 1000.0)
+                        .max(span_start + 0.05);
+                    text_clips.push(TextClip {
+                        content: String::new(),
+                        font_size: 32.0,
+                        timeline_start_sec: span_start,
+                        duration_sec: span_end - span_start,
+                        above: false,
+                        z_order: z,
+                        style: "caption".to_string(),
+                        motion: *motion,
+                        effect: *effect,
+                        caption_style: None,
+                        effects: c.effects.clone(),
+                        ass: Some(ass),
+                    });
                 }
                 _ => {}
             }
@@ -3871,7 +3682,6 @@ pub fn plan_from_project(
         .iter()
         .map(|c| c.timeline_start_sec + c.duration_sec)
         .fold(0.0_f64, f64::max);
-    normalize_caption_text_clips(&mut text_clips);
     let text_end_sec = text_clips
         .iter()
         .map(|c| c.timeline_start_sec + c.duration_sec)
@@ -4237,29 +4047,127 @@ mod tests {
         )
         .expect("plan built");
 
-        // Both segments must contribute text clips. Progressive reveal
-        // contributes one per word (2), fallback contributes one (1).
+        // The whole Captions clip becomes ONE libass stage, whether its
+        // segments carry word timings or not.
         assert_eq!(
             plan.text_clips.len(),
-            3,
-            "expected 2 word drawtexts + 1 fallback drawtext: {:#?}",
+            1,
+            "one subtitles filter per caption clip: {:#?}",
             plan.text_clips
         );
+        assert!(
+            plan.text_clips[0].ass.is_some(),
+            "caption must render through an ASS script"
+        );
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert_eq!(
+            fg.matches("subtitles=filename=").count(),
+            1,
+            "exactly one subtitles filter regardless of segment or word count: {fg}"
+        );
+        assert!(
+            !fg.contains("drawtext"),
+            "captions must not emit per-word drawtexts: {fg}"
+        );
+    }
 
-        // Progressive reveal: accumulated text.
-        let contents: Vec<&str> = plan.text_clips.iter().map(|t| t.content.as_str()).collect();
-        assert!(
-            contents.contains(&"hello"),
-            "first word drawtext must show 'hello': {contents:?}"
-        );
-        assert!(
-            contents.contains(&"hello world"),
-            "second word drawtext must show accumulated 'hello world': {contents:?}"
-        );
-        assert!(
-            contents.contains(&"plain segment"),
-            "fallback drawtext must show the whole segment text: {contents:?}"
-        );
+    /// Read the ASS file a caption stage points at, so tests can assert on
+    /// what libass is actually told to draw.
+    fn ass_body_of(plan: &RenderPlan) -> String {
+        let path = plan
+            .text_clips
+            .iter()
+            .find_map(|t| t.ass.as_ref())
+            .expect("caption clip carries an ASS script")
+            .path()
+            .to_path_buf();
+        std::fs::read_to_string(&path).expect("ASS file readable while the plan holds it")
+    }
+
+    /// Filter count must not scale with word count. This is the export
+    /// speed regression in #50: 150 words used to mean 150 chained
+    /// `drawtext` passes in front of the encoder, which starved NVENC.
+    #[test]
+    fn caption_filter_count_is_independent_of_word_count() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        let words = |n: u64| -> Vec<WordTiming> {
+            (0..n)
+                .map(|i| WordTiming {
+                    start_ms: i * 400,
+                    end_ms: i * 400 + 380,
+                    text: format!("w{i}"),
+                })
+                .collect()
+        };
+        let mk = |n: u64| CaptionSegment {
+            start_ms: 0,
+            end_ms: n * 400,
+            text: "many words".into(),
+            words: words(n),
+        };
+
+        for n in [3_u64, 40, 150] {
+            let plan = plan_with_caption_segments(vec![mk(n)]);
+            let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+            assert_eq!(
+                fg.matches("subtitles=filename=").count(),
+                1,
+                "{n} words must still be one subtitles filter: {fg}"
+            );
+            let body = ass_body_of(&plan);
+            assert_eq!(
+                body.lines().filter(|l| l.starts_with("Dialogue:")).count(),
+                1,
+                "{n} words must still be one dialogue line"
+            );
+            // Every word keeps its own karaoke run.
+            assert_eq!(
+                body.matches("\\k").count(),
+                n as usize,
+                "{n} words must produce {n} karaoke runs: {body}"
+            );
+        }
+    }
+
+    /// Word timings that land closer together than the old 50 ms floor
+    /// used to be stretched into overlapping enable windows and then
+    /// dropped by the normalizer, so a word would vanish mid-sentence.
+    /// ASS carries them as \k durations, so tight spacing must survive.
+    #[test]
+    fn tight_word_timings_reach_the_ass_file() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        let plan = plan_with_caption_segments(vec![CaptionSegment {
+            start_ms: 0,
+            end_ms: 200,
+            text: "the quick brown fox".into(),
+            words: vec![
+                WordTiming {
+                    start_ms: 0,
+                    end_ms: 20,
+                    text: "the".into(),
+                },
+                WordTiming {
+                    start_ms: 20,
+                    end_ms: 35,
+                    text: "quick".into(),
+                },
+                WordTiming {
+                    start_ms: 35,
+                    end_ms: 90,
+                    text: "brown".into(),
+                },
+                WordTiming {
+                    start_ms: 90,
+                    end_ms: 100,
+                    text: "fox".into(),
+                },
+            ],
+        }]);
+        let body = ass_body_of(&plan);
+        assert!(body.contains("\\k2the"), "20 ms word kept as \\k2: {body}");
+        assert!(body.contains("\\k2quick"), "15 ms word kept: {body}");
+        assert!(body.contains("\\k6brown"), "55 ms word kept: {body}");
+        assert!(!body.contains("\\k0"), "no zero-length karaoke run: {body}");
     }
 
     /// Build a project with one Captions clip holding `segments` and a
@@ -4311,170 +4219,6 @@ mod tests {
             caprust_core::project::VideoEncoder::H264Cpu,
         )
         .expect("plan built")
-    }
-
-    /// Whisper reports timings on a 10 ms grid, so rapid words land far
-    /// closer together than the 50 ms floor the progressive-reveal path
-    /// used to apply. Each word's enable window was
-    /// `[start, start + max(gap, 0.05))`, which pushed the window past
-    /// the *next* word's start and made two drawtexts render on top of
-    /// each other for a frame or two -- the caption visibly flickered.
-    ///
-    /// Windows must tile the segment exactly once: no overlap, no gap.
-    #[test]
-    fn progressive_reveal_windows_never_overlap() {
-        use caprust_core::clip::{CaptionSegment, WordTiming};
-        // Deliberately tight: every gap below the old 50 ms floor.
-        let words = vec![
-            WordTiming {
-                start_ms: 0,
-                end_ms: 20,
-                text: "the".into(),
-            },
-            WordTiming {
-                start_ms: 20,
-                end_ms: 35,
-                text: "quick".into(),
-            },
-            WordTiming {
-                start_ms: 35,
-                end_ms: 90,
-                text: "brown".into(),
-            },
-            WordTiming {
-                start_ms: 90,
-                end_ms: 100,
-                text: "fox".into(),
-            },
-        ];
-        let plan = plan_with_caption_segments(vec![CaptionSegment {
-            start_ms: 0,
-            end_ms: 200,
-            text: "the quick brown fox".into(),
-            words,
-        }]);
-
-        let mut windows: Vec<(f64, f64, String)> = plan
-            .text_clips
-            .iter()
-            .map(|t| {
-                (
-                    t.timeline_start_sec,
-                    t.timeline_start_sec + t.duration_sec,
-                    t.content.clone(),
-                )
-            })
-            .collect();
-        assert!(!windows.is_empty(), "plan emitted no caption drawtexts");
-        windows.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("finite"));
-
-        for pair in windows.windows(2) {
-            let (_prev_start, prev_end, prev_text) = &pair[0];
-            let (next_start, _next_end, next_text) = &pair[1];
-            assert!(
-                *prev_end <= *next_start + 1e-9,
-                "caption windows overlap, which double-draws the text: \
-                 {prev_text:?} ends at {prev_end} but {next_text:?} starts at {next_start}"
-            );
-        }
-    }
-
-    /// The reveal has to reach the segment end exactly once, with no
-    /// lingering window after the last word.
-    #[test]
-    fn progressive_reveal_last_window_ends_at_segment_end() {
-        use caprust_core::clip::{CaptionSegment, WordTiming};
-        let plan = plan_with_caption_segments(vec![CaptionSegment {
-            start_ms: 0,
-            end_ms: 1000,
-            text: "hello world".into(),
-            words: vec![
-                WordTiming {
-                    start_ms: 0,
-                    end_ms: 500,
-                    text: "hello".into(),
-                },
-                WordTiming {
-                    start_ms: 500,
-                    end_ms: 1000,
-                    text: "world".into(),
-                },
-            ],
-        }]);
-
-        let last_end = plan
-            .text_clips
-            .iter()
-            .map(|t| t.timeline_start_sec + t.duration_sec)
-            .fold(f64::MIN, f64::max);
-        assert!(
-            (last_end - 1.0).abs() < 1e-6,
-            "last window must end at the segment end (1.0s), got {last_end}"
-        );
-    }
-
-    /// Two drawtexts whose enable windows share an instant both paint in
-    /// that frame, so the caption is drawn twice on top of itself and
-    /// reads as a flicker. Every window that butts up against the next
-    /// one must therefore be half-open, and the last one closed.
-    ///
-    /// This asserts on the generated filtergraph, not just the plan
-    /// numbers, because the flicker only exists in what ffmpeg is
-    /// actually told to draw.
-    #[test]
-    fn caption_windows_are_half_open_except_the_last() {
-        use caprust_core::clip::{CaptionSegment, WordTiming};
-        let plan = plan_with_caption_segments(vec![CaptionSegment {
-            start_ms: 0,
-            end_ms: 1000,
-            text: "hello brave world".into(),
-            words: vec![
-                WordTiming {
-                    start_ms: 0,
-                    end_ms: 300,
-                    text: "hello".into(),
-                },
-                WordTiming {
-                    start_ms: 300,
-                    end_ms: 700,
-                    text: "brave".into(),
-                },
-                WordTiming {
-                    start_ms: 700,
-                    end_ms: 1000,
-                    text: "world".into(),
-                },
-            ],
-        }]);
-        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
-
-        let caption_drawtexts: Vec<&str> = fg
-            .match_indices("enable='")
-            .map(|(i, _)| &fg[i..])
-            .take_while(|s| s.len() > 12)
-            .collect();
-        assert!(
-            caption_drawtexts.len() >= 3,
-            "expected one enable window per word: {fg}"
-        );
-
-        // First two must be half-open, last must be closed.
-        assert!(
-            fg.contains("enable='gte(t,0.000000)*lt(t,0.300000)'"),
-            "first word window must be half-open: {fg}"
-        );
-        assert!(
-            fg.contains("enable='gte(t,0.300000)*lt(t,0.700000)'"),
-            "second word window must be half-open: {fg}"
-        );
-        assert!(
-            fg.contains("enable='between(t,0.700000,1.000000)'"),
-            "last word window stays closed so its final frame draws: {fg}"
-        );
-        assert!(
-            !fg.contains("between(t,0.000000,0.300000)"),
-            "no closed window may start at the segment start: {fg}"
-        );
     }
 
     #[test]
@@ -5394,7 +5138,7 @@ mod text_motion_render_tests {
             effect: None,
             caption_style: None,
             effects: Vec::new(),
-            window_end_inclusive: true,
+            ass: None,
         }
     }
 
@@ -6268,210 +6012,5 @@ mod reverse_filtergraph_tests {
     fn no_reverse_audio_means_no_areverse() {
         let (fg, _, _) = base_plan_audio(false).build_filtergraph().unwrap();
         assert!(!fg.contains("areverse"), "no reverse -> no areverse: {fg}");
-    }
-
-    #[test]
-    fn voice_fx_chain_composes_enabled_flags() {
-        assert_eq!(build_voice_fx(false, false, false, false), "");
-        let t = build_voice_fx(true, false, false, false);
-        assert!(t.contains("highpass=") && t.contains("lowpass="));
-        let all = build_voice_fx(true, true, true, true);
-        for frag in ["highpass=", "bass=", "aecho=", "asetrate="] {
-            assert!(all.contains(frag), "missing {frag}");
-        }
-    }
-
-    #[test]
-    fn overlapping_caption_windows_normalize() {
-        use caprust_core::clip::{CaptionPosition, CaptionStyle, TextMotion};
-        fn cap(start: f64, dur: f64) -> TextClip {
-            TextClip {
-                content: "x".into(),
-                font_size: 32.0,
-                timeline_start_sec: start,
-                duration_sec: dur,
-                above: false,
-                z_order: 0,
-                style: "caption".into(),
-                motion: TextMotion::default(),
-                effect: None,
-                caption_style: Some(CaptionStyle {
-                    font_size: 32.0,
-                    position: CaptionPosition::Bottom,
-                    color: [255, 255, 0],
-                    outline_color: [0, 0, 0],
-                    outline_width: 2.0,
-                    bg_enabled: false,
-                    bg_opacity: 0.8,
-                }),
-                effects: Vec::new(),
-                window_end_inclusive: true,
-            }
-        }
-        let mut plain = cap(0.9, 0.05);
-        plain.caption_style = None;
-        let mut v = vec![cap(0.0, 1.0), cap(0.8, 1.2), plain];
-        normalize_caption_text_clips(&mut v);
-        assert_eq!(v.len(), 3);
-        assert!((v[0].timeline_start_sec - 0.0).abs() < 1e-9);
-        assert!((v[0].duration_sec - 1.0).abs() < 1e-9);
-        assert!((v[1].timeline_start_sec - 1.0).abs() < 1e-9);
-        assert!((v[1].duration_sec - 1.0).abs() < 1e-9);
-        assert!((v[2].timeline_start_sec - 0.9).abs() < 1e-9);
-    }
-}
-
-#[cfg(test)]
-mod stab_tests {
-    use super::*;
-
-    fn stab_test_project() -> (caprust_core::ProjectState, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!("caprust-stab-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join("cache").join("stab")).expect("create temp stab dir");
-        let project = caprust_core::ProjectState {
-            project_path: Some(root.to_string_lossy().into_owned()),
-            ..Default::default()
-        };
-        (project, root)
-    }
-
-    fn stab_test_clip(project: &caprust_core::ProjectState) -> caprust_core::Clip {
-        use caprust_core::TrackKind;
-        let idx = project
-            .tracks
-            .iter()
-            .position(|t| t.kind == TrackKind::Video)
-            .expect("default project has a video track");
-        caprust_core::Clip::new_video("source.mp4", idx, 0, 1000)
-    }
-
-    fn write_trf(root: &std::path::Path, clip: &caprust_core::Clip) {
-        let trf = root
-            .join("cache")
-            .join("stab")
-            .join(format!("{}.trf", clip.id));
-        std::fs::write(&trf, b"fake-transforms").expect("write trf");
-    }
-
-    #[test]
-    fn stab_accepts_valid_trf() {
-        let (project, root) = stab_test_project();
-        let mut clip = stab_test_clip(&project);
-        write_trf(&root, &clip);
-        clip.stab_trf = Some(format!("cache/stab/{}.trf", clip.id));
-        let r = resolve_stab_path(&project, &clip);
-        assert!(r.is_some(), "valid trf should resolve: {r:?}");
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn stab_rejects_absolute_and_traversal() {
-        let (project, root) = stab_test_project();
-        let mut clip = stab_test_clip(&project);
-        clip.stab_trf = Some("C:\\Windows\\System32\\config\\SAM".into());
-        assert!(resolve_stab_path(&project, &clip).is_none());
-        clip.stab_trf = Some("../other.trf".into());
-        assert!(resolve_stab_path(&project, &clip).is_none());
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn stab_skips_reversed_and_speed() {
-        let (project, root) = stab_test_project();
-        let mut clip = stab_test_clip(&project);
-        write_trf(&root, &clip);
-        clip.stab_trf = Some(format!("cache/stab/{}.trf", clip.id));
-        clip.reversed = true;
-        assert!(resolve_stab_path(&project, &clip).is_none());
-        clip.reversed = false;
-        clip.speed = 2.0;
-        assert!(resolve_stab_path(&project, &clip).is_none());
-        clip.speed = 1.0;
-        clip.speed_end = Some(2.0);
-        assert!(resolve_stab_path(&project, &clip).is_none());
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    fn plan_with_stab(stab: Option<std::path::PathBuf>) -> RenderPlan {
-        RenderPlan {
-            inputs: vec![InputSpec {
-                ffmpeg_index: 0,
-                path: PathBuf::from("a.mp4"),
-                source_start_sec: 0.0,
-                duration_sec: 2.0,
-            }],
-            video_clips: vec![VideoClip {
-                input_index: 0,
-                timeline_start_sec: 0.0,
-                duration_sec: 2.0,
-                speed: 1.0,
-                speed_end: None,
-                speed_ease: caprust_core::clip::EaseCurve::Linear,
-                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
-                flip_h: false,
-                flip_v: false,
-                reversed: false,
-                z_order: 0,
-                is_image: false,
-                effects: Vec::<caprust_core::clip::EffectInstance>::new(),
-                transition_in: None,
-                transition_out: None,
-                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
-                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
-                transition_duration_sec: 0.35,
-                auto_reframe: Vec::new(),
-                bg_removal_path: None,
-                stab_trf: stab,
-                chroma_key: None,
-                lut: None,
-                blend_mode: None,
-                color_grade: None,
-                anon_mask_path: None,
-            }],
-            audio_clips: vec![],
-            text_clips: vec![],
-            total_duration_sec: 2.0,
-            width: 320,
-            height: 240,
-            fps_num: 30,
-            fps_den: 1,
-            crf: 23,
-            rate_mode: RateMode::Vbr,
-            bitrate_kbps: 8000,
-            preset: "veryfast".into(),
-            has_audio: false,
-            skipped: PlanSkipped::default(),
-            encoder: caprust_core::project::VideoEncoder::H264Cpu,
-            seek_ms: 0,
-            seek_optimized: false,
-        }
-    }
-
-    #[test]
-    fn stab_chain_emitted_after_reverse_before_fit() {
-        let plan = plan_with_stab(Some(std::path::PathBuf::from("x.trf")));
-        let (fg, _, _) = plan.build_filtergraph().expect("fg");
-        assert!(
-            fg.contains("vidstabtransform=input='x.trf':smoothing=30:crop=keep:optzoom=1"),
-            "expected stab stage with smoothing: {fg}"
-        );
-        let stab_pos = fg.find("vidstabtransform").expect("stab in graph");
-        let fit_pos = fg
-            .find("force_original_aspect_ratio")
-            .expect("fit chain in graph");
-        assert!(
-            stab_pos < fit_pos,
-            "stab must run before the fit crop/scale: {fg}"
-        );
-    }
-
-    #[test]
-    fn no_stab_chain_without_trf() {
-        let plan = plan_with_stab(None);
-        let (fg, _, _) = plan.build_filtergraph().expect("fg");
-        assert!(
-            !fg.contains("vidstabtransform"),
-            "no stab stage without transforms: {fg}"
-        );
     }
 }
