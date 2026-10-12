@@ -127,6 +127,16 @@ pub struct TextClip {
     /// right after this text's drawtext stage, then normalized back
     /// to project dimensions. Empty = text renders as before.
     pub effects: Vec<caprust_core::clip::EffectInstance>,
+    /// Whether the enable window includes its own end instant.
+    ///
+    /// Progressive-reveal captions tile their per-word windows against
+    /// each other, so every window but the last must be half-open
+    /// (`start <= t < end`). With a closed window the shared boundary
+    /// instant satisfies two windows at once and the same text gets
+    /// drawn twice on top of itself for one frame, which reads on
+    /// screen as a flicker. The last window of a run is inclusive so
+    /// its final frame still shows.
+    pub window_end_inclusive: bool,
 }
 
 /// Effect option suffix for a drawtext body. Blink = hard on/off via
@@ -188,7 +198,7 @@ fn build_caption_drawtext_body(
     };
     let effect_opts = build_text_effect_opts(t.effect.as_ref());
     format!(
-        "drawtext=text='{escaped}':fontcolor={color}:fontsize={fs}:x={x_expr}:y={y_expr}{outline}{bg}{effect_opts}:enable='between(t,{start:.6},{end:.6})'",
+        "drawtext=text='{escaped}':fontcolor={color}:fontsize={fs}:x={x_expr}:y={y_expr}{outline}{bg}{effect_opts}:enable='{enable}'",
         escaped = escaped,
         color = color,
         fs = fs,
@@ -197,9 +207,29 @@ fn build_caption_drawtext_body(
         outline = outline,
         bg = bg,
         effect_opts = effect_opts,
-        start = t.timeline_start_sec,
-        end = t.timeline_start_sec + t.duration_sec,
+        enable = caption_enable_expr(t),
     )
+}
+
+/// Enable expression for a caption's drawtext window.
+///
+/// `between(t,a,b)` is closed on both ends. Progressive-reveal captions
+/// emit one drawtext per word with windows that butt up against each
+/// other, so the shared boundary instant would enable two drawtexts at
+/// once and paint the caption twice in the same place for that frame --
+/// visible as the caption trembling. Half-open windows make the reveal
+/// tile exactly once per instant.
+///
+/// The end of a run stays inclusive so the last frame of the final
+/// word, and of a whole-segment fallback, still draws.
+fn caption_enable_expr(t: &TextClip) -> String {
+    let start = t.timeline_start_sec;
+    let end = start + t.duration_sec;
+    if t.window_end_inclusive {
+        format!("between(t,{start:.6},{end:.6})")
+    } else {
+        format!("gte(t,{start:.6})*lt(t,{end:.6})")
+    }
 }
 
 /// Creative voice FX chain (telephone, bass, echo, chipmunk). Runs
@@ -254,6 +284,12 @@ fn normalize_caption_text_clips(clips: &mut Vec<TextClip>) {
             }
             clips[i].timeline_start_sec = last_end;
             clips[i].duration_sec = end - last_end;
+            // Truncating the front of a window makes its new start a
+            // boundary it now shares with the previous window, so it
+            // has to become half-open or both draw at that instant.
+            if clips[i].duration_sec > 0.0 {
+                clips[i].window_end_inclusive = false;
+            }
         }
         last_end = last_end.max(end);
     }
@@ -3386,6 +3422,10 @@ pub fn plan_from_project(
                         effect: *effect,
                         caption_style: None,
                         effects: c.effects.clone(),
+                        // TextOverlay clips are placed by the user and
+                        // are meant to be independently visible, so a
+                        // closed window is fine.
+                        window_end_inclusive: true,
                     });
                 }
                 ClipType::Captions {
@@ -3485,6 +3525,10 @@ pub fn plan_from_project(
                                 effect: *effect,
                                 caption_style: Some(*caption_style),
                                 effects: c.effects.clone(),
+                                // Whole-segment fallback: nothing tiles
+                                // against it, so a closed window is
+                                // safe and keeps the final frame.
+                                window_end_inclusive: true,
                             });
                         } else {
                             let mut acc = String::new();
@@ -3525,6 +3569,14 @@ pub fn plan_from_project(
                                     Some(ms) => clip_start_raw + ms as f64 / 1000.0,
                                     None => seg_end_raw,
                                 };
+                                // Only the last real word of the segment
+                                // gets a closed window. Every other one
+                                // is half-open so consecutive windows
+                                // tile instead of both firing on their
+                                // shared boundary instant, which would
+                                // paint the caption twice and read as a
+                                // flicker.
+                                let is_last = next_real_start.is_none();
                                 let word_end_sec = if do_input_seek {
                                     (word_end_raw - seek_sec).max(word_start_sec)
                                 } else {
@@ -3543,6 +3595,7 @@ pub fn plan_from_project(
                                     effect: *effect,
                                     caption_style: Some(*caption_style),
                                     effects: c.effects.clone(),
+                                    window_end_inclusive: is_last,
                                 });
                             }
                         }
@@ -4206,6 +4259,221 @@ mod tests {
         assert!(
             contents.contains(&"plain segment"),
             "fallback drawtext must show the whole segment text: {contents:?}"
+        );
+    }
+
+    /// Build a project with one Captions clip holding `segments` and a
+    /// 2 s placeholder video, then run the real planner.
+    fn plan_with_caption_segments(segments: Vec<caprust_core::clip::CaptionSegment>) -> RenderPlan {
+        use caprust_core::clip::{Clip, ClipType};
+        let mut project = caprust_core::ProjectState::default();
+
+        let captions_track = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
+            .expect("captions track exists in default_tracks()");
+        let mut clip = Clip::new_video("placeholder.mp4", captions_track, 0, 2000);
+        clip.clip_type = ClipType::Captions {
+            style: Default::default(),
+            language: "en".into(),
+            model_id: "test".into(),
+            motion: Default::default(),
+            effect: None,
+            segments,
+        };
+        project.add_clip(clip);
+
+        let video_track = project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::track::TrackKind::Video)
+            .expect("video track exists in default_tracks()");
+        let mut placeholder = Clip::new_video("placeholder.mp4", video_track, 0, 2000);
+        placeholder.clip_type = ClipType::Video {
+            path: "placeholder.mp4".into(),
+            duration_ms: 2000,
+        };
+        project.add_clip(placeholder);
+
+        plan_from_project(
+            &project,
+            320,
+            240,
+            30,
+            1,
+            23,
+            RateMode::Vbr,
+            8000,
+            "veryfast",
+            std::path::Path::new("."),
+            0,
+            caprust_core::project::VideoEncoder::H264Cpu,
+        )
+        .expect("plan built")
+    }
+
+    /// Whisper reports timings on a 10 ms grid, so rapid words land far
+    /// closer together than the 50 ms floor the progressive-reveal path
+    /// used to apply. Each word's enable window was
+    /// `[start, start + max(gap, 0.05))`, which pushed the window past
+    /// the *next* word's start and made two drawtexts render on top of
+    /// each other for a frame or two -- the caption visibly flickered.
+    ///
+    /// Windows must tile the segment exactly once: no overlap, no gap.
+    #[test]
+    fn progressive_reveal_windows_never_overlap() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        // Deliberately tight: every gap below the old 50 ms floor.
+        let words = vec![
+            WordTiming {
+                start_ms: 0,
+                end_ms: 20,
+                text: "the".into(),
+            },
+            WordTiming {
+                start_ms: 20,
+                end_ms: 35,
+                text: "quick".into(),
+            },
+            WordTiming {
+                start_ms: 35,
+                end_ms: 90,
+                text: "brown".into(),
+            },
+            WordTiming {
+                start_ms: 90,
+                end_ms: 100,
+                text: "fox".into(),
+            },
+        ];
+        let plan = plan_with_caption_segments(vec![CaptionSegment {
+            start_ms: 0,
+            end_ms: 200,
+            text: "the quick brown fox".into(),
+            words,
+        }]);
+
+        let mut windows: Vec<(f64, f64, String)> = plan
+            .text_clips
+            .iter()
+            .map(|t| {
+                (
+                    t.timeline_start_sec,
+                    t.timeline_start_sec + t.duration_sec,
+                    t.content.clone(),
+                )
+            })
+            .collect();
+        assert!(!windows.is_empty(), "plan emitted no caption drawtexts");
+        windows.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("finite"));
+
+        for pair in windows.windows(2) {
+            let (_prev_start, prev_end, prev_text) = &pair[0];
+            let (next_start, _next_end, next_text) = &pair[1];
+            assert!(
+                *prev_end <= *next_start + 1e-9,
+                "caption windows overlap, which double-draws the text: \
+                 {prev_text:?} ends at {prev_end} but {next_text:?} starts at {next_start}"
+            );
+        }
+    }
+
+    /// The reveal has to reach the segment end exactly once, with no
+    /// lingering window after the last word.
+    #[test]
+    fn progressive_reveal_last_window_ends_at_segment_end() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        let plan = plan_with_caption_segments(vec![CaptionSegment {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "hello world".into(),
+            words: vec![
+                WordTiming {
+                    start_ms: 0,
+                    end_ms: 500,
+                    text: "hello".into(),
+                },
+                WordTiming {
+                    start_ms: 500,
+                    end_ms: 1000,
+                    text: "world".into(),
+                },
+            ],
+        }]);
+
+        let last_end = plan
+            .text_clips
+            .iter()
+            .map(|t| t.timeline_start_sec + t.duration_sec)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            (last_end - 1.0).abs() < 1e-6,
+            "last window must end at the segment end (1.0s), got {last_end}"
+        );
+    }
+
+    /// Two drawtexts whose enable windows share an instant both paint in
+    /// that frame, so the caption is drawn twice on top of itself and
+    /// reads as a flicker. Every window that butts up against the next
+    /// one must therefore be half-open, and the last one closed.
+    ///
+    /// This asserts on the generated filtergraph, not just the plan
+    /// numbers, because the flicker only exists in what ffmpeg is
+    /// actually told to draw.
+    #[test]
+    fn caption_windows_are_half_open_except_the_last() {
+        use caprust_core::clip::{CaptionSegment, WordTiming};
+        let plan = plan_with_caption_segments(vec![CaptionSegment {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "hello brave world".into(),
+            words: vec![
+                WordTiming {
+                    start_ms: 0,
+                    end_ms: 300,
+                    text: "hello".into(),
+                },
+                WordTiming {
+                    start_ms: 300,
+                    end_ms: 700,
+                    text: "brave".into(),
+                },
+                WordTiming {
+                    start_ms: 700,
+                    end_ms: 1000,
+                    text: "world".into(),
+                },
+            ],
+        }]);
+        let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+
+        let caption_drawtexts: Vec<&str> = fg
+            .match_indices("enable='")
+            .map(|(i, _)| &fg[i..])
+            .take_while(|s| s.len() > 12)
+            .collect();
+        assert!(
+            caption_drawtexts.len() >= 3,
+            "expected one enable window per word: {fg}"
+        );
+
+        // First two must be half-open, last must be closed.
+        assert!(
+            fg.contains("enable='gte(t,0.000000)*lt(t,0.300000)'"),
+            "first word window must be half-open: {fg}"
+        );
+        assert!(
+            fg.contains("enable='gte(t,0.300000)*lt(t,0.700000)'"),
+            "second word window must be half-open: {fg}"
+        );
+        assert!(
+            fg.contains("enable='between(t,0.700000,1.000000)'"),
+            "last word window stays closed so its final frame draws: {fg}"
+        );
+        assert!(
+            !fg.contains("between(t,0.000000,0.300000)"),
+            "no closed window may start at the segment start: {fg}"
         );
     }
 
@@ -5126,6 +5394,7 @@ mod text_motion_render_tests {
             effect: None,
             caption_style: None,
             effects: Vec::new(),
+            window_end_inclusive: true,
         }
     }
 
@@ -6036,6 +6305,7 @@ mod reverse_filtergraph_tests {
                     bg_opacity: 0.8,
                 }),
                 effects: Vec::new(),
+                window_end_inclusive: true,
             }
         }
         let mut plain = cap(0.9, 0.05);
