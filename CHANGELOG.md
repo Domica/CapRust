@@ -2,6 +2,35 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+
+- **Face anonymize per clip.** Right-click a video clip to detect faces and blur them in preview and export, using an SCRFD detector.
+- **Crash-recovery autosave.** Settings → Autosave takes an interval (1/5/15/30/60 min presets, or any custom value). Snapshots land in a per-project folder under the recovery root and never touch the project file; on reopen a prompt offers to restore the unsaved session, discard it, or decide later.
+- **Caption segment editing.** Add / remove / split / merge segments, with text and word timings kept in sync. Karaoke highlighting is opt-in.
+- **Color grading panel.** Per-clip lift/gamma/gain, HSL and curves.
+- **Built-in sound-effects library.**
+- **Caption size as a percentage of frame height**, alongside the existing pixel mode.
+
+### Fixed
+
+- **Export hung on any project with an anonymized clip (#51).** `movie=...:loop=0` is a loop *count* in ffmpeg, so 0 meant infinite and the mask stream never reached EOF; `overlay shortest=0` then waited forever. Now `loop=1`.
+- **Export window froze on open (#51).** The nine ffmpeg encoder probes ran on the UI thread. They now run on a detached one.
+- **Captions were visibly smaller in export than in preview (#54).** Font size was absolute pixels while ASS measures `Fontsize` in PlayRes units against the render target. The preview is scaled up for display and the export is not. Font size is now resolved per frame height.
+- **The anonymize blur ran at full resolution and starved the hardware encoder.** `boxblur=12:3` over 2560x1080 cost 5.8 s of CPU per 10 s of footage and left NVENC idle. It now runs at half resolution with half the radius, which is the same apparent blur width: NVENC export 22.0 s → 14.8 s on the reported project.
+- **Audio effects were silent in preview (#53).** `audio_render_hash` omitted all seven effect flags, so toggling one left the hash unchanged and the preview PCM cache was never re-rendered. Export builds a fresh plan, which is why it was correct there.
+- **Autosave dropdown showed the raw placeholder on every row (#55).** `tr()` called `format_pattern` with no arguments, so Fluent variables were never filled in.
+- **No way to enter a custom autosave interval (#56).** The Custom row is now always present and selecting it enables the spinner.
+- **Relink dialog opened on top of the crash-recovery prompt (#57).** The missing-media scan now defers until the recovery offer is answered, and restoring re-runs it.
+- **Recovery snapshots could be written to a slot the offer never read (#58).** The write side keyed on the derived project path while the read side used the opened path; the slot name is a hash of the whole path.
+- **All projects shared one recovery folder and one temp file (#52).** A clear could delete the directory out from under another project's write, surfacing as ENOENT. This failed on Ubuntu CI while Windows and macOS passed on timing. Each project now has its own subdirectory.
+- **Face anonymize produced an all-black mask (#59).** The bundled YuNet decoder found no faces; SCRFD finds 2-3 on the same source.
+- **The anon job swallowed its errors and left the output path undefined (#60).**
+- **Build red: missing `ensure_builtin_luts` (#61).**
+- **Captions were invisible in preview and export.** Burning them in through libass instead of per-word drawtext, holding the ASS temp files for the renderer's lifetime, wrapping karaoke tags in override blocks, and closing the half-open enable windows that made progressive reveal flicker.
+- **Whisper word timestamps were disabled and leaked control tokens.**
+
 ## [0.9.15] — 2026-10-11
 
 ### Added
