@@ -928,3 +928,6 @@ props-captions-style-karaoke-hint = Der Untertitel wird im Rhythmus der Sprache 
 
 # --- Exportfenster (#51) ---
 exp-codec-probing = Hardware-Encoder werden geprueft...
+
+# --- Bestaetigung des Autosave-Intervalls (#49) ---
+set-autosave-applied = Auf alle { $v } Min gesetzt.

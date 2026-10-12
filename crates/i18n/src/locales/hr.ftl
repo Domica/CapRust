@@ -928,3 +928,6 @@ props-captions-style-karaoke-hint = Titl se tipka sinkrono s govorom. Iskljuceno
 
 # --- Export prozor (#51) ---
 exp-codec-probing = Provjeravam hardverske encodere...
+
+# --- Potvrda intervala autosavea (#49) ---
+set-autosave-applied = Postavljeno na svakih { $v } min.

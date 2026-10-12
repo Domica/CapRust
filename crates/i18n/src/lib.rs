@@ -27,7 +27,7 @@ thread_local! {
     /// Current UI language, set once per frame by the app.
     static CURRENT: RefCell<String> = RefCell::new(String::from("en"));
 
-    /// When true, `t` formats with parameters via `t_args`.
+    /// Reserved for future per-call state.
     static _UNUSED: Cell<()> = const { Cell::new(()) };
 }
 
@@ -46,6 +46,11 @@ pub fn t(key: &str) -> String {
     CURRENT.with(|c| t_lang(key, &c.borrow()))
 }
 
+/// Translate using the current language, filling in Fluent variables.
+pub fn t_with(key: &str, args: &[(&str, &str)]) -> String {
+    CURRENT.with(|c| t_lang_with_args(key, &c.borrow(), args))
+}
+
 /// Explicit-language variant (kept for compatibility).
 pub fn t_lang(key: &str, lang: &str) -> String {
     BUNDLES.with(|bundles| {
@@ -61,6 +66,49 @@ pub fn t_lang(key: &str, lang: &str) -> String {
             }
         }
         key.to_string()
+    })
+}
+
+/// Translate with Fluent variables filled in.
+///
+/// Needed for any string that interpolates a value (an interval, a
+/// count). Without this the placeholder is rendered literally: with
+/// `None` args, `Every { $v } min` came back as `Every { $v } min`.
+///
+/// ```ignore
+/// tr_with("set-autosave-interval", &[("v", "5")])  // "Every 5 min"
+/// ```
+pub fn t_with_args(key: &str, args: &[(&str, &str)]) -> String {
+    CURRENT.with(|c| t_lang_with_args(key, &c.borrow(), args))
+}
+
+/// Explicit-language variant of [`t_with_args`].
+pub fn t_lang_with_args(key: &str, lang: &str, args: &[(&str, &str)]) -> String {
+    BUNDLES.with(|bundles| {
+        let bundles = bundles.borrow();
+        let Some(bundle) = bundles.get(lang) else {
+            return key.to_string();
+        };
+        let Some(msg) = bundle.get_message(key) else {
+            return key.to_string();
+        };
+        let Some(pattern) = msg.value() else {
+            return key.to_string();
+        };
+        let owned: Vec<(String, fluent_bundle::FluentValue)> = args
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    fluent_bundle::FluentValue::from(v.to_string()),
+                )
+            })
+            .collect();
+        let map = owned.into_iter().collect();
+        let mut errors = vec![];
+        bundle
+            .format_pattern(pattern, Some(&map), &mut errors)
+            .to_string()
     })
 }
 
@@ -91,6 +139,30 @@ mod tests {
             })
             .map(|l| l.split('=').next().unwrap_or("").trim().to_string())
             .collect()
+    }
+
+    /// A placeholder left unfilled rendered literally, which is how
+    /// the autosave dropdown ended up listing "Every { $v } min" for
+    /// every entry.
+    #[test]
+    fn variables_are_filled_in() {
+        for (lang, _) in LANGUAGES {
+            let s = t_lang_with_args("set-autosave-interval", lang, &[("v", "5")]);
+            assert!(
+                s.contains('5'),
+                "{lang}: placeholder not substituted, got {s:?}"
+            );
+            assert!(
+                !s.contains('$') && !s.contains('{'),
+                "{lang}: raw placeholder leaked into the output: {s:?}"
+            );
+        }
+    }
+
+    /// The no-args path must stay unchanged for plain strings.
+    #[test]
+    fn plain_translation_is_untouched() {
+        assert_eq!(t_lang("props-captions-add", "en"), "Add");
     }
 
     #[test]

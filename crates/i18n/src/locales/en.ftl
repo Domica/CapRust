@@ -928,3 +928,6 @@ props-captions-style-karaoke-hint = Types the caption in time with the speech. O
 
 # --- Export window (#51) ---
 exp-codec-probing = Checking hardware encoders...
+
+# --- Autosave interval feedback (#49) ---
+set-autosave-applied = Set to every { $v } min.

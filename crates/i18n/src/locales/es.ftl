@@ -928,3 +928,6 @@ props-captions-style-karaoke-hint = El subtitulo se escribe al ritmo de la voz. 
 
 # --- Ventana de exportacion (#51) ---
 exp-codec-probing = Comprobando codificadores de hardware...
+
+# --- Confirmacion del intervalo de autoguardado (#49) ---
+set-autosave-applied = Configurado cada { $v } min.

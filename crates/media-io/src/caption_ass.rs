@@ -240,7 +240,17 @@ pub fn build(
     s.push_str(&format!(
         "Style: CapRust,{font},{size},{primary},{secondary},{outline},&H80000000,0,0,0,0,100,100,0,0,{border_style},{outline_w},0,{align},10,10,{margin_v},1\n",
         font = if font_family.trim().is_empty() { "sans-serif" } else { font_family },
-        size = style.font_size.max(4.0).round(),
+        // Font size is relative to frame height, not absolute pixels. ASS
+        // measures Fontsize in PlayRes units, so an absolute value
+        // renders at different apparent sizes depending on the
+        // render target: the preview often renders at half
+        // resolution and is then scaled up for display, which made
+        // captions look right there and noticeably too small in a
+        // full-resolution export. `font_size` is authored against
+        // 1080p and scaled from there.
+        size = (style.font_size.max(4.0) * height as f32 / 1080.0)
+            .round()
+            .max(4.0),
         primary = ass_color(style.color, 1.0),
         // ASS karaoke paints the not-yet-sung part in SecondaryColour.
         // Making it fully transparent turns `\k` into a typewriter
@@ -580,6 +590,35 @@ mod tests {
                 "malformed override block: {tag}"
             );
         }
+    }
+
+    /// Captions must look the same size in a half-resolution preview and
+    /// a full-resolution export. An absolute pixel font size did not:
+    /// the preview is scaled up for display and the export is not, so
+    /// the export came out visibly smaller.
+    #[test]
+    fn font_size_scales_with_frame_height() {
+        let style = CaptionStyle::default();
+        let size_at = |h: u32| -> f32 {
+            let body = build(&[seg_with_words()], &style, "Arial", h * 16, h, 0.0);
+            let line = body.lines().find(|l| l.starts_with("Style:")).unwrap();
+            let fields: Vec<&str> = line.split(',').collect();
+            fields[2].parse().expect("fontsize field")
+        };
+        let at_1080 = size_at(1080);
+        let at_540 = size_at(540);
+        assert!(
+            (at_1080 - style.font_size).abs() < 1.0,
+            "1080p should use the authored size, got {at_1080}"
+        );
+        assert!(
+            at_540 < at_1080,
+            "a shorter frame must scale the font down: {at_540} vs {at_1080}"
+        );
+        assert!(
+            (at_540 - at_1080 / 2.0).abs() <= 1.0,
+            "size must be proportional to height: {at_540} vs {at_1080}"
+        );
     }
 
     #[test]

@@ -274,6 +274,10 @@ pub struct CapRustApp {
     pub settings_sync_prompt: Option<(std::path::PathBuf, u64)>,
     /// True after the sync-newer check has run once this session.
     pub settings_sync_prompt_checked: bool,
+    /// Minutes the user last applied through the Autosave tab's custom
+    /// spinner. Owned here so the confirmation can outlive the frame
+    /// the button was clicked on. Cleared when the dialog closes.
+    pub autosave_applied: Option<u64>,
     /// Hash of the last settings snapshot written to the sync folder.
     /// Guards against redundant writes when eframe calls save()
     /// repeatedly with identical state.
@@ -709,6 +713,7 @@ impl CapRustApp {
             ffmpeg_prompt_checked: false,
             settings_sync_prompt: None,
             settings_sync_prompt_checked: false,
+            autosave_applied: None,
             last_sync_hash: None,
             last_applied_font_family: None,
             relink_dialog: Default::default(),
@@ -10485,6 +10490,7 @@ impl CapRustApp {
                     &mut self.settings,
                     &mut self.settings_tab,
                     &mut self.ffmpeg_status,
+                    &mut self.autosave_applied,
                 );
                 if let Some(id) = ev.download_requested.clone() {
                     self.start_model_download(&id);
@@ -10509,9 +10515,11 @@ impl CapRustApp {
                         egui::UserAttentionType::Informational,
                     ));
                     self.settings_open = false;
+                    self.autosave_applied = None;
                 }
                 if ev.close {
                     self.settings_open = false;
+                    self.autosave_applied = None;
                 }
             });
         self.settings_open = open;

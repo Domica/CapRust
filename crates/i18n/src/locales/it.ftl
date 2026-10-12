@@ -928,3 +928,6 @@ props-captions-style-karaoke-hint = Il sottotitolo viene digitato in sincrono co
 
 # --- Finestra di esportazione (#51) ---
 exp-codec-probing = Controllo i codificatori hardware...
+
+# --- Conferma intervallo salvataggio automatico (#49) ---
+set-autosave-applied = Impostato ogni { $v } min.

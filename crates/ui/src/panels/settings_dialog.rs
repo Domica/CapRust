@@ -1,6 +1,6 @@
 //! Settings dialog — Appearance, AI Models, Shortcuts, Language, Paths.
 
-use crate::i18n_helper::tr;
+use crate::i18n_helper::{tr, tr_with};
 use crate::theme::tokens::space;
 use crate::theme::{Theme, ThemeMode, ACCENT_PRESETS};
 use crate::widgets::button;
@@ -53,6 +53,7 @@ pub fn show(
     settings: &mut AppSettings,
     tab: &mut SettingsTab,
     ffmpeg_status: &mut FfmpegStatus,
+    autosave_applied: &mut Option<u64>,
 ) -> SettingsEvents {
     let mut ev = SettingsEvents {
         save: false,
@@ -92,7 +93,7 @@ pub fn show(
             SettingsTab::Language => show_language(ui, &mut settings.language),
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status, &mut ev),
             SettingsTab::Audio => show_audio(ui, settings),
-            SettingsTab::Autosave => show_autosave(ui, settings),
+            SettingsTab::Autosave => show_autosave(ui, settings, autosave_applied),
             SettingsTab::Translation => show_translation(ui, settings),
             SettingsTab::About => show_about(ui, settings),
         });
@@ -932,7 +933,7 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
 /// just render as their raw number.
 const AUTOSAVE_PRESETS: &[u64] = &[0, 1, 5, 15, 30, 60];
 
-fn show_autosave(ui: &mut Ui, settings: &mut AppSettings) {
+fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut Option<u64>) {
     ui.label(egui::RichText::new(tr("set-tab-autosave")).strong());
     ui.add_space(space::XS);
     ui.label(
@@ -942,26 +943,24 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings) {
     );
     ui.add_space(space::M_PLUS);
 
-    // Dropdown of presets. A value outside the list (hand-edited settings
-    // file) still renders and the Custom spinner can change it.
-    let current = settings.autosave_minutes.unwrap_or(0);
-    let selected = if current == 0 {
-        tr("set-autosave-off")
-    } else {
-        tr("set-autosave-interval").replace("{v}", &current.to_string())
+    // Dropdown of presets. `tr` cannot interpolate, so every label
+    // used to render as the literal "Every { $v } min"; `tr_with`
+    // passes the value through Fluent instead.
+    let label_for = |m: u64| {
+        if m == 0 {
+            tr("set-autosave-off")
+        } else {
+            tr_with("set-autosave-interval", &[("v", &m.to_string())])
+        }
     };
+    let current = settings.autosave_minutes.unwrap_or(0);
 
     egui::ComboBox::from_id_salt("autosave_interval")
-        .selected_text(selected)
+        .selected_text(label_for(current))
         .width(180.0)
         .show_ui(ui, |ui| {
             for &m in AUTOSAVE_PRESETS {
-                let label = if m == 0 {
-                    tr("set-autosave-off")
-                } else {
-                    tr("set-autosave-interval").replace("{v}", &m.to_string())
-                };
-                ui.selectable_value(&mut settings.autosave_minutes, Some(m), label);
+                ui.selectable_value(&mut settings.autosave_minutes, Some(m), label_for(m));
             }
         });
 
@@ -976,8 +975,19 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings) {
         .on_hover_text(tr("set-autosave-custom-hint"));
         if ui.button(tr("set-autosave-set")).clicked() {
             settings.autosave_minutes = Some(mins);
+            // Nothing on screen changes otherwise, so the user had no
+            // way to tell whether the click registered.
+            *autosave_applied = Some(mins);
         }
     });
+
+    if let Some(mins) = *autosave_applied {
+        ui.label(
+            egui::RichText::new(tr_with("set-autosave-applied", &[("v", &mins.to_string())]))
+                .small()
+                .color(egui::Color32::from_rgb(120, 200, 140)),
+        );
+    }
 
     ui.add_space(space::M);
     if chip::chip(ui, tr("set-autosave-restore"), settings.autosave_recovery).clicked() {
