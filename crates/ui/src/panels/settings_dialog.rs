@@ -942,6 +942,15 @@ enum IntervalRow {
     Custom,
 }
 
+// Persistent draft value for the Custom spinner. Lives in a thread-local
+// so it survives frame-to-frame while the user types. Initialised from
+// settings when Custom becomes active; otherwise left alone so typing
+// isn't wiped on the next frame.
+thread_local! {
+    static DRAFT_CUSTOM_MINS: std::cell::RefCell<u64> = const { std::cell::RefCell::new(5) };
+    static DRAFT_CUSTOM_ACTIVE: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) };
+}
+
 fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut Option<u64>) {
     ui.label(egui::RichText::new(tr("set-tab-autosave")).strong());
     ui.add_space(space::XS);
@@ -958,6 +967,23 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
     // What the Custom row would apply, so its label is never empty
     // even while the interval is still "off".
     let custom_value = if current == 0 { 5 } else { current };
+
+    // Persistent draft value for the Custom spinner. Lives in a thread-local
+    // so it survives frame-to-frame while the user types. Initialised from
+    // settings when Custom becomes active; otherwise left alone so typing
+    // isn't wiped on the next frame.
+    DRAFT_CUSTOM_MINS.with(|cell| {
+        DRAFT_CUSTOM_ACTIVE.with(|active| {
+            let mut mins = cell.borrow_mut();
+            let mut act = active.borrow_mut();
+            if is_custom && !*act {
+                *mins = settings.autosave_minutes.unwrap_or(5);
+                *act = true;
+            } else if !is_custom {
+                *act = false;
+            }
+        });
+    });
 
     let label_for = |row: IntervalRow| -> String {
         match row {
@@ -1016,23 +1042,25 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
     let spinner_enabled = is_custom;
     ui.horizontal(|ui| {
         ui.label(tr("set-autosave-custom"));
-        let mut mins = if current == 0 { 5 } else { current };
-        ui.add_enabled(
-            spinner_enabled,
-            egui::DragValue::new(&mut mins)
-                .range(1..=240)
-                .suffix(" min"),
-        )
-        .on_hover_text(tr("set-autosave-custom-hint"));
+        DRAFT_CUSTOM_MINS.with(|cell| {
+            ui.add_enabled(
+                spinner_enabled,
+                egui::DragValue::new(&mut *cell.borrow_mut())
+                    .range(1..=240)
+                    .suffix(" min"),
+            )
+            .on_hover_text(tr("set-autosave-custom-hint"));
+        });
         if ui
             .add_enabled(spinner_enabled, egui::Button::new(tr("set-autosave-set")))
             .clicked()
         {
-            settings.autosave_minutes = Some(mins);
+            let draft = DRAFT_CUSTOM_MINS.with(|c| *c.borrow());
+            settings.autosave_minutes = Some(draft);
             settings.autosave_custom = true;
             // Nothing on screen changes otherwise, so the user had no
             // way to tell whether the click registered.
-            *autosave_applied = Some(mins);
+            *autosave_applied = Some(draft);
         }
     });
 
