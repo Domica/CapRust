@@ -933,6 +933,15 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
 /// just render as their raw number.
 const AUTOSAVE_PRESETS: &[u64] = &[0, 1, 5, 15, 30, 60];
 
+/// A row in the autosave interval dropdown.
+#[derive(Clone, Copy, PartialEq)]
+enum IntervalRow {
+    /// One of the fixed presets; 0 means off.
+    Preset(u64),
+    /// The hand-typed interval, edited by the spinner below.
+    Custom,
+}
+
 fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut Option<u64>) {
     ui.label(egui::RichText::new(tr("set-tab-autosave")).strong());
     ui.add_space(space::XS);
@@ -943,50 +952,61 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
     );
     ui.add_space(space::M_PLUS);
 
-    // Dropdown of presets. `tr` cannot interpolate, so every label
-    // used to render as the literal "Every { $v } min"; `tr_with`
-    // passes the value through Fluent instead.
     let current = settings.autosave_minutes.unwrap_or(0);
-
-    // The "Custom" row is always present, below the presets. Before it
-    // existed, a hand-typed interval had no selected row, so there was
-    // no visible confirmation that the value had been accepted. Picking
-    // Custom is what enables the spinner underneath.
-    let mut rows: Vec<u64> = AUTOSAVE_PRESETS.to_vec();
     let is_custom =
         settings.autosave_custom || (current > 0 && !AUTOSAVE_PRESETS.contains(&current));
-    let custom_row = if is_custom { current.max(1) } else { 0 };
-    // Avoid duplicating a preset when the stored custom value happens
-    // to equal one.
-    if custom_row > 0 && !rows.contains(&custom_row) {
-        rows.push(custom_row);
-    }
+    // What the Custom row would apply, so its label is never empty
+    // even while the interval is still "off".
+    let custom_value = if current == 0 { 5 } else { current };
 
-    let label_for_row = |m: u64, is_custom_row: bool| {
-        if is_custom_row {
-            tr_with("set-autosave-custom-row", &[("v", &m.to_string())])
-        } else if m == 0 {
-            tr("set-autosave-off")
-        } else {
-            tr_with("set-autosave-interval", &[("v", &m.to_string())])
+    let label_for = |row: IntervalRow| -> String {
+        match row {
+            IntervalRow::Custom => tr_with(
+                "set-autosave-custom-row",
+                &[("v", &custom_value.to_string())],
+            ),
+            IntervalRow::Preset(0) => tr("set-autosave-off"),
+            IntervalRow::Preset(m) => tr_with("set-autosave-interval", &[("v", &m.to_string())]),
         }
     };
+    let mut selected_row = if is_custom {
+        IntervalRow::Custom
+    } else {
+        IntervalRow::Preset(current)
+    };
+
+    // Custom is listed below the presets on every open. It used to be
+    // added only once the stored value was already off-preset, so
+    // there was no way to reach it from the UI at all.
+    let mut rows: Vec<IntervalRow> = AUTOSAVE_PRESETS
+        .iter()
+        .map(|&m| IntervalRow::Preset(m))
+        .collect();
+    rows.push(IntervalRow::Custom);
 
     egui::ComboBox::from_id_salt("autosave_interval")
-        .selected_text(label_for_row(
-            current,
-            custom_row > 0 && current == custom_row,
-        ))
+        .selected_text(label_for(selected_row))
         .width(180.0)
         .show_ui(ui, |ui| {
-            for &m in &rows {
-                let is_custom_row = m == custom_row && custom_row > 0;
-                let label = label_for_row(m, is_custom_row);
-                if ui
-                    .selectable_value(&mut settings.autosave_minutes, Some(m), label)
-                    .clicked()
-                {
-                    settings.autosave_custom = is_custom_row;
+            for row in rows {
+                let label = label_for(row);
+                if ui.selectable_value(&mut selected_row, row, label).clicked() {
+                    match row {
+                        IntervalRow::Preset(m) => {
+                            settings.autosave_minutes = Some(m);
+                            settings.autosave_custom = false;
+                        }
+                        IntervalRow::Custom => {
+                            settings.autosave_custom = true;
+                            if settings.autosave_minutes.unwrap_or(0) == 0 {
+                                settings.autosave_minutes = Some(5);
+                            }
+                        }
+                    }
+                    // Say so on screen. A preset click used to produce
+                    // no visible change, which is how this control came
+                    // to be reported as dead.
+                    *autosave_applied = Some(settings.autosave_minutes.unwrap_or(0));
                 }
             }
         });
@@ -1016,9 +1036,16 @@ fn show_autosave(ui: &mut Ui, settings: &mut AppSettings, autosave_applied: &mut
         }
     });
 
+    // The confirmation covers a preset click too, not just the custom
+    // spinner, so any selection is visibly acknowledged.
     if let Some(mins) = *autosave_applied {
+        let msg = if mins == 0 {
+            tr("set-autosave-off")
+        } else {
+            tr_with("set-autosave-applied", &[("v", &mins.to_string())])
+        };
         ui.label(
-            egui::RichText::new(tr_with("set-autosave-applied", &[("v", &mins.to_string())]))
+            egui::RichText::new(msg)
                 .small()
                 .color(egui::Color32::from_rgb(120, 200, 140)),
         );
