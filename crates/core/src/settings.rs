@@ -119,6 +119,21 @@ pub struct AppSettings {
     /// for plugin loads (see media-io `clap_host::effective_scan_dirs`).
     #[serde(default)]
     pub clap_dir: Option<String>,
+    /// Minutes between automatic crash-recovery snapshots. `None` or
+    /// 0 disables autosave entirely. See `crate::recovery`.
+    #[serde(default = "default_autosave_minutes")]
+    pub autosave_minutes: Option<u64>,
+    /// When true, opening a project that has a newer recovery snapshot
+    /// prompts to restore the unsaved session.
+    #[serde(default = "default_true")]
+    pub autosave_recovery: bool,
+}
+
+/// Autosave cadence in minutes. Every 5 minutes is short enough that
+/// a crash costs little work, long enough that the JSON write is not
+/// felt while dragging clips.
+fn default_autosave_minutes() -> Option<u64> {
+    Some(5)
 }
 
 fn default_true() -> bool {
@@ -166,6 +181,8 @@ impl Default for AppSettings {
             recordings_dir: None,
             lut_cache_dir: None,
             clap_dir: None,
+            autosave_minutes: default_autosave_minutes(),
+            autosave_recovery: true,
         }
     }
 }

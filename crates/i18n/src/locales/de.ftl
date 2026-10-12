@@ -884,3 +884,22 @@ set-appearance-font-scale = Größe
 
 missing-media-banner = Einige Mediendateien fehlen
 missing-media-relink = Neu verknüpfen…
+
+# --- Autosicherung zur Wiederherstellung (#49) ---
+set-tab-autosave = Autosicherung
+set-autosave-hint = Speichert periodisch eine Wiederherstellungskopie, damit ein Absturz deine Bearbeitung nicht kostet. Wiederherstellungsdateien werden separat geschrieben und überschreiben dein Projekt nie.
+set-autosave-interval = Alle { $v } Min
+set-autosave-off = Aus
+set-autosave-custom = Benutzerdefiniert:
+set-autosave-custom-hint = Minuten zwischen Wiederherstellungskopien (1-240).
+set-autosave-set = Übernehmen
+set-autosave-restore = Nach Absturz Wiederherstellung anbieten
+set-autosave-location = Wiederherstellungsdateien liegen in %APPDATA%/CapRust/recovery und werden gelöscht, sobald du das Projekt speicherst.
+recovery-prompt-title = Ungespeicherte Arbeit wiederhergestellt
+recovery-prompt-body = CapRust hat eine neuere Wiederherstellungskopie für dieses Projekt gefunden. Sie enthält Änderungen, die nie in der Projektdatei gespeichert wurden.
+recovery-prompt-saved = Kopie erstellt um
+recovery-prompt-restore = Wiederherstellen
+recovery-prompt-later = Später entscheiden
+recovery-prompt-discard = Verwerfen
+toast-recovery-restored = Deine ungespeicherte Sitzung ist wiederhergestellt. Mit Strg+S dauerhaft speichern.
+toast-recovery-failed = Die Wiederherstellungskopie konnte nicht gelesen werden.

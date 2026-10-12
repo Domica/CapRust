@@ -884,3 +884,22 @@ set-appearance-font-scale = Dimensione
 
 missing-media-banner = Alcuni file media mancano
 missing-media-relink = Ricollega…
+
+# --- Salvataggio automatico per il ripristino (#49) ---
+set-tab-autosave = Salvataggio automatico
+set-autosave-hint = Salva periodicamente una copia di ripristino cosi un crash non perde le tue modifiche. I file di ripristino vengono scritti separatamente e non sovrascrivono mai il progetto.
+set-autosave-interval = Ogni { $v } min
+set-autosave-off = Disattivato
+set-autosave-custom = Personalizzato:
+set-autosave-custom-hint = Minuti tra una copia di ripristino e l'altra (1-240).
+set-autosave-set = Imposta
+set-autosave-restore = Chiedi di ripristinare dopo un crash
+set-autosave-location = I file di ripristino si trovano in %APPDATA%/CapRust/recovery e vengono eliminati quando salvi il progetto.
+recovery-prompt-title = Lavoro non salvato recuperato
+recovery-prompt-body = CapRust ha trovato una copia di ripristino piu recente per questo progetto. Contiene modifiche mai salvate nel file del progetto.
+recovery-prompt-saved = Copia creata alle
+recovery-prompt-restore = Ripristina
+recovery-prompt-later = Decidi dopo
+recovery-prompt-discard = Scarta
+toast-recovery-restored = Ho recuperato la sessione non salvata. Premi Ctrl+S per tenerla.
+toast-recovery-failed = Impossibile leggere la copia di ripristino.

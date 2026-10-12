@@ -31,6 +31,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 thiserror = "2"
 sys-locale = "0.3"
+# Local wall-clock time for the crash-recovery prompt timestamp.
+# Pure Rust, IANA tzdata bundled on Windows.
+jiff = "0.2"
 ffmpeg-next = "7"
 fluent = "0.16"
 fluent-bundle = "0.15"

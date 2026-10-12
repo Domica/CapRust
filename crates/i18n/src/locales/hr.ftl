@@ -884,3 +884,22 @@ set-appearance-font-scale = Veličina
 
 missing-media-banner = Neke medijske datoteke nedostaju
 missing-media-relink = Ponovno poveži…
+
+# --- Autosaviranje za oporavak nakon pada (#49) ---
+set-tab-autosave = Automatsko spremanje
+set-autosave-hint = Povremeno sprema kopiju za oporavak kako pad aplikacije ne bi izgubio tvoje izmjene. Datoteke za oporavak pišu se odvojeno i nikada ne prepisuju tvoj projekt.
+set-autosave-interval = Svakih { $v } min
+set-autosave-off = Isključeno
+set-autosave-custom = Prilagođeno:
+set-autosave-custom-hint = Minuti između kopija za oporavak (1-240).
+set-autosave-set = Postavi
+set-autosave-restore = Pitaj za oporavak nakon pada
+set-autosave-location = Datoteke za oporavak nalaze se u %APPDATA%/CapRust/recovery i brišu se kad spremiš projekt.
+recovery-prompt-title = Pronađena nespremljena izmjena
+recovery-prompt-body = CapRust je pronašao noviju kopiju za oporavak ovog projekta. U njoj su izmjene koje nikada nisu spremljene u datoteku projekta.
+recovery-prompt-saved = Kopija napravljena u
+recovery-prompt-restore = Vrati
+recovery-prompt-later = Odluči kasnije
+recovery-prompt-discard = Odbaci
+toast-recovery-restored = Vratio sam tvoju nespremljenu sesiju. Pritisni Ctrl+S da je zadržiš.
+toast-recovery-failed = Kopiju za oporavak nije bilo moguće pročitati.

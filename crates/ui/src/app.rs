@@ -285,6 +285,24 @@ pub struct CapRustApp {
     /// whenever the banner would show and there is nothing missing,
     /// so a future regression re-opens it.
     pub missing_media_dismissed: bool,
+    /// Wall-clock time of the last recovery autosave. `None` until
+    /// the first one fires. Compared against the configured interval
+    /// in `tick_autosave`.
+    pub last_autosave_at: Option<std::time::Instant>,
+    /// `render_hash` of the project as of the last autosave (or last
+    /// manual Save). Compared each frame to decide whether anything
+    /// actually changed since, so an idle session does not keep
+    /// rewriting an identical snapshot.
+    pub last_autosave_hash: Option<u64>,
+    /// `render_hash` of the project at its last manual Save. This is
+    /// the real dirty flag: if the current hash differs, the project
+    /// has unsaved changes and autosave has something to capture.
+    pub last_saved_hash: Option<u64>,
+    /// Pending crash-recovery offer. `Some((project_file, offer))`
+    /// after `load_project_from` finds a newer snapshot; cleared by
+    /// the restore / discard / later buttons in
+    /// `show_recovery_prompt_window`.
+    pub recovery_prompt: Option<(std::path::PathBuf, caprust_core::recovery::RecoveryOffer)>,
     #[cfg(windows)]
     pub screen_record: crate::panels::screen_record::ScreenRecordState,
     #[cfg(windows)]
@@ -690,6 +708,10 @@ impl CapRustApp {
             relink_dialog: Default::default(),
             relink_dialog_open: false,
             missing_media_dismissed: false,
+            last_autosave_at: None,
+            last_autosave_hash: None,
+            last_saved_hash: None,
+            recovery_prompt: None,
             #[cfg(windows)]
             screen_record: crate::panels::screen_record::ScreenRecordState::new_defaults(),
             #[cfg(windows)]
@@ -844,12 +866,169 @@ impl CapRustApp {
                 let entry =
                     caprust_core::recent::entry_from(&self.project, &path.to_string_lossy());
                 self.recent.push(entry);
+                // The on-disk file now matches the in-memory project,
+                // so nothing is pending and any recovery snapshot is
+                // stale. Clearing both keeps the next autosave from
+                // re-writing what we just saved, and stops a restore
+                // prompt from offering to undo a manual Save.
+                self.last_saved_hash = Some(self.project.render_hash());
+                caprust_core::recovery::clear_snapshots(&path);
                 tracing::info!("Saved project to {}", path.display());
             }
             Err(e) => {
                 tracing::error!("Save failed: {e}");
                 self.toast_error(format!("{}: {e}", tr("toast-save-failed")));
             }
+        }
+    }
+
+    /// Periodic crash-recovery snapshot. Called once per frame from
+    /// `update`; does real work only on the configured interval.
+    ///
+    /// Guards, in order:
+    ///   * autosave disabled in Settings, or the project has never been
+    ///     saved to disk (no path, so there is nothing to recover
+    ///     * the project has no unsaved changes since the last Save
+    ///   * the interval has not elapsed
+    ///   * nothing changed since the previous autosave (idle session)
+    ///
+    /// The interval check comes before the change check so an idle
+    /// session does not pay for a hash comparison every frame.
+    fn tick_autosave(&mut self) {
+        let Some(interval_min) = self.settings.autosave_minutes.filter(|m| *m > 0) else {
+            return;
+        };
+        let Some(path) = self.project_file_path() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_autosave_at {
+            if now.duration_since(last) < std::time::Duration::from_secs(interval_min * 60) {
+                return;
+            }
+        }
+        self.last_autosave_at = Some(now);
+
+        // Dirty = current state differs from what is on disk.
+        let hash = self.project.render_hash();
+        if Some(hash) == self.last_saved_hash {
+            return;
+        }
+        // Skip when the previous autosave captured the same state, so
+        // an open-but-idle project does not rewrite an identical file.
+        if Some(hash) == self.last_autosave_hash {
+            return;
+        }
+
+        let saved_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        match caprust_core::recovery::write_snapshot(&path, &self.project, saved_at) {
+            Ok(written) => {
+                self.last_autosave_hash = Some(hash);
+                tracing::info!("recovery autosave: {}", written.display());
+            }
+            Err(e) => {
+                // Autosave failing must not interrupt editing; log it
+                // and wait for the next tick.
+                tracing::error!("recovery autosave failed: {e:#}");
+            }
+        }
+    }
+
+    /// Set `recovery_prompt` when `project_file` has a crash-recovery
+    /// snapshot worth offering. Silent when autosave recovery is off
+    /// in Settings, or when there is nothing to restore.
+    fn offer_recovery(&mut self, project_file: &std::path::Path, loaded_hash: u64) {
+        if !self.settings.autosave_recovery {
+            return;
+        }
+        match caprust_core::recovery::offer_for(project_file, loaded_hash) {
+            Some(offer) => {
+                tracing::info!(
+                    "recovery: snapshot from {} is newer than {}",
+                    offer.saved_at,
+                    project_file.display()
+                );
+                self.recovery_prompt = Some((project_file.to_path_buf(), offer));
+            }
+            None => self.recovery_prompt = None,
+        }
+    }
+
+    /// Restore / Discard / Later dialog for a crash-recovery snapshot.
+    /// Mirrors the settings-sync prompt: a single modal driven by
+    /// `recovery_prompt`, closed by whichever button is clicked.
+    fn show_recovery_prompt_window(&mut self, ctx: &egui::Context) {
+        let Some((path, offer)) = self.recovery_prompt.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(tr("recovery-prompt-title"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(tr("recovery-prompt-body"));
+                ui.add_space(space::S);
+                let when = format_clock(offer.saved_at);
+                ui.label(
+                    egui::RichText::new(format!("{}: {when}", tr("recovery-prompt-saved")))
+                        .small()
+                        .monospace()
+                        .color(egui::Color32::from_gray(150)),
+                );
+                ui.add_space(space::M_PLUS);
+                ui.horizontal(|ui| {
+                    if ui.button(tr("recovery-prompt-restore")).clicked() {
+                        match caprust_core::recovery::restore(&path) {
+                            Some(mut state) => {
+                                // Keep project_path pointing at the file
+                                // we were loaded from so the next autosave
+                                // and Save go to the same place.
+                                state.project_path =
+                                    Some(self.project.project_path.clone().unwrap_or_default());
+                                state.models.merge_missing_defaults();
+                                state
+                                    .models
+                                    .scan_local(&self.settings.effective_models_dir());
+                                self.project = state;
+                                self.undo_stack = UndoStack::new();
+                                // Restored state is on disk only in the
+                                // snapshot, so the project is dirty and a
+                                // fresh snapshot should be allowed to
+                                // overwrite the one we just read.
+                                let hash = self.project.render_hash();
+                                self.last_saved_hash = None;
+                                self.last_autosave_hash = None;
+                                self.last_autosave_at = None;
+                                tracing::info!("recovery: restored session, hash {hash}");
+                                self.toast(tr("toast-recovery-restored"));
+                            }
+                            None => self.toast_error(tr("toast-recovery-failed")),
+                        }
+                        self.recovery_prompt = None;
+                    }
+                    if ui.button(tr("recovery-prompt-later")).clicked() {
+                        // Keep the snapshot; it will be offered again
+                        // on the next open of this project.
+                        self.recovery_prompt = None;
+                    }
+                    if ui.button(tr("recovery-prompt-discard")).clicked() {
+                        caprust_core::recovery::clear_snapshots(&path);
+                        self.recovery_prompt = None;
+                        tracing::info!("recovery: snapshots discarded for {}", path.display());
+                    }
+                });
+            });
+
+        // Closing the window with X means "Later", not "Discard": the
+        // snapshot stays so no unsaved work is thrown away by a stray
+        // click.
+        if !open {
+            self.recovery_prompt = None;
         }
     }
 
@@ -877,6 +1056,16 @@ impl CapRustApp {
                 let entry = caprust_core::recent::entry_from(&self.project, path);
                 self.recent.push(entry);
                 tracing::info!("Loaded project {path}");
+                // The file on disk is now the baseline: no unsaved
+                // changes, and the autosave timer restarts for this
+                // project.
+                let loaded_hash = self.project.render_hash();
+                self.last_saved_hash = Some(loaded_hash);
+                self.last_autosave_hash = Some(loaded_hash);
+                self.last_autosave_at = None;
+                // Offer to restore a newer crash-recovery snapshot, if
+                // one exists and actually differs from this file.
+                self.offer_recovery(std::path::Path::new(path), loaded_hash);
                 // Prune empty Captions clips left behind by older builds
                 // that inserted a placeholder whenever a model was picked
                 // in the prompt.
@@ -10417,6 +10606,16 @@ impl CapRustApp {
     }
 }
 
+/// Wall-clock "14:05" for a Unix timestamp, in the user's local zone.
+/// Used only to say when a recovery snapshot was written.
+fn format_clock(unix_secs: u64) -> String {
+    let Ok(ts) = jiff::Timestamp::from_second(i64::try_from(unix_secs).unwrap_or(0)) else {
+        return "--:--".into();
+    };
+    let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
+    format!("{:02}:{:02}", zoned.hour(), zoned.minute())
+}
+
 /// Short "3m 12s" / "45s" / "1h 05m" formatter for the export ETA
 /// label. Zero-valued leading units are omitted.
 fn format_short_time(seconds: f32) -> String {
@@ -10769,6 +10968,12 @@ impl eframe::App for CapRustApp {
         }
         if self.relink_dialog_open {
             self.show_relink_dialog_window(ctx);
+        }
+        // Crash-recovery autosave. Cheap when disabled or idle: the
+        // interval and dirty checks bail before any hashing.
+        self.tick_autosave();
+        if self.recovery_prompt.is_some() {
+            self.show_recovery_prompt_window(ctx);
         }
         if self.export_open {
             self.show_export_window(ctx);

@@ -884,3 +884,22 @@ set-appearance-font-scale = Tamaño
 
 missing-media-banner = Faltan algunos archivos de medios
 missing-media-relink = Reenlazar…
+
+# --- Autoguardado de recuperacion tras fallo (#49) ---
+set-tab-autosave = Autoguardado
+set-autosave-hint = Guarda periodicamente una copia de recuperacion para que un fallo no pierda tus ediciones. Los archivos de recuperacion se escriben aparte y nunca sobrescriben tu proyecto.
+set-autosave-interval = Cada { $v } min
+set-autosave-off = Desactivado
+set-autosave-custom = Personalizado:
+set-autosave-custom-hint = Minutos entre copias de recuperacion (1-240).
+set-autosave-set = Aplicar
+set-autosave-restore = Preguntar al recuperar tras un fallo
+set-autosave-location = Los archivos de recuperacion se guardan en %APPDATA%/CapRust/recovery y se borran al guardar el proyecto.
+recovery-prompt-title = Trabajo sin guardar recuperado
+recovery-prompt-body = CapRust encontro una copia de recuperacion mas reciente para este proyecto. Contiene ediciones que nunca se guardaron en el archivo del proyecto.
+recovery-prompt-saved = Copia creada a las
+recovery-prompt-restore = Recuperar
+recovery-prompt-later = Decidir luego
+recovery-prompt-discard = Descartar
+toast-recovery-restored = Se recupero tu sesion sin guardar. Pulsa Ctrl+S para conservarla.
+toast-recovery-failed = No se pudo leer la copia de recuperacion.

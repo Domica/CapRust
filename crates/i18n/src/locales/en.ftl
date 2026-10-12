@@ -884,3 +884,22 @@ set-appearance-font-scale = Size
 
 missing-media-banner = Some media files are missing
 missing-media-relink = Relink…
+
+# --- Crash recovery autosave (#49) ---
+set-tab-autosave = Autosave
+set-autosave-hint = Periodically save a recovery copy so a crash cannot lose your edits. Recovery files are written separately and never overwrite your project.
+set-autosave-interval = Every { $v } min
+set-autosave-off = Off
+set-autosave-custom = Custom:
+set-autosave-custom-hint = Minutes between recovery snapshots (1-240).
+set-autosave-set = Set
+set-autosave-restore = Ask to restore after a crash
+set-autosave-location = Recovery files live in %APPDATA%/CapRust/recovery and are cleared once you save the project.
+recovery-prompt-title = Unsaved work recovered
+recovery-prompt-body = CapRust found a newer recovery snapshot for this project. It holds edits that were never saved to the project file.
+recovery-prompt-saved = Snapshot taken at
+recovery-prompt-restore = Restore
+recovery-prompt-later = Decide later
+recovery-prompt-discard = Discard
+toast-recovery-restored = Recovered your unsaved session. Press Ctrl+S to keep it.
+toast-recovery-failed = Could not read the recovery snapshot.

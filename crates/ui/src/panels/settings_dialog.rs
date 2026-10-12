@@ -20,6 +20,7 @@ pub enum SettingsTab {
     Language,
     Paths,
     Audio,
+    Autosave,
     Translation,
     About,
 }
@@ -70,6 +71,7 @@ pub fn show(
         ui.selectable_value(tab, SettingsTab::Language, tr("set-tab-language"));
         ui.selectable_value(tab, SettingsTab::Paths, tr("set-tab-paths"));
         ui.selectable_value(tab, SettingsTab::Audio, tr("set-tab-audio"));
+        ui.selectable_value(tab, SettingsTab::Autosave, tr("set-tab-autosave"));
         ui.selectable_value(tab, SettingsTab::Translation, tr("set-tab-translation"));
         ui.selectable_value(tab, SettingsTab::About, tr("set-tab-about"));
     });
@@ -90,6 +92,7 @@ pub fn show(
             SettingsTab::Language => show_language(ui, &mut settings.language),
             SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status, &mut ev),
             SettingsTab::Audio => show_audio(ui, settings),
+            SettingsTab::Autosave => show_autosave(ui, settings),
             SettingsTab::Translation => show_translation(ui, settings),
             SettingsTab::About => show_about(ui, settings),
         });
@@ -918,6 +921,71 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
     ui.add_space(space::M);
     ui.label(
         egui::RichText::new(tr("set-audio-preview-only"))
+            .small()
+            .italics()
+            .color(egui::Color32::from_gray(130)),
+    );
+}
+
+/// Autosave intervals offered in Settings. `0` means off. Values
+/// outside this list are still honored (the user can type one), they
+/// just render as their raw number.
+const AUTOSAVE_PRESETS: &[u64] = &[0, 1, 5, 15, 30, 60];
+
+fn show_autosave(ui: &mut Ui, settings: &mut AppSettings) {
+    ui.label(egui::RichText::new(tr("set-tab-autosave")).strong());
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("set-autosave-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::M_PLUS);
+
+    // Dropdown of presets. A value outside the list (hand-edited settings
+    // file) still renders and the Custom spinner can change it.
+    let current = settings.autosave_minutes.unwrap_or(0);
+    let selected = if current == 0 {
+        tr("set-autosave-off")
+    } else {
+        tr("set-autosave-interval").replace("{v}", &current.to_string())
+    };
+
+    egui::ComboBox::from_id_salt("autosave_interval")
+        .selected_text(selected)
+        .width(180.0)
+        .show_ui(ui, |ui| {
+            for &m in AUTOSAVE_PRESETS {
+                let label = if m == 0 {
+                    tr("set-autosave-off")
+                } else {
+                    tr("set-autosave-interval").replace("{v}", &m.to_string())
+                };
+                ui.selectable_value(&mut settings.autosave_minutes, Some(m), label);
+            }
+        });
+
+    ui.horizontal(|ui| {
+        ui.label(tr("set-autosave-custom"));
+        let mut mins = if current == 0 { 5 } else { current };
+        ui.add(
+            egui::DragValue::new(&mut mins)
+                .range(1..=240)
+                .suffix(" min"),
+        )
+        .on_hover_text(tr("set-autosave-custom-hint"));
+        if ui.button(tr("set-autosave-set")).clicked() {
+            settings.autosave_minutes = Some(mins);
+        }
+    });
+
+    ui.add_space(space::M);
+    if chip::chip(ui, tr("set-autosave-restore"), settings.autosave_recovery).clicked() {
+        settings.autosave_recovery = !settings.autosave_recovery;
+    }
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("set-autosave-location"))
             .small()
             .italics()
             .color(egui::Color32::from_gray(130)),

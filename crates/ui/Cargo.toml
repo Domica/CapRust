@@ -20,6 +20,7 @@ image = { workspace = true }
 cpal = { workspace = true }
 ringbuf = { workspace = true }
 uuid = { workspace = true }
+jiff = { workspace = true }
 rfd = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

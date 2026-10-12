@@ -11,6 +11,7 @@ pub mod multicam;
 pub mod project;
 pub mod project_io;
 pub mod recent;
+pub mod recovery;
 pub mod settings;
 pub mod sfx;
 pub mod template;
