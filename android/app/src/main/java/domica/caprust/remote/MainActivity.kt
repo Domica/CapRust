@@ -239,9 +239,10 @@ class MainActivity : android.app.Activity() {
         val conn = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         hostBox = EditText(this).apply {
             hint = getString(R.string.lbl_host)
-            // A phone keyboard has no colon, so digits and dots only.
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-                or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            // On one line: breaking after `=` makes Kotlin read the
+            // first operand as a statement and then trip over `or`.
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_URI
             setText(sharedPrefsHost())
         }
         portBox = EditText(this).apply {
@@ -418,12 +419,17 @@ class MainActivity : android.app.Activity() {
         val arr = try {
             org.json.JSONArray(text)
         } catch (_: Exception) {
-            TextView(this).apply { this.text = text.take(200) }
-            clipList.addView(this)
+            // The first version built a TextView, dropped it, and then
+            // added `this` -- the Activity. Bind it to a name.
+            val fallback = TextView(this)
+            fallback.text = text.take(200)
+            clipList.addView(fallback)
             return
         }
         if (arr.length() == 0) {
-            clipList.addView(TextView(this).apply { text = getString(R.string.no_clips) })
+            val empty = TextView(this)
+            empty.setText(getString(R.string.no_clips))
+            clipList.addView(empty)
             return
         }
         for (i in 0 until arr.length()) {
@@ -438,9 +444,7 @@ class MainActivity : android.app.Activity() {
             clipNames[id] = label
             val row = btn(label) {
                 selectedClip = id
-                clipList.childrenSequence().forEach {
-                    (it as? Button)?.setAlpha(if (it.tag == id) 1f else 0.6f)
-                }
+                dimOthers(id)
             }
             row.tag = id
             clipList.addView(row)
@@ -486,6 +490,19 @@ class MainActivity : android.app.Activity() {
             } catch (_: Exception) {
                 status.text = "Could not read the clip list"
             }
+        }
+    }
+
+    /** Dim every clip row except the selected one.
+     *
+     *  A plain index loop, not `childrenSequence()`: that is an
+     *  androidx.core KTX extension and this app deliberately has no
+     *  androidx dependency.
+     */
+    private fun dimOthers(selected: String) {
+        for (i in 0 until clipList.childCount) {
+            val child = clipList.getChildAt(i) as? Button ?: continue
+            child.setAlpha(if (child.tag == selected) 1f else 0.6f)
         }
     }
 
