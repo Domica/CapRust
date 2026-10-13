@@ -21,13 +21,14 @@ pub struct Ctx<'a> {
 
 /// Protocol state only. Everything with the project arrives per call,
 /// so one `Server` serves either host without duplicating logic.
+#[derive(Default)]
 pub struct Server {
     initialized: bool,
 }
 
 impl Server {
     pub fn new() -> Self {
-        Self { initialized: false }
+        Self::default()
     }
 
     /// Returns `Some(json_line)` for requests, `None` for notifications.

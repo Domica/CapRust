@@ -1,14 +1,15 @@
-mod rpc;
-mod server;
-mod tools;
-mod transport;
+//! Thin binary over `caprust_mcp_core`. All logic lives in the lib so
+//! the app can drive the same tool surface against a live session.
 
 use anyhow::{Context, Result};
 use std::io::{self, BufWriter};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-use transport::{TcpTransport, Transport};
+use caprust_mcp_core::{
+    server,
+    transport::{self, Transport},
+};
 
 /// How this process was asked to talk to clients.
 struct Options {
@@ -122,7 +123,7 @@ fn main() -> Result<()> {
                 tracing::warn!(
                     "mcp: listening on {bind} exposes project editing to the network with no authentication"
                 );
-                TcpTransport::bind((bind.as_str(), port)).context("bind MCP TCP port")?
+                transport::TcpTransport::bind((bind.as_str(), port)).context("bind MCP TCP port")?
             };
             let local = t
                 .local_port()

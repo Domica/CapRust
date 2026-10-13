@@ -4,6 +4,18 @@ version.workspace = true
 edition = "2021"
 publish = false
 
+# Library plus binary in one package rather than a separate crate.
+# The app needs `Server`/`Ctx`/`Transport` to drive a live session, and
+# a second crate would mean moving files for no benefit. The lib is
+# named differently so callers do not collide with the binary.
+[lib]
+name = "caprust_mcp_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "caprust-mcp"
+path = "src/main.rs"
+
 [dependencies]
 caprust-core = { path = "../core" }
 anyhow = { workspace = true }
