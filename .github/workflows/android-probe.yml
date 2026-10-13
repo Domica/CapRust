@@ -1,0 +1,84 @@
+# Android feasibility probe.
+#
+# Answers one question: can the non-UI crates cross-compile for
+# aarch64-linux-android? If this goes green, a native Android app is
+# reachable. If it goes red, that is months saved.
+#
+# Manual trigger only. It is a probe, not a gate, so it must not run
+# on every push.
+#
+# Split into steps on purpose: caprust-core is pure Rust and is
+# expected to pass. caprust-media-io pulls whisper-rs, which compiles
+# whisper.cpp from C++ source, and is the actual question. Separate
+# steps mean a media-io failure still reports the core result.
+
+name: Android probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_whisper:
+        description: "Also build caprust-media-io (whisper.cpp C++)"
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  probe:
+    name: cross-compile for aarch64-linux-android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub-hosted ubuntu runners already ship the Android SDK and
+      # NDK. Only the Rust target has to be added.
+      - name: Report toolchain versions
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT:-unset}"
+          echo "ANDROID_NDK_LATEST_HOME=${ANDROID_NDK_LATEST_HOME:-unset}"
+          ls -d "$ANDROID_NDK_ROOT" 2>/dev/null || true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-probe
+
+      # NDK ships clang wrappers per API level. API 21 is the floor
+      # egui/winit supports and keeps the minSdk low.
+      - name: Point cargo at the NDK clang wrappers
+        run: |
+          NDK="$ANDROID_NDK_ROOT"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "NDK clang bin: $BIN"
+          ls "$BIN" | grep aarch64 | head -5
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=llvm-ar" >> "$GITHUB_ENV"
+          echo "RANLIB_aarch64_linux_android=llvm-ranlib" >> "$GITHUB_ENV"
+          # cc/CMake-based build scripts need the API level, not just
+          # the triple, or they guess a host triple.
+          echo "ANDROID_API=21" >> "$GITHUB_ENV"
+
+      - name: Build caprust-core (pure Rust, expected to pass)
+        run: cargo build --release -p caprust-core --target aarch64-linux-android
+
+      - name: Build caprust-media-io (whisper.cpp C++, the real question)
+        if: ${{ inputs.with_whisper }}
+        # Do not abort the job: a failure here is the probe's answer,
+        # and we still want the core result and the summary.
+        continue-on-error: true
+        run: cargo build --release -p caprust-media-io --target aarch64-linux-android
+
+      - name: Report
+        if: always()
+        run: |
+          echo "=== probe result ==="
+          echo "core:     $([ -d target/aarch64-linux-android/release/libcaprust_core.rlib ] && echo BUILT || echo FAILED)"
+          echo "media-io: $([ -d target/aarch64-linux-android/release/libcaprust_media_io.rlib ] && echo BUILT || echo 'not built')"
