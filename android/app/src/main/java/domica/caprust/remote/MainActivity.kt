@@ -205,6 +205,17 @@ class MainActivity : android.app.Activity() {
     private lateinit var portBox: EditText
     private lateinit var codeBox: EditText
 
+    /** Milliseconds used by Split and Move. Prefilled with the selected
+     *  clip's midpoint so the common case is still one tap. */
+    private lateinit var timeBox: EditText
+
+    /** Detail panel for the selected clip, landscape only. */
+    private var selectedView: TextView? = null
+
+    /** Cached clip fields for the selected row, so the sheet and the
+     *  detail panel do not have to re-query. */
+    private val clipInfo = HashMap<String, JSONObject>()
+
     /** Clip id -> display name, rebuilt on every refresh. */
     private val clipNames = LinkedHashMap<String, String>()
     private var selectedClip: String? = null
@@ -314,9 +325,25 @@ class MainActivity : android.app.Activity() {
         root.addView(actions)
 
         val actions2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions2.addView(btn(getString(R.string.btn_split)) { splitSelected() })
         actions2.addView(btn(getString(R.string.btn_disconnect)) { doDisconnect() })
         root.addView(actions2)
+
+        // ---- time input ----
+        // Split used to happen at the midpoint, which is safe but not
+        // what anyone means. One field serves both Split and Move, and
+        // selecting a clip prefills it with that clip's midpoint so the
+        // common case is still one tap.
+        val timeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        timeRow.addView(TextView(this).apply {
+            text = getString(R.string.lbl_time_ms)
+            textSize = 12f
+        })
+        timeBox = EditText(this).apply {
+            hint = "ms"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        timeRow.addView(timeBox, LinearLayout.LayoutParams(0, dp(44), 1f))
+        root.addView(timeRow)
 
         root.addView(TextView(this).apply {
             text = getString(R.string.title_clips)
@@ -334,11 +361,10 @@ class MainActivity : android.app.Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f))
 
         // ---- log ----
-        val logToggle = btn(getString(R.string.btn_toggle_log)) {
+        root.addView(btn(getString(R.string.btn_toggle_log)) {
             logView.visibility =
                 if (logView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        }
-        root.addView(logToggle)
+        })
         val logScroll = ScrollView(this)
         logView = TextView(this).apply {
             textSize = 10f
@@ -349,7 +375,42 @@ class MainActivity : android.app.Activity() {
         root.addView(logScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(140)))
 
-        return root
+        if (resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_PORTRAIT) {
+            return root
+        }
+
+        // Landscape on a tablet was throwing away half the screen on a
+        // single column. Two columns: the list and the log side by
+        // side, with the log taking the room the list does not need.
+        val wide = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        wide.addView(root, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        val side = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), 0, 0, 0)
+        }
+        side.addView(selectionView = selectedInfo(), lp = lp(1f))
+        side.addView(btn(getString(R.string.btn_toggle_log)) {
+            logView.visibility =
+                if (logView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        })
+        side.addView(logScroll, LinearLayout.LayoutParams(
+            0, 0, 1f))
+        wide.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        return wide
+    }
+
+    private fun lp(weight: Float) = LinearLayout.LayoutParams(0, 0, weight)
+
+    /** Detail panel for the selected clip. Only shown in landscape;
+     *  portrait has no room and the bottom sheet carries this. */
+    private fun selectedInfo(): TextView {
+        selectedView = TextView(this).apply {
+            textSize = 12f
+            setTypeface(android.graphics.Typeface.MONOSPACE)
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        return selectedView!!
     }
 
     private fun btn(label: String, onClick: () -> Unit) = Button(this).apply {
@@ -517,55 +578,159 @@ class MainActivity : android.app.Activity() {
             val startSec = c.optLong("start_time_ms") / 1000
             val label = "$kind  @${startSec}s"
             clipNames[id] = label
+            clipInfo[id] = c
             val row = btn(label) {
                 selectedClip = id
                 dimOthers(id)
+                // Prefill the time field with this clip's midpoint, so
+                // Split is still one tap for the common case while
+                // staying adjustable.
+                if (::timeBox.isInitialized) {
+                    val mid = (c.optLong("start_time_ms") + c.optLong("duration_ms") / 2)
+                    timeBox.setText(mid.toString())
+                }
+                selectedView?.text = describe(id, c)
+                showClipSheet()
             }
             row.tag = id
             clipList.addView(row)
         }
     }
 
-    /** Split the selected clip at the midpoint of its duration.
-     *
-     *  A timestamp picker is not worth the surface area for v1: the
-     *  phone is a remote control for a timeline that is far easier to
-     *  aim at on the desktop. The midpoint is a safe, reversible
-     *  operation and undo takes it back.
-     */
-    private fun splitSelected() {
+    /**
+ * Bottom sheet of actions for the selected clip.
+ *
+ * Every button here maps to a tool the server already has; none of it
+ * is new backend. Grouped in one place rather than as a row of
+ * buttons because there are more actions than fit across a phone.
+ */
+    private fun showClipSheet() {
         val id = selectedClip
         if (id == null) {
-            status.text = "Tap a clip first"
+            status.text = getString(R.string.msg_tap_clip)
             return
         }
-        client.call("list_clips") { ok, text ->
-            if (!ok) return@call
-            try {
-                val arr = org.json.JSONArray(text)
-                for (i in 0 until arr.length()) {
-                    val c = arr.getJSONObject(i)
-                    if (c.optString("id") != id) continue
-                    val start = c.optLong("start_time_ms")
-                    val dur = c.optLong("duration_ms")
-                    val at = start + dur / 2
-                    client.call(
-                        // The argument is `at_ms`, matching
-                        // SplitClipCommand. `time_ms` was silently
-                        // ignored as a missing parameter.
-                        "split_clip",
-                        JSONObject().put("clip_id", id).put("at_ms", at)
-                    ) { ok2, msg ->
-                        status.text = if (ok2) "Split at ${at}ms" else "Split failed: $msg"
-                        if (ok2) refresh()
-                    }
-                    return@call
-                }
-                status.text = "Clip is no longer on the timeline"
-            } catch (_: Exception) {
-                status.text = "Could not read the clip list"
+        val info = clipInfo[id] ?: JSONObject()
+        val start = info.optLong("start_time_ms")
+        val dur = info.optLong("duration_ms")
+        val kind = info.optString("kind", "clip")
+
+        android.app.Dialog(this).apply {
+            setTitle(getString(R.string.sheet_title))
+            val col = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(8), dp(16), dp(16))
+            }
+            fun row(label: String, body: () -> Unit) = col.addView(btn(label) {
+                body()
+                dismiss()
+            })
+
+            row(getString(R.string.act_split)) { splitAt(readTimeOr(start + dur / 2)) }
+            row(getString(R.string.act_move)) { moveTo(readTimeOr(start)) }
+            row(getString(R.string.act_vol_up)) {
+                setVolume(info.optDouble("volume_db", 0.0) + 6.0)
+            }
+            row(getString(R.string.act_vol_down)) {
+                setVolume(info.optDouble("volume_db", 0.0) - 6.0)
+            }
+            row(getString(R.string.act_speed_up)) { setSpeed(info.optDouble("speed", 1.0) * 2.0) }
+            row(getString(R.string.act_speed_half)) { setSpeed(info.optDouble("speed", 1.0) / 2.0) }
+            row(getString(R.string.act_fade)) { setFade() }
+            if (kind.contains("Audio", true) || kind.contains("Video", true)) {
+                row(getString(R.string.act_media)) { client.call("list_media") { ok, t ->
+                    runOnUiThread { status.text = if (ok) t.take(300) else t }
+                } }
+            }
+
+            setContentView(col)
+            show()
+        }
+    }
+
+    /** The typed time, or a fallback when the field is empty or not a
+     *  number. Never silently uses the fallback for a bad value: a
+     *  split at the wrong place is worse than one at the midpoint. */
+    private fun readTimeOr(fallback: Long): Long =
+        if (::timeBox.isInitialized) timeBox.text.toString().trim().toLongOrNull() ?: fallback
+        else fallback
+
+    /** Split a clip at an explicit position.
+     *
+     *  The argument is `at_ms`, matching SplitClipCommand. `time_ms`
+     *  was silently ignored as a missing parameter in the first
+     *  version.
+     */
+    private fun splitAt(at: Long) {
+        val id = selectedClip ?: return
+        client.call("split_clip", JSONObject().put("clip_id", id).put("at_ms", at)) { ok, msg ->
+            runOnUiThread {
+                status.text = if (ok) "Split at ${at}ms" else "Split failed: $msg"
+                if (ok) refresh()
             }
         }
+    }
+
+    /** Move a clip to a start position.
+     *
+     *  The arguments are `to_ms` and the optional `to_track`, checked
+     *  against the server rather than guessed. `to_track` is left out
+     *  on purpose: omitting it keeps the clip where it is, which is
+     *  what Move means here.
+     */
+    private fun moveTo(at: Long) {
+        val id = selectedClip ?: return
+        client.call("move_clip", JSONObject().put("clip_id", id).put("to_ms", at)) { ok, msg ->
+            runOnUiThread {
+                status.text = if (ok) "Moved to ${at}ms" else "Move failed: $msg"
+                if (ok) refresh()
+            }
+        }
+    }
+
+    private fun setVolume(db: Double) {
+        val id = selectedClip ?: return
+        client.call("set_clip_volume", JSONObject().put("clip_id", id).put("db", db)) { ok, msg ->
+            runOnUiThread {
+                status.text = if (ok) "Volume $db dB" else "Volume failed: $msg"
+                if (ok) refresh()
+            }
+        }
+    }
+
+    private fun setSpeed(speed: Double) {
+        val id = selectedClip ?: return
+        // The slider is 0.25..4; halving a 0.25 would ask for 0.125,
+        // which the panel cannot represent.
+        val clamped = speed.coerceIn(0.25, 4.0)
+        client.call("set_clip_speed", JSONObject().put("clip_id", id).put("speed", clamped)) { ok, msg ->
+            runOnUiThread {
+                status.text = if (ok) "Speed ${clamped}x" else "Speed failed: $msg"
+                if (ok) refresh()
+            }
+        }
+    }
+
+    private fun setFade() {
+        val id = selectedClip ?: return
+        val args = JSONObject().put("clip_id", id).put("fade_in_ms", 1000).put("fade_out_ms", 1000)
+        client.call("set_clip_fade", args) { ok, msg ->
+            runOnUiThread {
+                status.text = if (ok) "Fade 1s in and out" else "Fade failed: $msg"
+                if (ok) refresh()
+            }
+        }
+    }
+
+    /** One-clip summary for the landscape detail panel. */
+    private fun describe(id: String, c: JSONObject): String = buildString {
+        appendLine("id      ${id.take(8)}")
+        appendLine("kind    ${c.optString("kind")}")
+        appendLine("track   ${c.optInt("track_index")}")
+        appendLine("start   ${c.optLong("start_time_ms")} ms")
+        appendLine("length  ${c.optLong("duration_ms")} ms")
+        appendLine("speed   ${c.optDouble("speed", 1.0)}x")
+        append("volume  ${c.optDouble("volume_db", 0.0)} dB")
     }
 
     /** Dim every clip row except the selected one.

@@ -17,4 +17,17 @@
     <string name="hint_never">never paired</string>
     <string name="title_clips">Clips</string>
     <string name="no_clips">No clips</string>
+
+    <!-- Clip action sheet -->
+    <string name="sheet_title">Clip actions</string>
+    <string name="msg_tap_clip">Tap a clip first</string>
+    <string name="lbl_time_ms">Time</string>
+    <string name="act_split">Split at time</string>
+    <string name="act_move">Move to time</string>
+    <string name="act_vol_up">Volume +6 dB</string>
+    <string name="act_vol_down">Volume -6 dB</string>
+    <string name="act_speed_up">Double speed</string>
+    <string name="act_speed_half">Half speed</string>
+    <string name="act_fade">Fade 1s in and out</string>
+    <string name="act_media">List media</string>
 </resources>
