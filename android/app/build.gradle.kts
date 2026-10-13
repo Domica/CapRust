@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -29,7 +30,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // No dependencies beyond the platform. org.json ships with Android,
-    // so JSON-RPC needs nothing added, and a dependency-free build does
-    // not drift when the runner's cached Gradle and AGP versions move.
+    // The only dependency in the whole project, and it is not optional:
+    // Kotlin has no runtime without it. org.json ships with the
+    // platform, so JSON-RPC still needs nothing added, and there is no
+    // networking or lifecycle library to drift against.
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.24")
 }

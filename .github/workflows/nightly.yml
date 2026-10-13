@@ -75,6 +75,29 @@ jobs:
         working-directory: android
         run: gradle --no-daemon assembleDebug
 
+      # A build with the Kotlin plugin missing exits 0 and produces an
+      # APK whose classes.dex is a few kilobytes of nothing: the
+      # manifest still names MainActivity, so it installs and then dies
+      # on launch. `assembleDebug` succeeding is not evidence the app is
+      # in there. This is.
+      - name: Verify the APK actually contains the app
+        working-directory: android
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK" || { echo "no APK at $APK"; exit 1; }
+          SIZE=$(stat -c%s "$APK")
+          echo "APK: $SIZE bytes"
+          # Below ~200 KB means no compiled app code got in.
+          if [ "$SIZE" -lt 204800 ]; then
+            echo "APK is too small to contain the app. Check that the"
+            echo "Kotlin plugin is applied; without it .kt files are skipped"
+            echo "and the build still succeeds."
+            exit 1
+          fi
+          unzip -l "$APK" | grep -q 'classes.dex' || {
+            echo "no classes.dex in the APK"; exit 1; }
+          echo "APK looks real."
+
       - uses: actions/upload-artifact@v4
         with:
           name: caprust-nightly-apk
