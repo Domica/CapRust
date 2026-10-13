@@ -1,8 +1,12 @@
 ﻿# CapRust MCP Server
 
-Standalone JSON-RPC 2.0 server over stdio. Loads a `.caprust`
-project file and exposes read-only inspection plus mutating tools
-that go through the same `UndoStack` as the UI.
+Standalone JSON-RPC 2.0 server. Loads a `.caprust` project file and
+exposes read-only inspection plus mutating tools that go through the
+same `UndoStack` as the UI.
+
+Speaks newline-delimited JSON over either stdio (AI agents) or a TCP
+socket (a phone driving the same tool surface). The protocol does not
+change between them.
 
 ## Build
 
@@ -15,7 +19,25 @@ Binary: `target/release/caprust-mcp.exe` (Windows).
     caprust-mcp F:/Dev/projects/MyVlog.caprust
 
 Line-delimited JSON-RPC 2.0 on stdin, responses on stdout, logs on
-stderr. No HTTP, no socket, no tokio.
+stderr. No HTTP, no tokio.
+
+## TCP mode
+
+    caprust-mcp --tcp F:/Dev/projects/MyVlog.caprust
+    caprust-mcp --bind 0.0.0.0 --port 4711 F:/Dev/projects/MyVlog.caprust
+
+Prints the bound port on stdout, so `--tcp` with no `--port` works
+when the caller asked for an OS-chosen one.
+
+**The default bind is loopback.** `--bind 0.0.0.0` puts an
+unauthenticated project-editing endpoint on the network; there is no
+authentication yet, so do it only on a network you trust. One client
+at a time: a second connection waits rather than interleaving, because
+the server owns a single `ProjectState` and a single undo stack.
+
+This is still a separate headless process. It does not share state
+with a running CapRust window — two of them editing the same file will
+overwrite each other on save.
 
 ## Claude Desktop
 
