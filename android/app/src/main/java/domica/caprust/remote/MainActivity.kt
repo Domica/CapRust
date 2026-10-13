@@ -228,6 +228,31 @@ class Client(private val ctx: Context) {
      * pairing earned on one machine is rejected by another, so loading
      * the saved one on switch is the whole point of saving it.
      */
+    /**
+     * Ask which tools this server offers.
+     *
+     * `tools/list` needs no token, so this works before pairing and is
+     * the one call that can tell a too-old desktop apart from a
+     * missing pairing.
+     */
+    fun listTools(then: (Boolean, List<String>) -> Unit) {
+        raw("tools/list", JSONObject()) { ok, resp, err ->
+            if (!ok) {
+                post { then(false, emptyList()) }
+                return@raw
+            }
+            val names = ArrayList<String>()
+            // raw() hands back the whole envelope, so the result is
+            // nested under "result" and the array under "tools".
+            resp.optJSONObject("result")?.optJSONArray("tools")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.optString("name")?.let { names.add(it) }
+                }
+            }
+            post { then(names.isNotEmpty(), names) }
+        }
+    }
+
     fun setToken(v: String?) {
         token = v
     }
@@ -277,6 +302,21 @@ class MainActivity : android.app.Activity() {
      * checked for exhaustiveness and a typo is a compile error.
      */
     private enum class Screen { Connect, Project, Projects, Log, Settings, Connections }
+
+    /**
+     * Tools this app needs from a CapRust instance.
+     *
+     * Checked at connect. A desktop older than the app simply does not
+     * have some of these, and the symptom otherwise is a button that
+     * does nothing -- indistinguishable from a bug here, which has
+     * cost several rounds of guessing already.
+     */
+    private val requiredTools = listOf(
+        "get_project_summary", "list_clips", "move_clip", "split_clip",
+        "set_clip_volume", "set_clip_speed", "set_clip_fade", "list_media",
+        "add_clip_to_timeline", "undo", "redo", "save_project",
+        "list_assets", "apply_preset", "list_recent_projects", "open_project",
+    )
 
     private var current = Screen.Connect
 
@@ -545,7 +585,7 @@ class MainActivity : android.app.Activity() {
                     say(getString(R.string.msg_connected_to, host))
                     // Same check as a manual connect: the socket being
                     // open says nothing about whether the token works.
-                    if (current == Screen.Connect) verifyTokenOrPrompt()
+                    if (current == Screen.Connect) checkServerThenPrompt()
                 } else {
                     say(getString(R.string.msg_reconnect_failed, err))
                     val every = reconnectDelaySec()
@@ -1116,7 +1156,7 @@ class MainActivity : android.app.Activity() {
                 // one. Trusting the cache meant a stale token looked
                 // paired and jumped past the pairing field, leaving
                 // every call failing with no way forward.
-                verifyTokenOrPrompt()
+                checkServerThenPrompt()
             }
         }
     }
@@ -1129,6 +1169,25 @@ class MainActivity : android.app.Activity() {
      * with the field that is on this screen. Anything else is a
      * transport problem and leaves the token alone.
      */
+    private fun checkServerThenPrompt() {
+        client.listTools { ok, names ->
+            runOnUiThread {
+                if (!ok) {
+                    say(getString(R.string.msg_no_tools))
+                    return@runOnUiThread
+                }
+                val missing = requiredTools.filter { it !in names }
+                if (missing.isNotEmpty()) {
+                    // Name what is missing, so the report says what to
+                    // update instead of "the list does not load".
+                    say(getString(R.string.msg_desktop_old, missing.joinToString(", ")))
+                    return@runOnUiThread
+                }
+                verifyTokenOrPrompt()
+            }
+        }
+    }
+
     private fun verifyTokenOrPrompt() {
         client.call("get_project_summary") { ok, body ->
             runOnUiThread {

@@ -68,6 +68,8 @@
     <string name="msg_connect_first">Connect first, then enter the pairing code.</string>
     <string name="pairing_header">Pairing code from CapRust</string>
     <string name="msg_token_stale">Pairing expired. Enter the code shown in CapRust.</string>
+    <string name="msg_desktop_old">CapRust on the computer is out of date. It is missing: %1$s</string>
+    <string name="msg_no_tools">Could not read the tool list from CapRust.</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->

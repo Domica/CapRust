@@ -248,6 +248,141 @@ mod tests {
                 session: None,
             }
         }
+
+        /// Same, but with a session attached.
+        fn ctx_with<'a>(&'a mut self, s: &'a mut FakeSession) -> Ctx<'a> {
+            Ctx {
+                project: &mut self.project,
+                undo: &mut self.undo,
+                project_path: &self.path,
+                session: Some(s),
+            }
+        }
+    }
+
+    /// Stands in for the running app.
+    struct FakeSession {
+        opened: Option<String>,
+    }
+
+    impl crate::server::SessionControl for FakeSession {
+        fn recent(&self) -> Vec<caprust_core::recent::RecentProject> {
+            vec![caprust_core::recent::RecentProject {
+                path: "C:/p/MyCut.caprust".into(),
+                name: "My Cut".into(),
+                duration_ms: 1500,
+                last_opened: 1_700_000_000,
+                clip_count: 4,
+                base_resolution: 1080,
+                frame_rate_label: "30.00".into(),
+                first_media_id: None,
+            }]
+        }
+        fn request_open(&mut self, path: &Path) -> Result<(), String> {
+            self.opened = Some(path.to_string_lossy().to_string());
+            Ok(())
+        }
+    }
+
+    /// Drive a tool call the way the phone does: JSON in, JSON out.
+    fn call_tool(
+        s: &mut Server,
+        f: &mut Fixture,
+        sess: &mut FakeSession,
+        name: &str,
+        args: Value,
+    ) -> Value {
+        let token = s.token().map(str::to_string);
+        let raw = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": args, "token": token }
+        })
+        .to_string();
+        let out = s.handle_line(&raw, &mut f.ctx_with(sess)).unwrap();
+        serde_json::from_str(&out).unwrap()
+    }
+
+    #[test]
+    fn recent_projects_reaches_the_client_over_json_rpc() {
+        // The handler tests call the function directly. That cannot catch
+        // a tool name wired to the wrong arm, a name the phone sends
+        // that the dispatch table does not have, or a result that never
+        // makes it back into the content envelope. This drives the whole
+        // path instead.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession { opened: None };
+        let token = s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "list_recent_projects", json!({}));
+        // Hand the token over the same way the app does, so auth is in
+        // the path under test.
+        let _ = token;
+
+        let text = v["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(!v["error"].is_object(), "got an error: {v}");
+        assert!(text.contains("My Cut"), "body was {text}");
+        assert!(text.contains("MyCut.caprust"), "body was {text}");
+    }
+
+    #[test]
+    fn open_project_reaches_the_host_over_json_rpc() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession { opened: None };
+        s.auth_mut().rotate_token();
+
+        let f2 = std::env::temp_dir().join(format!("caprust_e2e_{}.caprust", uuid::Uuid::new_v4()));
+        std::fs::write(&f2, b"{}").unwrap();
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "open_project",
+            json!({ "path": f2.to_string_lossy() }),
+        );
+        assert!(!v["error"].is_object(), "got an error: {v}");
+        assert_eq!(sess.opened.as_deref(), Some(f2.to_string_lossy().as_ref()));
+        let _ = std::fs::remove_file(&f2);
+    }
+
+    #[test]
+    fn every_advertised_tool_is_reachable() {
+        // tools/list and the dispatch table are maintained separately;
+        // a name in one and not the other is a tool the phone is told
+        // about and cannot call.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession { opened: None };
+        s.auth_mut().rotate_token();
+
+        let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let out = s.handle_line(raw, &mut f.ctx()).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let names: Vec<String> = v["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.len() >= 15);
+
+        for name in &names {
+            // Each gets empty arguments. Some will fail on validation --
+            // that is fine and expected. What must not happen is
+            // "unknown tool", which means the name is advertised but
+            // not dispatched.
+            let v = call_tool(&mut s, &mut f, &mut sess, name, json!({}));
+            let err = v["error"]["message"].as_str().unwrap_or_default();
+            assert!(
+                !err.contains("unknown tool"),
+                "`{name}` is advertised by tools/list but not dispatched"
+            );
+        }
     }
 
     #[test]
