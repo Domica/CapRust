@@ -775,17 +775,20 @@ class MainActivity : android.app.Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         list.addView(TextView(this).apply { text = getString(R.string.msg_loading_projects) })
 
-        client.call("list_recent_projects") { ok, text ->
+        // The parameter is not named `text`. Kotlin resolves a name in scope
+        // ahead of a member of the implicit receiver, so a lambda
+        // parameter called `text` makes `text = ...` inside `apply`
+        // assign to the parameter -- a val, and a compile error.
+        client.call("list_recent_projects") { ok, body ->
             runOnUiThread {
                 list.removeAllViews()
                 if (!ok) {
-                    say(text)
-                    val message = text
-                    list.addView(TextView(this@MainActivity).apply { text = message })
+                    say(body)
+                    list.addView(TextView(this@MainActivity).apply { text = body })
                     return@runOnUiThread
                 }
                 val arr = try {
-                    JSONObject(text).optJSONArray("projects") ?: JSONArray()
+                    JSONObject(body).optJSONArray("projects") ?: JSONArray()
                 } catch (_: Exception) {
                     JSONArray()
                 }
