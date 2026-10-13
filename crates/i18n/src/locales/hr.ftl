@@ -970,3 +970,9 @@ set-remote-new-code = Novi kod
 set-remote-revoke = Opozovi pristup
 toast-remote-paired = Uredaj uparen
 toast-remote-revoked = Udaljinski pristup opozvan
+
+# --- LAN vezivanje za udaljinsko upravljanje (#65)
+set-remote-lan = Dopusti uredaje na ovoj mrezi
+set-remote-lan-hint = Vezuje se na sve sucelja da telefon moze doci. Port postaje vidljiv lokalnoj mrezi, pa je uparenje obavezno.
+set-remote-type-on-phone = Na telefonu upisi
+set-remote-no-ip = nije uspjelo procitati mreznu adresu ovog racunala

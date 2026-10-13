@@ -281,6 +281,9 @@ pub struct CapRustApp {
     /// interval and the live remote-control pairing code. Neither is
     /// persisted; both have to outlive the frame they were set on.
     pub settings_status: crate::panels::settings_dialog::SettingsStatus,
+    /// Address the live listener is bound to. A socket cannot change
+    /// address, so this is what tells the reconcile step to restart it.
+    pub remote_bind: Option<String>,
     /// Hash of the last settings snapshot written to the sync folder.
     /// Guards against redundant writes when eframe calls save()
     /// repeatedly with identical state.
@@ -746,6 +749,7 @@ impl CapRustApp {
             settings_sync_prompt: None,
             settings_sync_prompt_checked: false,
             settings_status: Default::default(),
+            remote_bind: None,
             last_sync_hash: None,
             last_applied_font_family: None,
             relink_dialog: Default::default(),
@@ -1021,6 +1025,15 @@ impl CapRustApp {
         // Reconcile the listener with the setting first. Done here rather
         // than on the toggle click so a settings change that arrives any
         // other way (settings file, sync, undo) still takes effect.
+        // Loopback is only reachable from this machine. A phone on the same
+        // network needs every interface, which is what puts the port on the
+        // LAN -- which is exactly what the pairing code is for. Restart the
+        // listener when this flips; a bound socket cannot change address.
+        let want_bind: &str = if self.settings.remote_control_lan {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        };
         let want = self.settings.remote_control_enabled;
 
         // Adopt the persisted token so a restart does not force the
@@ -1029,15 +1042,23 @@ impl CapRustApp {
         self.mcp_server
             .load_token(self.settings.remote_control_token.clone());
 
-        match (&self.remote_bridge, want) {
-            (None, true) => match caprust_mcp_core::remote::RemoteBridge::spawn(
-                "127.0.0.1",
+        match (&self.remote_bridge, want, want_bind) {
+            (Some(_), true, bound) if Some(bound) != self.remote_bind.as_deref() => {
+                // The address changed under a live listener. Drop it so the
+                // next match arm re-binds.
+                tracing::info!("remote control: bind changed to {bound}, restarting");
+                self.remote_bridge = None;
+                self.remote_bind = Some(bound.to_string());
+            }
+            (None, true, _) => match caprust_mcp_core::remote::RemoteBridge::spawn(
+                want_bind,
                 self.settings.remote_control_port,
             ) {
                 Ok(bridge) => {
                     let port = bridge.port();
                     self.settings.remote_control_port = port;
-                    tracing::info!("remote control: listening on 127.0.0.1:{port}");
+                    self.remote_bind = Some(want_bind.to_string());
+                    tracing::info!("remote control: listening on {want_bind}:{port}");
                     self.toast(tr("toast-remote-on"));
                     self.remote_bridge = Some(bridge);
                 }
@@ -1049,9 +1070,10 @@ impl CapRustApp {
                     self.settings.remote_control_enabled = false;
                 }
             },
-            (Some(_), false) => {
+            (Some(_), false, _) => {
                 // Dropping closes the listener and the port.
                 self.remote_bridge = None;
+                self.remote_bind = None;
                 tracing::info!("remote control: stopped");
             }
             _ => {}

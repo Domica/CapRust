@@ -28,6 +28,10 @@ ringbuf = { workspace = true }
 uuid = { workspace = true }
 jiff = { workspace = true }
 rfd = { workspace = true }
+# To show the address the user has to type on the phone. Finding it
+# by hand (ipconfig / ifconfig) is the kind of friction that makes a
+# feature look broken.
+local-ip-address = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 caprust-screen-record = { path = "../screen-record" }

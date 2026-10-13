@@ -970,3 +970,9 @@ set-remote-new-code = New code
 set-remote-revoke = Revoke access
 toast-remote-paired = Device paired
 toast-remote-revoked = Remote access revoked
+
+# --- LAN binding for remote control (#65)
+set-remote-lan = Allow devices on this network
+set-remote-lan-hint = Binds to every interface so a phone can reach it. The port becomes visible to the local network, so pairing is required.
+set-remote-type-on-phone = On the phone, enter
+set-remote-no-ip = Could not read this machine's network address

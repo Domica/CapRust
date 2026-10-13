@@ -970,3 +970,9 @@ set-remote-new-code = Neuer Code
 set-remote-revoke = Zugriff widerrufen
 toast-remote-paired = Geraet gekoppelt
 toast-remote-revoked = Fernzugriff widerrufen
+
+# --- LAN-Bindung fuer Fernsteuerung (#65)
+set-remote-lan = Geraete in diesem Netz erlauben
+set-remote-lan-hint = Bindet an alle Schnittstellen, damit ein Telefon zugreifen kann. Der Port wird im lokalen Netz sichtbar, deshalb ist die Kopplung noetig.
+set-remote-type-on-phone = Am Telefon eingeben
+set-remote-no-ip = Netzwerkadresse dieses Rechners konnte nicht gelesen werden

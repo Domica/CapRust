@@ -940,6 +940,16 @@ fn show_remote_control(
     }
 
     ui.add_space(space::S);
+    let mut lan = settings.remote_control_lan;
+    if ui
+        .checkbox(&mut lan, tr("set-remote-lan"))
+        .on_hover_text(tr("set-remote-lan-hint"))
+        .changed()
+    {
+        settings.remote_control_lan = lan;
+    }
+
+    ui.add_space(space::S);
     ui.horizontal(|ui| {
         ui.label(tr("set-remote-port"));
         ui.add_enabled(
@@ -951,13 +961,32 @@ fn show_remote_control(
     });
 
     if settings.remote_control_enabled {
-        let addr = format!("127.0.0.1:{}", settings.remote_control_port);
-        ui.label(
-            egui::RichText::new(format!("{} {addr}", tr("set-remote-listen")))
-                .small()
-                .monospace()
-                .color(egui::Color32::from_gray(150)),
-        );
+        let port = settings.remote_control_port;
+        if settings.remote_control_lan {
+            // Show the address to type, not 0.0.0.0. A phone cannot
+            // connect to a wildcard, and typing it is the single most
+            // likely reason a first attempt fails.
+            match local_ip_address::local_ip() {
+                Ok(ip) => ui.label(
+                    egui::RichText::new(format!("{} {ip}:{port}", tr("set-remote-type-on-phone")))
+                        .small()
+                        .monospace()
+                        .color(egui::Color32::from_rgb(120, 200, 140)),
+                ),
+                Err(e) => ui.label(
+                    egui::RichText::new(format!("{}: {e}", tr("set-remote-no-ip")))
+                        .small()
+                        .color(egui::Color32::from_rgb(220, 140, 120)),
+                ),
+            };
+        } else {
+            ui.label(
+                egui::RichText::new(format!("{} 127.0.0.1:{port}", tr("set-remote-listen")))
+                    .small()
+                    .monospace()
+                    .color(egui::Color32::from_gray(150)),
+            );
+        }
 
         ui.add_space(space::S);
         if let Some(code) = remote_pair_code {

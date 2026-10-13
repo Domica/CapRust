@@ -970,3 +970,9 @@ set-remote-new-code = Nuovo codice
 set-remote-revoke = Revoca accesso
 toast-remote-paired = Dispositivo abbinato
 toast-remote-revoked = Accesso remoto revocato
+
+# --- Binding LAN per controllo remoto (#65)
+set-remote-lan = Consenti i dispositivi di questa rete
+set-remote-lan-hint = Si collega a tutte le interfacce cosi un telefono puo raggiungerlo. La porta diventa visibile alla rete locale, quindi l abbinamento e obbligatorio.
+set-remote-type-on-phone = Sul telefono, digita
+set-remote-no-ip = impossibile leggere l indirizzo di rete di questo computer

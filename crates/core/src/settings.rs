@@ -146,6 +146,15 @@ pub struct AppSettings {
     /// nobody has ever paired.
     #[serde(default)]
     pub remote_control_token: Option<String>,
+    /// Bind the listener to every interface so other devices on the
+    /// network can reach it.
+    ///
+    /// Off by default: loopback is reachable only from this machine, so
+    /// it needs no pairing at all. Turning this on puts the port on the
+    /// LAN, which is what a phone needs, and is why the pairing code
+    /// exists at all. Never bind to a routable interface without it.
+    #[serde(default)]
+    pub remote_control_lan: bool,
     /// When true, opening a project that has a newer recovery snapshot
     /// prompts to restore the unsaved session.
     #[serde(default = "default_true")]
@@ -214,6 +223,7 @@ impl Default for AppSettings {
             remote_control_enabled: false,
             remote_control_port: default_remote_control_port(),
             remote_control_token: None,
+            remote_control_lan: false,
             autosave_recovery: true,
         }
     }
