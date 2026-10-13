@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -346,7 +347,7 @@ class MainActivity : android.app.Activity() {
 
     /** The last preview frame from the desktop, base64 JPEG. Null
      *  until one has been fetched. */
-    private var previewView: android.widget.ImageView? = null
+    private var previewView: ImageView? = null
 
     /** Export button, kept so its label can show progress. */
     private var exportButton: Button? = null
@@ -803,7 +804,7 @@ class MainActivity : android.app.Activity() {
         // the desktop, and a push would need the desktop to track which
         // phone asked.
         previewView = ImageView(this).apply {
-            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(0xFF141414.toInt())
             contentDescription = getString(R.string.preview_desc)
         }
