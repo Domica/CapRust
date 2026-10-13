@@ -145,6 +145,21 @@ pub fn definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "list_recent_projects",
+            "description": "List recently opened projects, newest first. Each entry carries the `path` that `open_project` expects.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }),
+        json!({
+            "name": "open_project",
+            "description": "Switch the running CapRust session to another project. Undo history and open media are not carried over.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "list_assets",
             "description": "List the ids of the transition, effect and filter presets that can be applied to a clip. Returns three arrays under `transitions`, `effects` and `filters`.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -195,12 +210,18 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
-pub fn call(
+pub fn call<'a, 's>(
     name: &str,
     args: &Value,
     project: &mut ProjectState,
     undo: &mut UndoStack,
     project_path: &Path,
+    // Two lifetimes, deliberately. `&mut dyn Trait` would tie the
+    // borrow to the trait object's lifetime, and `&mut` is invariant in
+    // its target -- so the reborrow a caller has at hand could never be
+    // passed in. Naming the object lifetime separately lets the short
+    // borrow and the long object lifetime be different values.
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
 ) -> Result<String> {
     match name {
         // read-only
@@ -209,6 +230,8 @@ pub fn call(
         "list_clips" => list_clips(project, args),
         "list_media" => list_media(project),
         "list_assets" => list_assets(),
+        "list_recent_projects" => list_recent_projects(session),
+        "open_project" => open_project(args, session),
         // mutating
         "move_clip" => move_clip(args, project, undo),
         "split_clip" => split_clip(args, project, undo),
@@ -285,6 +308,65 @@ fn list_assets() -> Result<String> {
         "filters": ids(PresetKind::Filter),
     })
     .to_string())
+}
+
+/// The recent-projects list, newest first.
+///
+/// Returns the full path alongside the display name because `path` is
+/// what `open_project` takes. A client showing a name and sending back
+/// an index would break the moment the list is re-sorted, which is
+/// exactly what opening a project does.
+fn list_recent_projects<'a, 's>(
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server is pinned to one project and has no recent list");
+    };
+    let arr: Vec<Value> = s
+        .recent()
+        .into_iter()
+        .map(|r| {
+            json!({
+                "path": r.path,
+                "name": r.name,
+                "clip_count": r.clip_count,
+                "duration_ms": r.duration_ms,
+                "last_opened": r.last_opened,
+            })
+        })
+        .collect();
+    Ok(json!({ "projects": arr }).to_string())
+}
+
+/// Switch the host to another project.
+///
+/// Validates the path before asking. The host is the one that decides
+/// whether a project can actually be loaded -- it may need to save
+/// first, or may have media locked -- so a failure here is the host's
+/// message, passed through rather than replaced.
+fn open_project<'a, 's>(
+    args: &Value,
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server is pinned to one project and cannot switch");
+    };
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .context("missing or non-string `path`")?;
+    if path.trim().is_empty() {
+        bail!("`path` is empty");
+    }
+    let p = std::path::PathBuf::from(path);
+    if !p.exists() {
+        bail!("no file at {path}");
+    }
+    if p.extension().and_then(|e| e.to_str()) != Some("caprust") {
+        bail!("{path} is not a .caprust file");
+    }
+    s.request_open(&p).map_err(anyhow::Error::msg)?;
+    Ok(json!({ "ok": true, "opening": path }).to_string())
 }
 
 fn get_project_summary(p: &ProjectState) -> Result<String> {
@@ -901,6 +983,7 @@ mod tests {
             &mut p,
             &mut u,
             std::path::Path::new("x.caprust"),
+            None,
         )
         .unwrap_err();
         assert!(err.to_string().contains("unknown tool"));
@@ -1142,5 +1225,119 @@ mod tests {
         assert!(p.clips[0].effects.iter().any(|e| e.effect_id == "vignette"));
         do_undo(&mut p, &mut u).unwrap();
         assert!(p.clips[0].effects.is_empty());
+    }
+
+    // ── session / project switching ────────────────────────────────────────
+
+    /// Stand-in for the running app.
+    struct FakeSession {
+        items: Vec<caprust_core::recent::RecentProject>,
+        opened: Option<String>,
+        reject: Option<String>,
+    }
+
+    impl FakeSession {
+        fn new() -> Self {
+            Self {
+                items: Vec::new(),
+                opened: None,
+                reject: None,
+            }
+        }
+
+        fn with(name: &str, path: &str) -> Self {
+            Self {
+                items: vec![caprust_core::recent::RecentProject {
+                    path: path.into(),
+                    name: name.into(),
+                    duration_ms: 1500,
+                    last_opened: 1_700_000_000,
+                    clip_count: 4,
+                    base_resolution: 1080,
+                    frame_rate_label: "30.00".into(),
+                    first_media_id: None,
+                }],
+                opened: None,
+                reject: None,
+            }
+        }
+    }
+
+    impl crate::server::SessionControl for FakeSession {
+        fn recent(&self) -> Vec<caprust_core::recent::RecentProject> {
+            self.items.clone()
+        }
+        fn request_open(&mut self, path: &std::path::Path) -> Result<(), String> {
+            if let Some(why) = &self.reject {
+                return Err(why.clone());
+            }
+            self.opened = Some(path.to_string_lossy().to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn list_recent_projects_returns_name_and_path() {
+        let mut s = FakeSession::with("My Cut", "C:/p/MyCut.caprust");
+        let v: Value = serde_json::from_str(&list_recent_projects(Some(&mut s)).unwrap()).unwrap();
+        let first = &v["projects"][0];
+        assert_eq!(first["name"], "My Cut");
+        // The path is what open_project takes. Sending an index instead
+        // would break the moment the list re-sorts, which opening does.
+        assert_eq!(first["path"], "C:/p/MyCut.caprust");
+    }
+
+    #[test]
+    fn open_project_asks_the_host_to_load() {
+        let mut s = FakeSession::new();
+        let f = std::env::temp_dir().join(format!("caprust_{}.caprust", Uuid::new_v4()));
+        std::fs::write(&f, b"{}").unwrap();
+        let args = json!({ "path": f.to_string_lossy() });
+        open_project(&args, Some(&mut s)).unwrap();
+        assert_eq!(s.opened.as_deref(), Some(f.to_string_lossy().as_ref()));
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn open_project_surfaces_the_hosts_own_error() {
+        // The host knows things the tool does not: unsaved changes,
+        // locked media. Replacing its message with a generic one would
+        // hide the only useful part.
+        let mut s = FakeSession::new();
+        s.reject = Some("unsaved changes on the open project".into());
+        let f = std::env::temp_dir().join(format!("caprust_{}.caprust", Uuid::new_v4()));
+        std::fs::write(&f, b"{}").unwrap();
+        let args = json!({ "path": f.to_string_lossy() });
+        let e = open_project(&args, Some(&mut s)).unwrap_err().to_string();
+        assert!(e.contains("unsaved changes"), "{e}");
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn open_project_rejects_a_path_that_is_not_there() {
+        let mut s = FakeSession::new();
+        let args = json!({ "path": "Z:/caprust_missing_xyz.caprust" });
+        assert!(open_project(&args, Some(&mut s)).is_err());
+        assert!(s.opened.is_none(), "a bad path must not reach the host");
+    }
+
+    #[test]
+    fn open_project_rejects_a_non_project_extension() {
+        let mut s = FakeSession::new();
+        let f = std::env::temp_dir().join(format!("caprust_{}.mp4", Uuid::new_v4()));
+        std::fs::write(&f, b"x").unwrap();
+        let args = json!({ "path": f.to_string_lossy() });
+        assert!(open_project(&args, Some(&mut s)).is_err());
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn session_tools_say_so_when_there_is_no_session() {
+        // The standalone binary is pinned to one file. A clear message
+        // beats a silently ignored call that reports ok.
+        assert!(list_recent_projects(None).is_err());
+        let args = json!({ "path": "x.caprust" });
+        let e = open_project(&args, None).unwrap_err().to_string();
+        assert!(e.contains("pinned"), "{e}");
     }
 }

@@ -105,6 +105,9 @@ fn main() -> Result<()> {
         project: &mut project,
         undo: &mut undo,
         project_path: &opts.project_path,
+        // The binary is given one file and exits when it is closed, so
+        // there is no session to switch. Tools that need one say so.
+        session: None,
     };
 
     match opts.mode {

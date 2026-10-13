@@ -39,6 +39,11 @@
     <string name="title_settings">Settings</string>
     <string name="title_connections">Saved connections</string>
     <string name="title_project">Project</string>
+    <string name="btn_open">Open</string>
+    <string name="title_projects">Recent projects</string>
+    <string name="msg_loading_projects">Loading ...</string>
+    <string name="no_projects">No recent projects on the computer</string>
+    <string name="msg_opening">Opening %1$s</string>
 
     <!-- Settings rows -->
     <string name="lbl_theme">Theme: %1$s</string>

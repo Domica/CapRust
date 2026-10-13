@@ -18,6 +18,30 @@ pub struct Ctx<'a> {
     pub project: &'a mut ProjectState,
     pub undo: &'a mut UndoStack,
     pub project_path: &'a Path,
+    /// Session-wide actions the project alone cannot answer: which
+    /// projects exist, and switching to one.
+    ///
+    /// `None` for the standalone binary, which is pinned to the one
+    /// file it was given. A client asking it to switch gets a clear
+    /// error rather than a silently ignored call.
+    pub session: Option<&'a mut dyn SessionControl>,
+}
+
+/// Actions outside the project: the recent list, and loading one.
+///
+/// Separate from `Ctx.project` because a project swap replaces the very
+/// state `Ctx` borrows. The implementation therefore only *records* the
+/// request; the host performs the load once the borrow is released.
+/// Doing the load inside the call would replace memory the caller is
+/// still holding a `&mut` to.
+pub trait SessionControl {
+    /// Recently opened projects, newest first.
+    fn recent(&self) -> Vec<caprust_core::recent::RecentProject>;
+
+    /// Ask to switch to `path`. Returning `Ok` means accepted, not
+    /// loaded: the host acts on it after the current batch finishes.
+    /// An `Err` is reported to the client verbatim.
+    fn request_open(&mut self, path: &Path) -> Result<(), String>;
 }
 
 /// Protocol state only. Everything with the project arrives per call,
@@ -160,8 +184,25 @@ impl Server {
                     .ok_or_else(|| RpcError::invalid_params("missing tool name"))?;
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-                let text = tools::call(name, &args, ctx.project, ctx.undo, ctx.project_path)
-                    .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+                // Split the struct before borrowing its fields. Taking
+                // `ctx.project` and `ctx.session` inline would overlap
+                // two mutable borrows of the same `&mut Ctx`.
+                let Ctx {
+                    project,
+                    undo,
+                    project_path,
+                    session,
+                } = ctx;
+
+                let text = tools::call(
+                    name,
+                    &args,
+                    project,
+                    undo,
+                    project_path,
+                    session.as_deref_mut(),
+                )
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
 
                 Ok(json!({
                     "content": [{ "type": "text", "text": text }],
@@ -204,6 +245,7 @@ mod tests {
                 project: &mut self.project,
                 undo: &mut self.undo,
                 project_path: &self.path,
+                session: None,
             }
         }
     }
@@ -227,8 +269,8 @@ mod tests {
         let out = s.handle_line(raw, &mut f.ctx()).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let tools = v["result"]["tools"].as_array().unwrap();
-        // 6 read-only + 11 mutating
-        assert_eq!(tools.len(), 17);
+        // 8 read-only + 11 mutating
+        assert_eq!(tools.len(), 19);
     }
 
     #[test]

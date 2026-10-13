@@ -262,7 +262,7 @@ class MainActivity : android.app.Activity() {
      * An enum rather than an int or a string so a `when` over it is
      * checked for exhaustiveness and a typo is a compile error.
      */
-    private enum class Screen { Connect, Project, Log, Settings, Connections }
+    private enum class Screen { Connect, Project, Projects, Log, Settings, Connections }
 
     private var current = Screen.Connect
 
@@ -351,6 +351,7 @@ class MainActivity : android.app.Activity() {
             when (screen) {
                 Screen.Connect -> buildConnect()
                 Screen.Project -> buildProject()
+                Screen.Projects -> buildProjects()
                 Screen.Log -> buildLog()
                 Screen.Settings -> buildSettings()
                 Screen.Connections -> buildConnections()
@@ -639,6 +640,7 @@ class MainActivity : android.app.Activity() {
 
         root.addView(header(
             projectTitle(),
+            btn(getString(R.string.btn_open)) { show(Screen.Projects) },
             btn(getString(R.string.btn_log)) { show(Screen.Log) },
             btn(getString(R.string.btn_settings)) { show(Screen.Settings) },
         ))
@@ -744,6 +746,95 @@ class MainActivity : android.app.Activity() {
         )
         wide.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         return wide
+    }
+
+    /**
+     * Screen: the recent-projects list on the computer.
+     *
+     * Paths come from the desktop's own recent list, not from anything
+     * cached here. The phone has no way to know what has been opened
+     * elsewhere, and a stale copy would offer projects that no longer
+     * exist -- so the list is fetched when the screen opens.
+     *
+     * `open_project` only *requests* the switch: the desktop loads it
+     * after the current batch of requests finishes. The reply here
+     * therefore means "accepted", not "loaded", so the wait for the
+     * new project is a refresh rather than an immediate re-read.
+     */
+    private fun buildProjects(): View {
+        val root = column()
+        root.addView(header(getString(R.string.title_projects)))
+        status = TextView(this).apply { textSize = 12f; text = pendingStatus }
+        root.addView(status)
+
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this)
+        scroll.addView(list, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        list.addView(TextView(this).apply { text = getString(R.string.msg_loading_projects) })
+
+        client.call("list_recent_projects") { ok, text ->
+            runOnUiThread {
+                list.removeAllViews()
+                if (!ok) {
+                    say(text)
+                    list.addView(TextView(this@MainActivity).apply { text = text })
+                    return@runOnUiThread
+                }
+                val arr = try {
+                    JSONObject(text).optJSONArray("projects") ?: JSONArray()
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                if (arr.length() == 0) {
+                    list.addView(TextView(this@MainActivity).apply {
+                        text = getString(R.string.no_projects)
+                    })
+                    return@runOnUiThread
+                }
+                for (i in 0 until arr.length()) {
+                    val p = arr.getJSONObject(i)
+                    list.addView(projectRow(p))
+                }
+            }
+        }
+        return root
+    }
+
+    private fun projectRow(p: JSONObject): View {
+        val name = p.optString("name", "?")
+        val clips = p.optInt("clip_count")
+        val secs = p.optLong("duration_ms") / 1000
+        val path = p.optString("path")
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+        }
+        col.addView(btn("$name   $clips clips / ${secs}s") { openProject(path) })
+        col.addView(TextView(this).apply {
+            text = path
+            textSize = 10f
+            setTextColor(0xFF888888.toInt())
+        })
+        return col
+    }
+
+    private fun openProject(path: String) {
+        say(getString(R.string.msg_opening, path))
+        client.call("open_project", JSONObject().put("path", path)) { ok, text ->
+            runOnUiThread {
+                if (!ok) say(text)
+                else {
+                    // The desktop loads after the batch, so the new
+                    // project is not readable yet. Wait, then refresh.
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed({ show(Screen.Project) }, 700)
+                }
+            }
+        }
     }
 
     /**

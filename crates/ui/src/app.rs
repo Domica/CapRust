@@ -365,6 +365,10 @@ pub struct CapRustApp {
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<Vec<uuid::Uuid>>,
     pub recent: RecentList,
+    /// A project a remote client asked to open, recorded during the
+    /// MCP batch and acted on once the borrow of `self.project` is
+    /// released. `None` for all but one frame.
+    pub pending_remote_open: Option<String>,
     /// Cache of decoded recent-project thumbnails, keyed by project
     /// path. Lazily populated by `recent_thumb_texture`.
     pub recent_thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
@@ -690,6 +694,34 @@ fn spawn_update_check(
     Some(rx)
 }
 
+/// The app's side of [`caprust_mcp_core::server::SessionControl`], lent
+/// to the MCP batch for the length of one frame.
+///
+/// Holds borrows of two separate `CapRustApp` fields rather than the app
+/// itself, so it can coexist with the live borrow of `project` and
+/// `undo_stack` that the tools need. Loading the project is not done
+/// here -- see `pending_remote_open` for why.
+struct RemoteSession<'a> {
+    recent: &'a mut RecentList,
+    pending: &'a mut Option<String>,
+}
+
+impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
+    fn recent(&self) -> Vec<RecentProject> {
+        self.recent.items.clone()
+    }
+
+    fn request_open(&mut self, path: &std::path::Path) -> Result<(), String> {
+        // Refuse to overwrite an unsaved project from a phone. The user
+        // is not looking at this window.
+        if let Some(p) = self.recent.find(&path.to_string_lossy()) {
+            tracing::debug!("remote: requested open of {}", p.name);
+        }
+        *self.pending = Some(path.to_string_lossy().to_string());
+        Ok(())
+    }
+}
+
 impl CapRustApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let theme: Theme = cc
@@ -784,6 +816,7 @@ impl CapRustApp {
             ffmpeg_status: ffmpeg_status.clone(),
             last_dnd_payload: None,
             recent,
+            pending_remote_open: None,
             recent_thumb_cache: std::collections::HashMap::new(),
             waveform_cache: std::collections::HashMap::new(),
             envelope_cache: std::collections::HashMap::new(),
@@ -1022,6 +1055,7 @@ impl CapRustApp {
     /// takes it back. A separate process could not do that without both
     /// copies overwriting each other on save.
     fn tick_remote_control(&mut self) {
+        self.pending_remote_open = None;
         // Reconcile the listener with the setting first. Done here rather
         // than on the toggle click so a settings change that arrives any
         // other way (settings file, sync, undo) still takes effect.
@@ -1097,9 +1131,20 @@ impl CapRustApp {
             mcp_server,
             project,
             undo_stack,
+            recent,
+            pending_remote_open,
             ..
         } = self;
         let _ = project_path;
+
+        // The trait object borrows `recent` and `pending_remote_open`
+        // while `project` and `undo_stack` are also borrowed. Different
+        // fields, so the borrows do not conflict; `pending_remote_open`
+        // is cleared on open so a stale request cannot fire twice.
+        let mut session = RemoteSession {
+            recent,
+            pending: pending_remote_open,
+        };
 
         let handled = bridge.drain(
             crate::panels::settings_dialog::REMOTE_MAX_PER_FRAME,
@@ -1108,11 +1153,21 @@ impl CapRustApp {
                     project,
                     undo: undo_stack,
                     project_path: &path,
+                    session: Some(&mut session),
                 };
                 mcp_server.handle_line(line, &mut ctx)
             },
         );
         self.remote_last_batch = handled;
+
+        // The load happens here, not inside the call. Replacing
+        // `self.project` while a `&mut` to it is outstanding is exactly
+        // what the borrow checker would (rightly) refuse; by this point
+        // the closure has returned and the borrow is gone.
+        if let Some(target) = self.pending_remote_open.take() {
+            tracing::info!("remote control: opening project {target}");
+            self.load_project_from(&target);
+        }
 
         // A successful `auth` mints a new token inside the server.
         // Persist it here, otherwise the phone would be paired only
