@@ -2,6 +2,20 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+
+- **Crash-recovery autosave.** Periodic snapshots in a per-project folder under `%APPDATA%/CapRust/recovery/`; the project file itself is never written to. Presets 1/5/15/30/60 min or any custom interval. On reopen, a prompt offers to restore the unsaved session, discard it, or decide later.
+- **Platform timeline templates.** TikTok / Reels / Shorts (9:16), Instagram feed (4:5), YouTube (16:9), Square (1:1). Applying one sets the project geometry and text safe area before any footage is dropped in.
+- **Remote control (MCP over TCP).** Settings → Paths lets another device drive the open session through the same tool surface and the same undo stack. Loopback only and off by default.
+
+### Fixed
+
+- **Applying a template wiped the media bin.** The template's state replaced the project wholesale, taking every imported item and its cached probe/thumbnail/waveform flags with it.
+- **New project dropped the `.caprust` file into the chosen folder.** It now creates `<location>/<name>/<name>.caprust`.
+- **Custom autosave interval spinner lost every keystroke.** Thread-local draft value holds the input until Postavi.
+
 ## [0.9.16] — 2026-10-12
 
 ### Fixed
