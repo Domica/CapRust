@@ -42,6 +42,31 @@ pub trait SessionControl {
     /// loaded: the host acts on it after the current batch finishes.
     /// An `Err` is reported to the client verbatim.
     fn request_open(&mut self, path: &Path) -> Result<(), String>;
+
+    /// The current preview frame as base64 JPEG, longest side at most
+    /// `max_w` pixels. `Ok(None)` means "nothing decoded yet", which
+    /// is a normal state rather than a failure -- the preview has to
+    /// decode a frame first.
+    ///
+    /// Separate from [SessionControl::recent] because it is genuinely
+    /// optional: a host with no preview can leave it unimplemented by
+    /// returning `Ok(None)`.
+    fn preview_frame(&self, max_w: u32) -> Result<Option<String>, String> {
+        let _ = max_w;
+        Ok(None)
+    }
+
+    /// Begin an export. Like [SessionControl::request_open], `Ok`
+    /// means accepted, not finished.
+    fn request_export(&mut self, destination: &str) -> Result<(), String> {
+        let _ = destination;
+        Err("this host cannot start an export".into())
+    }
+
+    /// Export progress: 0.0 ..= 1.0, `None` when no export has run.
+    fn export_progress(&self) -> Option<f32> {
+        None
+    }
 }
 
 /// Protocol state only. Everything with the project arrives per call,
@@ -263,6 +288,9 @@ mod tests {
     /// Stands in for the running app.
     struct FakeSession {
         opened: Option<String>,
+        frame: Option<String>,
+        export_dest: Option<String>,
+        export_progress: Option<f32>,
     }
 
     impl crate::server::SessionControl for FakeSession {
@@ -281,6 +309,16 @@ mod tests {
         fn request_open(&mut self, path: &Path) -> Result<(), String> {
             self.opened = Some(path.to_string_lossy().to_string());
             Ok(())
+        }
+        fn preview_frame(&self, _max_w: u32) -> Result<Option<String>, String> {
+            Ok(self.frame.clone())
+        }
+        fn request_export(&mut self, destination: &str) -> Result<(), String> {
+            self.export_dest = Some(destination.to_string());
+            Ok(())
+        }
+        fn export_progress(&self) -> Option<f32> {
+            self.export_progress
         }
     }
 
@@ -313,7 +351,12 @@ mod tests {
         // path instead.
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession { opened: None };
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: None,
+        };
         let token = s.auth_mut().rotate_token();
 
         let v = call_tool(&mut s, &mut f, &mut sess, "list_recent_projects", json!({}));
@@ -333,7 +376,12 @@ mod tests {
     fn open_project_reaches_the_host_over_json_rpc() {
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession { opened: None };
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: None,
+        };
         s.auth_mut().rotate_token();
 
         let f2 = std::env::temp_dir().join(format!("caprust_e2e_{}.caprust", uuid::Uuid::new_v4()));
@@ -357,7 +405,12 @@ mod tests {
         // about and cannot call.
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession { opened: None };
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: None,
+        };
         s.auth_mut().rotate_token();
 
         let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
@@ -386,6 +439,164 @@ mod tests {
     }
 
     #[test]
+    fn preview_frame_without_a_frame_is_not_an_error() {
+        // The preview has to decode a frame first. Reporting that as a
+        // failure makes a warming-up preview look broken.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: None,
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "preview_frame", json!({}));
+        assert!(!v["error"].is_object(), "got an error: {v}");
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        assert!(body["frame"].is_null(), "expected a null frame, got {body}");
+    }
+
+    #[test]
+    fn preview_frame_carries_the_encoded_bytes() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            opened: None,
+            frame: Some("/9j/4AAQSkZJRg==".into()),
+            export_dest: None,
+            export_progress: None,
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_frame",
+            json!({ "width": 480 }),
+        );
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(body["frame"], "/9j/4AAQSkZJRg==");
+        assert_eq!(body["encoding"], "jpeg");
+    }
+
+    #[test]
+    fn preview_width_is_clamped_to_something_sane() {
+        // A client asking for 9000px would otherwise get a base64
+        // payload no phone can use over a socket.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            opened: None,
+            frame: Some("x".into()),
+            export_dest: None,
+            export_progress: None,
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_frame",
+            json!({ "width": 9000 }),
+        );
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(body["width"], 1280);
+    }
+
+    #[test]
+    fn export_start_and_status_travel_together() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: Some(0.42),
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "start_export",
+            json!({ "destination": "C:/out.mp4" }),
+        );
+        assert!(!v["error"].is_object(), "got an error: {v}");
+        assert_eq!(sess.export_dest.as_deref(), Some("C:/out.mp4"));
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "export_status", json!({}));
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(body["started"], true);
+        // Compared with a tolerance on purpose: the value is an f32
+        // and JSON has no float type, so it comes back as the nearest
+        // double. An exact assert here would fail on 0.42 and pass on
+        // nothing else, which is a test of serde, not of this code.
+        let p = body["progress"].as_f64().unwrap();
+        assert!((p - 0.42).abs() < 1e-6, "progress was {p}");
+    }
+
+    #[test]
+    fn export_status_before_anything_started_says_so() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: None,
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "export_status", json!({}));
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        // started:false, not an error and not a zero. A phone showing
+        // 0% would look like a hung export.
+        assert_eq!(body["started"], false);
+        assert!(body["progress"].is_null());
+    }
+
+    #[test]
+    fn start_export_needs_a_destination() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            opened: None,
+            frame: None,
+            export_dest: None,
+            export_progress: None,
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "start_export", json!({}));
+        assert!(
+            v["error"].is_object(),
+            "an empty destination must not be accepted"
+        );
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "start_export",
+            json!({ "destination": "  " }),
+        );
+        assert!(
+            v["error"].is_object(),
+            "a blank destination must not be accepted"
+        );
+        assert!(sess.export_dest.is_none());
+    }
+
+    #[test]
     fn initialize_returns_server_info() {
         let mut s = Server::new();
         let mut f = Fixture::new();
@@ -404,8 +615,8 @@ mod tests {
         let out = s.handle_line(raw, &mut f.ctx()).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let tools = v["result"]["tools"].as_array().unwrap();
-        // 8 read-only + 11 mutating
-        assert_eq!(tools.len(), 19);
+        // 11 read-only + 11 mutating
+        assert_eq!(tools.len(), 22);
     }
 
     #[test]

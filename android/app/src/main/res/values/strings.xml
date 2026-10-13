@@ -16,6 +16,7 @@
     <string name="lbl_pair_code">Pairing code</string>
     <string name="hint_never">never paired</string>
     <string name="title_clips">Clips</string>
+    <string name="title_clip_actions">Clip time</string>
     <string name="title_timeline">Timeline</string>
     <string name="tl_empty">No clips on the timeline</string>
     <string name="btn_show_log">Show log</string>
@@ -70,6 +71,19 @@
     <string name="msg_token_stale">Pairing expired. Enter the code shown in CapRust.</string>
     <string name="msg_desktop_old">CapRust on the computer is out of date. It is missing: %1$s</string>
     <string name="msg_no_tools">Could not read the tool list from CapRust.</string>
+
+    <!-- Preview and export -->
+    <string name="preview_desc">Preview frame from the computer</string>
+    <string name="preview_none">No frame yet. The preview has to decode first.</string>
+    <string name="preview_bad">Could not decode the preview frame.</string>
+    <string name="btn_refresh_preview">Refresh preview</string>
+    <string name="btn_export">Export</string>
+    <string name="lbl_export_path">Destination file</string>
+    <string name="msg_export_starting">Starting export ...</string>
+    <string name="msg_export_started">Export started on the computer</string>
+    <string name="export_running">Exporting</string>
+    <string name="export_pct">Export %1$d%%</string>
+    <string name="msg_not_connected">Not connected.</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->

@@ -91,6 +91,33 @@ pub struct PreviewPlayer {
     /// Active streaming decoder (only while playing).
     pub stream: Option<FrameStream>,
     rx: Option<Receiver<FrameResult>>,
+    /// The last decoded frame, as straight RGBA.
+    ///
+    /// Kept alongside the texture because egui's `TextureHandle` is an
+    /// id and a manager, not pixels: in epaint 0.31 there is no way to
+    /// read the image back out of it. Anything that needs the actual
+    /// frame -- a remote phone asking for one over the MCP socket --
+    /// has to get it from here, captured while the decoder still had
+    /// it in hand.
+    ///
+    /// Straight RGBA, not egui's premultiplied storage, so it can go
+    /// straight into an image encoder.
+    frame: Option<RawFrame>,
+}
+
+/// Straight-RGBA frame, kept for anything that needs pixels.
+#[derive(Debug, Clone)]
+pub struct RawFrame {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+impl PreviewPlayer {
+    /// The last decoded frame, if there is one.
+    pub fn raw_frame(&self) -> Option<&RawFrame> {
+        self.frame.as_ref()
+    }
 }
 
 impl std::fmt::Debug for PreviewPlayer {
@@ -151,6 +178,7 @@ impl PreviewPlayer {
             slot: Some(slot),
             rx: Some(rx),
             stream: None,
+            frame: None,
         }
     }
 
@@ -221,6 +249,11 @@ impl PreviewPlayer {
             let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &res.rgba[..expected]);
             let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
             let handle = ctx.load_texture(name, img, egui::TextureOptions::LINEAR);
+            self.frame = Some(RawFrame {
+                width: w,
+                height: h,
+                rgba: res.rgba[..expected].to_vec(),
+            });
             self.texture = Some(handle);
             self.last_key = Some(res.key);
             self.has_frame = true;
@@ -294,6 +327,11 @@ impl PreviewPlayer {
         }
         let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
         let handle = ctx.load_texture("preview-stream", img, egui::TextureOptions::LINEAR);
+        self.frame = Some(RawFrame {
+            width: w,
+            height: h,
+            rgba: buf[..expected].to_vec(),
+        });
         self.texture = Some(handle);
         self.has_frame = true;
         self.decoded += 1;
@@ -319,6 +357,7 @@ impl PreviewPlayer {
     /// Forget the current frame.
     pub fn clear(&mut self) {
         self.texture = None;
+        self.frame = None;
         self.last_key = None;
         self.cancel_pending();
         self.has_frame = false;

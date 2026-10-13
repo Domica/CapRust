@@ -145,6 +145,30 @@ pub fn definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "preview_frame",
+            "description": "The current preview frame as base64 JPEG. Returns `frame: null` before the first frame has decoded, which is normal. `width` caps the longest side; 320 is a sensible default for a phone.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "width": { "type": "integer", "minimum": 64, "maximum": 1280 } },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "start_export",
+            "description": "Start an export of the open project to `destination`. Returns as soon as it is accepted; poll `export_status` for progress.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "destination": { "type": "string" } },
+                "required": ["destination"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "export_status",
+            "description": "Export progress as `progress` (0..1) and `destination`, plus whether anything has started.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }),
+        json!({
             "name": "list_recent_projects",
             "description": "List recently opened projects, newest first. Each entry carries the `path` that `open_project` expects.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -231,6 +255,9 @@ pub fn call<'a, 's>(
         "list_media" => list_media(project),
         "list_assets" => list_assets(),
         "list_recent_projects" => list_recent_projects(session),
+        "preview_frame" => preview_frame(args, session),
+        "start_export" => start_export(args, session),
+        "export_status" => export_status(session),
         "open_project" => open_project(args, session),
         // mutating
         "move_clip" => move_clip(args, project, undo),
@@ -367,6 +394,71 @@ fn open_project<'a, 's>(
     }
     s.request_open(&p).map_err(anyhow::Error::msg)?;
     Ok(json!({ "ok": true, "opening": path }).to_string())
+}
+
+/// The current preview frame, base64 JPEG.
+///
+/// `Ok(None)` from the host is a real answer, not an error: nothing has
+/// decoded yet. Reporting that as a failure would make the client show
+/// an error on a preview that is merely still warming up.
+fn preview_frame<'a, 's>(
+    args: &Value,
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let width = args
+        .get("width")
+        .and_then(Value::as_u64)
+        .unwrap_or(320)
+        .clamp(64, 1280) as u32;
+    let Some(s) = session else {
+        bail!("this server has no preview");
+    };
+    match s.preview_frame(width).map_err(anyhow::Error::msg)? {
+        Some(jpeg) => Ok(json!({
+            "frame": jpeg,
+            "encoding": "jpeg",
+            "width": width,
+        })
+        .to_string()),
+        None => Ok(json!({ "frame": Value::Null }).to_string()),
+    }
+}
+
+/// Ask the host to export.
+///
+/// The destination is validated here, not by the host: an empty path
+/// would otherwise be reported as a vague failure after the UI has
+/// already opened its export window.
+fn start_export<'a, 's>(
+    args: &Value,
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server cannot export");
+    };
+    let dest = args
+        .get("destination")
+        .and_then(Value::as_str)
+        .context("missing or non-string `destination`")?;
+    if dest.trim().is_empty() {
+        bail!("`destination` is empty");
+    }
+    s.request_export(dest).map_err(anyhow::Error::msg)?;
+    Ok(json!({ "ok": true, "destination": dest }).to_string())
+}
+
+fn export_status<'a, 's>(
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server cannot export");
+    };
+    let p = s.export_progress();
+    Ok(json!({
+        "started": p.is_some(),
+        "progress": p,
+    })
+    .to_string())
 }
 
 fn get_project_summary(p: &ProjectState) -> Result<String> {

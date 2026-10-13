@@ -369,6 +369,11 @@ pub struct CapRustApp {
     /// MCP batch and acted on once the borrow of `self.project` is
     /// released. `None` for all but one frame.
     pub pending_remote_open: Option<String>,
+    /// A destination a remote client asked to export to, recorded
+    /// during the MCP batch and acted on once the borrow of
+    /// `self.project` is released. Same reason as
+    /// `pending_remote_open`.
+    pub pending_remote_export: Option<String>,
     /// Cache of decoded recent-project thumbnails, keyed by project
     /// path. Lazily populated by `recent_thumb_texture`.
     pub recent_thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
@@ -704,6 +709,11 @@ fn spawn_update_check(
 struct RemoteSession<'a> {
     recent: &'a mut RecentList,
     pending: &'a mut Option<String>,
+    /// Raw last preview frame, and the playhead it belongs to.
+    frame: Option<crate::preview_player::RawFrame>,
+    /// Export request recorded during the batch, acted on afterwards.
+    export_dest: &'a mut Option<String>,
+    export_progress: f32,
 }
 
 impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
@@ -712,14 +722,92 @@ impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
     }
 
     fn request_open(&mut self, path: &std::path::Path) -> Result<(), String> {
-        // Refuse to overwrite an unsaved project from a phone. The user
-        // is not looking at this window.
         if let Some(p) = self.recent.find(&path.to_string_lossy()) {
             tracing::debug!("remote: requested open of {}", p.name);
         }
         *self.pending = Some(path.to_string_lossy().to_string());
         Ok(())
     }
+
+    fn preview_frame(&self, max_w: u32) -> Result<Option<String>, String> {
+        let Some(f) = &self.frame else {
+            return Ok(None);
+        };
+        encode_jpeg_base64(f, max_w as usize).map(Some)
+    }
+
+    fn request_export(&mut self, destination: &str) -> Result<(), String> {
+        *self.export_dest = Some(destination.to_string());
+        Ok(())
+    }
+
+    fn export_progress(&self) -> Option<f32> {
+        if self.export_progress <= 0.0 {
+            None
+        } else {
+            Some(self.export_progress)
+        }
+    }
+}
+
+/// Encode a preview frame as a base64 JPEG, scaled so the longest side
+/// is at most `max_w`.
+///
+/// JPEG rather than PNG because this crosses a socket to a phone: a
+/// 320x180 frame is roughly 8 KB as JPEG against 230 KB of raw RGBA,
+/// and preview is polled. Scaling here rather than in the decoder
+/// because the decoder's size is chosen for the desktop window, which
+/// is not the size the phone wants.
+///
+/// Nearest-neighbour, not a resampling filter. The preview is a
+/// thumbnail on a small screen; a filter would cost more than it shows,
+/// and nearest keeps this to a handful of lines.
+/// Returns the encoded string, or the reason it could not be encoded.
+/// `String` rather than `anyhow::Result` because this crate does not
+/// depend on anyhow and the caller turns it into a tool error anyway.
+fn encode_jpeg_base64(
+    frame: &crate::preview_player::RawFrame,
+    max_w: usize,
+) -> Result<String, String> {
+    use base64::Engine;
+
+    let (w, h) = (frame.width, frame.height);
+    if w == 0 || h == 0 {
+        return Err("preview frame has no pixels".into());
+    }
+    let scale = if max_w > 0 && w > max_w {
+        max_w as f32 / w as f32
+    } else {
+        1.0
+    };
+    let (dw, dh) = ((w as f32 * scale) as usize, (h as f32 * scale) as usize);
+
+    let mut small = vec![0u8; dw * dh * 4];
+    for y in 0..dh {
+        let sy = (y as f32 / scale) as usize;
+        let sy = sy.min(h - 1);
+        for x in 0..dw {
+            let sx = ((x as f32 / scale) as usize).min(w - 1);
+            let s = (sy * w + sx) * 4;
+            let d = (y * dw + x) * 4;
+            small[d..d + 4].copy_from_slice(&frame.rgba[s..s + 4]);
+        }
+    }
+
+    let mut out = Vec::new();
+    // 70 is a deliberate compromise: visibly softer than a PNG at
+    // this size, but the banding a lower quality would add is not
+    // worth the bytes on a preview that refreshes several times a
+    // second.
+    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 70);
+    enc.encode(
+        &small,
+        dw as u32,
+        dh as u32,
+        image::ExtendedColorType::Rgba8,
+    )
+    .map_err(|e| format!("preview encode failed: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(out))
 }
 
 impl CapRustApp {
@@ -817,6 +905,7 @@ impl CapRustApp {
             last_dnd_payload: None,
             recent,
             pending_remote_open: None,
+            pending_remote_export: None,
             recent_thumb_cache: std::collections::HashMap::new(),
             waveform_cache: std::collections::HashMap::new(),
             envelope_cache: std::collections::HashMap::new(),
@@ -1056,6 +1145,7 @@ impl CapRustApp {
     /// copies overwriting each other on save.
     fn tick_remote_control(&mut self) {
         self.pending_remote_open = None;
+        self.pending_remote_export = None;
         // Reconcile the listener with the setting first. Done here rather
         // than on the toggle click so a settings change that arrives any
         // other way (settings file, sync, undo) still takes effect.
@@ -1133,17 +1223,26 @@ impl CapRustApp {
             undo_stack,
             recent,
             pending_remote_open,
+            pending_remote_export,
+            preview_player,
+            export_progress,
             ..
         } = self;
         let _ = project_path;
 
-        // The trait object borrows `recent` and `pending_remote_open`
-        // while `project` and `undo_stack` are also borrowed. Different
-        // fields, so the borrows do not conflict; `pending_remote_open`
-        // is cleared on open so a stale request cannot fire twice.
+        // The trait object borrows several separate fields while
+        // `project` and `undo_stack` are also borrowed. Different
+        // fields, so the borrows do not conflict.
         let mut session = RemoteSession {
             recent,
             pending: pending_remote_open,
+            // Cloned out of the player for the length of the batch.
+            // The phone is asking for pixels, and egui's TextureHandle
+            // cannot give them back in epaint 0.31 -- the raw frame is
+            // kept alongside for exactly this.
+            frame: preview_player.raw_frame().cloned(),
+            export_dest: pending_remote_export,
+            export_progress: *export_progress,
         };
 
         let handled = bridge.drain(
@@ -1160,13 +1259,21 @@ impl CapRustApp {
         );
         self.remote_last_batch = handled;
 
-        // The load happens here, not inside the call. Replacing
-        // `self.project` while a `&mut` to it is outstanding is exactly
-        // what the borrow checker would (rightly) refuse; by this point
-        // the closure has returned and the borrow is gone.
+        // Deferred for the same reason as the project switch: both
+        // replace state the closure was holding a `&mut` to.
         if let Some(target) = self.pending_remote_open.take() {
             tracing::info!("remote control: opening project {target}");
             self.load_project_from(&target);
+        }
+        if let Some(dest) = self.pending_remote_export.take() {
+            tracing::info!("remote control: starting export to {dest}");
+            self.export_state.destination = dest.clone();
+            self.start_export();
+            // The window is how progress is reported; a remote start
+            // with nothing on screen would leave the phone polling a
+            // number that never moves without explanation.
+            self.export_open = true;
+            self.toast(tr("toast-export-started"));
         }
 
         // A successful `auth` mints a new token inside the server.

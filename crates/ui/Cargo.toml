@@ -32,6 +32,8 @@ rfd = { workspace = true }
 # by hand (ipconfig / ifconfig) is the kind of friction that makes a
 # feature look broken.
 local-ip-address = "0.6"
+# A remote phone asks for preview frames as base64 over the MCP socket.
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 caprust-screen-record = { path = "../screen-record" }

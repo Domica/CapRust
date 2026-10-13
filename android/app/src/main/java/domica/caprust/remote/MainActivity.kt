@@ -316,6 +316,7 @@ class MainActivity : android.app.Activity() {
         "set_clip_volume", "set_clip_speed", "set_clip_fade", "list_media",
         "add_clip_to_timeline", "undo", "redo", "save_project",
         "list_assets", "apply_preset", "list_recent_projects", "open_project",
+        "preview_frame", "start_export", "export_status",
     )
 
     private var current = Screen.Connect
@@ -342,6 +343,13 @@ class MainActivity : android.app.Activity() {
     /** Drawn timeline map. */
     /** Null while a screen without a timeline is showing. */
     private var timeline: TimelineView? = null
+
+    /** The last preview frame from the desktop, base64 JPEG. Null
+     *  until one has been fetched. */
+    private var previewView: android.widget.ImageView? = null
+
+    /** Export button, kept so its label can show progress. */
+    private var exportButton: Button? = null
 
     /** Cached clip fields for the selected row, so the sheet and the
      *  detail panel do not have to re-query. */
@@ -480,6 +488,91 @@ class MainActivity : android.app.Activity() {
     private fun column(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(10), dp(12), dp(12))
+    }
+
+    /**
+     * A rounded panel for grouping related controls.
+     *
+     * The platform theme gives everything the same flat background, so
+     * a screen reads as one undifferentiated column of buttons. Cards
+     * with a visible surface and a little inset are what separate
+     * "connection details" from "actions" at a glance.
+     *
+     * A GradientDrawable rather than a Material card: this app has no
+     * androidx dependency, and the shape is nine lines of code.
+     */
+    private fun card(): LinearLayout {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = cardBackground()
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(0, dp(4), 0, dp(4))
+        card.layoutParams = lp
+        return card
+    }
+
+    private fun cardBackground(): android.graphics.drawable.Drawable =
+        android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 14f * resources.displayMetrics.density
+            setColor(surfaceColor())
+            setStroke(
+                (1 * resources.displayMetrics.density).toInt(),
+                outlineColor(),
+            )
+        }
+
+    /** Panel colour, derived from the theme so it flips with light and
+     *  dark rather than being a fixed grey that only works on one. */
+    private fun surfaceColor(): Int {
+        val night = resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        return if (night) 0xFF1E1E22.toInt() else 0xFFF3F3F7.toInt()
+    }
+
+    private fun outlineColor(): Int {
+        val night = resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        return if (night) 0xFF34343A.toInt() else 0xFFD8D8E0.toInt()
+    }
+
+    /** Section heading. Dimmed and spaced so it labels what follows
+     *  rather than competing with it. */
+    private fun sectionTitle(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        setTextColor(0xFF8A8A96.toInt())
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setPadding(dp(4), dp(14), dp(4), dp(2))
+    }
+
+    /** A button with flat platform styling removed.
+     *
+     * The default Button carries its own background, border and
+     * all-caps label; six of them in a row looks like a form. */
+    private fun chip(label: String, onClick: () -> Unit) = TextView(this).apply {
+        text = label
+        textSize = 14f
+        gravity = Gravity.CENTER
+        setTextColor(0xFFFFFFFF.toInt())
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 10f * resources.displayMetrics.density
+            setColor(accentColor())
+        }
+        val pad = dp(14)
+        setPadding(pad, dp(9), pad, dp(9))
+        setOnClickListener { onClick() }
+    }
+
+    private fun accentColor(): Int {
+        val night = resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        return if (night) 0xFF3D7BE8.toInt() else 0xFF2F6FD0.toInt()
     }
 
     // ---- theme ----
@@ -704,25 +797,46 @@ class MainActivity : android.app.Activity() {
         ))
         root.addView(status)
 
-        // ---- actions ----
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(btn(getString(R.string.btn_refresh)) { refresh() })
-        actions.addView(btn(getString(R.string.btn_undo)) { client.call("undo") { ok, _ -> if (ok) refresh() } })
-        actions.addView(btn(getString(R.string.btn_redo)) { client.call("redo") { ok, _ -> if (ok) refresh() } })
-        actions.addView(btn(getString(R.string.btn_save)) { client.call("save_project") { ok, _ -> if (ok) refresh() } })
-        root.addView(actions)
+        // ---- preview ----
+        // A frame is several KB of JPEG, so it is polled rather than
+        // pushed: the phone does not know when the playhead moves on
+        // the desktop, and a push would need the desktop to track which
+        // phone asked.
+        previewView = ImageView(this).apply {
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFF141414.toInt())
+            contentDescription = getString(R.string.preview_desc)
+        }
+        root.addView(previewView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
 
-        val actions2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions2.addView(btn(getString(R.string.btn_disconnect)) { doDisconnect() })
-        // Label reflects the current choice, so it doubles as the
-        // indicator. Three options do not need a dialog.
-        root.addView(actions2)
+        val previewRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        previewRow.addView(btn(getString(R.string.btn_refresh_preview)) { fetchPreview() })
+        exportButton = btn(getString(R.string.btn_export)) { askExport() }
+        previewRow.addView(exportButton)
+        root.addView(previewRow)
+
+        // ---- actions ----
+        val actions = card()
+        val actionsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actionsRow.addView(chip(getString(R.string.btn_refresh)) { refresh() })
+        actionsRow.addView(chip(getString(R.string.btn_undo)) { client.call("undo") { ok, _ -> if (ok) refresh() } })
+        actionsRow.addView(chip(getString(R.string.btn_redo)) { client.call("redo") { ok, _ -> if (ok) refresh() } })
+        actionsRow.addView(chip(getString(R.string.btn_save)) { client.call("save_project") { ok, _ -> if (ok) refresh() } })
+        actions.addView(actionsRow)
+
+        val actions2 = card()
+        val actionsRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actionsRow2.addView(chip(getString(R.string.btn_disconnect)) { doDisconnect() })
+        actions.addView(actionsRow2)
+        root.addView(actions)
 
         // ---- time input ----
         // Split used to happen at the midpoint, which is safe but not
         // what anyone means. One field serves both Split and Move, and
         // selecting a clip prefills it with that clip's midpoint so the
         // common case is still one tap.
+        root.addView(sectionTitle(getString(R.string.title_clip_actions)))
         val timeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         timeRow.addView(TextView(this).apply {
             text = getString(R.string.lbl_time_ms)
@@ -756,17 +870,15 @@ class MainActivity : android.app.Activity() {
         // Three lists, no preview. A preview needs frames shipped to
         // the phone; the ids are enough to make the edit and the desktop
         // still shows the result on its own preview.
-        val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        presets.addView(btn(getString(R.string.btn_effects)) { showPresetPicker("effect") })
-        presets.addView(btn(getString(R.string.btn_filters)) { showPresetPicker("filter") })
-        presets.addView(btn(getString(R.string.btn_transitions)) { showPresetPicker("transition") })
+        val presets = card()
+        val presetsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        presetsRow.addView(chip(getString(R.string.btn_effects)) { showPresetPicker("effect") })
+        presetsRow.addView(chip(getString(R.string.btn_filters)) { showPresetPicker("filter") })
+        presetsRow.addView(chip(getString(R.string.btn_transitions)) { showPresetPicker("transition") })
+        presets.addView(presetsRow)
         root.addView(presets)
 
-        root.addView(TextView(this).apply {
-            text = getString(R.string.title_clips)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(8), 0, 0)
-        })
+        root.addView(sectionTitle(getString(R.string.title_clips)))
 
         val clipScroll = ScrollView(this)
         clipList = LinearLayout(this).apply {
@@ -1162,13 +1274,140 @@ class MainActivity : android.app.Activity() {
     }
 
     /**
-     * Confirm the pairing by making one authenticated call.
+     * Ask the desktop for its current preview frame.
      *
-     * Success means the token is live: go to the editor. An auth
-     * failure means it is not: drop it so the user can pair again
-     * with the field that is on this screen. Anything else is a
-     * transport problem and leaves the token alone.
+     * A null frame is a normal answer, not an error: the preview has to
+     * decode before it has anything to show. Treated as an error it
+     * would put a failure message on screen every time the user asked
+     * too early.
      */
+    private fun fetchPreview() {
+        val view = previewView ?: return
+        client.call("preview_frame", JSONObject().put("width", 480)) { ok, body ->
+            runOnUiThread {
+                if (!ok) {
+                    say(body)
+                    return@runOnUiThread
+                }
+                val jpeg = try {
+                    JSONObject(body).optString("frame")
+                } catch (_: Exception) {
+                    ""
+                }
+                if (jpeg.isEmpty()) {
+                    view.setImageDrawable(null)
+                    say(getString(R.string.preview_none))
+                    return@runOnUiThread
+                }
+                val bytes = try {
+                    android.util.Base64.decode(jpeg, android.util.Base64.DEFAULT)
+                } catch (_: Exception) {
+                    say(getString(R.string.preview_bad))
+                    return@runOnUiThread
+                }
+                val bmp = try {
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                } catch (_: Exception) {
+                    null
+                }
+                if (bmp == null) {
+                    say(getString(R.string.preview_bad))
+                    return@runOnUiThread
+                }
+                view.setImageBitmap(bmp)
+                say("")
+            }
+        }
+    }
+
+    /**
+     * Start an export on the desktop.
+     *
+     * The desktop's own export window opens on the computer, so the
+     * person watching that screen sees what is happening -- a long
+     * encode with no feedback anywhere would look like the app hung.
+     */
+    private fun askExport() {
+        if (!connected) {
+            say(getString(R.string.msg_not_connected))
+            return
+        }
+        val box = EditText(this).apply {
+            hint = getString(R.string.lbl_export_path)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setText(defaultExportPath())
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(getString(R.string.btn_export))
+            .setView(box)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val dest = box.text.toString().trim()
+                if (dest.isEmpty()) return@setPositiveButton
+                say(getString(R.string.msg_export_starting))
+                exportButton?.text = getString(R.string.export_running)
+                client.call("start_export", JSONObject().put("destination", dest)) { ok, body ->
+                    runOnUiThread {
+                        if (!ok) {
+                            say(body)
+                            exportButton?.text = getString(R.string.btn_export)
+                        } else {
+                            say(getString(R.string.msg_export_started))
+                            pollExport()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Ask for progress until the export is no longer running.
+     *
+     * Stops itself. An endless poll would keep the socket busy for as
+     * long as the screen stayed open, and the reply handler runs on the
+     * io thread -- a timer that never stops is a leak with a network
+     * bill attached.
+     */
+    private fun pollExport() {
+        client.call("export_status") { ok, body ->
+            if (!ok) return@call
+            val started = try {
+                JSONObject(body).optBoolean("started", false)
+            } catch (_: Exception) {
+                false
+            }
+            val progress = try {
+                JSONObject(body).optDouble("progress", 0.0)
+            } catch (_: Exception) {
+                0.0
+            }
+            // No frame has been produced yet means 0.0, and that is
+            // also "not started". Anything above zero means a job is
+            // running; it stops updating when it is done.
+            if (!started || progress <= 0.0) {
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    pollExport()
+                }, 1000)
+            } else {
+                runOnUiThread {
+                    exportButton?.text = getString(R.string.export_pct, (progress * 100).toInt())
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    pollExport()
+                }, 1000)
+            }
+        }
+    }
+
+    /** A sensible default: project name plus timestamp, next to the
+     *  project itself so the file lands somewhere the user can find. */
+    private fun defaultExportPath(): String {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val name = projectTitle().replace(Regex("[^A-Za-z0-9_-]"), "_")
+        return "C:\\Users\\Public\\$name-$stamp.mp4"
+    }
+
     private fun checkServerThenPrompt() {
         client.listTools { ok, names ->
             runOnUiThread {
@@ -1188,6 +1427,14 @@ class MainActivity : android.app.Activity() {
         }
     }
 
+    /**
+     * Confirm the pairing by making one authenticated call.
+     *
+     * Success means the token is live: go to the editor. An auth
+     * failure means it is not: drop it so the user can pair again
+     * with the field that is on this screen. Anything else is a
+     * transport problem and leaves the token alone.
+     */
     private fun verifyTokenOrPrompt() {
         client.call("get_project_summary") { ok, body ->
             runOnUiThread {
@@ -1287,6 +1534,10 @@ class MainActivity : android.app.Activity() {
             }
             runOnUiThread { renderClips(text) }
         }
+        // Only when the preview is on screen. Asking for a frame on a
+        // screen that has nowhere to put it wastes a request per
+        // refresh for nothing.
+        if (previewView != null) fetchPreview()
     }
 
     /**
