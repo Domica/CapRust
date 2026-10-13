@@ -92,16 +92,25 @@ fn main() -> Result<()> {
 
     let opts = parse_args()?;
 
-    let project = caprust_core::project_io::load_project(&opts.project_path)
+    let mut project = caprust_core::project_io::load_project(&opts.project_path)
         .with_context(|| format!("failed to load {}", opts.project_path.display()))?;
     tracing::info!(path = %opts.project_path.display(), "project loaded");
 
+    // The server borrows the project rather than owning it. Here the
+    // binary owns it; in the app it will be the open session's state.
+    let mut server = server::Server::new();
+    let mut undo = caprust_core::commands::UndoStack::new();
+    let mut ctx = server::Ctx {
+        project: &mut project,
+        undo: &mut undo,
+        project_path: &opts.project_path,
+    };
+
     match opts.mode {
         Mode::Stdio => {
-            let mut server = server::Server::new(project, opts.project_path.clone());
             let t =
                 transport::StdioTransport::new(io::stdin().lock(), BufWriter::new(io::stdout()));
-            serve(&mut server, t)
+            serve(&mut server, t, &mut ctx)
         }
         Mode::Tcp { bind, port } => {
             // Loopback goes through bind_loopback so the safe default
@@ -122,8 +131,7 @@ fn main() -> Result<()> {
             // needs the port when it asked for 0, and it must not be
             // confused with a JSON-RPC frame in stdio mode.
             println!("listening on {bind}:{local}");
-            let mut server = server::Server::new(project, opts.project_path.clone());
-            serve(&mut server, t)
+            serve(&mut server, t, &mut ctx)
         }
     }
 }
@@ -131,13 +139,13 @@ fn main() -> Result<()> {
 /// Read requests until the peer goes away. Blank lines are ignored:
 /// keepalives and half-written frames both show up as empty input and
 /// are not JSON-RPC errors worth reporting.
-fn serve(server: &mut server::Server, mut t: impl Transport) -> Result<()> {
+fn serve(server: &mut server::Server, mut t: impl Transport, ctx: &mut server::Ctx) -> Result<()> {
     tracing::info!("mcp: serving on {}", t.describe());
     while let Some(line) = t.next_request()? {
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(resp) = server.handle_line(&line) {
+        if let Some(resp) = server.handle_line(&line, ctx) {
             t.send(&resp)?;
         }
     }
