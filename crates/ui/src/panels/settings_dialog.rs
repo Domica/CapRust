@@ -876,6 +876,56 @@ fn show_paths(
             ev.import_requested = true;
         }
     });
+
+    ui.add_space(space::XL);
+    ui.separator();
+    show_remote_control(ui, settings);
+}
+
+/// Remote control: a phone driving this open session over MCP.
+///
+/// Loopback only. Opening the port to the network is a separate,
+/// deliberate action because there is no authentication yet.
+fn show_remote_control(ui: &mut Ui, settings: &mut AppSettings) {
+    ui.label(egui::RichText::new(tr("set-remote-header")).strong());
+    ui.label(
+        egui::RichText::new(tr("set-remote-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::S);
+
+    let mut enabled = settings.remote_control_enabled;
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut enabled, tr("set-remote-enable")),
+        )
+        .changed()
+    {
+        settings.remote_control_enabled = enabled;
+    }
+
+    ui.add_space(space::S);
+    ui.horizontal(|ui| {
+        ui.label(tr("set-remote-port"));
+        ui.add_enabled(
+            settings.remote_control_enabled,
+            egui::DragValue::new(&mut settings.remote_control_port)
+                .range(1024..=65535)
+                .fixed_decimals(0),
+        );
+    });
+
+    if settings.remote_control_enabled {
+        let addr = format!("127.0.0.1:{}", settings.remote_control_port);
+        ui.label(
+            egui::RichText::new(format!("{} {addr}", tr("set-remote-listen")))
+                .small()
+                .monospace()
+                .color(egui::Color32::from_gray(150)),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -932,6 +982,13 @@ fn show_audio(ui: &mut Ui, settings: &mut AppSettings) {
 /// outside this list are still honored (the user can type one), they
 /// just render as their raw number.
 const AUTOSAVE_PRESETS: &[u64] = &[0, 1, 5, 15, 30, 60];
+
+/// Requests applied per frame by the remote-control bridge.
+///
+/// A client that floods the socket must not be able to turn one frame
+/// into unbounded work and stall the render loop. The remainder is
+/// picked up on the next frame.
+pub const REMOTE_MAX_PER_FRAME: usize = 16;
 
 /// A row in the autosave interval dropdown.
 #[derive(Clone, Copy, PartialEq)]

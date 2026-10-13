@@ -783,6 +783,7 @@ version = "0.9.16"
 dependencies = [
  "caprust-core",
  "caprust-i18n",
+ "caprust-mcp",
  "caprust-media-io",
  "caprust-screen-record",
  "cpal",

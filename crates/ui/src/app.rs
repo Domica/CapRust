@@ -326,6 +326,18 @@ pub struct CapRustApp {
     /// A missing-media scan that was postponed because a recovery
     /// offer was on screen. Runs as soon as that offer is answered.
     pub pending_missing_scan: bool,
+
+    // ---- Remote control (MCP over TCP) ----
+    /// Protocol state for the in-app MCP server. Holds no project data;
+    /// the open session is borrowed per request so the remote drives the
+    /// same state and the same undo stack the window shows.
+    pub mcp_server: caprust_mcp_core::server::Server,
+    /// Socket listener, `None` until the user turns remote control on.
+    /// Toggling it off drops the listener and closes the port.
+    pub remote_bridge: Option<caprust_mcp_core::remote::RemoteBridge>,
+    /// Requests handled since the last drain, for the status line.
+    /// Surfaced rather than just logged so a silent failure is visible.
+    pub remote_last_batch: usize,
     #[cfg(windows)]
     pub screen_record: crate::panels::screen_record::ScreenRecordState,
     #[cfg(windows)]
@@ -739,6 +751,9 @@ impl CapRustApp {
             recovery_prompt: None,
             recovery_slot_path: None,
             pending_missing_scan: false,
+            mcp_server: Default::default(),
+            remote_bridge: None,
+            remote_last_batch: 0,
             #[cfg(windows)]
             screen_record: crate::panels::screen_record::ScreenRecordState::new_defaults(),
             #[cfg(windows)]
@@ -989,6 +1004,99 @@ impl CapRustApp {
     /// Set `recovery_prompt` when `project_file` has a crash-recovery
     /// snapshot worth offering. Silent when autosave recovery is off
     /// in Settings, or when there is nothing to restore.
+    /// Handle whatever arrived on the remote-control socket this frame.
+    ///
+    /// Runs on the UI thread on purpose: the tools mutate the open project
+    /// and push onto the same undo stack the window uses, so a split made
+    /// from the phone lands in the timeline in front of the user and Ctrl+Z
+    /// takes it back. A separate process could not do that without both
+    /// copies overwriting each other on save.
+    fn tick_remote_control(&mut self) {
+        // Reconcile the listener with the setting first. Done here rather
+        // than on the toggle click so a settings change that arrives any
+        // other way (settings file, sync, undo) still takes effect.
+        let want = self.settings.remote_control_enabled;
+        match (&self.remote_bridge, want) {
+            (None, true) => match caprust_mcp_core::remote::RemoteBridge::spawn(
+                "127.0.0.1",
+                self.settings.remote_control_port,
+            ) {
+                Ok(bridge) => {
+                    let port = bridge.port();
+                    self.settings.remote_control_port = port;
+                    tracing::info!("remote control: listening on 127.0.0.1:{port}");
+                    self.toast(tr("toast-remote-on"));
+                    self.remote_bridge = Some(bridge);
+                }
+                Err(e) => {
+                    // Port taken is the common case. Say so instead of
+                    // failing silently every frame.
+                    tracing::error!("remote control: could not start: {e:#}");
+                    self.toast_error(format!("{}: {e}", tr("toast-remote-failed")));
+                    self.settings.remote_control_enabled = false;
+                }
+            },
+            (Some(_), false) => {
+                // Dropping closes the listener and the port.
+                self.remote_bridge = None;
+                tracing::info!("remote control: stopped");
+            }
+            _ => {}
+        }
+
+        let Some(bridge) = self.remote_bridge.as_ref() else {
+            self.remote_last_batch = 0;
+            return;
+        };
+        if !bridge.status().connected() {
+            self.remote_last_batch = 0;
+            return;
+        }
+
+        // Clones taken once, outside the closure, so the borrows the
+        // closure needs do not conflict with `self.mcp_server`.
+        let project_path = self.project.project_path.clone().unwrap_or_default();
+        let path = std::path::PathBuf::from(&project_path);
+
+        let Self {
+            mcp_server,
+            project,
+            undo_stack,
+            ..
+        } = self;
+        let _ = project_path;
+
+        let handled = bridge.drain(
+            crate::panels::settings_dialog::REMOTE_MAX_PER_FRAME,
+            |line| {
+                let mut ctx = caprust_mcp_core::server::Ctx {
+                    project,
+                    undo: undo_stack,
+                    project_path: &path,
+                };
+                mcp_server.handle_line(line, &mut ctx)
+            },
+        );
+        self.remote_last_batch = handled;
+        if handled == 0 {
+            return;
+        }
+
+        // A remote tool can delete a clip. The UI prunes its selection at
+        // every delete site it owns; a remote delete bypasses all of them,
+        // which would leave Clip Properties indexing a clip that is gone.
+        let live: std::collections::HashSet<uuid::Uuid> =
+            self.project.clips.iter().map(|c| c.id).collect();
+        let before = self.selected_clips.len();
+        self.selected_clips.retain(|id| live.contains(id));
+        if self.selected_clips.len() != before {
+            tracing::info!(
+                "remote: pruned {} selected clip id(s) that no longer exist",
+                before - self.selected_clips.len()
+            );
+        }
+    }
+
     fn offer_recovery(&mut self, project_file: &std::path::Path, loaded_hash: u64) {
         if !self.settings.autosave_recovery {
             return;
@@ -11150,6 +11258,9 @@ impl eframe::App for CapRustApp {
         // Crash-recovery autosave. Cheap when disabled or idle: the
         // interval and dirty checks bail before any hashing.
         self.tick_autosave();
+        // Remote control. Also cheap: no listener means an early
+        // return before any borrowing.
+        self.tick_remote_control();
         if self.recovery_prompt.is_some() {
             self.show_recovery_prompt_window(ctx);
         } else if self.pending_missing_scan {

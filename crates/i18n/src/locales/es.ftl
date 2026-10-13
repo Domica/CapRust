@@ -951,3 +951,12 @@ tpl-tiktok-vertical = TikTok / Reels / Shorts (9:16)
 tpl-instagram-feed = Instagram feed (4:5)
 tpl-youtube-horizontal = YouTube / landscape (16:9)
 tpl-square-post = Square post (1:1)
+
+# --- Control remoto (MCP sobre TCP) (#63)
+set-remote-header = Control remoto
+set-remote-hint = Otro dispositivo de este equipo puede controlar el proyecto abierto. Usa la misma pila de deshacer, asi que Ctrl+Z sigue funcionando.
+set-remote-enable = Permitir control remoto
+set-remote-port = Puerto
+set-remote-listen = Escuchando en
+toast-remote-on = El control remoto esta escuchando
+toast-remote-failed = No se pudo iniciar el control remoto

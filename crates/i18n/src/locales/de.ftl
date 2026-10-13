@@ -951,3 +951,12 @@ tpl-tiktok-vertical = TikTok / Reels / Shorts (9:16)
 tpl-instagram-feed = Instagram feed (4:5)
 tpl-youtube-horizontal = YouTube / landscape (16:9)
 tpl-square-post = Square post (1:1)
+
+# --- Fernsteuerung (MCP ueber TCP) (#63)
+set-remote-header = Fernsteuerung
+set-remote-hint = Ein anderes Geraet auf diesem Rechner kann das offene Projekt steuern. Nutzt denselben Undo-Stapel, Strg+Z funktioniert also weiterhin.
+set-remote-enable = Fernsteuerung erlauben
+set-remote-port = Port
+set-remote-listen = Horcht auf
+toast-remote-on = Fernsteuerung hort
+toast-remote-failed = Fernsteuerung konnte nicht gestartet werden

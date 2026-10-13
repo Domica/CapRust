@@ -951,3 +951,12 @@ tpl-tiktok-vertical = TikTok / Reels / Shorts (9:16)
 tpl-instagram-feed = Instagram feed (4:5)
 tpl-youtube-horizontal = YouTube / landscape (16:9)
 tpl-square-post = Square post (1:1)
+
+# --- Udaljinsko upravljanje (MCP preko TCP-a) (#63)
+set-remote-header = Udaljinsko upravljanje
+set-remote-hint = Drugi uredaj na ovom racunalu može voditi otvoreni projekt. Koristi isti undo stack, pa Ctrl+Z i dalje radi.
+set-remote-enable = Dopusti udaljinsko upravljanje
+set-remote-port = Port
+set-remote-listen = Sluša na
+toast-remote-on = Udaljinsko upravljanje sluša
+toast-remote-failed = Udaljinsko upravljanje se nije moglo pokrenuti

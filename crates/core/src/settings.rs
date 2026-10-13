@@ -131,6 +131,16 @@ pub struct AppSettings {
     /// and re-opening the dialog gave no sign the value had stuck.
     #[serde(default)]
     pub autosave_custom: bool,
+    /// Serve the MCP tool surface over TCP so another device can drive
+    /// the open session. Off by default: it opens a port on the
+    /// machine. Loopback only; there is no authentication yet.
+    #[serde(default)]
+    pub remote_control_enabled: bool,
+    /// TCP port for remote control. 0 would let the OS pick, but the
+    /// user has to be able to tell the phone where to connect, so it is
+    /// a fixed, visible number.
+    #[serde(default = "default_remote_control_port")]
+    pub remote_control_port: u16,
     /// When true, opening a project that has a newer recovery snapshot
     /// prompts to restore the unsaved session.
     #[serde(default = "default_true")]
@@ -146,6 +156,11 @@ fn default_autosave_minutes() -> Option<u64> {
 
 fn default_true() -> bool {
     true
+}
+
+/// Fixed rather than 0 so the phone has a number to type.
+fn default_remote_control_port() -> u16 {
+    4711
 }
 
 fn default_master_volume() -> f32 {
@@ -191,6 +206,8 @@ impl Default for AppSettings {
             clap_dir: None,
             autosave_minutes: default_autosave_minutes(),
             autosave_custom: false,
+            remote_control_enabled: false,
+            remote_control_port: default_remote_control_port(),
             autosave_recovery: true,
         }
     }

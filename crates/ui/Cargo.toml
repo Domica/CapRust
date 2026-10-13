@@ -10,6 +10,12 @@ open = { workspace = true }
 caprust-core = { path = "../core" }
 caprust-media-io = { path = "../media-io", features = ["clap"] }
 caprust-i18n = { path = "../i18n" }
+# MCP server library, for the remote-control bridge. A phone connects to
+# the running session over this, so the tools operate on the project the
+# user is looking at rather than a headless copy. The package builds a
+# lib named `caprust_mcp_core` alongside its binary, so the crate is
+# referred to by that name in code.
+caprust-mcp = { path = "../mcp" }
 egui = { workspace = true }
 egui-phosphor = { workspace = true }
 eframe = { workspace = true }
