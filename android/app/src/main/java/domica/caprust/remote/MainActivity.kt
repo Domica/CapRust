@@ -328,10 +328,16 @@ class MainActivity : android.app.Activity() {
         applyTheme(themeChoice(), apply = false)
         client = Client(this).also { it.loadToken() }
         client.onEvent = { renderLog() }
-        // Land on Project when a link is already wanted, so returning
-        // from the launcher does not send a connected user back to a
-        // Connect form they have already filled in.
-        current = if (wanted && sharedPrefsHost().isNotEmpty()) Screen.Project else Screen.Connect
+        // Land on Project when there is a stored token, so returning
+        // from the launcher does not send a paired user back to a
+        // Connect form they have already filled in. `wanted` alone is
+        // not enough: it records that a connect was attempted, which is
+        // also true of a session that connected and never paired.
+        current = if (wanted && sharedPrefsHost().isNotEmpty() && client.isPaired()) {
+            Screen.Project
+        } else {
+            Screen.Connect
+        }
         show(current)
         if (connected || wanted) refresh()
     }
@@ -353,10 +359,16 @@ class MainActivity : android.app.Activity() {
         if (screen == Screen.Project) refresh()
     }
 
-    /** Where Back goes. Project is the only screen with a natural
-     *  parent; from the settings-type screens you land on the editor if
-     *  there is one, otherwise on Connect. */
-    private fun back(): Screen = if (connected || wanted) Screen.Project else Screen.Connect
+    /**
+     * Where Back goes.
+     *
+     * Always Connect, never Project. The first version sent Back to
+     * the editor when a link was wanted, which meant the arrow on the
+     * editor screen did nothing at all -- it navigated to the screen
+     * you were already on, which reads as a broken button. Connect is
+     * where pairing and disconnecting live anyway.
+     */
+    private fun back(): Screen = Screen.Connect
 
     /**
      * Set the status line, if a screen showing one is attached.
@@ -520,10 +532,10 @@ class MainActivity : android.app.Activity() {
                 connected = ok
                 if (ok) {
                     say(getString(R.string.msg_connected_to, host))
-                    // A resume that lands on Connect while the link is
-                    // already up should not leave the user on a form
-                    // they have nothing left to fill in.
-                    if (current == Screen.Connect) show(Screen.Project)
+                    // Same rule as a manual connect: an open socket
+                    // without a token has nothing to show, and the
+                    // pairing code is only enterable on Connect.
+                    if (current == Screen.Connect && client.isPaired()) show(Screen.Project)
                 } else {
                     say(getString(R.string.msg_reconnect_failed, err))
                     val every = reconnectDelaySec()
@@ -559,6 +571,18 @@ class MainActivity : android.app.Activity() {
             text = pendingStatus
         }
         root.addView(status)
+
+        // A socket without a token cannot call a single tool, and the
+        // only way to tell that apart from "connected and working" is
+        // the failure message. Say it up front instead.
+        if (connected && !client.isPaired()) {
+            root.addView(TextView(this).apply {
+                text = getString(R.string.msg_need_pair)
+                textSize = 13f
+                setTextColor(0xFFE07A1F.toInt())
+                setPadding(0, dp(6), 0, dp(6))
+            })
+        }
 
         // ---- connection row ----
         val conn = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -971,9 +995,14 @@ class MainActivity : android.app.Activity() {
                 getSharedPreferences("caprust", MODE_PRIVATE).edit()
                     .putString("host", host).putString("port", "$port").apply()
                 say("Connected to $host:$port")
-                // Connected is the whole point of this screen; the
-                // editor is what the user came for.
-                show(Screen.Project)
+                // Only leave for the editor when there is something to
+                // show there. An open socket is not the same as a
+                // usable session: without a token every tool call comes
+                // back "missing token", and jumping there strands the
+                // user on a screen that cannot accept the pairing code
+                // that would fix it.
+                if (client.isPaired()) show(Screen.Project)
+                else say(getString(R.string.msg_need_pair))
             }
         }
     }
@@ -984,12 +1013,21 @@ class MainActivity : android.app.Activity() {
             say("Enter the code shown in CapRust on the computer")
             return
         }
+        // Pairing is a request on the open socket. Without it the send
+        // fails with "not connected", which reads as a wrong code.
+        if (!connected) {
+            say(getString(R.string.msg_connect_first))
+            return
+        }
         say("Pairing ...")
         client.pair(code) { ok, msg ->
             say(if (ok) "Paired" else "Pairing failed: $msg")
             if (ok) {
                 if (::codeBox.isInitialized) codeBox.text.clear()
-                refresh()
+                // Now there is something to show. Rebuilding the screen
+                // also drops the "pairing needed" banner, since this
+                // one would still be built without it.
+                show(Screen.Project)
             }
         }
     }

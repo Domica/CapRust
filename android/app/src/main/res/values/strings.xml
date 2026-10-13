@@ -59,6 +59,8 @@
     <string name="msg_reconnecting">Reconnecting to %1$s ...</string>
     <string name="msg_connected_to">Connected to %1$s</string>
     <string name="msg_reconnect_failed">Reconnect failed: %1$s</string>
+    <string name="msg_need_pair">Connected. Enter the pairing code from CapRust on the computer to continue.</string>
+    <string name="msg_connect_first">Connect first, then enter the pairing code.</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->
