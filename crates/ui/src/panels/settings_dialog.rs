@@ -928,14 +928,14 @@ fn show_remote_control(
     );
     ui.add_space(space::S);
 
+    // The checkbox must never be disabled. An earlier version passed
+    // `enabled` -- its own current value -- as the enable flag, so an
+    // unchecked box was greyed out and could never be ticked, and the
+    // port field below it stayed disabled for the same reason. The
+    // control that turns a feature on is the one thing that can never
+    // depend on that feature already being on.
     let mut enabled = settings.remote_control_enabled;
-    if ui
-        .add_enabled(
-            enabled,
-            egui::Checkbox::new(&mut enabled, tr("set-remote-enable")),
-        )
-        .changed()
-    {
+    if ui.checkbox(&mut enabled, tr("set-remote-enable")).changed() {
         settings.remote_control_enabled = enabled;
     }
 
