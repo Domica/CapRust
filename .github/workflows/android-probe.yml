@@ -104,5 +104,21 @@ jobs:
         if: always()
         run: |
           echo "=== probe result ==="
-          echo "core:     $([ -d target/aarch64-linux-android/release/libcaprust_core.rlib ] && echo BUILT || echo FAILED)"
-          echo "media-io: $([ -d target/aarch64-linux-android/release/libcaprust_media_io.rlib ] && echo BUILT || echo 'not built')"
+          OUT=target/aarch64-linux-android/release
+          # Test for a file, not a directory. The first version of this
+          # probe used `[ -d .../libcaprust_core.rlib ]`, which is always
+          # false, so a fully successful build reported FAILED.
+          for crate in caprust_core caprust_media_io; do
+            if compgen -G "$OUT/lib${crate}.rlib" > /dev/null \
+               || compgen -G "$OUT/lib${crate}.rmeta" > /dev/null; then
+              echo "$crate: BUILT"
+            else
+              echo "$crate: NOT BUILT"
+            fi
+          done
+          echo "--- native objects pulled in by the C dependencies ---"
+          # zstd-sys (via the zip crate) and whisper.cpp (via whisper-rs)
+          # are the reason this needed an NDK at all. Listing them makes
+          # the cost visible instead of implied.
+          find target/aarch64-linux-android/release/build -name '*.a' \
+            -exec ls -la {} + 2>/dev/null | head -10 || echo "none"
