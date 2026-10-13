@@ -45,6 +45,16 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      # rust-toolchain.toml pins 1.91.0, which overrides the action's
+      # toolchain and drops the target we just added. Re-add it for the
+      # pinned toolchain instead of assuming the action's list carried
+      # over.
+      - name: Install the Android target for the pinned toolchain
+        run: |
+          rustup show active-toolchain
+          rustup target add aarch64-linux-android --toolchain "$(cat rust-toolchain.toml | grep channel | cut -d'"' -f2)"
+          rustup target list --installed
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-probe
