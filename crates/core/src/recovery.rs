@@ -475,6 +475,46 @@ mod tests {
         clear_snapshots(&pf);
     }
 
+    /// A manual Save after the snapshot means the user's saved file is the
+    /// newer intent. Offering to restore would be offering to undo it.
+    ///
+    /// Verified by hand (save, reopen, no prompt) but had no automated
+    /// coverage, so the guard could have been dropped silently. Uses a
+    /// snapshot timestamp of 1 rather than a far-future one, because
+    /// the comparison is `project_mtime > saved_at` and the test file
+    /// is written now, so its mtime is ~1.7e9.
+    #[test]
+    fn offer_skips_when_project_file_is_newer_than_snapshot() {
+        let pf = tmp_project_dir("mtime-newer");
+        std::fs::write(&pf, b"{}").expect("create project file");
+        let state = project("mtime-newer", "P");
+        write_snapshot(&pf, &state, 1).unwrap();
+        assert!(
+            offer_for(&pf, 12345).is_none(),
+            "a project saved after the snapshot must not offer a restore"
+        );
+        clear_snapshots(&pf);
+    }
+
+    /// The other direction: the snapshot is newer than the file on
+    /// disk, which is the normal crash case. Uses a far-future
+    /// timestamp so the comparison is decided without touching the
+    /// real clock.
+    #[test]
+    fn offer_fires_when_snapshot_is_newer_than_project_file() {
+        let pf = tmp_project_dir("mtime-older");
+        std::fs::write(&pf, b"{}").expect("create project file");
+        let state = project("mtime-older", "P");
+        let far_future = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() + 86_400)
+            .unwrap_or(0);
+        write_snapshot(&pf, &state, far_future).unwrap();
+        let offer = offer_for(&pf, 12345).expect("snapshot is newer, offer made");
+        assert_eq!(offer.saved_at, far_future);
+        clear_snapshots(&pf);
+    }
+
     /// A snapshot identical to what is on disk means there is nothing
     /// to recover, so no prompt should appear.
     #[test]
