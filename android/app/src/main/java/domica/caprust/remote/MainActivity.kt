@@ -11,6 +11,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -264,8 +265,16 @@ class MainActivity : android.app.Activity() {
      *  detail panel do not have to re-query. */
     private val clipInfo = HashMap<String, JSONObject>()
 
+    /** Preset ids per kind ("effect", "filter", "transition"), fetched
+     *  once from the server. See [showPresetPicker]. */
+    private val assetsCache = HashMap<String, List<String>>()
+
     /** Label of the log toggle button; its text reflects the action. */
     private lateinit var logToggleLabel: Button
+
+    /** Theme button, kept so its label can follow the current choice
+     *  without rebuilding the whole view. */
+    private lateinit var themeButton: Button
 
     /** Project duration from the last summary, so the timeline can
      *  scale to fit. Cached because the clip list arrives separately. */
@@ -291,10 +300,62 @@ class MainActivity : android.app.Activity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
+        applyTheme(themeChoice(), apply = false)
         client = Client(this).also { it.loadToken() }
         client.onEvent = { renderLog() }
         setContentView(build())
         refresh()
+    }
+
+    // ---- theme ----
+
+    /**
+     * "system", "light" or "dark".
+     *
+     * Persisted because a theme the user picked once should not revert
+     * on the next launch.
+     */
+    private fun themeChoice(): String =
+        getSharedPreferences("caprust", MODE_PRIVATE).getString("theme", "system") ?: "system"
+
+    /**
+     * Apply a theme by resource id and recreate.
+     *
+     * setTheme + recreate rather than AppCompatDelegate, which would
+     * pull in the support library this app deliberately does not have.
+     */
+    private fun applyTheme(choice: String, apply: Boolean = true) {
+        val id = when (choice) {
+            "light" -> R.style.Theme_CapRustRemote_Light
+            "dark" -> R.style.Theme_CapRustRemote_Dark
+            else -> when (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) {
+                android.content.res.Configuration.UI_MODE_NIGHT_YES ->
+                    R.style.Theme_CapRustRemote_Dark
+                else -> R.style.Theme_CapRustRemote_Light
+            }
+        }
+        if (theme == id) return
+        setTheme(id)
+        if (apply) recreate()
+    }
+
+    /** Cycle light -> dark -> system. One button instead of a settings
+     *  dialog: three options do not need a list. */
+    private fun cycleTheme() {
+        val next = when (themeChoice()) {
+            "light" -> "dark"
+            "dark" -> "system"
+            else -> "light"
+        }
+        getSharedPreferences("caprust", MODE_PRIVATE).edit().putString("theme", next).apply()
+        applyTheme(next)
+    }
+
+    private fun themeLabel(): String = when (themeChoice()) {
+        "light" -> getString(R.string.theme_light)
+        "dark" -> getString(R.string.theme_dark)
+        else -> getString(R.string.theme_system)
     }
 
     /**
@@ -381,6 +442,10 @@ class MainActivity : android.app.Activity() {
 
         val actions2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions2.addView(btn(getString(R.string.btn_disconnect)) { doDisconnect() })
+        // Label reflects the current choice, so it doubles as the
+        // indicator. Three options do not need a dialog.
+        themeButton = btn(themeLabel()) { cycleTheme() }
+        actions2.addView(themeButton)
         root.addView(actions2)
 
         // ---- time input ----
@@ -416,6 +481,16 @@ class MainActivity : android.app.Activity() {
         }
         root.addView(timeline, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(150)))
+
+        // ---- presets ----
+        // Three lists, no preview. A preview needs frames shipped to
+        // the phone; the ids are enough to make the edit and the desktop
+        // still shows the result on its own preview.
+        val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        presets.addView(btn(getString(R.string.btn_effects)) { showPresetPicker("effect") })
+        presets.addView(btn(getString(R.string.btn_filters)) { showPresetPicker("filter") })
+        presets.addView(btn(getString(R.string.btn_transitions)) { showPresetPicker("transition") })
+        root.addView(presets)
 
         root.addView(TextView(this).apply {
             text = getString(R.string.title_clips)
@@ -483,7 +558,7 @@ class MainActivity : android.app.Activity() {
         return wide
     }
 
-    private fun logToggle() = btn("").also { b ->
+    private fun logToggle() = btn("", {}) .also { b ->
         logToggleLabel = b
         b.text = if (logOn) getString(R.string.btn_hide_log) else getString(R.string.btn_show_log)
         b.setOnClickListener { toggleLog() }
@@ -749,6 +824,82 @@ class MainActivity : android.app.Activity() {
 
             setContentView(col)
             show()
+        }
+    }
+
+    /**
+     * Pick a transition, effect or filter for the selected clip.
+     *
+     * Ids come from `list_assets` rather than being hardcoded here. The
+     * desktop owns the preset table; a copy on the phone would list
+     * effects that no longer exist and silently omit ones that do.
+     *
+     * Cached after the first fetch -- these tables do not change while
+     * the app is open, and re-querying on every button press would put
+     * a round trip in front of every tap.
+     */
+    private fun showPresetPicker(kind: String) {
+        val id = selectedClip
+        if (id == null) {
+            status.text = getString(R.string.msg_tap_clip)
+            return
+        }
+        assetsCache[kind]?.let { return showPresetList(kind, id, it) }
+        client.call("list_assets") { ok, text ->
+            runOnUiThread {
+                if (!ok) {
+                    status.text = text
+                    return@runOnUiThread
+                }
+                val arr = try {
+                    JSONObject(text).optJSONArray(kind) ?: JSONArray()
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                if (arr.length() == 0) {
+                    status.text = getString(R.string.no_presets)
+                    return@runOnUiThread
+                }
+                val ids = ArrayList<String>(arr.length())
+                for (i in 0 until arr.length()) ids.add(arr.getString(i))
+                assetsCache[kind] = ids
+                showPresetList(kind, id, ids)
+            }
+        }
+    }
+
+    private fun showPresetList(kind: String, clipId: String, ids: List<String>) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle(getString(
+                when (kind) {
+                    "effect" -> R.string.btn_effects
+                    "filter" -> R.string.btn_filters
+                    else -> R.string.btn_transitions
+                }
+            ))
+            .setItems(ids.toTypedArray()) { _, which ->
+                applyPreset(clipId, kind, ids[which])
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun applyPreset(clipId: String, kind: String, presetId: String) {
+        client.call(
+            "apply_preset",
+            JSONObject()
+                .put("clip_id", clipId)
+                .put("kind", kind)
+                .put("preset_id", presetId)
+        ) { ok, text ->
+            runOnUiThread {
+                if (!ok) {
+                    status.text = text
+                } else {
+                    status.text = getString(R.string.msg_applied, presetId)
+                    refresh()
+                }
+            }
         }
     }
 

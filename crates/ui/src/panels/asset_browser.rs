@@ -1580,3 +1580,73 @@ fn preset_card(ui: &mut Ui, p: &Preset, card_size: f32) -> bool {
 
     resp.clicked()
 }
+
+// ---------------------------------------------------------------------------
+// Drift guard
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod preset_drift_tests {
+    use super::*;
+    use caprust_core::presets::{self, PresetKind};
+
+    /// The UI tables carry the icons and labels; core carries the ids.
+    /// Both must list exactly the same presets. Drift means either a
+    /// card that renders but does nothing, or a preset the export
+    /// graph knows about that no card can reach.
+    fn assert_same(kind: PresetKind, ui: &[Preset]) {
+        let core = presets::table(kind);
+        for p in core {
+            assert!(
+                ui.iter().any(|u| u.id == p.id),
+                "{:?} preset `{}` is in core but has no card",
+                kind,
+                p.id
+            );
+        }
+        for u in ui {
+            assert!(
+                core.iter().any(|c| c.id == u.id),
+                "{:?} card `{}` is not in the core table, so remote clients cannot apply it",
+                kind,
+                u.id
+            );
+        }
+        assert_eq!(
+            core.len(),
+            ui.len(),
+            "{:?}: core has {} presets, UI has {} cards",
+            kind,
+            core.len(),
+            ui.len()
+        );
+    }
+
+    #[test]
+    fn ui_tables_match_core() {
+        assert_same(PresetKind::Transition, TRANSITIONS);
+        assert_same(PresetKind::Effect, EFFECTS);
+        assert_same(PresetKind::Filter, FILTERS);
+    }
+
+    #[test]
+    fn no_card_is_marked_coming_soon() {
+        // A remote client has no dimmed cards to avoid: it is given a
+        // flat list of ids, so a coming_soon preset would be offered
+        // and would apply to nothing. If one appears, apply_preset must
+        // reject it instead.
+        for (name, table) in [
+            ("transition", TRANSITIONS),
+            ("effect", EFFECTS),
+            ("filter", FILTERS),
+        ] {
+            for p in table {
+                assert!(
+                    !p.coming_soon,
+                    "{name} `{}` is coming_soon but is reachable over MCP",
+                    p.id
+                );
+            }
+        }
+    }
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light values. The night-qualified copy of this file lives in
+     values-night/; TimelineView reads these rather than hardcoding, so
+     the drawn map stays legible in both. -->
+<resources>
+    <color name="timeline_track">#22000000</color>
+    <color name="timeline_grid">#33000000</color>
+    <color name="timeline_text">#CC000000</color>
+    <color name="timeline_empty">#99000000</color>
+    <color name="timeline_selected">#E07A1F</color>
+</resources>

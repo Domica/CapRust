@@ -20,6 +20,14 @@
     <string name="tl_empty">No clips on the timeline</string>
     <string name="btn_show_log">Show log</string>
     <string name="btn_hide_log">Hide log</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_system">System</string>
+    <string name="btn_effects">Effects</string>
+    <string name="btn_filters">Filters</string>
+    <string name="btn_transitions">Transitions</string>
+    <string name="no_presets">No presets available</string>
+    <string name="msg_applied">Applied %1$s</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->

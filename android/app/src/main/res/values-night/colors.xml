@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Night overrides. Only the timeline needs them: the rest of the UI
+     is platform widgets and follows the theme automatically. -->
+<resources>
+    <color name="timeline_track">#22FFFFFF</color>
+    <color name="timeline_grid">#33FFFFFF</color>
+    <color name="timeline_text">#EEFFFFFF</color>
+    <color name="timeline_empty">#99FFFFFF</color>
+    <color name="timeline_selected">#FFC850</color>
+</resources>

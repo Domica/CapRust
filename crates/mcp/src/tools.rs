@@ -12,7 +12,7 @@ use caprust_core::clip::{Clip, ClipType};
 use caprust_core::commands::add_media::AddMediaCommand;
 use caprust_core::commands::ripple::RippleInsertCommand;
 use caprust_core::commands::set_clip::SetClipCommand;
-use caprust_core::commands::set_effect::SetTransitionCommand;
+use caprust_core::commands::set_effect::{AddEffectCommand, SetTransitionCommand};
 use caprust_core::commands::split_clip::SplitClipCommand;
 use caprust_core::commands::UndoStack;
 use caprust_core::media::MediaKind;
@@ -145,6 +145,26 @@ pub fn definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "list_assets",
+            "description": "List the ids of the transition, effect and filter presets that can be applied to a clip. Returns three arrays under `transitions`, `effects` and `filters`.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }),
+        json!({
+            "name": "apply_preset",
+            "description": "Apply a transition, effect or filter preset to a clip. `preset_id` \"none\" clears a transition or filter. Effects are added; there is no \"none\" effect.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "clip_id":   { "type": "string" },
+                    "kind":      { "type": "string", "enum": ["transition", "effect", "filter"] },
+                    "preset_id": { "type": "string" },
+                    "edge":      { "type": "string", "enum": ["in", "out"], "description": "Which edge a transition attaches to. Defaults to \"in\". Ignored for effects and filters." }
+                },
+                "required": ["clip_id", "kind", "preset_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "undo",
             "description": "Undo the last mutating operation.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -188,6 +208,7 @@ pub fn call(
         "list_tracks" => list_tracks(project),
         "list_clips" => list_clips(project, args),
         "list_media" => list_media(project),
+        "list_assets" => list_assets(),
         // mutating
         "move_clip" => move_clip(args, project, undo),
         "split_clip" => split_clip(args, project, undo),
@@ -196,6 +217,7 @@ pub fn call(
         "set_clip_speed" => set_clip_speed(args, project, undo),
         "set_clip_fade" => set_clip_fade(args, project, undo),
         "add_clip_to_timeline" => add_clip_to_timeline(args, project, undo),
+        "apply_preset" => apply_preset(args, project, undo),
         "undo" => do_undo(project, undo),
         "redo" => do_redo(project, undo),
         "save_project" => save_project(project, project_path),
@@ -245,6 +267,25 @@ fn clip_exists(project: &ProjectState, id: Uuid) -> Result<()> {
 }
 
 // ── read-only handlers ──────────────────────────────────────────────────────
+
+/// The preset ids a client can choose from.
+///
+/// Ids only. A client that can draw previews wants thumbnails and
+/// labels; one that cannot -- a phone over a socket -- wants a list it
+/// can render in a plain ListView without shipping an asset pipeline
+/// for it. Both are served by this; the extra fields are simply
+/// absent rather than null, so a client checking `has("thumb")` gets
+/// a clean false.
+fn list_assets() -> Result<String> {
+    use caprust_core::presets::{table, PresetKind};
+    let ids = |k: PresetKind| -> Vec<Value> { table(k).iter().map(|p| json!(p.id)).collect() };
+    Ok(json!({
+        "transitions": ids(PresetKind::Transition),
+        "effects": ids(PresetKind::Effect),
+        "filters": ids(PresetKind::Filter),
+    })
+    .to_string())
+}
 
 fn get_project_summary(p: &ProjectState) -> Result<String> {
     let total_duration_ms: u64 = p
@@ -366,6 +407,67 @@ fn split_clip(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) ->
 
     undo.execute(Box::new(SplitClipCommand::new(clip_id, at_ms)), project)?;
     Ok(json!({ "ok": true }).to_string())
+}
+
+/// Apply one asset-browser preset to a clip.
+///
+/// Mirrors exactly what the desktop does with a clicked preset card,
+/// including which command backs each kind. The reason it is one tool
+/// rather than three is that the desktop's own handler already treats
+/// them as one action -- Effects and Filters are the same command on
+/// different tables, and Transitions differ only in which edge they
+/// touch -- so splitting them here would invite a client to invent a
+/// fourth interpretation.
+///
+/// The id is validated against the table before anything runs. An
+/// unknown id would otherwise reach `build_one_effect`, match no arm,
+/// and render as no change at all: a silent no-op that looks like
+/// success on both sides.
+fn apply_preset(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> Result<String> {
+    use caprust_core::presets::{self, PresetKind};
+
+    let clip_id = parse_uuid(args, "clip_id")?;
+    let kind_str = args
+        .get("kind")
+        .and_then(Value::as_str)
+        .context("missing or non-string `kind`")?;
+    let kind = PresetKind::parse(kind_str).with_context(|| {
+        format!("`kind` must be transition, effect or filter, got {kind_str:?}")
+    })?;
+    let preset_id = args
+        .get("preset_id")
+        .and_then(Value::as_str)
+        .context("missing or non-string `preset_id`")?;
+
+    if !presets::contains(kind, preset_id) {
+        bail!(
+            "`{preset_id}` is not a {} preset; call list_assets for the valid ids",
+            kind.as_str()
+        );
+    }
+    clip_exists(project, clip_id)?;
+
+    match kind {
+        PresetKind::Transition => {
+            let edge = args.get("edge").and_then(Value::as_str).unwrap_or("in");
+            let in_edge = match edge {
+                "in" => true,
+                "out" => false,
+                other => bail!("`edge` must be \"in\" or \"out\", got {other:?}"),
+            };
+            let t = (preset_id != presets::CLEAR).then(|| preset_id.to_string());
+            undo.execute(
+                Box::new(SetTransitionCommand::new(clip_id, in_edge, t)),
+                project,
+            )?;
+        }
+        PresetKind::Effect | PresetKind::Filter => {
+            // No "none" in the effects table, so there is nothing to
+            // clear here: the caller removes the instance by id.
+            undo.execute(Box::new(AddEffectCommand::new(clip_id, preset_id)), project)?;
+        }
+    }
+    Ok(json!({ "ok": true, "kind": kind.as_str(), "preset_id": preset_id }).to_string())
 }
 
 fn set_transition(
@@ -868,5 +970,177 @@ mod tests {
             MediaKind::Audio
         ));
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ── presets ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn list_assets_returns_all_three_tables() {
+        let v: Value = serde_json::from_str(&list_assets().unwrap()).unwrap();
+        use caprust_core::presets::{table, PresetKind};
+        for (key, kind) in [
+            ("transitions", PresetKind::Transition),
+            ("effects", PresetKind::Effect),
+            ("filters", PresetKind::Filter),
+        ] {
+            assert_eq!(
+                v[key].as_array().unwrap().len(),
+                table(kind).len(),
+                "{key} length disagrees with the core table"
+            );
+        }
+    }
+
+    #[test]
+    fn list_assets_ids_are_actually_applicable() {
+        // The list is the only thing a phone shows the user. An id in
+        // it that apply_preset then rejects is a dead row in the list.
+        use caprust_core::presets::PresetKind;
+        let v: Value = serde_json::from_str(&list_assets().unwrap()).unwrap();
+        for (key, kind) in [
+            ("transitions", PresetKind::Transition),
+            ("effects", PresetKind::Effect),
+            ("filters", PresetKind::Filter),
+        ] {
+            for id in v[key].as_array().unwrap() {
+                let id = id.as_str().unwrap();
+                let (mut p, clip) = project_with_one_clip();
+                let mut u = UndoStack::new();
+                apply_preset(
+                    &json!({ "clip_id": clip, "kind": kind.as_str(), "preset_id": id }),
+                    &mut p,
+                    &mut u,
+                )
+                .unwrap_or_else(|e| panic!("listed {key} id `{id}` was rejected: {e}"));
+            }
+        }
+    }
+
+    #[test]
+    fn apply_preset_rejects_an_id_from_the_wrong_table() {
+        // "fade" is both a transition and a filter. Applying it as an
+        // effect would reach build_one_effect, match no arm, and change
+        // nothing while reporting ok.
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        let e = apply_preset(
+            &json!({ "clip_id": clip, "kind": "effect", "preset_id": "fade" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("not a effect preset"), "{e}");
+    }
+
+    #[test]
+    fn apply_preset_rejects_unknown_kind() {
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        assert!(apply_preset(
+            &json!({ "clip_id": clip, "kind": "texture", "preset_id": "blur" }),
+            &mut p,
+            &mut u
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn transition_none_clears_rather_than_appends() {
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({ "clip_id": clip, "kind": "transition", "preset_id": "fade" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert_eq!(p.clips[0].transition_in.as_deref(), Some("fade"));
+
+        apply_preset(
+            &json!({ "clip_id": clip, "kind": "transition", "preset_id": "none" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert_eq!(p.clips[0].transition_in, None);
+    }
+
+    #[test]
+    fn effect_attaches_to_the_clip() {
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({ "clip_id": clip, "kind": "effect", "preset_id": "vignette" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert!(p.clips[0].effects.iter().any(|e| e.effect_id == "vignette"));
+    }
+
+    #[test]
+    fn filter_uses_the_same_command_as_an_effect() {
+        // Both go through AddEffectCommand on the desktop too; the
+        // only difference is which table the id came from.
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({ "clip_id": clip, "kind": "filter", "preset_id": "cinematic" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert!(p.clips[0]
+            .effects
+            .iter()
+            .any(|e| e.effect_id == "cinematic"));
+    }
+
+    #[test]
+    fn transition_edge_out_is_honoured() {
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({
+                "clip_id": clip, "kind": "transition",
+                "preset_id": "wipe_l", "edge": "out"
+            }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert_eq!(p.clips[0].transition_out.as_deref(), Some("wipe_l"));
+        assert_eq!(p.clips[0].transition_in, None);
+    }
+
+    #[test]
+    fn apply_preset_rejects_an_unknown_clip() {
+        let mut p = empty_project();
+        let mut u = UndoStack::new();
+        assert!(apply_preset(
+            &json!({ "clip_id": Uuid::new_v4(), "kind": "effect", "preset_id": "blur" }),
+            &mut p,
+            &mut u
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn apply_preset_is_undoable() {
+        // A phone has no undo shortcut worth relying on, but the desktop
+        // stack is shared, so a remote edit has to leave the same
+        // trail a local one does.
+        let (mut p, clip) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({ "clip_id": clip, "kind": "effect", "preset_id": "vignette" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        assert!(p.clips[0].effects.iter().any(|e| e.effect_id == "vignette"));
+        do_undo(&mut p, &mut u).unwrap();
+        assert!(p.clips[0].effects.is_empty());
     }
 }

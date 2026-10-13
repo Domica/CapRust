@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- No AppCompat dependency, so the platform theme is the one to
-         use. DayNight keeps it readable in both modes without pulling
-         in a support library. -->
+    <!-- Three explicit themes rather than relying on DayNight alone.
+         DayNight follows the system, which is right as a default but
+         does not let someone pick. setTheme + recreate switches
+         between them, which needs no androidx dependency. -->
+    <!-- DayNight so the first frame before onCreate applies the stored
+         choice already follows the system. -->
     <style name="Theme.CapRustRemote" parent="@android:style/Theme.DeviceDefault.DayNight" />
+    <style name="Theme.CapRustRemote.Light" parent="@android:style/Theme.DeviceDefault.Light" />
+    <style name="Theme.CapRustRemote.Dark" parent="@android:style/Theme.DeviceDefault" />
 </resources>

@@ -35,13 +35,22 @@ class TimelineView(context: Context) : View(context) {
     )
 
     private val blockPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // Colours come from resources so the drawn map stays legible in
+    // both themes. Hardcoded whites were invisible on a light theme.
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFFFFF.toInt()
+        color = context.getColor(R.color.timeline_text)
         textSize = 11f * resources.displayMetrics.scaledDensity
     }
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x22FFFFFF }
-    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33FFFFFF.toInt() }
-    private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88FFFFFF.toInt() }
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = context.getColor(R.color.timeline_track)
+    }
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = context.getColor(R.color.timeline_grid)
+    }
+    private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = context.getColor(R.color.timeline_empty)
+    }
+    private val selectedColor = context.getColor(R.color.timeline_selected)
 
     private val rowHeight = 34f * resources.displayMetrics.density
     private val gap = 3f * resources.displayMetrics.density
@@ -82,7 +91,7 @@ class TimelineView(context: Context) : View(context) {
         val usable = width - labelWidth
         // Seconds per pixel, so a 30s project and a 10-minute one both
         // fit the screen. Reading the shape never requires zooming.
-        val msPerPx = totalMs.toFloat() / usable.coerceAtLeast(1)
+        val msPerPx = totalMs.toFloat() / usable.coerceAtLeast(1).toFloat()
 
         // Horizontal grid every second, labelled every ten.
         val stepMs = if (msPerPx * 1000f < 40f) 10_000L else 1_000L
@@ -114,7 +123,7 @@ class TimelineView(context: Context) : View(context) {
                 blockIds.add(c.optString("id"))
 
                 blockPaint.color = palette[row % palette.size]
-                if (c.optString("id") == selectedId) blockPaint.color = 0xFFFFC850.toInt()
+                if (c.optString("id") == selectedId) blockPaint.color = selectedColor
                 canvas.drawRoundRect(r, 4f, 4f, blockPaint)
 
                 // Only label when the block is wide enough to read.
