@@ -61,20 +61,34 @@ jobs:
 
       # NDK ships clang wrappers per API level. API 21 is the floor
       # egui/winit supports and keeps the minSdk low.
+      #
+      # CC/CXX must be absolute paths: cc-rs resolves them directly and
+      # does not go through the shell, so a bare wrapper name fails with
+      # "No such file or directory" even after PATH is set. They also
+      # end in a bare version number on purpose, which is what makes
+      # them API-level specific instead of picking the host default.
       - name: Point cargo at the NDK clang wrappers
         run: |
           NDK="$ANDROID_NDK_ROOT"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "NDK clang bin: $BIN"
-          ls "$BIN" | grep aarch64 | head -5
-          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
-          echo "CC_aarch64_linux_android=aarch64-linux-android21-clang" >> "$GITHUB_ENV"
-          echo "CXX_aarch64_linux_android=aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
-          echo "AR_aarch64_linux_android=llvm-ar" >> "$GITHUB_ENV"
-          echo "RANLIB_aarch64_linux_android=llvm-ranlib" >> "$GITHUB_ENV"
-          # cc/CMake-based build scripts need the API level, not just
-          # the triple, or they guess a host triple.
-          echo "ANDROID_API=21" >> "$GITHUB_ENV"
+          ls "$BIN" | grep -E 'aarch64.*clang' | head -5
+          CC="$BIN/aarch64-linux-android21-clang"
+          CXX="$BIN/aarch64-linux-android21-clang++"
+          test -x "$CC" || { echo "missing $CC"; exit 1; }
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CC"
+            echo "CC_aarch64_linux_android=$CC"
+            echo "CXX_aarch64_linux_android=$CXX"
+            echo "AR_aarch64_linux_android=$BIN/llvm-ar"
+            echo "RANLIB_aarch64_linux_android=$BIN/llvm-ranlib"
+            # cc/CMake build scripts need the API level, not just the
+            # triple, or they guess a host triple.
+            echo "ANDROID_API=21"
+            # PATH too, for anything that shells out (cmake, make).
+            echo "PATH=$BIN:$PATH"
+          } >> "$GITHUB_ENV"
+          echo "export PATH=\"$BIN:\$PATH\"" >> "$GITHUB_PATH"
 
       - name: Build caprust-core (pure Rust, expected to pass)
         run: cargo build --release -p caprust-core --target aarch64-linux-android
