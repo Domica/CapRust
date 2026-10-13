@@ -232,6 +232,20 @@ class Client(private val ctx: Context) {
         token = v
     }
 
+    /**
+     * Forget a token the server has rejected.
+     *
+     * Must clear storage too, not just the field. A token that was
+     * only cleared in memory comes back on the next launch and the app
+     * believes it is paired again -- the same dead end, once per
+     * restart.
+     */
+    fun clearToken() {
+        token = null
+        ctx.getSharedPreferences("caprust", Context.MODE_PRIVATE)
+            .edit().remove("token").apply()
+    }
+
     /** True once a pairing has completed this session or been loaded
      *  from storage. Used to label saved connections honestly. */
     fun isPaired(): Boolean = !token.isNullOrEmpty()
@@ -328,16 +342,12 @@ class MainActivity : android.app.Activity() {
         applyTheme(themeChoice(), apply = false)
         client = Client(this).also { it.loadToken() }
         client.onEvent = { renderLog() }
-        // Land on Project when there is a stored token, so returning
-        // from the launcher does not send a paired user back to a
-        // Connect form they have already filled in. `wanted` alone is
-        // not enough: it records that a connect was attempted, which is
-        // also true of a session that connected and never paired.
-        current = if (wanted && sharedPrefsHost().isNotEmpty() && client.isPaired()) {
-            Screen.Project
-        } else {
-            Screen.Connect
-        }
+        // Always start on Connect. Deciding from the stored token meant a
+        // stale one opened the editor, where every call failed. The
+        // connect that follows checks the token properly, and only then
+        // moves on -- one round trip, rather than a wrong screen the
+        // user has to back out of.
+        current = Screen.Connect
         show(current)
         if (connected || wanted) refresh()
     }
@@ -533,10 +543,9 @@ class MainActivity : android.app.Activity() {
                 connected = ok
                 if (ok) {
                     say(getString(R.string.msg_connected_to, host))
-                    // Same rule as a manual connect: an open socket
-                    // without a token has nothing to show, and the
-                    // pairing code is only enterable on Connect.
-                    if (current == Screen.Connect && client.isPaired()) show(Screen.Project)
+                    // Same check as a manual connect: the socket being
+                    // open says nothing about whether the token works.
+                    if (current == Screen.Connect) verifyTokenOrPrompt()
                 } else {
                     say(getString(R.string.msg_reconnect_failed, err))
                     val every = reconnectDelaySec()
@@ -607,6 +616,15 @@ class MainActivity : android.app.Activity() {
         root.addView(conn)
 
         // ---- pairing row ----
+        // Labelled rather than hinted: this is the field a first-time
+        // user is looking for, and a hint disappears as soon as they
+        // start typing anything anywhere else on the screen.
+        root.addView(TextView(this).apply {
+            text = getString(R.string.pairing_header)
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(14), 0, dp(4))
+        })
         val pairRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         codeBox = EditText(this).apply {
             hint = getString(R.string.lbl_pair_code)
@@ -1090,17 +1108,50 @@ class MainActivity : android.app.Activity() {
                 getSharedPreferences("caprust", MODE_PRIVATE).edit()
                     .putString("host", host).putString("port", "$port").apply()
                 say("Connected to $host:$port")
-                // Only leave for the editor when there is something to
-                // show there. An open socket is not the same as a
-                // usable session: without a token every tool call comes
-                // back "missing token", and jumping there strands the
-                // user on a screen that cannot accept the pairing code
-                // that would fix it.
-                if (client.isPaired()) show(Screen.Project)
-                else say(getString(R.string.msg_need_pair))
+                // Ask the server whether the stored token is good,
+                // rather than believing the copy on the phone. A token
+                // can go stale between sessions -- the desktop's
+                // settings live wherever its settings file does, and a
+                // build run from a different folder has a different
+                // one. Trusting the cache meant a stale token looked
+                // paired and jumped past the pairing field, leaving
+                // every call failing with no way forward.
+                verifyTokenOrPrompt()
             }
         }
     }
+
+    /**
+     * Confirm the pairing by making one authenticated call.
+     *
+     * Success means the token is live: go to the editor. An auth
+     * failure means it is not: drop it so the user can pair again
+     * with the field that is on this screen. Anything else is a
+     * transport problem and leaves the token alone.
+     */
+    private fun verifyTokenOrPrompt() {
+        client.call("get_project_summary") { ok, body ->
+            runOnUiThread {
+                when {
+                    ok -> show(Screen.Project)
+                    isAuthFailure(body) -> {
+                        client.setToken(null)
+                        client.clearToken()
+                        say(getString(R.string.msg_token_stale))
+                        show(Screen.Connect)
+                    }
+                    else -> say(body)
+                }
+            }
+        }
+    }
+
+    /** Does this failure mean "the token is not valid"? The server
+     *  answers with JSON-RPC code -32001 and says so in words. */
+    private fun isAuthFailure(message: String): Boolean =
+        message.contains("-32001") ||
+            message.contains("invalid token", true) ||
+            message.contains("missing or invalid", true)
 
     private fun doPair() {
         val code = if (::codeBox.isInitialized) codeBox.text.toString().trim() else ""
