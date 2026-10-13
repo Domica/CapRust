@@ -1,4 +1,4 @@
-package domica.caprust.remote
+﻿package domica.caprust.remote
 
 import android.content.Context
 import android.os.Handler
@@ -220,19 +220,60 @@ class Client(private val ctx: Context) {
         token = ctx.getSharedPreferences("caprust", Context.MODE_PRIVATE)
             .getString("token", null)
     }
+
+    /**
+     * Adopt a token stored for a different computer.
+     *
+     * Needed because the token belongs to a desktop, not to the app: a
+     * pairing earned on one machine is rejected by another, so loading
+     * the saved one on switch is the whole point of saving it.
+     */
+    fun setToken(v: String?) {
+        token = v
+    }
+
+    /** True once a pairing has completed this session or been loaded
+     *  from storage. Used to label saved connections honestly. */
+    fun isPaired(): Boolean = !token.isNullOrEmpty()
+
+    /** Drop the captured traffic. */
+    fun clearLog() {
+        synchronized(log) { log.clear() }
+    }
 }
 
-/** One activity, one screen, built in code.
+/** One activity, several screens, built in code.
  *
  *  XML layouts would need a resource compiler and a view-binding
  *  setup for a UI this small, and a linear stack of views is easier to
- *  follow here than a nested layout file would be. */
+ *  follow here than a nested layout file would be.
+ *
+ *  Screens swap by rebuilding the content view rather than by keeping
+ *  five trees alive and toggling visibility. Toggling is cheaper, but
+ *  a hidden LinearLayout still measures itself, and five measured
+ *  trees on a tablet is how a layout ends up scrolled somewhere
+ *  unexpected. Rebuilding also means a screen never shows stale data
+ *  from the last time it was visited. */
 class MainActivity : android.app.Activity() {
 
+    /**
+     * The five screens.
+     *
+     * An enum rather than an int or a string so a `when` over it is
+     * checked for exhaustiveness and a typo is a compile error.
+     */
+    private enum class Screen { Connect, Project, Log, Settings, Connections }
+
+    private var current = Screen.Connect
+
     private lateinit var client: Client
-    private lateinit var status: TextView
-    private lateinit var clipList: LinearLayout
-    private lateinit var logView: TextView
+    // Null while no screen showing that particular view is attached.
+    // A reply can arrive after the user has navigated away, and a
+    // lateinit field would throw on exactly that path -- which is the
+    // path a screen-off or a slow request takes.
+    private var status: TextView? = null
+    private var clipList: LinearLayout? = null
+    private var logView: TextView? = null
     private lateinit var hostBox: EditText
     private lateinit var portBox: EditText
     private lateinit var codeBox: EditText
@@ -245,21 +286,8 @@ class MainActivity : android.app.Activity() {
     private var selectedView: TextView? = null
 
     /** Drawn timeline map. */
-    private lateinit var timeline: TimelineView
-
-    /**
-     * Whether the raw traffic log is shown.
-     *
-     * A setting, not a preference: on a small phone the log eats a
-     * quarter of the screen for something only useful when something is
-     * wrong. Defaults on, because the log is the only diagnostic
-     * without adb.
-     */
-    private var logOn: Boolean
-        get() = getSharedPreferences("caprust", MODE_PRIVATE)
-            .getBoolean("logOn", true)
-        set(v) = getSharedPreferences("caprust", MODE_PRIVATE)
-            .edit().putBoolean("logOn", v).apply()
+    /** Null while a screen without a timeline is showing. */
+    private var timeline: TimelineView? = null
 
     /** Cached clip fields for the selected row, so the sheet and the
      *  detail panel do not have to re-query. */
@@ -269,12 +297,9 @@ class MainActivity : android.app.Activity() {
      *  once from the server. See [showPresetPicker]. */
     private val assetsCache = HashMap<String, List<String>>()
 
-    /** Label of the log toggle button; its text reflects the action. */
-    private lateinit var logToggleLabel: Button
-
-    /** Theme button, kept so its label can follow the current choice
-     *  without rebuilding the whole view. */
-    private lateinit var themeButton: Button
+    /** Project name from the last summary, for the Project header. */
+    @Volatile
+    private var pendingProjectName = ""
 
     /** Project duration from the last summary, so the timeline can
      *  scale to fit. Cached because the clip list arrives separately. */
@@ -303,8 +328,95 @@ class MainActivity : android.app.Activity() {
         applyTheme(themeChoice(), apply = false)
         client = Client(this).also { it.loadToken() }
         client.onEvent = { renderLog() }
-        setContentView(build())
-        refresh()
+        // Land on Project when a link is already wanted, so returning
+        // from the launcher does not send a connected user back to a
+        // Connect form they have already filled in.
+        current = if (wanted && sharedPrefsHost().isNotEmpty()) Screen.Project else Screen.Connect
+        show(current)
+        if (connected || wanted) refresh()
+    }
+
+    // ---- navigation ----
+
+    /** Rebuild the content view for `screen`. */
+    private fun show(screen: Screen) {
+        current = screen
+        setContentView(
+            when (screen) {
+                Screen.Connect -> buildConnect()
+                Screen.Project -> buildProject()
+                Screen.Log -> buildLog()
+                Screen.Settings -> buildSettings()
+                Screen.Connections -> buildConnections()
+            }
+        )
+        if (screen == Screen.Project) refresh()
+    }
+
+    /** Where Back goes. Project is the only screen with a natural
+     *  parent; from the settings-type screens you land on the editor if
+     *  there is one, otherwise on Connect. */
+    private fun back(): Screen = if (connected || wanted) Screen.Project else Screen.Connect
+
+    /**
+     * Set the status line, if a screen showing one is attached.
+     *
+     * Every status write goes through here. Screens are rebuilt on
+     * navigation, so the TextView only exists while its screen is on
+     * display -- a reply arriving after the user moved to the log
+     * screen would otherwise touch a detached view. The text is kept
+     * in [pendingStatus] and shown by the next screen that has a
+     * status line, so a message is never silently dropped.
+     */
+    private fun say(line: String) {
+        pendingStatus = line
+        status?.text = line
+    }
+
+    /** Last thing [say] was given, replayed into the next screen. */
+    private var pendingStatus = ""
+
+    /** The host to dial: what is typed, else what was last used. */
+    private fun hostValue(): String =
+        if (::hostBox.isInitialized) hostBox.text.toString().trim() else sharedPrefsHost()
+
+    private fun portValue(): Int =
+        if (::portBox.isInitialized) {
+            portBox.text.toString().trim().toIntOrNull() ?: 4711
+        } else {
+            sharedPrefsPort().toIntOrNull() ?: 4711
+        }
+
+    /**
+     * A screen header with an optional back arrow and trailing actions.
+     *
+     * Every screen gets one so there is always an obvious way out. A
+     * full-screen settings page with no back control is the kind of
+     * thing that needs the home button to escape.
+     */
+    private fun header(title: String, vararg actions: View): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        if (current != Screen.Connect) {
+            row.addView(btn(getString(R.string.btn_back)) { show(back()) })
+        }
+        row.addView(TextView(this).apply {
+            text = title
+            textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(6), 0, 0, 0)
+        })
+        for (a in actions) row.addView(a)
+        return row
+    }
+
+    /** Vertical scroll container with the standard padding. */
+    private fun column(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(12), dp(10), dp(12), dp(12))
     }
 
     // ---- theme ----
@@ -382,29 +494,70 @@ class MainActivity : android.app.Activity() {
         if (!wanted) return
         val host = sharedPrefsHost()
         if (host.isEmpty()) return
-        status.text = "Reconnecting to $host ..."
-        client.connect(host, sharedPrefsPort().toIntOrNull() ?: 4711) { ok, err ->
-            connected = ok
-            status.text = if (ok) "Connected to $host" else "Reconnect failed: $err"
-            if (ok) refresh()
-        }
+        attemptConnect()
+    }
+
+    /**
+     * One reconnect attempt, self-rescheduling while it fails.
+     *
+     * Retries are scheduled rather than fired in a loop: a tight retry
+     * against a desktop that is asleep or off-network would hammer the
+     * socket and drain the battery. The interval is the setting; 0
+     * means try once and then wait for the user.
+     *
+     * The check on `wanted` is inside the runnable, not at schedule
+     * time. A manual Disconnect while a retry is pending has to win,
+     * or the button appears not to work.
+     */
+    private fun attemptConnect() {
+        val host = sharedPrefsHost()
+        if (host.isEmpty()) return
+        say(getString(R.string.msg_reconnecting, host))
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.postDelayed({
+            if (!wanted) return@postDelayed
+            client.connect(host, sharedPrefsPort().toIntOrNull() ?: 4711) { ok, err ->
+                connected = ok
+                if (ok) {
+                    say(getString(R.string.msg_connected_to, host))
+                    // A resume that lands on Connect while the link is
+                    // already up should not leave the user on a form
+                    // they have nothing left to fill in.
+                    if (current == Screen.Connect) show(Screen.Project)
+                } else {
+                    say(getString(R.string.msg_reconnect_failed, err))
+                    val every = reconnectDelaySec()
+                    if (wanted && every > 0) attemptConnect()
+                }
+            }
+        }, reconnectDelaySec() * 1000L)
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun build(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-        }
+    /**
+     * Screen 1: reach a computer and pair with it.
+     *
+     * Deliberately the only screen with no Back arrow -- it is the root
+     * of the app, and an arrow pointing at itself would be a lie.
+     * Everything else hangs off it.
+     */
+    private fun buildConnect(): View {
+        val root = column()
 
         root.addView(TextView(this).apply {
-            text = "CapRust Remote"
+            text = getString(R.string.app_name)
             textSize = 20f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
 
-        status = TextView(this).apply { textSize = 13f }
+        status = TextView(this).apply {
+            textSize = 13f
+            // Replay whatever the last action said. Without this, a
+            // message posted while another screen was up would be lost
+            // the moment the user navigated here.
+            text = pendingStatus
+        }
         root.addView(status)
 
         // ---- connection row ----
@@ -439,6 +592,34 @@ class MainActivity : android.app.Activity() {
             LinearLayout.LayoutParams(0, dp(48), 1f))
         root.addView(pairRow)
 
+        // ---- secondary actions ----
+        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        nav.addView(btn(getString(R.string.btn_saved)) { show(Screen.Connections) })
+        nav.addView(btn(getString(R.string.btn_settings)) { show(Screen.Settings) })
+        nav.addView(btn(getString(R.string.btn_log)) { show(Screen.Log) })
+        root.addView(nav)
+        return root
+    }
+
+    /**
+     * Screen 2: the open project.
+     *
+     * The project name goes in the header because that is what the
+     * screen is about, and it was previously buried in a status line
+     * that also carried connection messages.
+     */
+    private fun buildProject(): View {
+        val root = column()
+
+        status = TextView(this).apply { textSize = 12f; text = pendingStatus }
+
+        root.addView(header(
+            projectTitle(),
+            btn(getString(R.string.btn_log)) { show(Screen.Log) },
+            btn(getString(R.string.btn_settings)) { show(Screen.Settings) },
+        ))
+        root.addView(status)
+
         // ---- actions ----
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(btn(getString(R.string.btn_refresh)) { refresh() })
@@ -451,8 +632,6 @@ class MainActivity : android.app.Activity() {
         actions2.addView(btn(getString(R.string.btn_disconnect)) { doDisconnect() })
         // Label reflects the current choice, so it doubles as the
         // indicator. Three options do not need a dialog.
-        themeButton = btn(themeLabel()) { cycleTheme() }
-        actions2.addView(themeButton)
         root.addView(actions2)
 
         // ---- time input ----
@@ -481,7 +660,7 @@ class MainActivity : android.app.Activity() {
         timeline = TimelineView(this).apply {
             onPick = { id ->
                 selectedClip = id
-                timeline.setSelected(id)
+                timeline?.setSelected(id)
                 selectedView?.text = clipInfo[id]?.let { describe(id, it) } ?: ""
                 showClipSheet()
             }
@@ -514,38 +693,23 @@ class MainActivity : android.app.Activity() {
         root.addView(clipScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f))
 
-        // ---- log ----
-        // Built here, attached in one place further down: a View has a
-        // single parent, so attaching it to both columns would throw.
-        val logScroll = ScrollView(this)
-        logView = TextView(this).apply {
-            textSize = 10f
-            setTypeface(android.graphics.Typeface.MONOSPACE)
-            setTextIsSelectable(true)
-        }
-        logScroll.addView(logView)
-        logView.visibility = if (logOn) View.VISIBLE else View.GONE
-
+        // The log used to be built here and attached in one of two places
+        // below. It is its own screen now, so nothing inline survives:
+        // a quarter of a phone screen for a diagnostic nobody wants
+        // while editing.
         if (resources.configuration.orientation ==
             android.content.res.Configuration.ORIENTATION_PORTRAIT) {
-            root.addView(logToggle())
-            root.addView(logScroll, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                if (logOn) dp(140) else dp(1)))
             return root
         }
 
         // Landscape on a tablet was throwing away half the screen on a
-        // single column. Two columns: list on the left, selected clip
-        // and the log on the right.
-        //
-        // The log goes in exactly one place. A View has one parent, so
-        // adding it to both columns throws at inflate time.
+        // single column. Two columns: timeline and clips on the left,
+        // the selected clip's detail on the right.
         val wide = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         wide.addView(root, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         val side = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), 0, 0, 0)
+            setPadding(dp(8), 0, dp(0), 0)
         }
         side.addView(
             selectedInfo(),
@@ -554,29 +718,210 @@ class MainActivity : android.app.Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
-        side.addView(logToggle())
-        side.addView(
-            logScroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            )
-        )
         wide.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         return wide
     }
 
-    private fun logToggle() = btn("", {}) .also { b ->
-        logToggleLabel = b
-        b.text = if (logOn) getString(R.string.btn_hide_log) else getString(R.string.btn_show_log)
-        b.setOnClickListener { toggleLog() }
+    /**
+     * Screen 3: the raw traffic log.
+     *
+     * Its own screen, reachable by a button, never expanded over the
+     * editor. It is still the only diagnostic available without adb, so
+     * it has to stay one tap away rather than behind a settings dive.
+     */
+    private fun buildLog(): View {
+        val root = column()
+        root.addView(
+            header(
+                getString(R.string.title_log),
+                btn(getString(R.string.btn_clear)) { client.clearLog(); renderLog() }
+            )
+        )
+        status = TextView(this).apply { textSize = 12f; text = pendingStatus }
+        root.addView(status)
+
+        val scroll = ScrollView(this)
+        logView = TextView(this).apply {
+            textSize = 10f
+            setTypeface(android.graphics.Typeface.MONOSPACE)
+            // Selectable so a line can be copied into a bug report.
+            setTextIsSelectable(true)
+            renderLogInto(this)
+        }
+        scroll.addView(logView, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        return root
     }
 
-    private fun toggleLog() {
-        logOn = !logOn
-        logView.visibility = if (logOn) View.VISIBLE else View.GONE
-        // Keep capturing either way: a hidden log is still the
-        // diagnostic when the user goes looking for it.
-        logToggleLabel.text = if (logOn) "Hide log" else "Show log"
+    /**
+     * Screen 4: settings.
+     *
+     * Two choices, each one row with the current value on it, rather
+     * than a dialog per setting. A dialog to pick one of three themes
+     * is a dialog to dismiss every time.
+     */
+    private fun buildSettings(): View {
+        val root = column()
+        root.addView(header(getString(R.string.title_settings)))
+        status = TextView(this).apply { textSize = 12f; text = pendingStatus }
+        root.addView(status)
+
+        root.addView(btn(getString(R.string.lbl_theme, themeLabel())) { cycleTheme() })
+
+        val every = reconnectDelaySec()
+        root.addView(btn(getString(R.string.lbl_reconnect, reconnectLabel(every))) {
+            chooseReconnect()
+        })
+
+        root.addView(btn(getString(R.string.btn_saved)) { show(Screen.Connections) })
+        root.addView(btn(getString(R.string.btn_log)) { show(Screen.Log) })
+
+        val spacer = LinearLayout(this)
+        root.addView(spacer, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        return root
+    }
+
+    private fun reconnectLabel(seconds: Int): String = when (seconds) {
+        0 -> getString(R.string.reconnect_off)
+        1 -> getString(R.string.reconnect_seconds, 1)
+        else -> getString(R.string.reconnect_seconds, seconds)
+    }
+
+    private fun chooseReconnect() {
+        val options = intArrayOf(0, 1, 5, 10)
+        val labels = options.map { reconnectLabel(it) }.toTypedArray<CharSequence>()
+        android.app.AlertDialog.Builder(this)
+            .setTitle(getString(R.string.lbl_reconnect_short))
+            .setItems(labels) { _, which ->
+                setReconnectDelay(options[which])
+                show(Screen.Settings)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun setReconnectDelay(seconds: Int) {
+        getSharedPreferences("caprust", MODE_PRIVATE)
+            .edit().putInt("reconnectSec", seconds).apply()
+    }
+
+    /** Seconds between reconnect attempts. 0 = one attempt, then wait
+     *  for the user. Default 5: fast enough that a sleeping desktop
+     *  feels instant, slow enough not to spin. */
+    private fun reconnectDelaySec(): Int =
+        getSharedPreferences("caprust", MODE_PRIVATE).getInt("reconnectSec", 5)
+
+    /**
+     * Screen 5: saved pairings.
+     *
+     * A computer is identified by host:port, and the pairing token
+     * belongs to that computer -- a token from the desktop in the
+     * office is meaningless to the one at home. Saving the token with
+     * the address is what makes switching back and forth work without
+     * retyping a six-digit code that only exists for five minutes.
+     */
+    private fun buildConnections(): View {
+        val root = column()
+        root.addView(header(getString(R.string.title_connections)))
+        status = TextView(this).apply { textSize = 12f; text = pendingStatus }
+        root.addView(status)
+
+        val saved = loadSaved()
+        if (saved.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = getString(R.string.no_connections)
+                setPadding(0, dp(12), 0, dp(12))
+            })
+        } else {
+            for (entry in saved) {
+                val key = "${entry.get("host")}:${entry.get("port")}"
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                val label = entry.optString("name").ifEmpty { key }
+                row.addView(btn(label) { connectTo(entry) },
+                    LinearLayout.LayoutParams(0, dp(48), 1f))
+                row.addView(btn(getString(R.string.btn_forget)) {
+                    forget(key)
+                    show(Screen.Connections)
+                }, LinearLayout.LayoutParams(dp(100), dp(48)))
+                root.addView(row)
+            }
+        }
+
+        root.addView(btn(getString(R.string.btn_save_current)) { saveCurrent() })
+        return root
+    }
+
+    private fun connectTo(entry: JSONObject) {
+        val host = entry.optString("host")
+        val port = entry.optInt("port", 4711)
+        getSharedPreferences("caprust", MODE_PRIVATE).edit()
+            .putString("host", host).putString("port", "$port").apply()
+        // The saved token belongs to this computer, not to whatever was
+        // connected last. Loading it is what makes the pairing stick.
+        val token = entry.optString("token")
+        if (token.isNotEmpty()) {
+            client.setToken(token)
+            getSharedPreferences("caprust", MODE_PRIVATE)
+                .edit().putString("token", token).apply()
+        }
+        doConnect()
+    }
+
+    private fun saveCurrent() {
+        val host = hostValue()
+        if (host.isEmpty()) {
+            say(getString(R.string.msg_no_host))
+            return
+        }
+        val port = portValue()
+        val name = host + if (client.isPaired()) "" else " (${getString(R.string.not_paired)})"
+        val saved = loadSaved().toMutableList()
+        val key = "$host:$port"
+        saved.removeAll { "${it.optString("host")}:${it.optInt("port")}" == key }
+        saved.add(
+            JSONObject()
+                .put("host", host)
+                .put("port", port)
+                .put("name", name)
+                .put("token", client.token ?: "")
+        )
+        storeSaved(saved)
+        say(getString(R.string.msg_saved, name))
+        show(Screen.Connections)
+    }
+
+    private fun forget(key: String) {
+        storeSaved(loadSaved().filter { "${it.optString("host")}:${it.optInt("port")}" != key })
+    }
+
+    private fun loadSaved(): List<JSONObject> {
+        val raw = getSharedPreferences("caprust", MODE_PRIVATE)
+            .getString("connections", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getJSONObject(it) }
+        } catch (_: Exception) {
+            // Corrupt entry should not take the whole screen down.
+            emptyList()
+        }
+    }
+
+    private fun storeSaved(list: List<JSONObject>) {
+        val arr = JSONArray()
+        for (e in list) arr.put(e)
+        getSharedPreferences("caprust", MODE_PRIVATE)
+            .edit().putString("connections", arr.toString()).apply()
+    }
+
+    /** Name for the project header. Falls back to a neutral label so a
+     *  header never renders blank while the summary is in flight. */
+    private fun projectTitle(): String {
+        var name = ""
+        synchronized(this) { name = pendingProjectName }
+        return name.ifEmpty { getString(R.string.title_project) }
     }
 
     /** Detail panel for the selected clip. Only shown in landscape;
@@ -607,13 +952,13 @@ class MainActivity : android.app.Activity() {
         getSharedPreferences("caprust", MODE_PRIVATE).getString("port", "4711") ?: "4711"
 
     private fun doConnect() {
-        val host = hostBox.text.toString().trim()
-        val port = portBox.text.toString().trim().toIntOrNull() ?: 4711
+        val host = hostValue()
+        val port = portValue()
         if (host.isEmpty()) {
-            status.text = "Enter the computer's IP address"
+            say("Enter the computer's IP address")
             return
         }
-        status.text = "Connecting to $host:$port ..."
+        say("Connecting to $host:$port ...")
         client.connect(host, port) { ok, err ->
             connected = ok
             // Remembered separately from `connected`: this is the
@@ -621,27 +966,29 @@ class MainActivity : android.app.Activity() {
             // retried on the next resume.
             wanted = true
             if (!ok) {
-                status.text = "Failed: $err"
+                say("Failed: $err")
             } else {
                 getSharedPreferences("caprust", MODE_PRIVATE).edit()
                     .putString("host", host).putString("port", "$port").apply()
-                status.text = "Connected to $host:$port"
-                refresh()
+                say("Connected to $host:$port")
+                // Connected is the whole point of this screen; the
+                // editor is what the user came for.
+                show(Screen.Project)
             }
         }
     }
 
     private fun doPair() {
-        val code = codeBox.text.toString().trim()
+        val code = if (::codeBox.isInitialized) codeBox.text.toString().trim() else ""
         if (code.isEmpty()) {
-            status.text = "Enter the code shown in CapRust on the computer"
+            say("Enter the code shown in CapRust on the computer")
             return
         }
-        status.text = "Pairing ..."
+        say("Pairing ...")
         client.pair(code) { ok, msg ->
-            status.text = if (ok) "Paired" else "Pairing failed: $msg"
+            say(if (ok) "Paired" else "Pairing failed: $msg")
             if (ok) {
-                codeBox.text.clear()
+                if (::codeBox.isInitialized) codeBox.text.clear()
                 refresh()
             }
         }
@@ -652,8 +999,11 @@ class MainActivity : android.app.Activity() {
         connected = false
         // Explicit disconnect, so stop reconnecting behind their back.
         wanted = false
-        status.text = "Disconnected"
-        clipList.removeAllViews()
+        say("Disconnected")
+        clipList?.removeAllViews()
+        // Back to Connect: a disconnected Project screen is a dead end
+        // with no way to reconnect from it.
+        show(Screen.Connect)
     }
 
     /** Pull the summary and the clip list. Both are read-only, so a
@@ -664,11 +1014,11 @@ class MainActivity : android.app.Activity() {
             // blank, with nothing to say why.
             // childCount, not hasViews(): the latter is an androidx
             // KTX extension and this app has no androidx dependency.
-            if (clipList.childCount == 0) {
-                clipList.removeAllViews()
+            if (clipList?.childCount == 0) {
+                clipList?.removeAllViews()
                 val note = TextView(this)
                 note.text = if (wanted) "Reconnecting ..." else "Tap Connect to reach CapRust"
-                clipList.addView(note)
+                clipList?.addView(note)
             }
             return
         }
@@ -680,11 +1030,16 @@ class MainActivity : android.app.Activity() {
             lastDurationMs = runCatching {
                 JSONObject(text).optLong("total_duration_ms", 1L)
             }.getOrDefault(1L)
-            runOnUiThread { status.text = summarise(text) }
+            // The header shows the project name, so it has to be
+            // captured before the screen is rebuilt.
+            pendingProjectName = runCatching {
+                JSONObject(text).optString("name", "")
+            }.getOrDefault("")
+            runOnUiThread { say(summarise(text)) }
         }
         client.call("list_clips") { ok, text ->
             if (!ok) {
-                runOnUiThread { status.text = text }
+                runOnUiThread { say(text) }
                 return@call
             }
             runOnUiThread { renderClips(text) }
@@ -704,9 +1059,9 @@ class MainActivity : android.app.Activity() {
             message.contains("closed", true)
         if (linkDown) {
             connected = false
-            status.text = "Connection lost. It will reconnect when you return."
+            say("Connection lost. It will reconnect when you return.")
         } else {
-            status.text = message
+            say(message)
         }
     }
 
@@ -730,7 +1085,7 @@ class MainActivity : android.app.Activity() {
     }
 
     private fun renderClips(text: String) {
-        clipList.removeAllViews()
+        clipList?.removeAllViews()
         clipNames.clear()
         clipInfo.clear()
         val arr = try {
@@ -740,18 +1095,18 @@ class MainActivity : android.app.Activity() {
             // added `this` -- the Activity. Bind it to a name.
             val fallback = TextView(this)
             fallback.text = text.take(200)
-            clipList.addView(fallback)
-            timeline.setClips(org.json.JSONArray(), 1)
+            clipList?.addView(fallback)
+            timeline?.setClips(org.json.JSONArray(), 1)
             return
         }
         // Feed the drawn map from the same array the list uses, so the
         // two can never disagree about what is on the timeline.
-        timeline.setClips(arr, lastDurationMs)
-        timeline.setSelected(selectedClip)
+        timeline?.setClips(arr, lastDurationMs)
+        timeline?.setSelected(selectedClip)
         if (arr.length() == 0) {
             val empty = TextView(this)
             empty.setText(getString(R.string.no_clips))
-            clipList.addView(empty)
+            clipList?.addView(empty)
             return
         }
         for (i in 0 until arr.length()) {
@@ -779,7 +1134,7 @@ class MainActivity : android.app.Activity() {
                 showClipSheet()
             }
             row.tag = id
-            clipList.addView(row)
+            clipList?.addView(row)
         }
     }
 
@@ -793,7 +1148,7 @@ class MainActivity : android.app.Activity() {
     private fun showClipSheet() {
         val id = selectedClip
         if (id == null) {
-            status.text = getString(R.string.msg_tap_clip)
+            say(getString(R.string.msg_tap_clip))
             return
         }
         val info = clipInfo[id] ?: JSONObject()
@@ -825,7 +1180,7 @@ class MainActivity : android.app.Activity() {
             row(getString(R.string.act_fade)) { setFade() }
             if (kind.contains("Audio", true) || kind.contains("Video", true)) {
                 row(getString(R.string.act_media)) { client.call("list_media") { ok, t ->
-                    runOnUiThread { status.text = if (ok) t.take(300) else t }
+                    runOnUiThread { say(if (ok) t.take(300) else t) }
                 } }
             }
 
@@ -848,14 +1203,14 @@ class MainActivity : android.app.Activity() {
     private fun showPresetPicker(kind: String) {
         val id = selectedClip
         if (id == null) {
-            status.text = getString(R.string.msg_tap_clip)
+            say(getString(R.string.msg_tap_clip))
             return
         }
         assetsCache[kind]?.let { return showPresetList(kind, id, it) }
         client.call("list_assets") { ok, text ->
             runOnUiThread {
                 if (!ok) {
-                    status.text = text
+                    say(text)
                     return@runOnUiThread
                 }
                 val arr = try {
@@ -864,7 +1219,7 @@ class MainActivity : android.app.Activity() {
                     JSONArray()
                 }
                 if (arr.length() == 0) {
-                    status.text = getString(R.string.no_presets)
+                    say(getString(R.string.no_presets))
                     return@runOnUiThread
                 }
                 val ids = ArrayList<String>(arr.length())
@@ -904,9 +1259,9 @@ class MainActivity : android.app.Activity() {
         ) { ok, text ->
             runOnUiThread {
                 if (!ok) {
-                    status.text = text
+                    say(text)
                 } else {
-                    status.text = getString(R.string.msg_applied, presetId)
+                    say(getString(R.string.msg_applied, presetId))
                     refresh()
                 }
             }
@@ -930,7 +1285,7 @@ class MainActivity : android.app.Activity() {
         val id = selectedClip ?: return
         client.call("split_clip", JSONObject().put("clip_id", id).put("at_ms", at)) { ok, msg ->
             runOnUiThread {
-                status.text = if (ok) "Split at ${at}ms" else "Split failed: $msg"
+                say(if (ok) "Split at ${at}ms" else "Split failed: $msg")
                 if (ok) refresh()
             }
         }
@@ -947,7 +1302,7 @@ class MainActivity : android.app.Activity() {
         val id = selectedClip ?: return
         client.call("move_clip", JSONObject().put("clip_id", id).put("to_ms", at)) { ok, msg ->
             runOnUiThread {
-                status.text = if (ok) "Moved to ${at}ms" else "Move failed: $msg"
+                say(if (ok) "Moved to ${at}ms" else "Move failed: $msg")
                 if (ok) refresh()
             }
         }
@@ -957,7 +1312,7 @@ class MainActivity : android.app.Activity() {
         val id = selectedClip ?: return
         client.call("set_clip_volume", JSONObject().put("clip_id", id).put("db", db)) { ok, msg ->
             runOnUiThread {
-                status.text = if (ok) "Volume $db dB" else "Volume failed: $msg"
+                say(if (ok) "Volume $db dB" else "Volume failed: $msg")
                 if (ok) refresh()
             }
         }
@@ -970,7 +1325,7 @@ class MainActivity : android.app.Activity() {
         val clamped = speed.coerceIn(0.25, 4.0)
         client.call("set_clip_speed", JSONObject().put("clip_id", id).put("speed", clamped)) { ok, msg ->
             runOnUiThread {
-                status.text = if (ok) "Speed ${clamped}x" else "Speed failed: $msg"
+                say(if (ok) "Speed ${clamped}x" else "Speed failed: $msg")
                 if (ok) refresh()
             }
         }
@@ -981,7 +1336,7 @@ class MainActivity : android.app.Activity() {
         val args = JSONObject().put("clip_id", id).put("fade_in_ms", 1000).put("fade_out_ms", 1000)
         client.call("set_clip_fade", args) { ok, msg ->
             runOnUiThread {
-                status.text = if (ok) "Fade 1s in and out" else "Fade failed: $msg"
+                say(if (ok) "Fade 1s in and out" else "Fade failed: $msg")
                 if (ok) refresh()
             }
         }
@@ -1005,15 +1360,30 @@ class MainActivity : android.app.Activity() {
      *  androidx dependency.
      */
     private fun dimOthers(selected: String) {
-        for (i in 0 until clipList.childCount) {
-            val child = clipList.getChildAt(i) as? Button ?: continue
+        val list = clipList ?: return
+        for (i in 0 until list.childCount) {
+            val child = list.getChildAt(i) as? Button ?: continue
             child.setAlpha(if (child.tag == selected) 1f else 0.6f)
         }
     }
 
+    /**
+     * Push new traffic into the log screen, if it is on display.
+     *
+     * Capture is unconditional; only the rendering is conditional. A
+     * client that only recorded lines while the log was visible would
+     * lose exactly the lines you open the log to read.
+     */
     private fun renderLog() {
-        val text = synchronized(client.log) { client.log.joinToString("\n") }
-        logView.text = text
-        logView.post { (logView.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN) }
+        val view = logView ?: return
+        renderLogInto(view)
+        view.post { (view.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun renderLogInto(into: TextView) {
+        into.text = synchronized(client.log) { client.log.joinToString("\n") }
     }
 }
+
+
+

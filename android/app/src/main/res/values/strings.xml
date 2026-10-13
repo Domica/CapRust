@@ -28,6 +28,37 @@
     <string name="btn_transitions">Transitions</string>
     <string name="no_presets">No presets available</string>
     <string name="msg_applied">Applied %1$s</string>
+
+    <!-- Screens -->
+    <string name="btn_back">Back</string>
+    <string name="btn_saved">Saved</string>
+    <string name="btn_settings">Settings</string>
+    <string name="btn_log">Log</string>
+    <string name="btn_clear">Clear</string>
+    <string name="title_log">Traffic log</string>
+    <string name="title_settings">Settings</string>
+    <string name="title_connections">Saved connections</string>
+    <string name="title_project">Project</string>
+
+    <!-- Settings rows -->
+    <string name="lbl_theme">Theme: %1$s</string>
+    <string name="lbl_reconnect">Reconnect: %1$s</string>
+    <string name="lbl_reconnect_short">Reconnect</string>
+    <string name="reconnect_off">Off</string>
+    <string name="reconnect_seconds">Every %1$d s</string>
+
+    <!-- Connections -->
+    <string name="no_connections">Nothing saved yet</string>
+    <string name="btn_forget">Forget</string>
+    <string name="btn_save_current">Save this connection</string>
+    <string name="not_paired">not paired</string>
+    <string name="msg_saved">Saved %1$s</string>
+    <string name="msg_no_host">Enter the computer\'s IP address first</string>
+
+    <!-- Connection messages -->
+    <string name="msg_reconnecting">Reconnecting to %1$s ...</string>
+    <string name="msg_connected_to">Connected to %1$s</string>
+    <string name="msg_reconnect_failed">Reconnect failed: %1$s</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->
