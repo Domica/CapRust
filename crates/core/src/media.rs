@@ -103,6 +103,23 @@ impl MediaLibrary {
 
     /// Find an item by path, case- and separator-insensitive, so
     /// re-importing the same file does not duplicate the library.
+    /// Add every item from `other` whose path is not already present.
+    ///
+    /// Used when a template is applied. The media bin belongs to the
+    /// user's session, not to the template, and replacing it wholesale
+    /// dropped every imported item along with its cached probe,
+    /// thumbnail and waveform flags, so the bin came back empty and
+    /// every thumbnail had to be regenerated. Existing entries win:
+    /// they already carry the cache flags, the incoming ones start
+    /// unprobed.
+    pub fn merge_missing_from(&mut self, other: &MediaLibrary) {
+        for item in &other.items {
+            if !self.items.iter().any(|i| i.path == item.path) {
+                self.items.push(item.clone());
+            }
+        }
+    }
+
     pub fn find_by_path(&self, path: &str) -> Option<Uuid> {
         let norm = normalize_import_path(path);
         self.items

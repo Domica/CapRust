@@ -24,14 +24,19 @@ pub const TEMPLATE_EXT: &str = "caprust-template";
 pub struct BundledTemplate {
     pub id: &'static str,
     pub display: &'static str,
+    /// Fluent key for the display name. The UI renders this through
+    /// `tr()` so bundled template names follow the active language
+    /// like every other string.
+    pub i18n_key: &'static str,
     pub json: &'static str,
 }
 
 macro_rules! bundled {
-    ($id:literal, $display:literal, $file:literal) => {
+    ($id:literal, $display:literal, $key:literal, $file:literal) => {
         BundledTemplate {
             id: $id,
             display: $display,
+            i18n_key: $key,
             json: include_str!($file),
         }
     };
@@ -39,22 +44,54 @@ macro_rules! bundled {
 
 /// Starter templates shipped with the app. Files live in
 /// `templates/` at the repo root so contributors can add more.
-pub fn bundled_templates() -> [BundledTemplate; 3] {
+///
+/// The platform starters exist because the useful difference between a
+/// TikTok cut and a YouTube cut is mostly the frame: the ratio, the
+/// safe area for text, and the title position. Pinned here so picking
+/// one sets the project geometry before any footage is dropped in.
+pub fn bundled_templates() -> [BundledTemplate; 7] {
     [
         bundled!(
             "intro-title",
             "Intro title card",
+            "tpl-intro-title",
             "../../../templates/intro-title.caprust-template.json"
         ),
         bundled!(
             "lower-third",
             "Lower third",
+            "tpl-lower-third",
             "../../../templates/lower-third.caprust-template.json"
         ),
         bundled!(
             "outro-subscribe",
             "Outro subscribe card",
+            "tpl-outro-subscribe",
             "../../../templates/outro-subscribe.caprust-template.json"
+        ),
+        bundled!(
+            "tiktok-vertical",
+            "TikTok / Reels / Shorts (9:16)",
+            "tpl-tiktok-vertical",
+            "../../../templates/tiktok-vertical.caprust-template.json"
+        ),
+        bundled!(
+            "instagram-feed",
+            "Instagram feed (4:5)",
+            "tpl-instagram-feed",
+            "../../../templates/instagram-feed.caprust-template.json"
+        ),
+        bundled!(
+            "youtube-horizontal",
+            "YouTube / landscape (16:9)",
+            "tpl-youtube-horizontal",
+            "../../../templates/youtube-horizontal.caprust-template.json"
+        ),
+        bundled!(
+            "square-post",
+            "Square post (1:1)",
+            "tpl-square-post",
+            "../../../templates/square-post.caprust-template.json"
         ),
     ]
 }

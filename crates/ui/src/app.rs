@@ -9612,6 +9612,16 @@ impl CapRustApp {
                     // history (same as opening a project), unsaved
                     // path so the next save asks where to write.
                     state.project_path = None;
+                    // The media bin is the user's, not the template's.
+                    // Assigning `state` wholesale dropped every
+                    // imported item along with its cached probe,
+                    // thumbnail and waveform flags, so the bin came
+                    // back empty and the clips pointed at nothing.
+                    // Merge the template's items in instead; the
+                    // existing entries keep their cache flags.
+                    let mut media = std::mem::take(&mut self.project.media);
+                    media.merge_missing_from(&state.media);
+                    state.media = media;
                     self.project = state;
                     self.undo_stack = UndoStack::new();
                     self.selected_clips.clear();

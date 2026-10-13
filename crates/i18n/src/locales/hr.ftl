@@ -942,3 +942,12 @@ set-autosave-custom-value = Custom: { $v } min
 
 # --- Redak Custom u padajucem listi intervala (#49)
 set-autosave-custom-row = Custom: { $v } min
+
+# --- Template names for platform-specific starters (#62)
+tpl-intro-title = Intro title card
+tpl-lower-third = Lower third
+tpl-outro-subscribe = Outro subscribe card
+tpl-tiktok-vertical = TikTok / Reels / Shorts (9:16)
+tpl-instagram-feed = Instagram feed (4:5)
+tpl-youtube-horizontal = YouTube / landscape (16:9)
+tpl-square-post = Square post (1:1)

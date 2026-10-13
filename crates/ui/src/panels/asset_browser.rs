@@ -1256,7 +1256,7 @@ fn show_templates_tab(ui: &mut Ui, out: &mut AssetBrowserOutput) {
     ui.label(RichText::new(tr("asset-templates-bundled")).strong());
     for t in caprust_core::template::bundled_templates() {
         ui.horizontal(|ui| {
-            ui.label(t.display);
+            ui.label(tr(t.i18n_key));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button(tr("asset-templates-apply")).clicked() {
                     out.template_apply_requested = Some(TemplateRequest::Bundled(t.id));
