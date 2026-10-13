@@ -361,10 +361,8 @@ class MainActivity : android.app.Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f))
 
         // ---- log ----
-        root.addView(btn(getString(R.string.btn_toggle_log)) {
-            logView.visibility =
-                if (logView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        })
+        // Built here, attached in one place further down: a View has a
+        // single parent, so attaching it to both columns would throw.
         val logScroll = ScrollView(this)
         logView = TextView(this).apply {
             textSize = 10f
@@ -372,35 +370,49 @@ class MainActivity : android.app.Activity() {
             setTextIsSelectable(true)
         }
         logScroll.addView(logView)
-        root.addView(logScroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(140)))
 
         if (resources.configuration.orientation ==
             android.content.res.Configuration.ORIENTATION_PORTRAIT) {
+            root.addView(btn(getString(R.string.btn_toggle_log)) { toggleLog() })
+            root.addView(logScroll, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(140)))
             return root
         }
 
         // Landscape on a tablet was throwing away half the screen on a
-        // single column. Two columns: the list and the log side by
-        // side, with the log taking the room the list does not need.
+        // single column. Two columns: list on the left, selected clip
+        // and the log on the right.
+        //
+        // The log goes in exactly one place. A View has one parent, so
+        // adding it to both columns throws at inflate time.
         val wide = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         wide.addView(root, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         val side = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, 0, 0)
         }
-        side.addView(selectionView = selectedInfo(), lp = lp(1f))
-        side.addView(btn(getString(R.string.btn_toggle_log)) {
-            logView.visibility =
-                if (logView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        })
-        side.addView(logScroll, LinearLayout.LayoutParams(
-            0, 0, 1f))
+        side.addView(
+            selectedInfo(),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        side.addView(btn(getString(R.string.btn_toggle_log)) { toggleLog() })
+        side.addView(
+            logScroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        )
         wide.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         return wide
     }
 
-    private fun lp(weight: Float) = LinearLayout.LayoutParams(0, 0, weight)
+    private fun toggleLog() {
+        logView.visibility =
+            if (logView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+    }
 
     /** Detail panel for the selected clip. Only shown in landscape;
      *  portrait has no room and the bottom sheet carries this. */
