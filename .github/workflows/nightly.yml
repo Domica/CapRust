@@ -53,3 +53,30 @@ jobs:
           name: caprust-nightly-linux
           path: target/release/caprust-app
           retention-days: 14
+
+  build-android-apk:
+    name: Android remote APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # gradle from the runner image rather than a wrapper: the wrapper
+      # would mean committing a binary jar for a build that only needs
+      # assembleDebug. rust-toolchain.toml pins the Rust version, not
+      # Gradle, so nothing here is coupled to it.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        # Debug, not release: there is no signing config, and an
+        # unsigned release APK cannot be sideloaded anyway. Debug is
+        # signed with the default debug key, which is enough to install
+        # by tapping the file on the device.
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caprust-nightly-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

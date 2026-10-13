@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No AppCompat dependency, so the platform theme is the one to
+         use. DayNight keeps it readable in both modes without pulling
+         in a support library. -->
+    <style name="Theme.CapRustRemote" parent="@android:style/Theme.DeviceDefault.DayNight" />
+</resources>

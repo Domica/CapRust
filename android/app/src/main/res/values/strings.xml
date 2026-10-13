@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CapRust Remote</string>
+
+    <string name="lbl_host">Computer IP</string>
+    <string name="lbl_port">Port</string>
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_pair">Pair</string>
+    <string name="btn_refresh">Refresh</string>
+    <string name="btn_undo">Undo</string>
+    <string name="btn_redo">Redo</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_split">Split</string>
+    <string name="btn_toggle_log">Log</string>
+    <string name="lbl_pair_code">Pairing code</string>
+    <string name="hint_never">never paired</string>
+    <string name="title_clips">Clips</string>
+    <string name="no_clips">No clips</string>
+</resources>
