@@ -960,3 +960,13 @@ set-remote-port = Port
 set-remote-listen = Horcht auf
 toast-remote-on = Fernsteuerung hort
 toast-remote-failed = Fernsteuerung konnte nicht gestartet werden
+
+# --- Kopplung der Fernsteuerung (#64)
+set-remote-code = Diesen Code auf dem Geraet eingeben:
+set-remote-code-hint = 5 Minuten gueltig. Nur ein Versuch.
+set-remote-paired = Ein Geraet ist gekoppelt.
+set-remote-unpaired = Kein Geraet gekoppelt.
+set-remote-new-code = Neuer Code
+set-remote-revoke = Zugriff widerrufen
+toast-remote-paired = Geraet gekoppelt
+toast-remote-revoked = Fernzugriff widerrufen

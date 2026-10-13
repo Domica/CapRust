@@ -44,6 +44,25 @@ pub struct SettingsEvents {
     /// User clicked "Load theme" at the bottom of Appearance. app.rs
     /// opens a pick dialog and replaces the Theme from JSON.
     pub theme_import_requested: bool,
+    /// Mint a fresh pairing code for the remote-control token.
+    pub remote_pair_requested: bool,
+    /// Forget the token and kill every live remote session.
+    pub remote_revoke_requested: bool,
+}
+
+/// Transient status the settings panel renders but the app owns.
+///
+/// Both values have to outlive the frame they were set on, and neither
+/// is worth persisting: the applied interval is already in
+/// `AppSettings` and the pairing code expires on its own. Grouping them
+/// also keeps `show` from growing an argument per feature.
+#[derive(Default)]
+pub struct SettingsStatus {
+    /// Minutes last applied through the autosave custom spinner.
+    pub autosave_applied: Option<u64>,
+    /// Live remote-control pairing code. `None` when none has been
+    /// issued or the one that was has expired.
+    pub remote_pair_code: Option<String>,
 }
 
 pub fn show(
@@ -53,7 +72,7 @@ pub fn show(
     settings: &mut AppSettings,
     tab: &mut SettingsTab,
     ffmpeg_status: &mut FfmpegStatus,
-    autosave_applied: &mut Option<u64>,
+    status: &mut SettingsStatus,
 ) -> SettingsEvents {
     let mut ev = SettingsEvents {
         save: false,
@@ -63,6 +82,8 @@ pub fn show(
         import_requested: false,
         theme_export_requested: false,
         theme_import_requested: false,
+        remote_pair_requested: false,
+        remote_revoke_requested: false,
     };
 
     ui.horizontal(|ui| {
@@ -91,9 +112,15 @@ pub fn show(
             }
             SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
             SettingsTab::Language => show_language(ui, &mut settings.language),
-            SettingsTab::Paths => show_paths(ui, settings, ffmpeg_status, &mut ev),
+            SettingsTab::Paths => show_paths(
+                ui,
+                settings,
+                ffmpeg_status,
+                &mut ev,
+                status.remote_pair_code.as_deref(),
+            ),
             SettingsTab::Audio => show_audio(ui, settings),
-            SettingsTab::Autosave => show_autosave(ui, settings, autosave_applied),
+            SettingsTab::Autosave => show_autosave(ui, settings, &mut status.autosave_applied),
             SettingsTab::Translation => show_translation(ui, settings),
             SettingsTab::About => show_about(ui, settings),
         });
@@ -575,6 +602,7 @@ fn show_paths(
     settings: &mut AppSettings,
     status: &mut FfmpegStatus,
     ev: &mut SettingsEvents,
+    remote_pair_code: Option<&str>,
 ) {
     ui.label(egui::RichText::new(tr("set-paths-models")).strong());
     ui.horizontal(|ui| {
@@ -879,14 +907,19 @@ fn show_paths(
 
     ui.add_space(space::XL);
     ui.separator();
-    show_remote_control(ui, settings);
+    show_remote_control(ui, settings, ev, remote_pair_code);
 }
 
 /// Remote control: a phone driving this open session over MCP.
 ///
 /// Loopback only. Opening the port to the network is a separate,
 /// deliberate action because there is no authentication yet.
-fn show_remote_control(ui: &mut Ui, settings: &mut AppSettings) {
+fn show_remote_control(
+    ui: &mut Ui,
+    settings: &mut AppSettings,
+    ev: &mut SettingsEvents,
+    remote_pair_code: Option<&str>,
+) {
     ui.label(egui::RichText::new(tr("set-remote-header")).strong());
     ui.label(
         egui::RichText::new(tr("set-remote-hint"))
@@ -925,6 +958,43 @@ fn show_remote_control(ui: &mut Ui, settings: &mut AppSettings) {
                 .monospace()
                 .color(egui::Color32::from_gray(150)),
         );
+
+        ui.add_space(space::S);
+        if let Some(code) = remote_pair_code {
+            ui.label(
+                egui::RichText::new(format!("{} {code}", tr("set-remote-code")))
+                    .size(26.0)
+                    .monospace()
+                    .color(egui::Color32::from_rgb(255, 200, 80)),
+            );
+            ui.label(
+                egui::RichText::new(tr("set-remote-code-hint"))
+                    .small()
+                    .color(egui::Color32::from_gray(150)),
+            );
+        } else if settings.remote_control_token.is_some() {
+            ui.label(
+                egui::RichText::new(tr("set-remote-paired"))
+                    .small()
+                    .color(egui::Color32::from_rgb(120, 200, 140)),
+            );
+        } else {
+            ui.label(
+                egui::RichText::new(tr("set-remote-unpaired"))
+                    .small()
+                    .color(egui::Color32::from_gray(150)),
+            );
+        }
+
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            if button::secondary(ui, tr("set-remote-new-code")).clicked() {
+                ev.remote_pair_requested = true;
+            }
+            if button::secondary(ui, tr("set-remote-revoke")).clicked() {
+                ev.remote_revoke_requested = true;
+            }
+        });
     }
 }
 

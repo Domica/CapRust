@@ -960,3 +960,13 @@ set-remote-port = Port
 set-remote-listen = Listening on
 toast-remote-on = Remote control is listening
 toast-remote-failed = Remote control could not start
+
+# --- Remote control pairing (#64)
+set-remote-code = Type this code on the device:
+set-remote-code-hint = Valid for 5 minutes. One try only.
+set-remote-paired = A device is paired.
+set-remote-unpaired = No device paired yet.
+set-remote-new-code = New code
+set-remote-revoke = Revoke access
+toast-remote-paired = Device paired
+toast-remote-revoked = Remote access revoked

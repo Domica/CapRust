@@ -24,3 +24,5 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
+# Constant-time comparison for token checks.
+subtle = "2"

@@ -15,6 +15,7 @@
 //! }
 //! ```
 
+pub mod auth;
 pub mod remote;
 pub mod rpc;
 pub mod server;

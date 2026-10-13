@@ -55,6 +55,14 @@ impl RpcError {
             message: msg.into(),
         }
     }
+    /// Any code in the implementation-defined range, for errors the
+    /// standard set does not cover. Auth failures use this.
+    pub fn custom(code: i32, msg: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: msg.into(),
+        }
+    }
     pub fn method_not_found(m: &str) -> Self {
         Self {
             code: METHOD_NOT_FOUND,

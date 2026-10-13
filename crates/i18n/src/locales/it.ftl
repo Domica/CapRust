@@ -960,3 +960,13 @@ set-remote-port = Porta
 set-remote-listen = In ascolto su
 toast-remote-on = Il controllo remoto e in ascolto
 toast-remote-failed = Impossibile avviare il controllo remoto
+
+# --- Abbinamento del controllo remoto (#64)
+set-remote-code = Digita questo codice sul dispositivo:
+set-remote-code-hint = Valido per 5 minuti. Un solo tentativo.
+set-remote-paired = Un dispositivo e abbinato.
+set-remote-unpaired = Nessun dispositivo abbinato.
+set-remote-new-code = Nuovo codice
+set-remote-revoke = Revoca accesso
+toast-remote-paired = Dispositivo abbinato
+toast-remote-revoked = Accesso remoto revocato

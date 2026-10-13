@@ -141,6 +141,11 @@ pub struct AppSettings {
     /// a fixed, visible number.
     #[serde(default = "default_remote_control_port")]
     pub remote_control_port: u16,
+    /// Persistent token a paired device presents. Held here so a
+    /// restart does not force the user to pair again. `None` means
+    /// nobody has ever paired.
+    #[serde(default)]
+    pub remote_control_token: Option<String>,
     /// When true, opening a project that has a newer recovery snapshot
     /// prompts to restore the unsaved session.
     #[serde(default = "default_true")]
@@ -208,6 +213,7 @@ impl Default for AppSettings {
             autosave_custom: false,
             remote_control_enabled: false,
             remote_control_port: default_remote_control_port(),
+            remote_control_token: None,
             autosave_recovery: true,
         }
     }

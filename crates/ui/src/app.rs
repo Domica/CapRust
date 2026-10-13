@@ -277,7 +277,10 @@ pub struct CapRustApp {
     /// Minutes the user last applied through the Autosave tab's custom
     /// spinner. Owned here so the confirmation can outlive the frame
     /// the button was clicked on. Cleared when the dialog closes.
-    pub autosave_applied: Option<u64>,
+    /// Transient settings-panel state the app owns: the applied autosave
+    /// interval and the live remote-control pairing code. Neither is
+    /// persisted; both have to outlive the frame they were set on.
+    pub settings_status: crate::panels::settings_dialog::SettingsStatus,
     /// Hash of the last settings snapshot written to the sync folder.
     /// Guards against redundant writes when eframe calls save()
     /// repeatedly with identical state.
@@ -338,6 +341,9 @@ pub struct CapRustApp {
     /// Requests handled since the last drain, for the status line.
     /// Surfaced rather than just logged so a silent failure is visible.
     pub remote_last_batch: usize,
+    /// Live pairing code, `None` when none has been issued or it has
+    /// expired. Not persisted; the token it produces is.
+
     #[cfg(windows)]
     pub screen_record: crate::panels::screen_record::ScreenRecordState,
     #[cfg(windows)]
@@ -739,7 +745,7 @@ impl CapRustApp {
             ffmpeg_prompt_checked: false,
             settings_sync_prompt: None,
             settings_sync_prompt_checked: false,
-            autosave_applied: None,
+            settings_status: Default::default(),
             last_sync_hash: None,
             last_applied_font_family: None,
             relink_dialog: Default::default(),
@@ -1016,6 +1022,13 @@ impl CapRustApp {
         // than on the toggle click so a settings change that arrives any
         // other way (settings file, sync, undo) still takes effect.
         let want = self.settings.remote_control_enabled;
+
+        // Adopt the persisted token so a restart does not force the
+        // user to pair again. `set_token` refuses to clobber a token
+        // that is already live, so this is safe every frame.
+        self.mcp_server
+            .load_token(self.settings.remote_control_token.clone());
+
         match (&self.remote_bridge, want) {
             (None, true) => match caprust_mcp_core::remote::RemoteBridge::spawn(
                 "127.0.0.1",
@@ -1078,6 +1091,26 @@ impl CapRustApp {
             },
         );
         self.remote_last_batch = handled;
+
+        // A successful `auth` mints a new token inside the server.
+        // Persist it here, otherwise the phone would be paired only
+        // until the next restart.
+        let live_token = self.mcp_server.token().map(str::to_string);
+        if live_token.is_some() && live_token != self.settings.remote_control_token {
+            tracing::info!("remote control: device paired, token stored");
+            self.settings.remote_control_token = live_token;
+            self.settings_status.remote_pair_code = None;
+            self.toast(tr("toast-remote-paired"));
+        }
+
+        // Stop showing a code that has expired, rather than leaving a
+        // dead one on screen.
+        if self.settings_status.remote_pair_code.is_some()
+            && self.mcp_server.auth_mut().active_code().is_none()
+        {
+            self.settings_status.remote_pair_code = None;
+        }
+
         if handled == 0 {
             return;
         }
@@ -1095,6 +1128,30 @@ impl CapRustApp {
                 before - self.selected_clips.len()
             );
         }
+    }
+
+    /// Mint a pairing code for the remote-control token. The code is shown
+    /// in Settings and expires on its own; the token it turns into is what
+    /// gets stored.
+    fn start_remote_pairing(&mut self) {
+        let code = self.mcp_server.auth_mut().begin_pairing();
+        self.settings_status.remote_pair_code = Some(code);
+        tracing::info!("remote control: pairing code issued");
+    }
+
+    /// Forget the token and end every live remote session. This is the
+    /// "something is wrong" button, so it has to be immediate and it must
+    /// not wait for the socket to drain.
+    fn revoke_remote_access(&mut self) {
+        self.mcp_server.auth_mut().revoke_all();
+        self.settings.remote_control_token = None;
+        self.settings_status.remote_pair_code = None;
+        // Dropping the bridge closes the port too, so a paired device
+        // cannot reconnect with a token it remembers.
+        self.remote_bridge = None;
+        self.settings.remote_control_enabled = false;
+        self.toast(tr("toast-remote-revoked"));
+        tracing::info!("remote control: access revoked, listener closed");
     }
 
     fn offer_recovery(&mut self, project_file: &std::path::Path, loaded_hash: u64) {
@@ -10682,8 +10739,14 @@ impl CapRustApp {
                     &mut self.settings,
                     &mut self.settings_tab,
                     &mut self.ffmpeg_status,
-                    &mut self.autosave_applied,
+                    &mut self.settings_status,
                 );
+                if ev.remote_pair_requested {
+                    self.start_remote_pairing();
+                }
+                if ev.remote_revoke_requested {
+                    self.revoke_remote_access();
+                }
                 if let Some(id) = ev.download_requested.clone() {
                     self.start_model_download(&id);
                 }
@@ -10707,11 +10770,11 @@ impl CapRustApp {
                         egui::UserAttentionType::Informational,
                     ));
                     self.settings_open = false;
-                    self.autosave_applied = None;
+                    self.settings_status.autosave_applied = None;
                 }
                 if ev.close {
                     self.settings_open = false;
-                    self.autosave_applied = None;
+                    self.settings_status.autosave_applied = None;
                 }
             });
         self.settings_open = open;

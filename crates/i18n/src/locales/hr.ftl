@@ -960,3 +960,13 @@ set-remote-port = Port
 set-remote-listen = Sluša na
 toast-remote-on = Udaljinsko upravljanje sluša
 toast-remote-failed = Udaljinsko upravljanje se nije moglo pokrenuti
+
+# --- Uparenje udaljinskog upravljanja (#64)
+set-remote-code = U ovaj kod upremite na uredaj:
+set-remote-code-hint = Vrijedi 5 minuta. Samo jedan pokusaj.
+set-remote-paired = Uredaj je uparen.
+set-remote-unpaired = Niti jedan uredaj nije uparen.
+set-remote-new-code = Novi kod
+set-remote-revoke = Opozovi pristup
+toast-remote-paired = Uredaj uparen
+toast-remote-revoked = Udaljinski pristup opozvan
