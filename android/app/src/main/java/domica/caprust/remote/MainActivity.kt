@@ -27,19 +27,32 @@ import java.util.concurrent.Executors
  * same shape the desktop MCP server uses over stdio. That is why this
  * app needs no dependency: org.json ships with Android.
  *
- * Every network call runs on one background thread. Responses come back
- * to the main thread through [post], because touching a View from the
- * socket thread throws.
+ * Request/response runs on one serial thread, which is what keeps
+ * replies matched to their requests.
+ *
+ * Connection setup deliberately does NOT run there. A screen-off
+ * leaves a read blocked waiting for a reply that will never arrive, and
+ * on a shared serial executor that stalls every queued Connect behind
+ * it -- the button appears to do nothing. Connect gets its own thread
+ * so it can close the socket and unblock the stuck read.
+ *
+ * `generation` fences the two. A reply from a socket that has since
+ * been replaced is dropped rather than delivered to whichever call
+ * happens to be waiting now.
  */
 class Client(private val ctx: Context) {
 
     private val io = Executors.newSingleThreadExecutor()
+    private val net = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
     private var socket: Socket? = null
     private var writer: BufferedWriter? = null
     private var reader: BufferedReader? = null
     private var nextId = 1
+
+    @Volatile
+    private var generation = 0
 
     /** Token from a completed pairing. Persisted so a reconnect does not
      *  need the six-digit code again. */
@@ -68,7 +81,10 @@ class Client(private val ctx: Context) {
     /** Open the socket. Returns once the TCP connection is up; the
      *  handshake is a separate [call] so a wrong code reports itself
      *  rather than looking like a network failure. */
-    fun connect(host: String, port: Int, then: (Boolean, String) -> Unit) = io.execute {
+    fun connect(host: String, port: Int, then: (Boolean, String) -> Unit) = net.execute {
+        // Bump first: any reply still in flight on the old socket is
+        // now stale and will be discarded when it arrives.
+        val gen = ++generation
         try {
             closeQuietly()
             val s = Socket()
@@ -76,6 +92,11 @@ class Client(private val ctx: Context) {
             // seconds rather than hanging the button forever.
             s.connect(InetSocketAddress(host, port), 4000)
             s.soTimeout = 8000
+            if (gen != generation) {
+                // A newer connect won the race while we were dialling.
+                s.close()
+                return@execute
+            }
             socket = s
             writer = BufferedWriter(OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8))
             reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
@@ -143,6 +164,10 @@ class Client(private val ctx: Context) {
      *  method that is not a tool call. */
     private fun raw(method: String, params: JSONObject, done: (Boolean, JSONObject, String) -> Unit) =
         io.execute {
+            // Captured before the send: if the socket is replaced while
+            // this is waiting, the reply belongs to a connection nobody
+            // is using any more.
+            val gen = generation
             try {
                 val w = writer ?: throw IllegalStateException("not connected")
                 val r = reader ?: throw IllegalStateException("not connected")
@@ -157,6 +182,10 @@ class Client(private val ctx: Context) {
                 note("> $req")
                 val line = r.readLine() ?: throw IllegalStateException("connection closed")
                 note("< $line")
+                if (gen != generation) {
+                    note("~ reply dropped: connection was replaced")
+                    return@execute
+                }
                 val v = JSONObject(line)
                 if (v.has("error")) {
                     val e = v.getJSONObject("error")
@@ -167,11 +196,13 @@ class Client(private val ctx: Context) {
             } catch (e: Exception) {
                 val why = e.message ?: e.javaClass.simpleName
                 note("! $why")
+                if (gen != generation) return@execute
                 done(false, JSONObject(), why)
             }
         }
 
-    fun disconnect() = io.execute {
+    fun disconnect() = net.execute {
+        generation++
         closeQuietly()
         post { onEvent?.invoke("-- disconnected") }
     }
