@@ -210,12 +210,45 @@ class MainActivity : android.app.Activity() {
     private var selectedClip: String? = null
     private var connected = false
 
+    /**
+     * Whether the user wants the link up.
+     *
+     * Persisted, not just a field: Android may destroy and recreate
+     * the activity while the screen is off, which leaves a fresh
+     * instance with no socket and an empty clip list. Reading this back
+     * on resume is what reconnects instead of stranding the user on a
+     * blank screen.
+     */
+    private var wanted: Boolean
+        get() = getSharedPreferences("caprust", MODE_PRIVATE).getBoolean("wanted", false)
+        set(v) = getSharedPreferences("caprust", MODE_PRIVATE).edit().putBoolean("wanted", v).apply()
+
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         client = Client(this).also { it.loadToken() }
         client.onEvent = { renderLog() }
         setContentView(build())
         refresh()
+    }
+
+    /**
+     * Re-establish the socket when coming back to the foreground.
+     *
+     * Screen off tears the connection down; without this the app comes
+     * back looking connected while every later call fails on a dead
+     * socket.
+     */
+    override fun onResume() {
+        super.onResume()
+        if (connected || !wanted) return
+        val host = sharedPrefsHost()
+        if (host.isEmpty()) return
+        status.text = "Reconnecting to $host ..."
+        client.connect(host, sharedPrefsPort().toIntOrNull() ?: 4711) { ok, err ->
+            connected = ok
+            status.text = if (ok) "Connected to $host" else "Reconnect failed: $err"
+            if (ok) refresh()
+        }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -340,6 +373,10 @@ class MainActivity : android.app.Activity() {
         status.text = "Connecting to $host:$port ..."
         client.connect(host, port) { ok, err ->
             connected = ok
+            // Remembered separately from `connected`: this is the
+            // user's intent, and a failed attempt should still be
+            // retried on the next resume.
+            wanted = true
             if (!ok) {
                 status.text = "Failed: $err"
             } else {
@@ -370,6 +407,8 @@ class MainActivity : android.app.Activity() {
     private fun doDisconnect() {
         client.disconnect()
         connected = false
+        // Explicit disconnect, so stop reconnecting behind their back.
+        wanted = false
         status.text = "Disconnected"
         clipList.removeAllViews()
     }
@@ -377,10 +416,20 @@ class MainActivity : android.app.Activity() {
     /** Pull the summary and the clip list. Both are read-only, so a
      *  token-less client fails here rather than looking like a crash. */
     private fun refresh() {
-        if (!connected) return
+        if (!connected) {
+            // Without this the screen comes back from sleep completely
+            // blank, with nothing to say why.
+            if (!clipList.hasViews()) {
+                clipList.removeAllViews()
+                val note = TextView(this)
+                note.text = if (wanted) "Reconnecting ..." else "Tap Connect to reach CapRust"
+                clipList.addView(note)
+            }
+            return
+        }
         client.call("get_project_summary") { ok, text ->
             if (!ok) {
-                status.text = text
+                runOnUiThread { onCallFailed(text) }
                 return@call
             }
             runOnUiThread { status.text = summarise(text) }
@@ -391,6 +440,25 @@ class MainActivity : android.app.Activity() {
                 return@call
             }
             runOnUiThread { renderClips(text) }
+        }
+    }
+
+    /**
+ * A call failed.
+ *
+ * A dead socket is the common case -- screen off, Wi-Fi roam, sleep --
+ * and it reads as a mysterious tool error otherwise. Mark the link
+ * down so the next resume reconnects, and say which it was.
+ */
+    private fun onCallFailed(message: String) {
+        val linkDown = message.contains("not connected", true) ||
+            message.contains("connection", true) ||
+            message.contains("closed", true)
+        if (linkDown) {
+            connected = false
+            status.text = "Connection lost. It will reconnect when you return."
+        } else {
+            status.text = message
         }
     }
 
