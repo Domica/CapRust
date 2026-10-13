@@ -88,10 +88,10 @@ class TimelineView(context: Context) : View(context) {
         blockIds.clear()
 
         val rows = trackCount()
-        val usable = width - labelWidth
+        val usable = (width - labelWidth).coerceAtLeast(1f)
         // Seconds per pixel, so a 30s project and a 10-minute one both
         // fit the screen. Reading the shape never requires zooming.
-        val msPerPx = totalMs.toFloat() / usable.coerceAtLeast(1).toFloat()
+        val msPerPx = totalMs / usable
 
         // Horizontal grid every second, labelled every ten.
         val stepMs = if (msPerPx * 1000f < 40f) 10_000L else 1_000L

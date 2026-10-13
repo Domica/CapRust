@@ -335,10 +335,17 @@ class MainActivity : android.app.Activity() {
                 else -> R.style.Theme_CapRustRemote_Light
             }
         }
-        if (theme == id) return
+        // Activity.getTheme() returns a Resources.Theme, not the id we
+        // set, so the already-applied id is tracked here instead.
+        if (appliedThemeId == id) return
+        appliedThemeId = id
         setTheme(id)
         if (apply) recreate()
     }
+
+    /** Resource id currently set via [applyTheme], or 0 before the first
+     *  call. Guards against a redundant recreate. */
+    private var appliedThemeId = 0
 
     /** Cycle light -> dark -> system. One button instead of a settings
      *  dialog: three options do not need a list. */
@@ -877,7 +884,10 @@ class MainActivity : android.app.Activity() {
                     else -> R.string.btn_transitions
                 }
             ))
-            .setItems(ids.toTypedArray()) { _, which ->
+            // setItems takes Array<out CharSequence>, and Kotlin's Array is
+            // invariant, so a plain toTypedArray() on List<String> does
+            // not satisfy it.
+            .setItems(ids.toTypedArray<CharSequence>()) { _, which ->
                 applyPreset(clipId, kind, ids[which])
             }
             .setNegativeButton(android.R.string.cancel, null)
