@@ -234,13 +234,18 @@ class MainActivity : android.app.Activity() {
     /**
      * Re-establish the socket when coming back to the foreground.
      *
-     * Screen off tears the connection down; without this the app comes
-     * back looking connected while every later call fails on a dead
-     * socket.
+     * Screen off tears the connection down. It does it silently: no call
+     * happens while the app is asleep, so nothing notices and
+     * `connected` is still true on resume. Guarding on that flag meant
+     * the app came back looking alive and did nothing, which is why
+     * Connect still had to be pressed. Checking `wanted` alone is the
+     * only correct test -- the only way to know a socket survived
+     * sleep is to reopen it, and a wasted reconnect to a healthy
+     * server costs milliseconds.
      */
     override fun onResume() {
         super.onResume()
-        if (connected || !wanted) return
+        if (!wanted) return
         val host = sharedPrefsHost()
         if (host.isEmpty()) return
         status.text = "Reconnecting to $host ..."
