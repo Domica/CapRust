@@ -780,7 +780,8 @@ class MainActivity : android.app.Activity() {
                 list.removeAllViews()
                 if (!ok) {
                     say(text)
-                    list.addView(TextView(this@MainActivity).apply { text = text })
+                    val message = text
+                    list.addView(TextView(this@MainActivity).apply { text = message })
                     return@runOnUiThread
                 }
                 val arr = try {
