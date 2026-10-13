@@ -243,9 +243,33 @@ class MainActivity : android.app.Activity() {
     /** Detail panel for the selected clip, landscape only. */
     private var selectedView: TextView? = null
 
+    /** Drawn timeline map. */
+    private lateinit var timeline: TimelineView
+
+    /**
+     * Whether the raw traffic log is shown.
+     *
+     * A setting, not a preference: on a small phone the log eats a
+     * quarter of the screen for something only useful when something is
+     * wrong. Defaults on, because the log is the only diagnostic
+     * without adb.
+     */
+    private var logOn: Boolean
+        get() = getSharedPreferences("caprust", MODE_PRIVATE)
+            .getBoolean("logOn", true)
+        set(v) = getSharedPreferences("caprust", MODE_PRIVATE)
+            .edit().putBoolean("logOn", v).apply()
+
     /** Cached clip fields for the selected row, so the sheet and the
      *  detail panel do not have to re-query. */
     private val clipInfo = HashMap<String, JSONObject>()
+
+    /** Label of the log toggle button; its text reflects the action. */
+    private lateinit var logToggleLabel: Button
+
+    /** Project duration from the last summary, so the timeline can
+     *  scale to fit. Cached because the clip list arrives separately. */
+    private var lastDurationMs: Long = 1
 
     /** Clip id -> display name, rebuilt on every refresh. */
     private val clipNames = LinkedHashMap<String, String>()
@@ -377,6 +401,23 @@ class MainActivity : android.app.Activity() {
         root.addView(timeRow)
 
         root.addView(TextView(this).apply {
+            text = getString(R.string.title_timeline)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, 0)
+        })
+
+        timeline = TimelineView(this).apply {
+            onPick = { id ->
+                selectedClip = id
+                timeline.setSelected(id)
+                selectedView?.text = clipInfo[id]?.let { describe(id, it) } ?: ""
+                showClipSheet()
+            }
+        }
+        root.addView(timeline, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(150)))
+
+        root.addView(TextView(this).apply {
             text = getString(R.string.title_clips)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setPadding(0, dp(8), 0, 0)
@@ -401,12 +442,14 @@ class MainActivity : android.app.Activity() {
             setTextIsSelectable(true)
         }
         logScroll.addView(logView)
+        logView.visibility = if (logOn) View.VISIBLE else View.GONE
 
         if (resources.configuration.orientation ==
             android.content.res.Configuration.ORIENTATION_PORTRAIT) {
-            root.addView(btn(getString(R.string.btn_toggle_log)) { toggleLog() })
+            root.addView(logToggle())
             root.addView(logScroll, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(140)))
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                if (logOn) dp(140) else dp(1)))
             return root
         }
 
@@ -429,7 +472,7 @@ class MainActivity : android.app.Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
-        side.addView(btn(getString(R.string.btn_toggle_log)) { toggleLog() })
+        side.addView(logToggle())
         side.addView(
             logScroll,
             LinearLayout.LayoutParams(
@@ -440,9 +483,18 @@ class MainActivity : android.app.Activity() {
         return wide
     }
 
+    private fun logToggle() = btn("").also { b ->
+        logToggleLabel = b
+        b.text = if (logOn) getString(R.string.btn_hide_log) else getString(R.string.btn_show_log)
+        b.setOnClickListener { toggleLog() }
+    }
+
     private fun toggleLog() {
-        logView.visibility =
-            if (logView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        logOn = !logOn
+        logView.visibility = if (logOn) View.VISIBLE else View.GONE
+        // Keep capturing either way: a hidden log is still the
+        // diagnostic when the user goes looking for it.
+        logToggleLabel.text = if (logOn) "Hide log" else "Show log"
     }
 
     /** Detail panel for the selected clip. Only shown in landscape;
@@ -543,6 +595,9 @@ class MainActivity : android.app.Activity() {
                 runOnUiThread { onCallFailed(text) }
                 return@call
             }
+            lastDurationMs = runCatching {
+                JSONObject(text).optLong("total_duration_ms", 1L)
+            }.getOrDefault(1L)
             runOnUiThread { status.text = summarise(text) }
         }
         client.call("list_clips") { ok, text ->
@@ -595,6 +650,7 @@ class MainActivity : android.app.Activity() {
     private fun renderClips(text: String) {
         clipList.removeAllViews()
         clipNames.clear()
+        clipInfo.clear()
         val arr = try {
             org.json.JSONArray(text)
         } catch (_: Exception) {
@@ -603,8 +659,13 @@ class MainActivity : android.app.Activity() {
             val fallback = TextView(this)
             fallback.text = text.take(200)
             clipList.addView(fallback)
+            timeline.setClips(org.json.JSONArray(), 1)
             return
         }
+        // Feed the drawn map from the same array the list uses, so the
+        // two can never disagree about what is on the timeline.
+        timeline.setClips(arr, lastDurationMs)
+        timeline.setSelected(selectedClip)
         if (arr.length() == 0) {
             val empty = TextView(this)
             empty.setText(getString(R.string.no_clips))

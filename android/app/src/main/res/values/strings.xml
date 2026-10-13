@@ -16,6 +16,10 @@
     <string name="lbl_pair_code">Pairing code</string>
     <string name="hint_never">never paired</string>
     <string name="title_clips">Clips</string>
+    <string name="title_timeline">Timeline</string>
+    <string name="tl_empty">No clips on the timeline</string>
+    <string name="btn_show_log">Show log</string>
+    <string name="btn_hide_log">Hide log</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->
