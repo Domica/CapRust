@@ -419,7 +419,9 @@ class MainActivity : android.app.Activity() {
         if (!connected) {
             // Without this the screen comes back from sleep completely
             // blank, with nothing to say why.
-            if (!clipList.hasViews()) {
+            // childCount, not hasViews(): the latter is an androidx
+            // KTX extension and this app has no androidx dependency.
+            if (clipList.childCount == 0) {
                 clipList.removeAllViews()
                 val note = TextView(this)
                 note.text = if (wanted) "Reconnecting ..." else "Tap Connect to reach CapRust"
