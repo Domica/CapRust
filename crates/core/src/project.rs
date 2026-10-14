@@ -146,6 +146,7 @@ impl ProjectState {
             // each clip, not a value already moved by an earlier
             // iteration on this track (which would compound shifts
             // across a chain).
+            #[allow(unused)]
             let original_start: Vec<u64> = self.clips.iter().map(|c| c.start_time_ms).collect();
 
             // Pass 2a: the first clip on a track has no predecessor.
@@ -176,14 +177,32 @@ impl ProjectState {
                     continue;
                 }
 
-                let prev_end = self.clips[prev_i].start_time_ms + self.clips[prev_i].duration_ms;
-                // Where would the clip sit without any shift?
-                let unshifted_start = original_start[cur_i];
+                let prev_start = self.clips[prev_i].start_time_ms;
+                let prev_end = prev_start + self.clips[prev_i].duration_ms;
+                let cur_start = self.clips[cur_i].start_time_ms;
 
-                let touches = prev_end <= unshifted_start
-                    && unshifted_start.saturating_sub(prev_end) <= ADJACENCY_TOL_MS;
+                // An xfade clip must OVERLAP its predecessor -- that is
+                // the whole point of it, and once the shift has been
+                // applied (which is the normal state of any project
+                // saved after a transition was set) `cur_start` sits
+                // *before* `prev_end`, not after it.
+                //
+                // The old test here was `prev_end <= unshifted_start`,
+                // which only ever held for the pre-migration state where
+                // the clips were butt-joined and no shift was recorded.
+                // Any project saved after the user arranged a
+                // transition failed that test on reload, so the
+                // transition was cleared and the overlap thrown away --
+                // the clips sprang back apart exactly as the user
+                // described.
+                //
+                // So: adjacent means touching OR overlapping, and not
+                // nested so far inside the predecessor that the fade has
+                // nothing to cross.
+                let overlaps_or_touches = cur_start >= prev_start.saturating_sub(ADJACENCY_TOL_MS)
+                    && cur_start <= prev_end.saturating_add(ADJACENCY_TOL_MS);
 
-                if !touches {
+                if !overlaps_or_touches {
                     self.clips[cur_i].transition_in = None;
                     self.clips[cur_i].applied_xfade_shift_ms = 0;
                     continue;
@@ -199,8 +218,17 @@ impl ProjectState {
                     .max(0.05);
                 let target_shift = (d * 1000.0).round() as u64;
 
-                // Desired final position = original - target shift.
-                let desired_start = original_start[cur_i].saturating_sub(target_shift);
+                // Where the clip belongs: sitting back from the end of its predecessor
+                // by exactly the transition length. Anchoring to
+                // `prev_end` rather than to the clip's own recorded start
+                // is what makes this pass idempotent. The old version
+                // subtracted the shift from `original_start`, which
+                // already had the shift baked in, so every reload moved
+                // the clip a little further left -- and since the
+                // predecessor was indexed by `sorted`, which was built
+                // from the already-shifted positions, a chain crept
+                // further on every open.
+                let desired_start = prev_end.saturating_sub(target_shift);
                 let shift_needed = self.clips[cur_i].start_time_ms as i64 - desired_start as i64;
 
                 if shift_needed != 0 {
@@ -984,6 +1012,8 @@ impl Default for ExportSettings {
 #[cfg(test)]
 mod normalize_xfade_tests {
     use crate::clip::Clip;
+    use crate::commands::set_effect::SetTransitionCommand;
+    use crate::commands::Command;
     use crate::project::ProjectState;
 
     /// Clip with an xfade transition_in and a touching predecessor
@@ -1007,7 +1037,24 @@ mod normalize_xfade_tests {
 
         assert_eq!(s.clips[1].start_time_ms, 7500, "b shifted left by 500 ms");
         assert_eq!(s.clips[1].applied_xfade_shift_ms, 500);
-        assert_eq!(s.clips[2].start_time_ms, 15500, "c followed b");
+        assert_eq!(s.clips[1].transition_in.as_deref(), Some("fade"));
+
+        // b now ends at 15500, so c sits at 15000 and overlaps b by its
+        // own 500 ms.
+        //
+        // This used to assert 15500, which was the bug rather than the
+        // intent: c had only followed b's shift instead of taking its
+        // own, and the old adjacency test then cleared c's transition
+        // outright (it read as "not touching"). A third of a chain was
+        // silently losing its fade on every project load. Asserted here
+        // explicitly so the regression cannot come back quietly.
+        assert_eq!(s.clips[2].start_time_ms, 15000, "c overlaps b by 500 ms");
+        assert_eq!(s.clips[2].applied_xfade_shift_ms, 500);
+        assert_eq!(
+            s.clips[2].transition_in.as_deref(),
+            Some("fade"),
+            "every link in the chain keeps its own transition"
+        );
     }
 
     /// Clip with xfade but no touching predecessor gets the transition
@@ -1055,6 +1102,109 @@ mod normalize_xfade_tests {
         s.normalize_xfade_shifts();
         let second: Vec<u64> = s.clips.iter().map(|c| c.start_time_ms).collect();
         assert_eq!(first, second);
+    }
+
+    /// The user's actual report: apply a transition, it overlaps
+    /// correctly on screen, save, quit, reopen — and the transition is
+    /// gone and the clips sit butt-joined again.
+    ///
+    /// Goes through the real command and a real JSON round trip, because
+    /// the failure is not in the command (the shift is applied and looks
+    /// right) but in what survives serialisation. `diag_bl` is the id the
+    /// user named.
+    #[test]
+    fn applied_transition_survives_save_and_reload() {
+        let mut s = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let b = Clip::new_video("b.mp4", 0, 8000, 8000);
+        let c = Clip::new_video("c.mp4", 0, 16000, 8000);
+        let b_id = b.id;
+        s.clips.push(a);
+        s.clips.push(b);
+        s.clips.push(c);
+
+        let mut cmd = SetTransitionCommand::new(b_id, true, Some("diag_bl".into()));
+        cmd.execute(&mut s).expect("apply transition");
+
+        // What the user sees right after applying: b pulled left so it
+        // overlaps a, and the marker records how far.
+        assert!(s.clips[1].start_time_ms < 8000, "b should overlap a");
+        let shifted_start = s.clips[1].start_time_ms;
+        let recorded = s.clips[1].applied_xfade_shift_ms;
+        assert_eq!(recorded, 8000 - shifted_start, "marker matches the move");
+
+        // Save and reopen, exactly as the app does it.
+        let json = serde_json::to_string(&s).expect("serialize");
+        let mut loaded: ProjectState = serde_json::from_str(&json).expect("deserialize");
+        loaded.normalize_xfade_shifts();
+
+        assert_eq!(
+            loaded.clips[1].transition_in.as_deref(),
+            Some("diag_bl"),
+            "the transition must survive a reload"
+        );
+        assert_eq!(
+            loaded.clips[1].start_time_ms, shifted_start,
+            "and the overlap must be the same one the user arranged"
+        );
+        assert_eq!(loaded.clips[1].applied_xfade_shift_ms, recorded);
+        // The follower was shifted with b and must stay with it, or the
+        // gap opens up at the tail.
+        assert_eq!(loaded.clips[2].start_time_ms, 16000 - recorded);
+    }
+
+    /// Reopening the same project must not move anything. This is the
+    /// half of the bug that a single save/load assertion would miss: the
+    /// old `desired_start` subtracted the shift from a position that
+    /// already had the shift in it, so each open crept the clips further
+    /// left. One round trip can look right; five cannot.
+    #[test]
+    fn repeated_reloads_do_not_creep() {
+        let mut s = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let b = Clip::new_video("b.mp4", 0, 8000, 8000);
+        let c = Clip::new_video("c.mp4", 0, 16000, 8000);
+        let b_id = b.id;
+        let c_id = c.id;
+        s.clips.push(a);
+        s.clips.push(b);
+        s.clips.push(c);
+
+        SetTransitionCommand::new(b_id, true, Some("diag_bl".into()))
+            .execute(&mut s)
+            .expect("apply b");
+
+        let mut positions = Vec::new();
+        for round in 0..5 {
+            let json = serde_json::to_string(&s).expect("serialize");
+            let mut loaded: ProjectState = serde_json::from_str(&json).expect("deserialize");
+            loaded.normalize_xfade_shifts();
+
+            let got: Vec<(u64, Option<String>, u64)> = loaded
+                .clips
+                .iter()
+                .map(|c| {
+                    (
+                        c.start_time_ms,
+                        c.transition_in.clone(),
+                        c.applied_xfade_shift_ms,
+                    )
+                })
+                .collect();
+            positions.push(got);
+
+            // Carry the loaded state forward so the next round re-saves
+            // exactly what a user's file would contain.
+            s = loaded;
+            let _ = round;
+        }
+
+        for (i, w) in positions.windows(2).enumerate() {
+            assert_eq!(w[0], w[1], "round {} moved the timeline", i + 1);
+        }
+        let final_state = positions.last().unwrap();
+        assert_eq!(final_state[1].1.as_deref(), Some("diag_bl"));
+        let _ = c_id;
     }
 
     /// Cross-track independence: a clip with an xfade whose predecessor
