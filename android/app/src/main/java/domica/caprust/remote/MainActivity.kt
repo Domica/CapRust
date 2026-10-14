@@ -302,7 +302,7 @@ class MainActivity : android.app.Activity() {
      * An enum rather than an int or a string so a `when` over it is
      * checked for exhaustiveness and a typo is a compile error.
      */
-    private enum class Screen { Connect, Project, Projects, Log, Settings, Connections }
+    private enum class Screen { Connect, Home, Project, Projects, Log, Settings, Connections }
 
     /**
      * Tools this app needs from a CapRust instance.
@@ -444,6 +444,7 @@ class MainActivity : android.app.Activity() {
         setContentView(
             when (screen) {
                 Screen.Connect -> buildConnect()
+                Screen.Home -> buildHome()
                 Screen.Project -> buildProject()
                 Screen.Projects -> buildProjects()
                 Screen.Log -> buildLog()
@@ -478,8 +479,7 @@ class MainActivity : android.app.Activity() {
      * list they expected, went back, and landed on a connection form
      * they had already filled in.
      */
-    private fun back(): Screen = if (connected || wanted) Screen.Project else Screen.Connect
-
+    private fun back(): Screen = if (connected || wanted) Screen.Home else Screen.Connect
     /**
      * Set the status line, if a screen showing one is attached.
      *
@@ -522,10 +522,10 @@ class MainActivity : android.app.Activity() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(0, dp(4), 0, dp(4))
         }
-        // Project is the root of a live session, so it carries no Back --
-        // an arrow there that navigates to the screen you are already
-        // on reads as a dead button, which is exactly what it was.
-        if (current != Screen.Connect && current != Screen.Project) {
+        // Home is the root of a live session, so it carries no Back -- an
+        // arrow there that navigates to the screen you are already on
+        // reads as a dead button, which is exactly what it was.
+        if (current != Screen.Connect && current != Screen.Home) {
             row.addView(btn(getString(R.string.btn_back)) { show(back()) })
         }
         row.addView(TextView(this).apply {
@@ -845,6 +845,7 @@ class MainActivity : android.app.Activity() {
 
         root.addView(header(
             projectTitle(),
+            btn(getString(R.string.btn_home)) { show(Screen.Home) },
             btn(getString(R.string.btn_open)) { show(Screen.Projects) },
             btn(getString(R.string.btn_log)) { show(Screen.Log) },
             btn(getString(R.string.btn_settings)) { show(Screen.Settings) },
@@ -1114,6 +1115,109 @@ class MainActivity : android.app.Activity() {
                 }
             }
         }
+    }
+
+    /**
+     * Screen 2: what you can do once the link is up.
+     *
+     * Connecting used to land on the editor, which showed a preview of
+     * a project that might not be open at all -- an empty frame, a
+     * transport that does nothing, a clip list with nothing in it. A
+     * link is not a session, and the screen after connecting should
+     * say what is possible rather than show the result of a choice
+     * that has not been made yet.
+     *
+     * The menu is vertical because it is three items and the whole
+     * screen. A row of three on a phone puts them at thumb reach in
+     * the least useful place.
+     */
+    private fun buildHome(): View {
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val col = column()
+        col.addView(logo())
+        col.addView(
+            TextView(this).apply {
+                text = pendingStatus
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setPadding(0, dp(6), 0, dp(10))
+            }
+        )
+
+        // A card per entry, label plus a line saying where it leads.
+        // Three unexplained buttons are a form with worse labels.
+        col.addView(homeRow(R.string.btn_open, R.string.home_open_hint) {
+            show(Screen.Projects)
+        })
+        col.addView(homeRow(R.string.btn_settings, R.string.home_settings_hint) {
+            show(Screen.Settings)
+        })
+        if (logOn) {
+            // Open by default when the setting says so, which is the
+            // entire reason the setting exists.
+            col.addView(sectionTitle(getString(R.string.title_log)))
+            val logScroll = ScrollView(this)
+            logView = TextView(this).apply {
+                textSize = 10f
+                setTypeface(android.graphics.Typeface.MONOSPACE)
+                setTextIsSelectable(true)
+                renderLogInto(this)
+            }
+            logScroll.addView(logView, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            col.addView(logScroll, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
+        } else {
+            col.addView(homeRow(R.string.btn_log, R.string.home_log_hint) {
+                show(Screen.Log)
+            })
+        }
+
+        // A scroller in both orientations. The menu plus an expanded log
+        // is taller than a landscape phone, and a menu you cannot scroll
+        // to is a menu with a missing button.
+        val scroll = ScrollView(this)
+        scroll.addView(col, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        outer.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        return outer
+    }
+
+    /** The desktop's own icon, so the two halves look like one product. */
+    private fun logo(): View = android.widget.ImageView(this).apply {
+        setImageResource(R.drawable.ic_launcher)
+        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        contentDescription = getString(R.string.app_name)
+        val size = dp(96)
+        layoutParams = LinearLayout.LayoutParams(size, size).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setMargins(0, dp(16), 0, 0)
+        }
+    }
+
+    /** A menu row: label plus a line saying what it leads to. */
+    private fun homeRow(label: Int, hint: Int, onClick: () -> Unit): View {
+        val shell = card()
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(10), dp(4), dp(10))
+        }
+        col.addView(TextView(this).apply {
+            text = getString(label)
+            textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        col.addView(TextView(this).apply {
+            text = getString(hint)
+            textSize = 12f
+            setTextColor(0xFF8A8A96.toInt())
+        })
+        // Clickable on the whole card. Tappable text with a gap under it
+        // is a target the user has to aim at.
+        shell.addView(col)
+        shell.setOnClickListener { onClick() }
+        return shell
     }
 
     /**
@@ -1755,7 +1859,10 @@ class MainActivity : android.app.Activity() {
         client.call("get_project_summary") { ok, body ->
             runOnUiThread {
                 when {
-                    ok -> show(Screen.Project)
+                    // The link is up and the token works, but no project has been
+                    // chosen yet. The editor comes after that choice,
+                    // not before it.
+                    ok -> show(Screen.Home)
                     isAuthFailure(body) -> {
                         client.setToken(null)
                         client.clearToken()
@@ -1792,10 +1899,10 @@ class MainActivity : android.app.Activity() {
             say(if (ok) "Paired" else "Pairing failed: $msg")
             if (ok) {
                 if (::codeBox.isInitialized) codeBox.text.clear()
-                // Now there is something to show. Rebuilding the screen
-                // also drops the "pairing needed" banner, since this
-                // one would still be built without it.
-                show(Screen.Project)
+                // Now there is something to show: the menu, not the
+                // editor. Rebuilding also drops the "pairing needed"
+                // banner, which this screen does not have.
+                show(Screen.Home)
             }
         }
     }

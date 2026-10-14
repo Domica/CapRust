@@ -42,6 +42,10 @@
     <string name="title_project">Project</string>
     <string name="btn_open">Open</string>
     <string name="title_projects">Recent projects</string>
+    <string name="btn_home">Home</string>
+    <string name="home_open_hint">Choose a project on the computer</string>
+    <string name="home_settings_hint">Theme, reconnect, saved connections</string>
+    <string name="home_log_hint">Raw request and response log</string>
     <string name="msg_loading_projects">Loading ...</string>
     <string name="no_projects">No recent projects on the computer</string>
     <string name="no_projects_n">CapRust reports %1$d recent projects. Open one on the computer to make it appear here.</string>
