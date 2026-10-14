@@ -28,7 +28,7 @@
 
 <header class="hero">
   <div class="container">
-    <div class="badge">v0.9.16 — crash-recovery autosave, custom interval, caption size per frame height, face anonymize</div>
+    <div class="badge">v0.9.17 — remote control from your phone, New Project shows the shape, audio waveforms in the media bin</div>
     <h1>Video editing.<br>Without the drag.</h1>
     <p class="tagline">
       A native Windows video editor for short-form creators.
@@ -171,7 +171,7 @@
       <div class="feature">
         <div class="icon">🤖</div>
         <h3>MCP server</h3>
-        <p>Drive the editor from Claude Desktop or Cursor through a Model Context Protocol server. 15 tools, undo-stack integrated.</p>
+        <p>Drive the editor from Claude Desktop, Cursor, or your own phone through a Model Context Protocol server. 26 tools, undo-stack integrated. Off by default; one checkbox opens it to your local network.</p>
       </div>
       <div class="feature">
         <div class="icon">🟩</div>
@@ -202,9 +202,9 @@
 <section id="download" class="download">
   <div class="container">
     <h2>Download CapRust</h2>
-    <p>v0.9.16 adds crash-recovery autosave, custom autosave interval, caption size proportional to frame height, and one-click face anonymize.</p>
+    <p>v0.9.17 adds remote control over your local network, a New Project dialog that shows the real shape of each format before you commit to it, and audio items in the media bin that draw their own waveform.</p>
     <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
-      ↓&nbsp; Download v0.9.16 for Windows
+      ↓&nbsp; Download v0.9.17 for Windows
     </a>
     <p class="verify">
       SHA-256 for each release is on the
@@ -263,12 +263,36 @@
       <details>
         <summary>It says "beta" — is it stable?</summary>
         <div class="answer">
-          v0.9.9 adds import hygiene, menu polish and a transition overlap fix. Everything from 0.9.0 through 0.9.8 is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
+          v0.9.17 adds remote control from a phone, platform timeline templates and crash-recovery autosave. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
           audio effects, CLAP hosting and the MCP server are all in. Expect
           rough edges; a crash handler writes a report to
           <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and
           the log is worth attaching to a
           <a href="https://github.com/Domica/CapRust/issues">GitHub issue</a>.
+        </div>
+      </details>
+      <details>
+        <summary>Can I control CapRust from my phone?</summary>
+        <div class="answer">
+          Yes &mdash; and the phone is not the point. CapRust listens on
+          a TCP socket speaking the same Model Context Protocol it already
+          serves to Claude Desktop and Cursor: 26 tools, the same undo
+          stack, the session that is open right now. Off by default, and
+          bound to loopback only until you ask for more.
+          <br><br>
+          Ticking <strong>Settings &rarr; Paths &rarr; Allow remote control</strong>
+          starts it. Ticking <strong>Allow devices on this network</strong>
+          as well puts it on your LAN, and that is the point where a
+          six-digit pairing code becomes required: valid five minutes, one
+          try only, exchanged for a stored token you can revoke.
+          <br><br>
+          An Android app that speaks this protocol is built in CI and
+          shipped through
+          <a href="https://github.com/Domica/CapRust/actions">nightly builds</a>.
+          It is <em>not</em> part of this release and has not yet had a full
+          pass on a device, so treat it as a preview. Any other MCP client
+          speaks to the same socket &mdash; nothing about remote control
+          depends on the phone app existing.
         </div>
       </details>
       <details>
