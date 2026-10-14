@@ -127,4 +127,21 @@
     <string name="act_speed_half">Half speed</string>
     <string name="act_fade">Fade 1s in and out</string>
     <string name="act_media">List media</string>
+
+    <!-- Transitions, effects and length -->
+    <string name="lbl_no_clip_selected">No clip selected</string>
+    <string name="lbl_no_transition">No transition on this clip</string>
+    <string name="lbl_trans_in">In: %1$s, %2$d ms, overlap %3$d ms</string>
+    <string name="lbl_trans_out">Out: %1$s</string>
+    <string name="lbl_trans_note">Length is capped at half of either clip.</string>
+    <string name="lbl_effects_on">Effects: %1$s</string>
+    <string name="lbl_transition_length">Transition length</string>
+    <string name="btn_set_length">Set</string>
+    <string name="act_remove_effect">Remove %1$s</string>
+    <string name="act_effects_on_clip">Remove an effect</string>
+    <string name="msg_length_set">Transition length is now %1$d ms</string>
+    <string name="msg_bad_length">Enter a length between 1 and 5000 ms</string>
+    <string name="msg_no_transition">That clip has no transition to change</string>
+    <string name="msg_removed">Removed %1$s</string>
+    <string name="msg_no_duration">Project length is not known yet</string>
 </resources>

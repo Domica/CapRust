@@ -320,6 +320,7 @@ class MainActivity : android.app.Activity() {
         "preview_frame", "start_export", "export_status",
         "preview_transport", "preview_status",
         "export_settings", "set_export_setting",
+        "remove_effect",
     )
 
     private var current = Screen.Connect
@@ -385,6 +386,18 @@ class MainActivity : android.app.Activity() {
 
     /** Explains an empty preview area. */
     private var previewNote: TextView? = null
+
+    /** Project length in ms, from `get_project_summary`. Needed to turn
+     *  a tap on the preview into a playhead position; 0 means unknown,
+     *  and a tap then does nothing rather than guessing. */
+    private var projectDurationMs: Long = 0
+
+    /** Reads out the selected clip's transitions and effects, and
+     *  carries the length control. */
+    private var transitionInfo: TextView? = null
+
+    /** Holds the transition-length row, rebuilt per selection. */
+    private var lengthHost: LinearLayout? = null
 
     /**
  * Whether the log is expanded in place rather than behind a button.
@@ -875,6 +888,15 @@ private var logOn: Boolean
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(0xFF141414.toInt())
             contentDescription = getString(R.string.preview_desc)
+            // Tap to seek to a quarter, long press to three quarters. The frame
+            // is the one control on this screen with real estate to
+            // spare, and a fixed step is a poor substitute for seeking.
+            isClickable = true
+            setOnClickListener { v -> seekToFraction(v, 0.25f) }
+            setOnLongClickListener { v ->
+                seekToFraction(v, 0.75f)
+                true
+            }
         }
         root.addView(previewView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
@@ -979,7 +1001,17 @@ private var logOn: Boolean
         presetsRow.addView(chip(getString(R.string.btn_filters)) { showPresetPicker("filter") })
         presetsRow.addView(chip(getString(R.string.btn_transitions)) { showPresetPicker("transition") })
         presets.addView(presetsRow)
+
+        // What is actually on the selected clip, and the length of its
+        // transitions. Before this the phone could apply a transition
+        // but had no way to read back the duration it was given, no way
+        // to change it, and no way to take an effect off again.
+        transitionInfo = TextView(this).apply { textSize = 12f }
+        presets.addView(transitionInfo)
         root.addView(presets)
+
+        lengthHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(lengthHost)
 
         root.addView(sectionTitle(getString(R.string.title_clips)))
 
@@ -1581,7 +1613,37 @@ private var logOn: Boolean
     }
 
     /**
-     * Ask the desktop for its current preview frame.
+ * Seek to a fraction of the project, from a tap on the preview.
+ *
+ * `frac` is the position along the project, 0..1: a plain tap seeks to
+ * 25%, a long press to 75%. Position rather than the touch's x so the
+ * frame itself has to be the control -- on a small phone the picture is
+ * the only thing big enough to hit without missing.
+ */
+private fun seekToFraction(v: View, frac: Float) {
+    if (projectDurationMs <= 0L) {
+        say(getString(R.string.msg_no_duration))
+        return
+    }
+    if (v.width <= 0) return
+    val at = (projectDurationMs * frac).toLong()
+    client.call(
+        "preview_transport",
+        JSONObject().put("action", "seek").put("at_ms", at)
+    ) { ok, msg ->
+        runOnUiThread {
+            if (ok) {
+                pollPlayback()
+                fetchPreview()
+            } else {
+                say(msg)
+            }
+        }
+    }
+}
+
+/**
+ * Ask the desktop for its current preview frame.
      *
      * A null frame is a normal answer, not an error: the preview has to
      * decode before it has anything to show. Treated as an error it
@@ -1973,6 +2035,14 @@ private var logOn: Boolean
             lastDurationMs = runCatching {
                 JSONObject(text).optLong("total_duration_ms", 1L)
             }.getOrDefault(1L)
+            // A tap on the preview needs the project length to turn into
+            // a playhead position. Kept separate from lastDurationMs,
+            // which is the timeline's own scale and defaults to 1ms when
+            // the summary has not arrived -- far too small to divide a
+            // tap by.
+            projectDurationMs = runCatching {
+                JSONObject(text).optLong("total_duration_ms", 0L)
+            }.getOrDefault(0L)
             // The header shows the project name, so it has to be
             // captured before the screen is rebuilt.
             pendingProjectName = runCatching {
@@ -2078,10 +2148,145 @@ private var logOn: Boolean
                     timeBox.setText(mid.toString())
                 }
                 selectedView?.text = describe(id, c)
+                showTransitionInfo()
                 showClipSheet()
             }
             row.tag = id
             clipList?.addView(row)
+        }
+        showTransitionInfo()
+    }
+
+    /**
+     * What is on the selected clip, and how long its transitions run.
+     *
+     * Read from `list_clips`, which reports the transition ids, their
+     * duration, the shift they produced, and the applied effect
+     * instances. Without the duration there was no way to read back
+     * what the desktop clamped a request to, so a phone that asked for
+     * 3000ms on a 2s clip and drew a 3000ms overlap would be showing
+     * something the render never produces.
+     */
+    private fun showTransitionInfo() {
+        val view = transitionInfo ?: return
+        val id = selectedClip
+        if (id == null) {
+            view.text = getString(R.string.lbl_no_clip_selected)
+            return
+        }
+        val c = clipInfo[id] ?: return
+        val lines = ArrayList<String>()
+        val tIn = c.optString("transition_in", "")
+        val tOut = c.optString("transition_out", "")
+        if (tIn.isEmpty() && tOut.isEmpty()) {
+            lines.add(getString(R.string.lbl_no_transition))
+        } else {
+            val durMs = c.optLong("transition_duration_ms", 0L)
+            val shift = c.optLong("applied_xfade_shift_ms", 0L)
+            if (tIn.isNotEmpty()) {
+                lines.add(getString(R.string.lbl_trans_in, tIn, durMs, shift))
+            }
+            if (tOut.isNotEmpty()) {
+                lines.add(getString(R.string.lbl_trans_out, tOut, durMs))
+            }
+            lines.add(getString(R.string.lbl_trans_note))
+        }
+        val effects = c.optJSONArray("effects")
+        if (effects != null && effects.length() > 0) {
+            val names = ArrayList<String>()
+            for (i in 0 until effects.length()) {
+                val e = effects.getJSONObject(i)
+                names.add(
+                    e.optString("effect_id") +
+                        if (e.optBoolean("enabled", true)) "" else " (off)"
+                )
+            }
+            lines.add(getString(R.string.lbl_effects_on, names.joinToString(", ")))
+        }
+        view.text = lines.joinTo("\n")
+
+        // Length control, only when there is a transition to lengthen.
+        // Rebuilding on every selection is cheaper than keeping a
+        // SeekBar alive across clip changes and re-reading its value.
+        lengthHost?.removeAllViews()
+        if (tIn.isEmpty() && tOut.isEmpty()) return
+        lengthHost?.addView(buildLengthControl(id, c.optLong("transition_duration_ms", 500L)))
+    }
+
+    /**
+     * A row of preset lengths plus the exact millisecond field.
+     *
+     * The presets cover what anyone actually picks (0.5 / 1 / 2 s); the
+     * field is there because the desktop accepts any value and the
+     * render clamps it, so the phone has to be able to ask for the odd
+     * one and report back what it got.
+     */
+    private fun buildLengthControl(clipId: String, currentMs: Long): View {
+        val box = card()
+        box.addView(TextView(this).apply {
+            text = getString(R.string.lbl_transition_length)
+            textSize = 12f
+        })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (ms in longArrayOf(500L, 1000L, 2000L)) {
+            row.addView(
+                chip("${ms / 1000}s") { setTransitionLength(clipId, ms) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            )
+        }
+        box.addView(row)
+
+        val exactRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val field = EditText(this).apply {
+            hint = "ms"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(currentMs.toString())
+        }
+        exactRow.addView(
+            field,
+            LinearLayout.LayoutParams(0, dp(44), 1f)
+        )
+        exactRow.addView(chip(getString(R.string.btn_set_length)) {
+            val typed = field.text.toString().trim().toLongOrNull()
+            if (typed == null || typed < 1 || typed > 5000) {
+                say(getString(R.string.msg_bad_length))
+            } else {
+                setTransitionLength(clipId, typed)
+            }
+        })
+        box.addView(exactRow)
+        return box
+    }
+
+    /** Change the length of the selected clip's in-transition. */
+    private fun setTransitionLength(clipId: String, ms: Long) {
+        val id = clipInfo[clipId]?.optString("transition_in", "") ?: ""
+        if (id.isEmpty()) {
+            say(getString(R.string.msg_no_transition))
+            return
+        }
+        client.call(
+            "set_transition",
+            JSONObject()
+                .put("clip_id", clipId)
+                .put("edge", "in")
+                .put("transition_id", id)
+                .put("duration_ms", ms)
+        ) { ok, body ->
+            runOnUiThread {
+                if (!ok) {
+                    say(body)
+                } else {
+                    // The reply carries what was actually stored, which
+                    // may be less than asked for: the render clamps to
+                    // half of either neighbouring clip.
+                    val got = runCatching {
+                        JSONObject(body).optLong("duration_ms", ms)
+                    }.getOrDefault(ms)
+                    say(getString(R.string.msg_length_set, got))
+                    refresh()
+                }
+            }
         }
     }
 
@@ -2125,6 +2330,38 @@ private var logOn: Boolean
             row(getString(R.string.act_speed_up)) { setSpeed(info.optDouble("speed", 1.0) * 2.0) }
             row(getString(R.string.act_speed_half)) { setSpeed(info.optDouble("speed", 1.0) / 2.0) }
             row(getString(R.string.act_fade)) { setFade() }
+            // Take an applied effect off again. The phone could add one
+            // before this but never remove it, so a mistake on the
+            // phone had to be undone from the computer.
+            val applied = info.optJSONArray("effects")
+            if (applied != null && applied.length() > 0) {
+                val labels = ArrayList<CharSequence>(applied.length())
+                val ids = ArrayList<String>(applied.length())
+                for (i in 0 until applied.length()) {
+                    val e = applied.getJSONObject(i)
+                    val eid = e.optString("effect_id")
+                    ids.add(eid)
+                    labels.add(
+                        getString(
+                            R.string.act_remove_effect,
+                            eid,
+                        )
+                    )
+                }
+                // setItems needs Array<out CharSequence>, and Kotlin's
+                // Array is invariant, so toTypedArray<CharSequence> is
+                // required here -- a plain toTypedArray() will not
+                // compile against List<String>.
+                row(getString(R.string.act_effects_on_clip)) {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle(getString(R.string.btn_effects))
+                        .setItems(labels.toTypedArray<CharSequence>()) { _, which ->
+                            removeEffect(id, ids[which])
+                        }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show()
+                }
+            }
             if (kind.contains("Audio", true) || kind.contains("Video", true)) {
                 row(getString(R.string.act_media)) { client.call("list_media") { ok, t ->
                     runOnUiThread { say(if (ok) t.take(300) else t) }
@@ -2133,6 +2370,23 @@ private var logOn: Boolean
 
             setContentView(col)
             show()
+        }
+    }
+
+    /** Remove one applied effect from a clip. */
+    private fun removeEffect(clipId: String, effectId: String) {
+        client.call(
+            "remove_effect",
+            JSONObject().put("clip_id", clipId).put("effect_id", effectId)
+        ) { ok, body ->
+            runOnUiThread {
+                if (ok) {
+                    say(getString(R.string.msg_removed, effectId))
+                    refresh()
+                } else {
+                    say(body)
+                }
+            }
         }
     }
 

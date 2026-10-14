@@ -12,7 +12,9 @@ use caprust_core::clip::{Clip, ClipType};
 use caprust_core::commands::add_media::AddMediaCommand;
 use caprust_core::commands::ripple::RippleInsertCommand;
 use caprust_core::commands::set_clip::SetClipCommand;
-use caprust_core::commands::set_effect::{AddEffectCommand, SetTransitionCommand};
+use caprust_core::commands::set_effect::{
+    AddEffectCommand, RemoveEffectCommand, SetTransitionCommand, SetTransitionDurationCommand,
+};
 use caprust_core::commands::split_clip::SplitClipCommand;
 use caprust_core::commands::UndoStack;
 use caprust_core::media::MediaKind;
@@ -77,14 +79,29 @@ pub fn definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "remove_effect",
+            "description": "Remove one applied effect or filter from a clip, by the same id `apply_preset` used to add it. `list_clips` reports the applied ids.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "clip_id":   { "type": "string" },
+                    "effect_id": { "type": "string" }
+                },
+                "required": ["clip_id", "effect_id"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "set_transition",
-            "description": "Set or clear the in/out transition on a clip. transition_id=null clears.",
+            "description": "Set or clear the in/out transition on a clip. transition_id=null clears. Pass `duration_ms` to also change the transition length; it is ignored when clearing. Effective length is clamped to half of either neighbouring clip, so a request above that returns the clamped value.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "clip_id":       { "type": "string" },
                     "edge":          { "type": "string", "enum": ["in", "out"] },
-                    "transition_id": { "type": ["string", "null"] }
+                    "transition_id": { "type": ["string", "null"] },
+                    "duration_ms":   { "type": "integer", "minimum": 1, "maximum": 5000,
+                                       "description": "Optional. Changes the transition length in milliseconds. The clip and every clip after it on the same track shift so the overlap stays exact." }
                 },
                 "required": ["clip_id", "edge", "transition_id"],
                 "additionalProperties": false
@@ -306,6 +323,7 @@ pub fn call<'a, 's>(
         "set_clip_fade" => set_clip_fade(args, project, undo),
         "add_clip_to_timeline" => add_clip_to_timeline(args, project, undo),
         "apply_preset" => apply_preset(args, project, undo),
+        "remove_effect" => remove_effect(args, project, undo),
         "undo" => do_undo(project, undo),
         "redo" => do_redo(project, undo),
         "save_project" => save_project(project, project_path),
@@ -666,6 +684,22 @@ fn list_clips(p: &ProjectState, args: &Value) -> Result<String> {
                 "volume_db": c.volume_db,
                 "transition_in": c.transition_in,
                 "transition_out": c.transition_out,
+                // Duration and the shift it produced. Without these a
+                // client can set a transition but cannot read back what
+                // was actually stored, and the render clamps the request
+                // to half of either neighbouring clip, so the value the
+                // client sent is not always the value in effect.
+                "transition_duration_ms": c.transition_duration_ms,
+                "applied_xfade_shift_ms": c.applied_xfade_shift_ms,
+                // The applied effect/filter instances, so a client can
+                // show what is on a clip and remove one by id rather
+                // than guessing which is which.
+                "effects": c.effects.iter().map(|e| json!({
+                    "effect_id": e.effect_id,
+                    "amount": e.amount,
+                    "enabled": e.enabled,
+                })).collect::<Vec<_>>(),
+                "lut": c.lut,
             })
         })
         .collect();
@@ -804,11 +838,94 @@ fn set_transition(
     });
     clip_exists(project, clip_id)?;
 
+    let still_set = transition_id.is_some();
+
     undo.execute(
         Box::new(SetTransitionCommand::new(clip_id, in_edge, transition_id)),
         project,
     )?;
-    Ok(json!({ "ok": true }).to_string())
+
+    // Duration is a second, separate command so that setting a
+    // transition and then changing its length are two undoable steps,
+    // matching what the desktop panel does. Skipped when clearing: a
+    // cleared transition has no length to set, and writing one would
+    // leave a stale value behind for the next transition to inherit.
+    let requested_duration = args.get("duration_ms").and_then(Value::as_u64);
+    if still_set {
+        if let Some(ms) = requested_duration {
+            if !(1..=5000).contains(&ms) {
+                bail!("duration_ms out of range 1 .. 5000 (got {ms})");
+            }
+            undo.execute(
+                Box::new(SetTransitionDurationCommand::new(clip_id, ms)),
+                project,
+            )?;
+        }
+    }
+
+    // Report what was actually stored rather than what was asked for.
+    // The render clamps to half of either neighbouring clip, so a
+    // request for 3000 on a 2s clip is honoured as 1000 and a client
+    // that trusted its own input would draw the wrong overlap.
+    let (stored_id, stored_dur, stored_shift, stored_start) = project
+        .clips
+        .iter()
+        .find(|c| c.id == clip_id)
+        .map(|c| {
+            let id = if in_edge {
+                c.transition_in.clone()
+            } else {
+                c.transition_out.clone()
+            };
+            (
+                id,
+                c.transition_duration_ms,
+                c.applied_xfade_shift_ms,
+                c.start_time_ms,
+            )
+        })
+        .unwrap_or((None, 0, 0, 0));
+
+    Ok(json!({
+        "ok": true,
+        "transition_id": stored_id,
+        "duration_ms": stored_dur,
+        "applied_shift_ms": stored_shift,
+        "start_time_ms": stored_start,
+    })
+    .to_string())
+}
+
+fn remove_effect(
+    args: &Value,
+    project: &mut ProjectState,
+    undo: &mut UndoStack,
+) -> Result<String> {
+    let clip_id = parse_uuid(args, "clip_id")?;
+    let effect_id = args
+        .get("effect_id")
+        .and_then(Value::as_str)
+        .context("missing or non-string `effect_id`")?
+        .to_string();
+    clip_exists(project, clip_id)?;
+
+    // Say so when there was nothing to remove. Silently succeeding
+    // leaves the client showing an effect the project does not have,
+    // and the user has no way to tell which side is wrong.
+    let present = project
+        .clips
+        .iter()
+        .find(|c| c.id == clip_id)
+        .is_some_and(|c| c.effects.iter().any(|e| e.effect_id == effect_id));
+    if !present {
+        bail!("clip has no effect `{effect_id}`; call list_clips to see what is applied");
+    }
+
+    undo.execute(
+        Box::new(RemoveEffectCommand::new(clip_id, effect_id.clone())),
+        project,
+    )?;
+    Ok(json!({ "ok": true, "removed": effect_id }).to_string())
 }
 
 fn set_clip_volume(
@@ -1144,6 +1261,178 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("edge"));
+    }
+
+    /// Setting a transition with a length is the whole point of the
+    /// `duration_ms` argument. Before it existed, `SetTransitionDurationCommand`
+    /// was unreachable over MCP: a client could apply `diag_bl` and had
+    /// no way to change how long it ran.
+    #[test]
+    fn set_transition_with_duration_moves_the_overlap() {
+        let mut p = ProjectState::default();
+        let a = Clip::new_video("a.mp4", 0, 0, 8000);
+        let b = Clip::new_video("b.mp4", 0, 8000, 8000);
+        let id = b.id;
+        p.clips.push(a);
+        p.clips.push(b);
+        let mut u = UndoStack::new();
+
+        let out = set_transition(
+            &json!({
+                "clip_id": id,
+                "edge": "in",
+                "transition_id": "fade",
+                "duration_ms": 1000,
+            }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(clip.transition_duration_ms, 1000);
+        // 8s clips: half of either is 4000, so 1000 is honoured whole.
+        assert_eq!(clip.applied_xfade_shift_ms, 1000);
+        assert_eq!(clip.start_time_ms, 7000, "b pulled 1000ms left of a");
+
+        // The reply reports the stored value, so a client that draws
+        // the overlap uses the same number the render will.
+        assert_eq!(v["duration_ms"], 1000);
+        assert_eq!(v["applied_shift_ms"], 1000);
+        assert_eq!(v["start_time_ms"], 7000);
+    }
+
+    /// A length above half of either neighbouring clip is clamped, and
+    /// the reply has to say so. A client that trusted its own input
+    /// would draw an overlap the render never produces.
+    #[test]
+    fn set_transition_duration_reports_the_clamped_value() {
+        let mut p = ProjectState::default();
+        // 2s clips, so half is 1000ms.
+        let a = Clip::new_video("a.mp4", 0, 0, 2000);
+        let b = Clip::new_video("b.mp4", 0, 2000, 2000);
+        let id = b.id;
+        p.clips.push(a);
+        p.clips.push(b);
+        let mut u = UndoStack::new();
+
+        let out = set_transition(
+            &json!({ "clip_id": id, "edge": "in", "transition_id": "fade", "duration_ms": 1800 }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        let v: Value = serde_json::from_str(&out).unwrap();
+        // The field keeps what was asked for; the shift is what the
+        // render actually applies.
+        assert_eq!(v["duration_ms"], 1800, "the request is stored as sent");
+        assert_eq!(
+            v["applied_shift_ms"], 1000,
+            "but the overlap is clamped to half the clip"
+        );
+        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(clip.start_time_ms, 1000);
+    }
+
+    /// Clearing a transition must not write a duration. A stale length
+    /// left behind is inherited by the next transition the user applies
+    /// and silently changes it.
+    #[test]
+    fn clearing_a_transition_ignores_duration() {
+        let (mut p, id) = project_with_one_clip();
+        let mut u = UndoStack::new();
+
+        set_transition(
+            &json!({ "clip_id": id, "edge": "in", "transition_id": "fade", "duration_ms": 1200 }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        let out = set_transition(
+            &json!({
+                "clip_id": id, "edge": "in", "transition_id": null,
+                "duration_ms": 900,
+            }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        assert!(clip.transition_in.is_none());
+        assert_eq!(
+            clip.transition_duration_ms, 1200,
+            "clearing leaves the old length alone rather than writing a new one"
+        );
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["transition_id"].is_null());
+    }
+
+    #[test]
+    fn remove_effect_reports_when_there_is_nothing_to_remove() {
+        let (mut p, id) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        let err = remove_effect(
+            &json!({ "clip_id": id, "effect_id": "grain" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("list_clips"),
+            "the message should point at the tool that lists what is applied: {err}"
+        );
+    }
+
+    #[test]
+    fn remove_effect_takes_one_off_and_leaves_the_rest() {
+        let (mut p, id) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({ "clip_id": id, "kind": "effect", "preset_id": "grain" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+        apply_preset(
+            &json!({ "clip_id": id, "kind": "effect", "preset_id": "zoom_pulse" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        remove_effect(
+            &json!({ "clip_id": id, "effect_id": "grain" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        let ids: Vec<&str> = clip.effects.iter().map(|e| e.effect_id.as_str()).collect();
+        assert_eq!(ids, vec!["zoom_pulse"]);
+    }
+
+    #[test]
+    fn list_clips_reports_transition_duration_and_effects() {
+        let (mut p, id) = project_with_one_clip();
+        let mut u = UndoStack::new();
+        apply_preset(
+            &json!({ "clip_id": id, "kind": "effect", "preset_id": "grain" }),
+            &mut p,
+            &mut u,
+        )
+        .unwrap();
+
+        let out = list_clips(&p, &json!({})).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let first = &v[0];
+        assert!(first.get("transition_duration_ms").is_some());
+        assert!(first.get("applied_xfade_shift_ms").is_some());
+        assert_eq!(first["effects"][0]["effect_id"], "grain");
     }
 
     #[test]

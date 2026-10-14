@@ -799,8 +799,8 @@ mod tests {
         let out = s.handle_line(raw, &mut f.ctx()).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let tools = v["result"]["tools"].as_array().unwrap();
-        // 15 read-only + 11 mutating
-        assert_eq!(tools.len(), 26);
+        // 15 read-only + 12 mutating
+        assert_eq!(tools.len(), 27);
     }
 
     #[test]
