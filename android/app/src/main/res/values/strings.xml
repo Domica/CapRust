@@ -85,6 +85,24 @@
     <string name="export_running">Exporting</string>
     <string name="export_pct">Export %1$d%%</string>
     <string name="msg_not_connected">Not connected.</string>
+
+    <!-- Transport -->
+    <string name="act_play">Play</string>
+    <string name="act_pause">Pause</string>
+    <string name="act_back5">−5s</string>
+    <string name="act_fwd5">+5s</string>
+
+    <!-- Export settings -->
+    <string name="lbl_resolution">Resolution</string>
+    <string name="lbl_framerate">Frame rate</string>
+    <string name="lbl_quality">Quality</string>
+    <string name="lbl_rate_mode">Rate mode</string>
+    <string name="lbl_colour_range">Colour range</string>
+    <string name="setting_fmt">%1$s: %2$s</string>
+    <string name="act_change">Change %1$s</string>
+    <string name="act_export_now">Export now</string>
+    <string name="msg_no_options">No values reported for %1$s</string>
+    <string name="msg_set">%1$s set to %2$s</string>
     <string name="no_clips">No clips</string>
 
     <!-- Clip action sheet -->

@@ -16,6 +16,16 @@ pub enum QualityTier {
 }
 
 impl QualityTier {
+    /// Wire id, used when a remote client sets this over MCP. Kept
+    /// separate from [QualityTier::label], which is display text.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Regular => "regular",
+            Self::Large => "large",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Small => "Small",
@@ -32,6 +42,14 @@ pub enum ColorRange {
 }
 
 impl ColorRange {
+    /// Wire id. See [QualityTier::id].
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Limited => "limited",
+            Self::Full => "full",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Limited => "Limited (16–235)",

@@ -318,6 +318,8 @@ class MainActivity : android.app.Activity() {
         "add_clip_to_timeline", "undo", "redo", "save_project",
         "list_assets", "apply_preset", "list_recent_projects", "open_project",
         "preview_frame", "start_export", "export_status",
+        "preview_transport", "preview_status",
+        "export_settings", "set_export_setting",
     )
 
     private var current = Screen.Connect
@@ -351,6 +353,12 @@ class MainActivity : android.app.Activity() {
 
     /** Export button, kept so its label can show progress. */
     private var exportButton: Button? = null
+
+    /** Play/pause toggle; its label follows the desktop's state. */
+    private var playButton: TextView? = null
+
+    /** Playhead readout under the transport. */
+    private var playheadView: TextView? = null
 
     /** Cached clip fields for the selected row, so the sheet and the
      *  detail panel do not have to re-query. */
@@ -823,8 +831,22 @@ class MainActivity : android.app.Activity() {
         root.addView(previewView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
 
+        // ---- transport ----
+        // Drives the desktop's own playback. Not a local player: the
+        // phone has no timeline, so a play button here that animated
+        // nothing would be worse than no button at all.
+        val transport = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        playButton = chip(getString(R.string.act_play)) { sendTransport("toggle") }
+        transport.addView(playButton)
+        transport.addView(chip(getString(R.string.act_back5)) { sendTransport("seek_back") })
+        transport.addView(chip(getString(R.string.act_fwd5)) { sendTransport("seek_fwd") })
+        transport.addView(chip(getString(R.string.btn_refresh_preview)) { fetchPreview() })
+        root.addView(transport)
+
+        playheadView = TextView(this).apply { textSize = 12f }
+        root.addView(playheadView)
+
         val previewRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        previewRow.addView(btn(getString(R.string.btn_refresh_preview)) { fetchPreview() })
         exportButton = btn(getString(R.string.btn_export)) { askExport() }
         previewRow.addView(exportButton)
         root.addView(previewRow)
@@ -1294,6 +1316,49 @@ class MainActivity : android.app.Activity() {
         }
     }
 
+    /** Send one transport command to the desktop and follow the result. */
+    private fun sendTransport(action: String) {
+        client.call("preview_transport", JSONObject().put("action", action)) { ok, body ->
+            if (!ok) {
+                runOnUiThread { say(body) }
+                return@call
+            }
+            // Read the state back rather than assuming what it did. The
+            // label is the only thing telling the user which state the
+            // desktop is actually in.
+            pollPlayback()
+            fetchPreview()
+        }
+    }
+
+    /** Read play state and playhead, updating the button and readout. */
+    private fun pollPlayback() {
+        client.call("preview_status") { ok, body ->
+            if (!ok) return@call
+            runOnUiThread {
+                val playing = try {
+                    JSONObject(body).optBoolean("playing", false)
+                } catch (_: Exception) {
+                    false
+                }
+                val at = try {
+                    JSONObject(body).optLong("at_ms", -1)
+                } catch (_: Exception) {
+                    -1
+                }
+                playButton?.text = getString(
+                    if (playing) R.string.act_pause else R.string.act_play)
+                playheadView?.text = if (at < 0) "" else formatTime(at)
+            }
+        }
+    }
+
+    /** milliseconds as m:ss.d -- a duration, not a clock. */
+    private fun formatTime(ms: Long): String {
+        val total = ms / 1000
+        return "%d:%02d.%d".format(total / 60, total % 60, (ms % 1000) / 100)
+    }
+
     /**
      * Ask the desktop for its current preview frame.
      *
@@ -1342,44 +1407,145 @@ class MainActivity : android.app.Activity() {
     }
 
     /**
-     * Start an export on the desktop.
+     * Export settings, read from the desktop and applied one at a time.
      *
-     * The desktop's own export window opens on the computer, so the
-     * person watching that screen sees what is happening -- a long
-     * encode with no feedback anywhere would look like the app hung.
+     * The values and their accepted options come from the computer
+     * rather than being listed here. A hardcoded list would break the
+     * day the desktop adds a resolution, and would happily offer one
+     * the encoder has never heard of.
      */
     private fun askExport() {
         if (!connected) {
             say(getString(R.string.msg_not_connected))
             return
         }
-        val box = EditText(this).apply {
+        client.call("export_settings") { ok, body ->
+            runOnUiThread {
+                if (!ok) {
+                    say(body)
+                } else {
+                    showExportSheet(body)
+                }
+            }
+        }
+    }
+
+    private fun showExportSheet(settingsText: String) {
+        val s = try {
+            JSONObject(settingsText)
+        } catch (_: Exception) {
+            JSONObject()
+        }
+        val available = s.optJSONObject("available") ?: JSONObject()
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+
+        // Destination first: it is the one value with no default and
+        // the only one that has to be right.
+        val destBox = EditText(this).apply {
             hint = getString(R.string.lbl_export_path)
             inputType = android.text.InputType.TYPE_CLASS_TEXT
-            setText(defaultExportPath())
+            setText(s.optString("destination", "").ifEmpty { defaultExportPath() })
         }
+        col.addView(TextView(this).apply { text = getString(R.string.lbl_export_path) })
+        col.addView(destBox)
+
+        // One row per enum setting. Each row shows the current value
+        // and opens the desktop's own list of accepted values.
+        val rows = arrayOf(
+            "resolution" to R.string.lbl_resolution,
+            "frame_rate" to R.string.lbl_framerate,
+            "quality" to R.string.lbl_quality,
+            "rate_mode" to R.string.lbl_rate_mode,
+            "color_range" to R.string.lbl_colour_range,
+        )
+        for ((key, label) in rows) {
+            val current = s.optString(key, "?")
+            col.addView(TextView(this).apply {
+                text = getString(R.string.setting_fmt, getString(label), current)
+            })
+            col.addView(btn(getString(R.string.act_change, getString(label))) {
+                chooseExportOption(key, current, available.optJSONArray(key)) { destBox }
+            })
+        }
+
+        val scroll = ScrollView(this)
+        scroll.addView(col)
         android.app.AlertDialog.Builder(this)
             .setTitle(getString(R.string.btn_export))
-            .setView(box)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                val dest = box.text.toString().trim()
+            .setView(scroll)
+            .setPositiveButton(getString(R.string.act_export_now)) { _, _ ->
+                val dest = destBox.text.toString().trim()
                 if (dest.isEmpty()) return@setPositiveButton
-                say(getString(R.string.msg_export_starting))
-                exportButton?.text = getString(R.string.export_running)
-                client.call("start_export", JSONObject().put("destination", dest)) { ok, body ->
+                runExport(dest)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Pick one of the desktop's accepted values for `key`. */
+    private fun chooseExportOption(
+        key: String,
+        current: String,
+        options: JSONArray?,
+        destBox: () -> EditText,
+    ) {
+        if (options == null || options.length() == 0) {
+            say(getString(R.string.msg_no_options, key))
+            return
+        }
+        val labels = ArrayList<CharSequence>(options.length())
+        val ids = ArrayList<String>(options.length())
+        for (i in 0 until options.length()) {
+            val o = options.getJSONObject(i)
+            val id = o.optString("id")
+            val label = o.optString("label", id)
+            // Mark the current one, so the sheet answers "what is it
+            // set to now" without the user having to remember.
+            labels.add(if (id == current) "$label  ✓" else label)
+            ids.add(id)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(key)
+            .setItems(labels.toTypedArray()) { _, which ->
+                val chosen = ids[which]
+                client.call(
+                    "set_export_setting",
+                    JSONObject().put("key", key).put("value", chosen)
+                ) { ok, body ->
                     runOnUiThread {
-                        if (!ok) {
-                            say(body)
-                            exportButton?.text = getString(R.string.btn_export)
-                        } else {
-                            say(getString(R.string.msg_export_started))
-                            pollExport()
-                        }
+                        if (!ok) say(body) else say(getString(R.string.msg_set, key, chosen))
                     }
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /**
+     * Start an export on the desktop.
+     *
+     * The desktop's own export window opens on the computer, so the
+     * person watching that screen sees what is happening -- a long
+     * encode with no feedback anywhere would look like the app hung.
+     */
+    private fun runExport(dest: String) {
+        say(getString(R.string.msg_export_starting))
+        exportButton?.text = getString(R.string.export_running)
+        client.call("start_export", JSONObject().put("destination", dest)) { ok, body ->
+            runOnUiThread {
+                if (!ok) {
+                    say(body)
+                    exportButton?.text = getString(R.string.btn_export)
+                } else {
+                    say(getString(R.string.msg_export_started))
+                    pollExport()
+                }
+            }
+        }
     }
 
     /** Ask for progress until the export is no longer running.

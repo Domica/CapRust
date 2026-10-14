@@ -56,6 +56,33 @@ pub trait SessionControl {
         Ok(None)
     }
 
+    /// Run the preview transport: `play`, `pause`, `toggle`, `seek`,
+    /// or the relative `seek_back` / `seek_fwd`. Returns whether the
+    /// host has a transport at all.
+    fn preview_transport(&mut self, action: &str, at_ms: Option<u64>) -> Result<bool, String> {
+        let _ = (action, at_ms);
+        Err("this host has no preview transport".into())
+    }
+
+    /// Whether the preview is playing and where its playhead sits.
+    fn preview_status(&self) -> Option<(bool, u64)> {
+        None
+    }
+
+    /// The export settings this host will use, as plain strings and
+    /// numbers, each with the values it accepts.
+    fn export_settings(&self) -> Option<Value> {
+        None
+    }
+
+    /// Change one export setting by name.
+    fn set_export_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let _ = (key, value);
+        Err(format!(
+            "this host does not expose the `{key}` export setting"
+        ))
+    }
+
     /// Begin an export. Like [SessionControl::request_open], `Ok`
     /// means accepted, not finished.
     fn request_export(&mut self, destination: &str) -> Result<(), String> {
@@ -291,6 +318,26 @@ mod tests {
         frame: Option<String>,
         export_dest: Option<String>,
         export_progress: Option<f32>,
+        transport: Vec<String>,
+        playing: bool,
+        at_ms: u64,
+        settings: Value,
+    }
+
+    impl FakeSession {
+        /// Defaults for a test that only cares about one field.
+        fn bare() -> Self {
+            Self {
+                opened: None,
+                frame: None,
+                export_dest: None,
+                export_progress: None,
+                transport: Vec::new(),
+                playing: false,
+                at_ms: 0,
+                settings: Value::Null,
+            }
+        }
     }
 
     impl crate::server::SessionControl for FakeSession {
@@ -312,6 +359,27 @@ mod tests {
         }
         fn preview_frame(&self, _max_w: u32) -> Result<Option<String>, String> {
             Ok(self.frame.clone())
+        }
+        fn preview_transport(&mut self, action: &str, at_ms: Option<u64>) -> Result<bool, String> {
+            self.transport.push(format!("{action}:{at_ms:?}"));
+            Ok(true)
+        }
+        fn preview_status(&self) -> Option<(bool, u64)> {
+            Some((self.playing, self.at_ms))
+        }
+        fn export_settings(&self) -> Option<Value> {
+            if self.settings.is_null() {
+                None
+            } else {
+                Some(self.settings.clone())
+            }
+        }
+        fn set_export_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
+            if key != "quality" {
+                return Err(format!("`{key}` is not a setting this fake knows"));
+            }
+            self.settings["quality"] = Value::String(value.to_string());
+            Ok(())
         }
         fn request_export(&mut self, destination: &str) -> Result<(), String> {
             self.export_dest = Some(destination.to_string());
@@ -351,12 +419,7 @@ mod tests {
         // path instead.
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
-            export_progress: None,
-        };
+        let mut sess = FakeSession::bare();
         let token = s.auth_mut().rotate_token();
 
         let v = call_tool(&mut s, &mut f, &mut sess, "list_recent_projects", json!({}));
@@ -376,12 +439,7 @@ mod tests {
     fn open_project_reaches_the_host_over_json_rpc() {
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
-            export_progress: None,
-        };
+        let mut sess = FakeSession::bare();
         s.auth_mut().rotate_token();
 
         let f2 = std::env::temp_dir().join(format!("caprust_e2e_{}.caprust", uuid::Uuid::new_v4()));
@@ -405,12 +463,7 @@ mod tests {
         // about and cannot call.
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
-            export_progress: None,
-        };
+        let mut sess = FakeSession::bare();
         s.auth_mut().rotate_token();
 
         let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
@@ -444,12 +497,7 @@ mod tests {
         // failure makes a warming-up preview look broken.
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
-            export_progress: None,
-        };
+        let mut sess = FakeSession::bare();
         s.auth_mut().rotate_token();
 
         let v = call_tool(&mut s, &mut f, &mut sess, "preview_frame", json!({}));
@@ -464,10 +512,8 @@ mod tests {
         let mut s = Server::new();
         let mut f = Fixture::new();
         let mut sess = FakeSession {
-            opened: None,
             frame: Some("/9j/4AAQSkZJRg==".into()),
-            export_dest: None,
-            export_progress: None,
+            ..FakeSession::bare()
         };
         s.auth_mut().rotate_token();
 
@@ -491,10 +537,8 @@ mod tests {
         let mut s = Server::new();
         let mut f = Fixture::new();
         let mut sess = FakeSession {
-            opened: None,
-            frame: Some("x".into()),
-            export_dest: None,
-            export_progress: None,
+            frame: Some("/9j/4AAQSkZJRg==".into()),
+            ..FakeSession::bare()
         };
         s.auth_mut().rotate_token();
 
@@ -515,10 +559,8 @@ mod tests {
         let mut s = Server::new();
         let mut f = Fixture::new();
         let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
             export_progress: Some(0.42),
+            ..FakeSession::bare()
         };
         s.auth_mut().rotate_token();
 
@@ -548,12 +590,7 @@ mod tests {
     fn export_status_before_anything_started_says_so() {
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
-            export_progress: None,
-        };
+        let mut sess = FakeSession::bare();
         s.auth_mut().rotate_token();
 
         let v = call_tool(&mut s, &mut f, &mut sess, "export_status", json!({}));
@@ -569,12 +606,7 @@ mod tests {
     fn start_export_needs_a_destination() {
         let mut s = Server::new();
         let mut f = Fixture::new();
-        let mut sess = FakeSession {
-            opened: None,
-            frame: None,
-            export_dest: None,
-            export_progress: None,
-        };
+        let mut sess = FakeSession::bare();
         s.auth_mut().rotate_token();
 
         let v = call_tool(&mut s, &mut f, &mut sess, "start_export", json!({}));
@@ -597,6 +629,158 @@ mod tests {
     }
 
     #[test]
+    fn transport_play_reaches_the_host() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession::bare();
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_transport",
+            json!({ "action": "play" }),
+        );
+        assert!(!v["error"].is_object(), "got an error: {v}");
+        assert_eq!(sess.transport, vec!["play:None".to_string()]);
+    }
+
+    #[test]
+    fn seek_without_a_position_is_rejected() {
+        // Otherwise it reads as "played and did nothing", which is the
+        // one thing a seek button must never do.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession::bare();
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_transport",
+            json!({ "action": "seek" }),
+        );
+        assert!(v["error"].is_object(), "a bare seek must not be accepted");
+        assert!(
+            sess.transport.is_empty(),
+            "nothing should have reached the host"
+        );
+    }
+
+    #[test]
+    fn relative_seeks_are_resolved_against_the_current_playhead() {
+        // The client does not know where the playhead is, and sending
+        // "back five seconds" as a raw number would be meaningless.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            at_ms: 12_000,
+            ..FakeSession::bare()
+        };
+        s.auth_mut().rotate_token();
+
+        call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_transport",
+            json!({ "action": "seek_back" }),
+        );
+        call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_transport",
+            json!({ "action": "seek_fwd" }),
+        );
+        assert_eq!(sess.transport[0], "seek_back:Some(7000)");
+        assert_eq!(sess.transport[1], "seek_fwd:Some(17000)");
+    }
+
+    #[test]
+    fn relative_seek_back_clamps_at_zero() {
+        // A playhead near the start minus five seconds is negative.
+        // Wrapping to a huge number would park it past the end.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            at_ms: 2_000,
+            ..FakeSession::bare()
+        };
+        s.auth_mut().rotate_token();
+
+        call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "preview_transport",
+            json!({ "action": "seek_back" }),
+        );
+        assert_eq!(sess.transport[0], "seek_back:Some(0)");
+    }
+
+    #[test]
+    fn preview_status_reports_play_state() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            playing: true,
+            at_ms: 4_250,
+            ..FakeSession::bare()
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "preview_status", json!({}));
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(body["playing"], true);
+        assert_eq!(body["at_ms"], 4_250);
+    }
+
+    #[test]
+    fn export_settings_round_trip_through_the_host() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession {
+            settings: json!({ "quality": "regular" }),
+            ..FakeSession::bare()
+        };
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "export_settings", json!({}));
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("regular"), "{text}");
+
+        let v = call_tool(
+            &mut s,
+            &mut f,
+            &mut sess,
+            "set_export_setting",
+            json!({ "key": "quality", "value": "large" }),
+        );
+        assert!(!v["error"].is_object(), "got an error: {v}");
+        assert_eq!(sess.settings["quality"], "large");
+    }
+
+    #[test]
+    fn export_settings_say_so_when_the_host_has_none() {
+        // The binary is pinned to one project and has no export
+        // window. A clear message beats an empty object a phone would
+        // render as an unusable sheet.
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        let mut sess = FakeSession::bare();
+        s.auth_mut().rotate_token();
+
+        let v = call_tool(&mut s, &mut f, &mut sess, "export_settings", json!({}));
+        assert!(v["error"].is_object(), "expected an error, got {v}");
+        let e = v["error"]["message"].as_str().unwrap_or_default();
+        assert!(e.contains("export settings"), "{e}");
+    }
+
+    #[test]
     fn initialize_returns_server_info() {
         let mut s = Server::new();
         let mut f = Fixture::new();
@@ -615,8 +799,8 @@ mod tests {
         let out = s.handle_line(raw, &mut f.ctx()).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let tools = v["result"]["tools"].as_array().unwrap();
-        // 11 read-only + 11 mutating
-        assert_eq!(tools.len(), 22);
+        // 15 read-only + 11 mutating
+        assert_eq!(tools.len(), 26);
     }
 
     #[test]

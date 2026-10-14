@@ -15,6 +15,25 @@ pub enum ExportResolution {
 }
 
 impl ExportResolution {
+    /// Wire id, used when a remote client sets this over MCP.
+    ///
+    /// Separate from [ExportResolution::label] because the label is
+    /// display text: "1080p (1920×1080)" is for a menu, not for a
+    /// round trip. A client echoes back what it was given, so the two
+    /// must not be the same string.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Uhd4K => "uhd_4k",
+            Self::Qhd => "qhd",
+            Self::FullHd => "full_hd",
+            Self::Hd => "hd",
+            Self::UltraWide21x9 => "ultra_wide_21x9",
+            Self::Original => "original",
+            Self::Scale1_5x => "scale_1_5x",
+            Self::Scale2x => "scale_2x",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Uhd4K => "4K (3840×2160)",
@@ -78,6 +97,16 @@ pub enum ExportFrameRate {
 }
 
 impl ExportFrameRate {
+    /// Wire id. See [ExportResolution::id].
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Fps24 => "fps_24",
+            Self::Fps30 => "fps_30",
+            Self::Fps60 => "fps_60",
+            Self::Original => "original",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Fps24 => "24 fps",
@@ -108,6 +137,14 @@ pub enum RateMode {
 }
 
 impl RateMode {
+    /// Wire id. See [ExportResolution::id].
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Vbr => "vbr",
+            Self::Cbr => "cbr",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Vbr => "VBR",

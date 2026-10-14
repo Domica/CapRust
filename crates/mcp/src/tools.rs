@@ -145,6 +145,40 @@ pub fn definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "preview_transport",
+            "description": "Drive the preview: `play`, `pause`, `toggle`, or `seek` to `at_ms`. Seeks are clamped to the project duration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["play", "pause", "toggle", "seek", "seek_back", "seek_fwd"] },
+                    "at_ms": { "type": "integer", "minimum": 0, "description": "Required for `seek`." },
+                    "by_ms": { "type": "integer", "minimum": 1, "description": "Step for `seek_back` and `seek_fwd`. Defaults to 5000." }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "preview_status",
+            "description": "Whether the preview is playing and where its playhead is, in milliseconds.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }),
+        json!({
+            "name": "export_settings",
+            "description": "The export settings the computer will use, each with the accepted values. Change one with `set_export_setting`.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }),
+        json!({
+            "name": "set_export_setting",
+            "description": "Change one export setting, using a value from `export_settings`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "key": { "type": "string" }, "value": { "type": "string" } },
+                "required": ["key", "value"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "preview_frame",
             "description": "The current preview frame as base64 JPEG. Returns `frame: null` before the first frame has decoded, which is normal. `width` caps the longest side; 320 is a sensible default for a phone.",
             "inputSchema": {
@@ -256,6 +290,10 @@ pub fn call<'a, 's>(
         "list_assets" => list_assets(),
         "list_recent_projects" => list_recent_projects(session),
         "preview_frame" => preview_frame(args, session),
+        "preview_transport" => preview_transport(args, session),
+        "preview_status" => preview_status(session),
+        "export_settings" => export_settings(session),
+        "set_export_setting" => set_export_setting(args, session),
         "start_export" => start_export(args, session),
         "export_status" => export_status(session),
         "open_project" => open_project(args, session),
@@ -399,6 +437,99 @@ fn open_project<'a, 's>(
     }
     s.request_open(&p).map_err(anyhow::Error::msg)?;
     Ok(json!({ "ok": true, "opening": path }).to_string())
+}
+
+/// Drive the preview transport.
+fn preview_transport<'a, 's>(
+    args: &Value,
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server has no preview");
+    };
+    let action = args
+        .get("action")
+        .and_then(Value::as_str)
+        .context("missing or non-string `action`")?;
+    let at_ms = args.get("at_ms").and_then(Value::as_u64);
+    let by_ms = args
+        .get("by_ms")
+        .and_then(Value::as_u64)
+        // Five seconds matches the desktop transport. A client that
+        // omits it gets the same step the buttons on the computer do.
+        .unwrap_or(5000)
+        .max(1);
+    if action == "seek" && at_ms.is_none() {
+        bail!("`seek` needs `at_ms`");
+    }
+    // The relative seeks need the current position to be relative to,
+    // and the host is the only one that knows it.
+    let at_ms = match action {
+        "seek_back" => Some(
+            s.preview_status()
+                .map(|(_, at)| at)
+                .unwrap_or(0)
+                .saturating_sub(by_ms),
+        ),
+        "seek_fwd" => Some(s.preview_status().map(|(_, at)| at).unwrap_or(0) + by_ms),
+        _ => at_ms,
+    };
+    let handled = s
+        .preview_transport(action, at_ms)
+        .map_err(anyhow::Error::msg)?;
+    Ok(json!({ "ok": true, "handled": handled }).to_string())
+}
+
+fn preview_status<'a, 's>(
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server has no preview");
+    };
+    match s.preview_status() {
+        Some((playing, at_ms)) => Ok(json!({ "playing": playing, "at_ms": at_ms }).to_string()),
+        // No status is a valid answer from a host that has no preview,
+        // and reporting it as an error would put a red line on a screen
+        // that is working exactly as the host allows.
+        None => Ok(json!({ "playing": false, "at_ms": Value::Null }).to_string()),
+    }
+}
+
+/// The export settings and the values each one accepts.
+///
+/// The host owns the vocabulary. A client that hardcoded a list of
+/// resolutions would break the day the desktop adds one, and would
+/// happily send a value the encoder has never heard of.
+fn export_settings<'a, 's>(
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server cannot export");
+    };
+    let Some(v) = s.export_settings() else {
+        bail!("this host does not expose its export settings");
+    };
+    Ok(v.to_string())
+}
+
+fn set_export_setting<'a, 's>(
+    args: &Value,
+    session: Option<&'s mut (dyn crate::server::SessionControl + 'a)>,
+) -> Result<String> {
+    let Some(s) = session else {
+        bail!("this server cannot export");
+    };
+    let key = args
+        .get("key")
+        .and_then(Value::as_str)
+        .context("missing or non-string `key`")?;
+    let value = args
+        .get("value")
+        .and_then(Value::as_str)
+        .context("missing or non-string `value`")?;
+    s.set_export_setting(key, value)
+        .map_err(anyhow::Error::msg)?;
+    Ok(json!({ "ok": true, "key": key, "value": value }).to_string())
 }
 
 /// The current preview frame, base64 JPEG.
@@ -1370,6 +1501,9 @@ mod tests {
             }
             self.opened = Some(path.to_string_lossy().to_string());
             Ok(())
+        }
+        fn request_export(&mut self, _destination: &str) -> Result<(), String> {
+            Err("this fake cannot export".into())
         }
     }
 

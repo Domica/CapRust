@@ -374,6 +374,13 @@ pub struct CapRustApp {
     /// `self.project` is released. Same reason as
     /// `pending_remote_open`.
     pub pending_remote_export: Option<String>,
+    /// Playback state mirrored for remote clients, and where a remote
+    /// transport command waits to be applied. The playhead itself is
+    /// borrowed for the length of the MCP batch.
+    pub remote_transport: PreviewTransport,
+    /// Mirror of the export settings, for the same reason: the export
+    /// window's state cannot be borrowed alongside the rest.
+    pub remote_export: ExportSettingsMirror,
     /// Cache of decoded recent-project thumbnails, keyed by project
     /// path. Lazily populated by `recent_thumb_texture`.
     pub recent_thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
@@ -718,6 +725,84 @@ struct RemoteSession<'a> {
     /// Export request recorded during the batch, acted on afterwards.
     export_dest: &'a mut Option<String>,
     export_progress: f32,
+    /// Mirror of the export settings, written back after the batch.
+    export: &'a mut ExportSettingsMirror,
+    /// Playback state, recorded at the start of the batch and written
+    /// back after. The playhead lives in `self` next to everything else
+    /// the batch borrows, so it cannot be handed out as a field
+    /// reference alongside `recent` and `player`.
+    transport: &'a mut PreviewTransport,
+}
+
+/// Playback state a remote transport command acts on.
+#[derive(Default)]
+pub struct PreviewTransport {
+    playing: bool,
+    at_ms: u64,
+    /// Set by a transport command, acted on once the batch has ended.
+    action: Option<(String, Option<u64>)>,
+}
+
+/// Mirror of the export settings, for the same reason: the export
+/// window's own state is on `self` and cannot be borrowed alongside the
+/// rest of the batch.
+pub struct ExportSettingsMirror {
+    resolution: String,
+    frame_rate: String,
+    quality: String,
+    rate_mode: String,
+    color_range: String,
+    subtitles_srt: bool,
+    advanced: bool,
+}
+
+impl ExportSettingsMirror {
+    fn of(state: &crate::panels::export_window::ExportState) -> Self {
+        Self {
+            resolution: state.resolution.id().into(),
+            frame_rate: state.frame_rate.id().into(),
+            quality: state.quality.id().into(),
+            rate_mode: state.rate_mode.id().into(),
+            color_range: state.color_range.id().into(),
+            subtitles_srt: state.subtitles_srt,
+            advanced: state.advanced,
+        }
+    }
+
+    /// What a setting holds now.
+    fn get(&self, key: &str) -> Option<String> {
+        Some(match key {
+            "resolution" => self.resolution.clone(),
+            "frame_rate" => self.frame_rate.clone(),
+            "quality" => self.quality.clone(),
+            "rate_mode" => self.rate_mode.clone(),
+            "color_range" => self.color_range.clone(),
+            "subtitles_srt" => self.subtitles_srt.to_string(),
+            "advanced" => self.advanced.to_string(),
+            _ => return None,
+        })
+    }
+
+    /// Apply a setting. Unknown keys are rejected here so a client
+    /// with a stale vocabulary is told rather than silently ignored.
+    fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
+        match key {
+            "resolution" => self.resolution = value.into(),
+            "frame_rate" => self.frame_rate = value.into(),
+            "quality" => self.quality = value.into(),
+            "rate_mode" => self.rate_mode = value.into(),
+            "color_range" => self.color_range = value.into(),
+            "subtitles_srt" => self.subtitles_srt = parse_bool(value)?,
+            "advanced" => self.advanced = parse_bool(value)?,
+            other => {
+                return Err(format!(
+                    "no export setting called `{other}`; valid keys are resolution, \
+                     frame_rate, quality, rate_mode, color_range, subtitles_srt, advanced"
+                ))
+            }
+        }
+        Ok(())
+    }
 }
 
 impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
@@ -742,6 +827,17 @@ impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
         encode_jpeg_base64(f, max_w as usize).map(Some)
     }
 
+    fn preview_transport(&mut self, action: &str, at_ms: Option<u64>) -> Result<bool, String> {
+        // Recorded, not performed. The playhead is borrowed by the
+        // batch closure, so it is applied once the batch has returned.
+        self.transport.action = Some((action.to_string(), at_ms));
+        Ok(true)
+    }
+
+    fn preview_status(&self) -> Option<(bool, u64)> {
+        Some((self.transport.playing, self.transport.at_ms))
+    }
+
     fn request_export(&mut self, destination: &str) -> Result<(), String> {
         *self.export_dest = Some(destination.to_string());
         Ok(())
@@ -753,6 +849,106 @@ impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
         } else {
             Some(self.export_progress)
         }
+    }
+
+    fn export_settings(&self) -> Option<serde_json::Value> {
+        Some(export_settings_value(self.export))
+    }
+
+    fn set_export_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
+        self.export.set(key, value)
+    }
+}
+
+/// Describe the export settings with the accepted values alongside.
+///
+/// The accepted values come from the enums themselves, not a
+/// hand-written list. A client with its own list breaks the day the
+/// desktop adds a resolution, and will happily send a value the
+/// encoder has never heard of.
+fn export_settings_value(state: &ExportSettingsMirror) -> serde_json::Value {
+    use crate::panels::export_window::{ColorRange, QualityTier};
+    use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
+    use serde_json::json;
+
+    let opts = |items: Vec<(&str, &str)>| -> serde_json::Value {
+        json!(items
+            .into_iter()
+            .map(|(id, label)| json!({ "id": id, "label": label }))
+            .collect::<Vec<_>>())
+    };
+
+    json!({
+        "resolution": state.get("resolution").unwrap_or_default(),
+        "frame_rate": state.get("frame_rate").unwrap_or_default(),
+        "quality": state.get("quality").unwrap_or_default(),
+        "rate_mode": state.get("rate_mode").unwrap_or_default(),
+        "color_range": state.get("color_range").unwrap_or_default(),
+        "subtitles_srt": state.subtitles_srt,
+        "advanced": state.advanced,
+        "available": {
+            "resolution": opts(ExportResolution::all().iter().map(|r| (r.id(), r.label())).collect()),
+            "frame_rate": opts(ExportFrameRate::all().iter().map(|r| (r.id(), r.label())).collect()),
+            "quality": opts(
+                [QualityTier::Small, QualityTier::Regular, QualityTier::Large]
+                    .iter().map(|q| (q.id(), q.label())).collect()
+            ),
+            "rate_mode": opts(RateMode::all().iter().map(|r| (r.id(), r.label())).collect()),
+            "color_range": opts(
+                [ColorRange::Limited, ColorRange::Full]
+                    .iter().map(|c| (c.id(), c.label())).collect()
+            ),
+        }
+    })
+}
+
+/// Apply the mirrored settings back onto the real export state.
+///
+/// The one place a wire id becomes an enum, validated here rather than
+/// on the way in. Validating early would mean a second copy of every
+/// accepted-value list; validating here means a bad id never reaches
+/// the mirror looking accepted, and the error names the fix.
+fn apply_export_mirror(
+    state: &mut crate::panels::export_window::ExportState,
+    mirror: &ExportSettingsMirror,
+) -> Result<(), String> {
+    use crate::panels::export_window::{ColorRange, QualityTier};
+    use caprust_media_io::export::{ExportFrameRate, ExportResolution, RateMode};
+
+    state.resolution = ExportResolution::all()
+        .into_iter()
+        .find(|r| r.id() == mirror.resolution)
+        .ok_or_else(|| bad("resolution", &mirror.resolution))?;
+    state.frame_rate = ExportFrameRate::all()
+        .into_iter()
+        .find(|r| r.id() == mirror.frame_rate)
+        .ok_or_else(|| bad("frame_rate", &mirror.frame_rate))?;
+    state.quality = [QualityTier::Small, QualityTier::Regular, QualityTier::Large]
+        .into_iter()
+        .find(|q| q.id() == mirror.quality)
+        .ok_or_else(|| bad("quality", &mirror.quality))?;
+    state.rate_mode = RateMode::all()
+        .into_iter()
+        .find(|r| r.id() == mirror.rate_mode)
+        .ok_or_else(|| bad("rate_mode", &mirror.rate_mode))?;
+    state.color_range = [ColorRange::Limited, ColorRange::Full]
+        .into_iter()
+        .find(|c| c.id() == mirror.color_range)
+        .ok_or_else(|| bad("color_range", &mirror.color_range))?;
+    state.subtitles_srt = mirror.subtitles_srt;
+    state.advanced = mirror.advanced;
+    Ok(())
+}
+
+fn bad(key: &str, value: &str) -> String {
+    format!("`{value}` is not a valid `{key}`; call export_settings for the accepted values")
+}
+
+fn parse_bool(v: &str) -> Result<bool, String> {
+    match v {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        other => Err(format!("`{other}` is not true or false")),
     }
 }
 
@@ -926,6 +1122,8 @@ impl CapRustApp {
             recent,
             pending_remote_open: None,
             pending_remote_export: None,
+            remote_transport: PreviewTransport::default(),
+            remote_export: ExportSettingsMirror::of(&ExportState::default()),
             recent_thumb_cache: std::collections::HashMap::new(),
             waveform_cache: std::collections::HashMap::new(),
             envelope_cache: std::collections::HashMap::new(),
@@ -1163,6 +1361,38 @@ impl CapRustApp {
     /// from the phone lands in the timeline in front of the user and Ctrl+Z
     /// takes it back. A separate process could not do that without both
     /// copies overwriting each other on save.
+    /// Carry out one transport command from a remote client.
+    ///
+    /// A seek is clamped to the project duration. Parking the playhead
+    /// past the end decodes nothing, so the phone would show a blank frame
+    /// with no way to tell a seek worked from one that did nothing.
+    fn apply_remote_transport(&mut self, action: &str, at_ms: Option<u64>) {
+        let total = self.total_duration_ms();
+        match action {
+            "play" => self.preview.playing = true,
+            "pause" => self.preview.playing = false,
+            "toggle" => self.preview.playing = !self.preview.playing,
+            "seek" | "seek_back" | "seek_fwd" => {
+                // Relative seeks arrive already resolved to an absolute
+                // position by the tool layer, which is the only place that
+                // can read the playhead without borrowing it here.
+                if let Some(at) = at_ms {
+                    self.playhead_ms = at.min(total);
+                    // The cached frame belongs to the old position. Keeping
+                    // it shows the previous moment until the next decode
+                    // lands, which reads as the seek not working.
+                    self.preview_player.cancel_pending();
+                }
+            }
+            other => tracing::warn!("remote: unknown transport action {other:?}"),
+        }
+        tracing::info!(
+            "remote: transport {action} -> playing={} playhead={}",
+            self.preview.playing,
+            self.playhead_ms
+        );
+    }
+
     fn tick_remote_control(&mut self) {
         self.pending_remote_open = None;
         self.pending_remote_export = None;
@@ -1244,6 +1474,8 @@ impl CapRustApp {
             recent,
             pending_remote_open,
             pending_remote_export,
+            remote_transport,
+            remote_export,
             preview_player,
             export_progress,
             ..
@@ -1259,6 +1491,8 @@ impl CapRustApp {
             player: preview_player,
             export_dest: pending_remote_export,
             export_progress: *export_progress,
+            transport: remote_transport,
+            export: remote_export,
         };
 
         let handled = bridge.drain(
@@ -1281,6 +1515,22 @@ impl CapRustApp {
             tracing::info!("remote control: opening project {target}");
             self.load_project_from(&target);
         }
+        // Export settings changed remotely, validated against the real enums
+        // before they reach the export window.
+        if let Err(e) = apply_export_mirror(&mut self.export_state, &self.remote_export) {
+            tracing::warn!("remote control: bad export setting: {e}");
+        }
+
+        // A transport command, applied now the borrow has ended.
+        if let Some((action, at_ms)) = self.remote_transport.action.take() {
+            self.apply_remote_transport(&action, at_ms);
+        }
+        // The playhead moves during playback, so the cached value has
+        // to follow it or the phone's readout drifts within a second
+        // of starting.
+        self.remote_transport.playing = self.preview.playing;
+        self.remote_transport.at_ms = self.playhead_ms;
+
         if let Some(dest) = self.pending_remote_export.take() {
             tracing::info!("remote control: starting export to {dest}");
             self.export_state.destination = dest.clone();
