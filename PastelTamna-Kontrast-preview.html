@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="hr"><head><meta charset="utf-8"><title>PastelTamna Kontrast preview</title>
+<style>
+body{background:#17151D;color:#FFF9EC;font-family:Consolas,monospace;padding:24px}
+.card{background:#201E26;border:1px solid #322E3D;border-radius:12px;padding:20px;max-width:780px}
+.code{line-height:1.75}
+.k{color:#FFA8C5;font-weight:bold}.s{color:#B6F5D6}.n{color:#FFDD9E;font-weight:bold}.c{color:#C2B5C2;font-style:italic}
+.f{color:#FFE45E;font-weight:bold}.t{color:#FFC890;font-weight:bold}.l{color:#6EF3FF;text-decoration:underline}.v{color:#E3C7FF;font-weight:bold}
+.sel{background:#FFE45E;color:#201E26;font-weight:bold;padding:0 4px;border-radius:4px}
+.sw{display:inline-block;min-width:118px;height:46px;border-radius:8px;margin:4px;line-height:46px;text-align:center;font-size:12px;font-weight:bold}
+</style></head><body>
+<h2>PastelTamna-Kontrast — preview</h2>
+<div class="card"><div class="code">
+<span class="c"># tekst #FFF9EC na #201E26 — kontrast ~15:1</span><br>
+<span class="k">if</span> uspjeh:<br>
+&nbsp;&nbsp;<span class="t">ispisi</span>(<span class="s">"sadržaj mint"</span>, <span class="n">123</span>) <span class="c"># sadržaj vs pozadina jasno odvojen</span><br>
+&nbsp;&nbsp;link = <span class="l">https://primjer.hr/dokumentacija</span> <span class="c"># link: aqua + underline</span><br>
+&nbsp;&nbsp;varijabla = <span class="v">@lavanda</span> + <span class="f">ključna_žuta</span><br>
+&nbsp;&nbsp;selekcija: <span class="sel">označeni tekst</span> <span class="c"># select: žuta #FFE45E</span><br>
+</div></div>
+<h3>Razlike koje tražiš</h3>
+<div>
+<span class="sw" style="background:#201E26;color:#FFF9EC;border:1px solid #555">tekst na pozadini</span>
+<span class="sw" style="background:#201E26;color:#6EF3FF;text-decoration:underline">link</span>
+<span class="sw" style="background:#201E26;color:#B6F5D6">sadržaj/string</span>
+<span class="sw" style="background:#FFE45E;color:#201E26">SELECT</span>
+<span class="sw" style="background:#322E3D;color:#FFF9EC">curr. linija</span>
+</div>
+<p style="color:#C2B5C2">Tekst = bijelo, link = aqua+underline, sadržaj = mint, select = puna žuta. Sve bez tamno-plave.</p>
+</body></html>

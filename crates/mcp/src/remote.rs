@@ -12,7 +12,7 @@
 
 use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -52,12 +52,36 @@ impl BridgeStatus {
     }
 }
 
-/// Owns the listener side. Dropping it stops the acceptor thread on its
-/// next loop iteration.
+/// Owns the listener side.
+///
+/// Dropping it releases the port. That does not happen on its own: the
+/// acceptor thread owns the `TcpListener` and parks in `accept()`, so
+/// dropping the channels only ends the current connection. The thread
+/// would sit on the socket forever, and the next `spawn` on the same
+/// port would fail with "address already in use" -- which is what a
+/// LAN toggle does, so the feature would break itself every time the
+/// user changed a setting.
 pub struct RemoteBridge {
     incoming: Receiver<String>,
     outgoing: Sender<String>,
     status: Arc<BridgeStatus>,
+    /// Set on drop. The acceptor checks it and returns.
+    shutdown: Arc<AtomicBool>,
+    /// Where to poke to wake a parked `accept()`.
+    addr: SocketAddr,
+}
+
+impl Drop for RemoteBridge {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        // `accept()` is blocking, so setting the flag is not enough --
+        // nothing wakes it. One throwaway connection makes it return,
+        // and the acceptor sees the flag and drops the listener.
+        //
+        // Best effort: if this fails the thread is stuck until the
+        // process exits, which is no worse than not trying.
+        let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(250));
+    }
 }
 
 impl RemoteBridge {
@@ -72,10 +96,23 @@ impl RemoteBridge {
         let (incoming_tx, incoming_rx) = mpsc::channel::<String>();
         let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>();
 
+        // Read before the listener is moved into the thread below.
+        let addr = listener.local_addr().context("read bound address")?;
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let acceptor_shutdown = Arc::clone(&shutdown);
+
         let acceptor_status = Arc::clone(&status);
         std::thread::Builder::new()
             .name("caprust-mcp-acceptor".into())
-            .spawn(move || acceptor(listener, incoming_tx, outgoing_rx, acceptor_status))
+            .spawn(move || {
+                acceptor(
+                    listener,
+                    incoming_tx,
+                    outgoing_rx,
+                    acceptor_status,
+                    acceptor_shutdown,
+                )
+            })
             .context("spawn MCP acceptor")?;
 
         tracing::info!("mcp: remote bridge listening on {host}:{bound}");
@@ -83,6 +120,8 @@ impl RemoteBridge {
             incoming: incoming_rx,
             outgoing: outgoing_tx,
             status,
+            shutdown,
+            addr,
         })
     }
 
@@ -131,8 +170,13 @@ fn acceptor(
     incoming_tx: Sender<String>,
     outgoing_rx: Receiver<String>,
     status: Arc<BridgeStatus>,
+    shutdown: Arc<AtomicBool>,
 ) {
     loop {
+        if shutdown.load(Ordering::Relaxed) {
+            tracing::info!("mcp: acceptor shutting down, releasing the port");
+            return;
+        }
         let (stream, addr) = match listener.accept() {
             Ok(v) => v,
             Err(e) => {
@@ -142,6 +186,13 @@ fn acceptor(
                 continue;
             }
         };
+        // The wake-up connection from Drop is not a client. Accepting
+        // it and then blocking again would leave the port held for as
+        // long as the process lives.
+        if shutdown.load(Ordering::Relaxed) {
+            tracing::info!("mcp: acceptor shutting down, releasing the port");
+            return;
+        }
         tracing::info!("mcp: remote client connected from {addr}");
 
         let read_half = match stream.try_clone() {
@@ -214,6 +265,59 @@ fn write_loop(write_half: &mut TcpStream, outgoing: &Receiver<String>, status: &
 mod tests {
     use super::*;
     use std::io::BufReader;
+
+    #[test]
+    fn dropping_the_bridge_releases_the_port() {
+        // The bug this covers: the acceptor thread owns the listener
+        // and parks in accept(), so dropping the bridge left the port
+        // held and the next bind failed. That is what the LAN toggle
+        // does, so turning the setting off and on again broke remote
+        // control for the rest of the session.
+        let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+        let port = bridge.port();
+        drop(bridge);
+
+        // Give the acceptor a moment to notice and let go.
+        std::thread::sleep(Duration::from_millis(300));
+
+        let again = RemoteBridge::spawn("127.0.0.1", port);
+        assert!(
+            again.is_ok(),
+            "port {port} was still held after drop: {}",
+            again.err().map(|e| e.to_string()).unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn rebinding_the_same_port_twice_in_a_row_works() {
+        // Straight from the settings flow: bind, drop, rebind.
+        for _ in 0..3 {
+            let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+            let port = bridge.port();
+            drop(bridge);
+            std::thread::sleep(Duration::from_millis(200));
+            let next = RemoteBridge::spawn("127.0.0.1", port).expect("rebind");
+            drop(next);
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    #[test]
+    fn a_dropped_bridge_reports_no_new_requests() {
+        // The wake-up connection from Drop must not be served as a
+        // client: nothing comes of it and it would look like a peer
+        // joining.
+        let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+        let port = bridge.port();
+        drop(bridge);
+        std::thread::sleep(Duration::from_millis(400));
+        // The port must be closed, not merely idle.
+        let reachable = TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(500),
+        );
+        assert!(reachable.is_err(), "port {port} still accepts connections");
+    }
 
     /// Connect a client, and get a thread that collects the server's
     /// replies. Reading replies has to live off the test thread or it
