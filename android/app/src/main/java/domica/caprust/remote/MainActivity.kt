@@ -2203,10 +2203,10 @@ private fun seekToFraction(v: View, frac: Float) {
             }
             lines.add(getString(R.string.lbl_effects_on, names.joinToString(", ")))
         }
-        // `text` here resolves to TextView.text, not to String's, so
-        // joinTo's receiver StringBuilder is not an Appendable of the
-        // kind the setter wants. Assign to a local first.
-        val summary = lines.joinTo("\n")
+        // joinToString, not joinTo. joinTo also exists on Appendable and
+        // resolves to that overload here, which does not return a
+        // String; joinToString has no such variant and always does.
+        val summary = lines.joinToString(separator = "\n")
         view.text = summary
 
         // Length control, only when there is a transition to lengthen.
