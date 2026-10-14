@@ -2340,11 +2340,11 @@ impl CapRustApp {
             .id(egui::Id::new("new_project_modal"))
             .collapsible(false)
             .resizable(true)
-            .default_width(940.0)
+            .default_width(1120.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.set_min_width(760.0);
+                ui.set_min_width(880.0);
                 // Two columns laid out by hand.
                 //
                 // A SidePanel here was the obvious way to do it and was
@@ -2367,7 +2367,12 @@ impl CapRustApp {
                     });
                     ui.add_space(space::L);
                     ui.vertical(|ui| {
-                        ui.set_width(300.0);
+                        // Wide enough for a 21:9 frame to show at a
+                        // size where the safe-area guides are actually
+                        // readable. The preview is the reason to look at
+                        // this panel at all; squeezing it to a column
+                        // made the guides decorative.
+                        ui.set_width(420.0);
                         new_project_preview(ui, &self.draft);
                     });
                 });
@@ -12343,12 +12348,18 @@ fn new_project_preview(ui: &mut egui::Ui, draft: &NewProjectDraft) {
     let (w, h) = draft.aspect_ratio.dimensions(draft.base_resolution.max(1));
     let ratio = w as f32 / h.max(1) as f32;
 
-    let avail = ui.available_width();
-    let box_h = 300.0f32;
+    let avail_w = ui.available_width() - 20.0;
+    // Fit inside the panel in both directions, taking the whole width
+    // for a wide format and the full height for a tall one. The height
+    // is the cap rather than the width, so a 9:16 uses the full
+    // column instead of sitting in a narrow strip beside it.
+    let max_h = 420.0f32;
     let (bw, bh) = if ratio >= 1.0 {
-        ((avail - 24.0).min(box_h * ratio), box_h)
+        let w = avail_w.min(max_h * ratio);
+        (w, w / ratio)
     } else {
-        (box_h * ratio, box_h)
+        let h = max_h;
+        (h * ratio, h)
     };
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(bw.max(20.0), bh.max(20.0)), egui::Sense::hover());
