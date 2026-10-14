@@ -12201,13 +12201,15 @@ fn format_card(ui: &mut egui::Ui, preset: &AspectRatio, selected: bool) -> bool 
     let (w, h) = preset.dimensions(1080);
     let ratio = w as f32 / h.max(1) as f32;
 
-    // Fixed card size, rectangle fitted inside. Variable widths would
-    // make the grid ragged and defeat the comparison the cards exist
-    // for -- every rectangle should be judged against the same frame.
+    // Fixed card size, with the thumbnail fitted into a reserved area
+    // above a reserved band for the two label lines. Fixed sizes keep
+    // the grid even, which is what makes the rectangles comparable --
+    // the whole reason for showing them side by side.
     const CARD_W: f32 = 210.0;
-    const CARD_H: f32 = 172.0;
-    const THUMB_H: f32 = 96.0;
+    const CARD_H: f32 = 176.0;
     const PAD: f32 = 10.0;
+    /// Enough for the name and the one line under it.
+    const LABEL_H: f32 = 42.0;
 
     // The rect is allocated first and everything is painted onto it.
     //
@@ -12243,18 +12245,42 @@ fn format_card(ui: &mut egui::Ui, preset: &AspectRatio, selected: bool) -> bool 
         egui::StrokeKind::Inside,
     );
 
-    // Fit the frame inside the thumbnail band, preserving the ratio. A
-    // portrait 9:16 becomes a tall sliver and a 21:9 a wide bar, which
-    // is the whole point of showing them side by side.
-    let (bw, bh) = if ratio >= 1.0 {
-        (THUMB_H * ratio, THUMB_H)
-    } else {
-        (THUMB_H, THUMB_H / ratio)
-    };
-    let thumb = egui::Rect::from_center_size(
-        rect.center() - egui::vec2(0.0, CARD_H * 0.5 - THUMB_H * 0.5 - 6.0),
-        egui::vec2(bw.min(CARD_W - PAD * 2.0), bh),
+    // Two bands, top and bottom, and the rectangle is fitted into the
+    // top one. Deriving both from CARD_H rather than positioning by
+    // hand is what stops a tall 9:16 from growing past the card edge and
+    // the labels from landing on top of it.
+    let thumb_area = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + PAD, rect.top() + PAD),
+        egui::pos2(rect.right() - PAD, rect.bottom() - PAD - LABEL_H),
     );
+    let label_area = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.bottom() - PAD - LABEL_H),
+        egui::pos2(rect.right(), rect.bottom() - PAD),
+    );
+
+    // Fit inside the band, preserving the ratio. A portrait 9:16 comes
+    // out as a tall sliver and a 21:9 as a wide bar, which is the whole
+    // point of showing them side by side.
+    let aw = thumb_area.width();
+    let ah = thumb_area.height();
+    let (bw, bh) = if ratio >= 1.0 {
+        let h = ah;
+        let w = h * ratio;
+        if w > aw {
+            (aw, aw / ratio)
+        } else {
+            (w, h)
+        }
+    } else {
+        let w = aw;
+        let h = w / ratio;
+        if h > ah {
+            (ah * ratio, ah)
+        } else {
+            (w, h)
+        }
+    };
+    let thumb = egui::Rect::from_center_size(thumb_area.center(), egui::vec2(bw, bh));
     p.rect_filled(
         thumb,
         radius::cr(radius::SM),
@@ -12270,18 +12296,22 @@ fn format_card(ui: &mut egui::Ui, preset: &AspectRatio, selected: bool) -> bool 
         egui::Stroke::new(1.0, accent),
         egui::StrokeKind::Inside,
     );
-    p.text(
-        thumb.center(),
-        egui::Align2::CENTER_CENTER,
-        format!("{w}x{h}"),
-        egui::FontId::proportional(11.0),
-        ui.visuals().text_color(),
-    );
+    // Only while it fits. On a tall sliver the text is wider than the
+    // rectangle and spills over the card edge.
+    if bw > 70.0 {
+        p.text(
+            thumb.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("{w}x{h}"),
+            egui::FontId::proportional(11.0),
+            ui.visuals().text_color(),
+        );
+    }
 
-    // Two label lines pinned to the bottom of the card, so the grid
-    // stays level whatever the thumbnail's height turns out to be.
+    // Labels in their own band, so they cannot collide with whatever
+    // shape the rectangle turned out to be.
     p.text(
-        egui::pos2(rect.center().x, rect.bottom() - CARD_H * 0.5 + 30.0),
+        egui::pos2(label_area.center().x, label_area.top() + 12.0),
         egui::Align2::CENTER_CENTER,
         preset.label(),
         egui::FontId::proportional(14.0),
@@ -12292,10 +12322,10 @@ fn format_card(ui: &mut egui::Ui, preset: &AspectRatio, selected: bool) -> bool 
         },
     );
     p.text(
-        egui::pos2(rect.center().x, rect.bottom() - CARD_H * 0.5 + 48.0),
+        egui::pos2(label_area.center().x, label_area.top() + 29.0),
         egui::Align2::CENTER_CENTER,
         preset.description(),
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(10.0),
         ui.visuals().weak_text_color(),
     );
 
