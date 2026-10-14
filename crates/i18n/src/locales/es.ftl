@@ -976,3 +976,9 @@ set-remote-lan = Permitir dispositivos de esta red
 set-remote-lan-hint = Se enlaza a todas las interfaces para que un telefono pueda conectarse. El puerto queda visible en la red local, por eso se exige emparejamiento.
 set-remote-type-on-phone = En el telefono, escribe
 set-remote-no-ip = no se pudo leer la direccion de red de este equipo
+
+
+new-pick-format = Elige un formato
+
+new-pick-format-hint = Elige para qué es el vídeo. La vista previa muestra la forma real.
+new-preview-header = Vista previa

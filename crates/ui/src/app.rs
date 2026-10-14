@@ -2286,6 +2286,35 @@ impl CapRustApp {
         );
     }
 
+    /// Format presets as cards, each showing the real proportions.
+    ///
+    /// Was a dropdown whose only clue was a tooltip on hover. Choosing
+    /// 9:16 over 16:9 is the single most consequential decision in
+    /// this dialog and the least visible one: the names are nearly
+    /// interchangeable and nothing on screen shows the difference until
+    /// the timeline is built. A little rectangle in the right
+    /// proportions answers it before the question is asked.
+    fn format_cards(&mut self, ui: &mut egui::Ui) {
+        let presets = AspectRatio::presets();
+        let per_row = if ui.available_width() > 520.0 { 3 } else { 2 };
+
+        egui::Grid::new("new_format_cards")
+            .num_columns(per_row)
+            .spacing([space::M, space::M])
+            .show(ui, |ui| {
+                for (i, preset) in presets.iter().enumerate() {
+                    let selected = self.draft.aspect_ratio == *preset;
+                    let clicked = format_card(ui, preset, selected);
+                    if clicked {
+                        self.draft.aspect_ratio = preset.clone();
+                    }
+                    if (i + 1) % per_row == 0 {
+                        ui.end_row();
+                    }
+                }
+            });
+    }
+
     fn show_new_project_modal(&mut self, ctx: &egui::Context) {
         if !self.new_project_modal_open {
             return;
@@ -2296,11 +2325,35 @@ impl CapRustApp {
         egui::Window::new(tr("new-title"))
             .id(egui::Id::new("new_project_modal"))
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
+            .default_width(940.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.set_min_width(560.0);
+                ui.set_min_width(760.0);
+                // Two columns: what to build on the left, what it will
+                // look like on the right. A single 940px-wide column of
+                // fields reads as a form with nothing to look at, and the
+                // one thing a new project needs to convey is its shape.
+                egui::SidePanel::right("new_project_preview")
+                    .exact_width(320.0)
+                    .default_width(320.0)
+                    .resizable(false)
+                    .show_inside(ui, |ui| {
+                        new_project_preview(ui, &self.draft);
+                    });
+
+                ui.add_space(space::M);
+                ui.label(tr("new-pick-format"));
+                ui.label(
+                    egui::RichText::new(tr("new-pick-format-hint"))
+                        .small()
+                        .color(egui::Color32::from_gray(150)),
+                );
+                ui.add_space(space::S);
+                self.format_cards(ui);
+
+                ui.add_space(space::XL);
                 egui::Grid::new("new_project_modal_grid")
                     .num_columns(2)
                     .spacing([space::L, space::M_PLUS])
@@ -2318,32 +2371,6 @@ impl CapRustApp {
                                 }
                             }
                         });
-                        ui.end_row();
-
-                        ui.label(tr("new-field-format"));
-                        egui::ComboBox::from_id_salt("modal_draft_aspect")
-                            .selected_text(self.draft.aspect_ratio.label())
-                            .show_ui(ui, |ui| {
-                                for preset in AspectRatio::presets() {
-                                    ui.selectable_value(
-                                        &mut self.draft.aspect_ratio,
-                                        preset.clone(),
-                                        preset.label(),
-                                    )
-                                    .on_hover_text(format!(
-                                        "{} — {}",
-                                        preset.label(),
-                                        preset.description()
-                                    ));
-                                }
-                            });
-                        // Show the description of the currently selected format
-                        ui.label(
-                            egui::RichText::new(self.draft.aspect_ratio.description())
-                                .small()
-                                .italics()
-                                .color(egui::Color32::from_gray(150)),
-                        );
                         ui.end_row();
 
                         ui.label(tr("new-field-resolution"));
@@ -12031,4 +12058,267 @@ mod preview_encoding_tests {
         let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
         assert_eq!((img.width(), img.height()), (160, 90));
     }
+}
+
+#[cfg(test)]
+mod export_settings_tests {
+    use super::*;
+
+    #[test]
+    fn available_lists_are_never_empty() {
+        // A setting whose option list is empty renders as a Change
+        // button that opens nothing. That is exactly what a phone
+        // cannot explain, so it is asserted here rather than found on
+        // a device.
+        let mirror =
+            ExportSettingsMirror::of(&crate::panels::export_window::ExportState::default());
+        let v = export_settings_value(&mirror);
+        let available = v["available"].as_object().expect("no `available` key");
+        for key in [
+            "resolution",
+            "frame_rate",
+            "quality",
+            "rate_mode",
+            "color_range",
+        ] {
+            let n = available
+                .get(key)
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            assert!(n > 0, "`{key}` has no accepted values");
+        }
+    }
+
+    #[test]
+    fn a_current_value_is_always_one_of_the_accepted_ones() {
+        // The row shows the current value and the option list shows
+        // what is allowed. If the current value is not in the list,
+        // nothing is ticked and the user cannot tell what is set.
+        let state = crate::panels::export_window::ExportState::default();
+        let mirror = ExportSettingsMirror::of(&state);
+        let v = export_settings_value(&mirror);
+        let available = v["available"].as_object().unwrap();
+        for key in [
+            "resolution",
+            "frame_rate",
+            "quality",
+            "rate_mode",
+            "color_range",
+        ] {
+            let current = v[key].as_str().unwrap_or_default();
+            let ids: Vec<String> = available[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| o["id"].as_str().unwrap_or_default().to_string())
+                .collect();
+            assert!(
+                ids.iter().any(|i| i == current),
+                "`{key}` is `{current}`, which is not among {ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mirror_applies_back_onto_a_real_state() {
+        // The round trip the phone relies on: read, change, write, and
+        // the desktop's export window agrees.
+        let mut state = crate::panels::export_window::ExportState::default();
+        let mut mirror = ExportSettingsMirror::of(&state);
+        mirror.set("quality", "large").unwrap();
+        mirror.set("resolution", "hd").unwrap();
+        apply_export_mirror(&mut state, &mirror).expect("valid values");
+
+        assert_eq!(
+            state.quality,
+            crate::panels::export_window::QualityTier::Large
+        );
+        assert_eq!(
+            state.resolution,
+            caprust_media_io::export::ExportResolution::Hd
+        );
+    }
+
+    #[test]
+    fn a_bad_value_is_refused_and_changes_nothing() {
+        let mut state = crate::panels::export_window::ExportState::default();
+        let before = state.quality;
+        let mut mirror = ExportSettingsMirror::of(&state);
+        mirror.set("quality", "enormous").unwrap();
+        let err = apply_export_mirror(&mut state, &mirror).unwrap_err();
+        assert!(err.contains("export_settings"), "{err}");
+        assert_eq!(
+            state.quality, before,
+            "a rejected value still changed the state"
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_names_the_valid_ones() {
+        let mut mirror = ExportSettingsMirror::of(&Default::default());
+        let err = mirror.set("sharpness", "high").unwrap_err();
+        assert!(err.contains("resolution"), "{err}");
+    }
+}
+/// One format card: a rectangle in the real proportions, the name, and
+/// what the format is for. Returns true when clicked.
+fn format_card(ui: &mut egui::Ui, preset: &AspectRatio, selected: bool) -> bool {
+    let (w, h) = preset.dimensions(1080);
+    let ratio = w as f32 / h.max(1) as f32;
+
+    // Fixed card size, rectangle fitted inside. Variable widths would
+    // make the grid ragged and defeat the comparison the cards exist
+    // for -- every rectangle should be judged against the same frame.
+    const CARD_W: f32 = 210.0;
+    const THUMB_H: f32 = 96.0;
+    const PAD: f32 = 10.0;
+
+    let card = egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::symmetric(PAD as i8, PAD as i8))
+        .fill(if selected {
+            ui.visuals().selection.bg_fill
+        } else {
+            ui.visuals().faint_bg_color
+        })
+        .stroke(egui::Stroke::new(
+            2.0,
+            if selected {
+                ui.visuals().selection.stroke.color
+            } else {
+                ui.visuals().widgets.noninteractive.bg_stroke.color
+            },
+        ));
+
+    card.show(ui, |ui| {
+        ui.set_width(CARD_W - PAD * 2.0);
+        ui.vertical_centered(|ui| {
+            // Fit the frame inside the thumbnail box, preserving the
+            // ratio. A portrait 9:16 becomes a tall sliver and a
+            // 21:9 a wide bar, which is the point.
+            let (bw, bh) = if ratio >= 1.0 {
+                (THUMB_H * ratio, THUMB_H)
+            } else {
+                (THUMB_H, THUMB_H / ratio)
+            };
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(bw.min(THUMB_H * 1.6), bh.min(THUMB_H * 1.6)),
+                egui::Sense::hover(),
+            );
+            let accent = ui.visuals().selection.stroke.color;
+            ui.painter().rect_filled(
+                rect,
+                radius::cr(radius::SM),
+                if selected {
+                    accent.gamma_multiply(0.35)
+                } else {
+                    egui::Color32::from_gray(70)
+                },
+            );
+            ui.painter().rect_stroke(
+                rect,
+                radius::cr(radius::SM),
+                egui::Stroke::new(if selected { 2.0 } else { 1.0 }, accent),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{w}x{h}"),
+                egui::FontId::proportional(11.0),
+                ui.visuals().text_color(),
+            );
+
+            ui.add_space(space::S);
+            ui.label(
+                egui::RichText::new(preset.label())
+                    .strong()
+                    .color(if selected {
+                        ui.visuals().text_color()
+                    } else {
+                        ui.visuals().weak_text_color()
+                    }),
+            );
+            ui.label(
+                egui::RichText::new(preset.description())
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+    });
+    // `Frame::show` hands back the inner response, which only covers
+    // what was allocated inside. The whole card is clickable, so the
+    // painter is interacted with directly.
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(CARD_W, 0.0), egui::Sense::click());
+    ui.interact(rect, ui.id().with("card"), egui::Sense::click())
+        .clicked()
+}
+
+/// The chosen format, drawn to scale against the panel.
+fn new_project_preview(ui: &mut egui::Ui, draft: &NewProjectDraft) {
+    ui.label(egui::RichText::new(tr("new-preview-header")).strong());
+    ui.add_space(space::M);
+
+    let (w, h) = draft.aspect_ratio.dimensions(draft.base_resolution.max(1));
+    let ratio = w as f32 / h.max(1) as f32;
+
+    let avail = ui.available_width();
+    let box_h = 300.0f32;
+    let (bw, bh) = if ratio >= 1.0 {
+        ((avail - 24.0).min(box_h * ratio), box_h)
+    } else {
+        (box_h * ratio, box_h)
+    };
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(bw.max(20.0), bh.max(20.0)), egui::Sense::hover());
+    let accent = ui.visuals().selection.stroke.color;
+    ui.painter()
+        .rect_filled(rect, radius::cr(radius::MD), ui.visuals().faint_bg_color);
+    ui.painter().rect_stroke(
+        rect,
+        radius::cr(radius::MD),
+        egui::Stroke::new(1.5, accent),
+        egui::StrokeKind::Inside,
+    );
+
+    // Safe-area guides, so the box reads as a frame rather than a
+    // rectangle of nothing. Title and action zones are where people put
+    // things, and seeing them before the first clip exists is the
+    // point of the panel.
+    let inset = rect.height() * 0.05;
+    let guide = egui::Stroke::new(1.0, egui::Color32::from_gray(90));
+    for frac in [0.1f32, 0.9] {
+        let y = rect.top() + rect.height() * frac;
+        ui.painter().add(egui::Shape::line_segment(
+            [
+                egui::pos2(rect.left() + inset, y),
+                egui::pos2(rect.right() - inset, y),
+            ],
+            guide,
+        ));
+    }
+    let x = rect.left() + rect.width() * 0.05;
+    ui.painter().add(egui::Shape::line_segment(
+        [
+            egui::pos2(x, rect.top() + inset),
+            egui::pos2(x, rect.bottom() - inset),
+        ],
+        guide,
+    ));
+
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{} x {}", w, h),
+        egui::FontId::proportional(20.0),
+        ui.visuals().text_color(),
+    );
+
+    ui.add_space(space::M);
+    ui.label(egui::RichText::new(draft.aspect_ratio.label()).strong());
+    ui.label(
+        egui::RichText::new(draft.aspect_ratio.description())
+            .small()
+            .color(ui.visuals().weak_text_color()),
+    );
 }

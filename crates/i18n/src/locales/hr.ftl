@@ -976,3 +976,9 @@ set-remote-lan = Dopusti uredaje na ovoj mrezi
 set-remote-lan-hint = Vezuje se na sve sucelja da telefon moze doci. Port postaje vidljiv lokalnoj mrezi, pa je uparenje obavezno.
 set-remote-type-on-phone = Na telefonu upisi
 set-remote-no-ip = nije uspjelo procitati mreznu adresu ovog racunala
+
+
+new-pick-format = Odaberi format
+
+new-pick-format-hint = Odaberi za što je video. Prikaz pokazuje stvarni oblik.
+new-preview-header = Prikaz

@@ -976,3 +976,9 @@ set-remote-lan = Geraete in diesem Netz erlauben
 set-remote-lan-hint = Bindet an alle Schnittstellen, damit ein Telefon zugreifen kann. Der Port wird im lokalen Netz sichtbar, deshalb ist die Kopplung noetig.
 set-remote-type-on-phone = Am Telefon eingeben
 set-remote-no-ip = Netzwerkadresse dieses Rechners konnte nicht gelesen werden
+
+
+new-pick-format = Format wählen
+
+new-pick-format-hint = Wähle, wofür das Video ist. Die Vorschau zeigt die echte Form.
+new-preview-header = Vorschau

@@ -976,3 +976,9 @@ set-remote-lan = Consenti i dispositivi di questa rete
 set-remote-lan-hint = Si collega a tutte le interfacce cosi un telefono puo raggiungerlo. La porta diventa visibile alla rete locale, quindi l abbinamento e obbligatorio.
 set-remote-type-on-phone = Sul telefono, digita
 set-remote-no-ip = impossibile leggere l indirizzo di rete di questo computer
+
+
+new-pick-format = Scegli un formato
+
+new-pick-format-hint = Scegli a cosa serve il video. L'anteprima mostra la forma reale.
+new-preview-header = Anteprima

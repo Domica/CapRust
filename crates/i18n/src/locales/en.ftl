@@ -976,3 +976,9 @@ set-remote-lan = Allow devices on this network
 set-remote-lan-hint = Binds to every interface so a phone can reach it. The port becomes visible to the local network, so pairing is required.
 set-remote-type-on-phone = On the phone, enter
 set-remote-no-ip = Could not read this machine's network address
+
+
+new-pick-format = Choose a format
+
+new-pick-format-hint = Pick what the video is for. The preview shows the real shape.
+new-preview-header = Preview

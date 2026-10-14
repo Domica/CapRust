@@ -791,6 +791,97 @@ fn kind_rank(k: MediaKind) -> u8 {
 // render-time input (target, layout, caches, selection) and bundling
 // them into a context struct would just add a layer of indirection
 // for a single call site.
+/// Read a cached waveform without needing `&mut self`.
+///
+/// The bin already holds a `&mut MediaBinState` and the peaks live on
+/// the app, which the bin cannot reach. The file is small and only read
+/// for cards that are actually drawn, so reading it here is cheaper
+/// than threading a second cache through the call chain.
+fn load_peaks(project_path: Option<&str>, id: Uuid) -> Option<Vec<f32>> {
+    let proj = project_path?;
+    let path = caprust_core::cache::waveform_path(std::path::Path::new(proj), id);
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() < 4 {
+        return None;
+    }
+    let n = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if bytes.len() < 4 + n * 4 {
+        return None;
+    }
+    let mut peaks = Vec::with_capacity(n);
+    for i in 0..n {
+        let off = 4 + i * 4;
+        peaks.push(f32::from_le_bytes([
+            bytes[off],
+            bytes[off + 1],
+            bytes[off + 2],
+            bytes[off + 3],
+        ]));
+    }
+    Some(peaks)
+}
+
+/// Peaks across most of the card, normalised to the clip's own loudest
+/// sample.
+///
+/// Normalised because an absolute scale makes a quietly recorded voice
+/// memo draw as a flat line -- which is the same as no waveform at all.
+/// Capped at 8x so a near-silent passage is not amplified into noise.
+fn draw_card_waveform(ui: &Ui, rect: Rect, peaks: &[f32]) {
+    if peaks.is_empty() || rect.width() < 8.0 || rect.height() < 8.0 {
+        return;
+    }
+    let loudest = peaks.iter().fold(0.0f32, |a, b| a.max(*b));
+    let gain = if loudest > 0.01 {
+        (0.92 / loudest).min(8.0)
+    } else {
+        1.0
+    };
+
+    // Leave a margin so the waveform reads as a waveform and not as a
+    // filled block, and keep the filename row clear below it.
+    let margin = rect.width() * 0.06;
+    let inner = Rect::from_min_max(
+        Pos2::new(rect.left() + margin, rect.top() + rect.height() * 0.16),
+        Pos2::new(rect.right() - margin, rect.bottom() - rect.height() * 0.14),
+    );
+    let center_y = inner.center().y;
+    let amp = inner.height() * 0.5;
+    let bar_w = 2.0_f32;
+    let n_bars = ((inner.width() / bar_w) as usize).max(1);
+    let stride = (peaks.len() / n_bars).max(1);
+    let color = Color32::from_white_alpha(235);
+
+    let mut x = inner.left();
+    let mut i = 0;
+    while i < peaks.len() && x < inner.right() {
+        // Take the loudest sample in each bucket, not the first. A
+        // peak array is a decimated envelope, and sampling it thinly
+        // makes transients vanish and the shape look wrong.
+        let end = (i + stride).min(peaks.len());
+        let v = peaks[i..end].iter().fold(0.0f32, |a, b| a.max(*b));
+        let h = (v * gain).clamp(0.0, 1.0) * amp;
+        if h >= 0.5 {
+            ui.painter().add(egui::Shape::line_segment(
+                [Pos2::new(x, center_y - h), Pos2::new(x, center_y + h)],
+                Stroke::new(bar_w * 0.7, color),
+            ));
+        }
+        x += bar_w;
+        i = end;
+    }
+
+    // Centre line, so silence still reads as audio rather than as an
+    // empty card.
+    ui.painter().add(egui::Shape::line_segment(
+        [
+            Pos2::new(inner.left(), center_y),
+            Pos2::new(inner.right(), center_y),
+        ],
+        Stroke::new(1.0, Color32::from_white_alpha(70)),
+    ));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_card(
     ui: &mut Ui,
@@ -874,22 +965,40 @@ fn draw_card(
         ui.painter()
             .rect_filled(thumb_rect, radius::cr(radius::SM), base);
 
-        let dark = Color32::from_black_alpha(40);
-        let grad_rect = Rect::from_min_max(
-            Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
-            thumb_rect.max,
-        );
-        ui.painter()
-            .rect_filled(grad_rect, radius::cr(radius::SM), dark);
+        // Audio gets the waveform itself, not a note icon.
+        //
+        // The card is the only thing a user has to go on before
+        // deciding what to drop on the timeline, and a music note is the
+        // one placeholder that says nothing: every audio file in the
+        // bin looks identical. Peaks taken across most of the box show
+        // the shape of the recording, so a voice memo, a music bed and
+        // a room recording are told apart at a glance.
+        let peaks = if item.kind == MediaKind::Audio {
+            load_peaks(project_path, item.id)
+        } else {
+            None
+        };
 
-        let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
-        ui.painter().text(
-            thumb_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            item.kind.icon(),
-            FontId::proportional(icon_size),
-            Color32::from_white_alpha(230),
-        );
+        if let Some(p) = peaks.as_deref() {
+            draw_card_waveform(ui, thumb_rect, p);
+        } else {
+            let dark = Color32::from_black_alpha(40);
+            let grad_rect = Rect::from_min_max(
+                Pos2::new(thumb_rect.left(), thumb_rect.bottom() - thumb_h * 0.35),
+                thumb_rect.max,
+            );
+            ui.painter()
+                .rect_filled(grad_rect, radius::cr(radius::SM), dark);
+
+            let icon_size = (thumb_h * 0.42).clamp(16.0, 40.0);
+            ui.painter().text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                item.kind.icon(),
+                FontId::proportional(icon_size),
+                Color32::from_white_alpha(230),
+            );
+        }
     }
 
     // Border: selected cards get a thicker accent border.
