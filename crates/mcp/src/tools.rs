@@ -349,9 +349,9 @@ fn list_recent_projects<'a, 's>(
     let Some(s) = session else {
         bail!("this server is pinned to one project and has no recent list");
     };
-    let arr: Vec<Value> = s
-        .recent()
-        .into_iter()
+    let items = s.recent();
+    let arr: Vec<Value> = items
+        .iter()
         .map(|r| {
             json!({
                 "path": r.path,
@@ -362,7 +362,12 @@ fn list_recent_projects<'a, 's>(
             })
         })
         .collect();
-    Ok(json!({ "projects": arr }).to_string())
+    // `count` is redundant with the array length and stays in the
+    // response deliberately: an empty array and an empty recent list
+    // are the same thing here, and a client that cannot tell "the
+    // desktop has no recent projects" from "the call silently failed"
+    // has no way to report which one happened.
+    Ok(json!({ "projects": arr, "count": items.len() }).to_string())
 }
 
 /// Switch the host to another project.

@@ -710,7 +710,11 @@ struct RemoteSession<'a> {
     recent: &'a mut RecentList,
     pending: &'a mut Option<String>,
     /// Raw last preview frame, and the playhead it belongs to.
-    frame: Option<crate::preview_player::RawFrame>,
+    /// Borrowed so the frame is only copied when a phone actually asks.
+    /// Cloning it every UI frame costs about a megabyte of allocation
+    /// sixty times a second for a request that arrives once a second at
+    /// best.
+    player: &'a crate::preview_player::PreviewPlayer,
     /// Export request recorded during the batch, acted on afterwards.
     export_dest: &'a mut Option<String>,
     export_progress: f32,
@@ -730,7 +734,9 @@ impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
     }
 
     fn preview_frame(&self, max_w: u32) -> Result<Option<String>, String> {
-        let Some(f) = &self.frame else {
+        // Read here rather than copied into the struct up front. This
+        // runs on every UI frame whether or not anyone is watching.
+        let Some(f) = self.player.raw_frame() else {
             return Ok(None);
         };
         encode_jpeg_base64(f, max_w as usize).map(Some)
@@ -762,6 +768,16 @@ impl caprust_mcp_core::server::SessionControl for RemoteSession<'_> {
 /// Nearest-neighbour, not a resampling filter. The preview is a
 /// thumbnail on a small screen; a filter would cost more than it shows,
 /// and nearest keeps this to a handful of lines.
+/// RGBA to RGB, dropping the alpha byte from every pixel.
+fn drop_alpha(rgba: &[u8]) -> Vec<u8> {
+    let px = rgba.len() / 4;
+    let mut rgb = Vec::with_capacity(px * 3);
+    for i in 0..px {
+        rgb.extend_from_slice(&rgba[i * 4..i * 4 + 3]);
+    }
+    rgb
+}
+
 /// Returns the encoded string, or the reason it could not be encoded.
 /// `String` rather than `anyhow::Result` because this crate does not
 /// depend on anyhow and the caller turns it into a tool error anyway.
@@ -780,7 +796,10 @@ fn encode_jpeg_base64(
     } else {
         1.0
     };
-    let (dw, dh) = ((w as f32 * scale) as usize, (h as f32 * scale) as usize);
+    let (dw, dh) = (
+        ((w as f32 * scale) as usize).max(1),
+        ((h as f32 * scale) as usize).max(1),
+    );
 
     let mut small = vec![0u8; dw * dh * 4];
     for y in 0..dh {
@@ -794,19 +813,20 @@ fn encode_jpeg_base64(
         }
     }
 
+    // JPEG has no alpha channel, and the encoder rejects Rgba8 outright
+    // rather than quietly dropping the fourth byte. So it has to be
+    // dropped here. The source alpha is always 255 by the time a frame
+    // reaches a preview surface.
+    let rgb = drop_alpha(&small);
+
     let mut out = Vec::new();
     // 70 is a deliberate compromise: visibly softer than a PNG at
     // this size, but the banding a lower quality would add is not
     // worth the bytes on a preview that refreshes several times a
     // second.
     let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 70);
-    enc.encode(
-        &small,
-        dw as u32,
-        dh as u32,
-        image::ExtendedColorType::Rgba8,
-    )
-    .map_err(|e| format!("preview encode failed: {e}"))?;
+    enc.encode(&rgb, dw as u32, dh as u32, image::ExtendedColorType::Rgb8)
+        .map_err(|e| format!("preview encode failed: {e}"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(out))
 }
 
@@ -1236,11 +1256,7 @@ impl CapRustApp {
         let mut session = RemoteSession {
             recent,
             pending: pending_remote_open,
-            // Cloned out of the player for the length of the batch.
-            // The phone is asking for pixels, and egui's TextureHandle
-            // cannot give them back in epaint 0.31 -- the raw frame is
-            // kept alongside for exactly this.
-            frame: preview_player.raw_frame().cloned(),
+            player: preview_player,
             export_dest: pending_remote_export,
             export_progress: *export_progress,
         };
@@ -11687,4 +11703,82 @@ pub struct TextOverlayDrag {
     /// Scale factors from frame-space to screen-space at drag start.
     pub sx: f32,
     pub sy: f32,
+}
+
+#[cfg(test)]
+mod preview_encoding_tests {
+    use super::encode_jpeg_base64;
+    use crate::preview_player::RawFrame;
+
+    fn frame(w: usize, h: usize) -> RawFrame {
+        let mut rgba = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                rgba[i] = (x * 255 / w.max(1)) as u8;
+                rgba[i + 1] = (y * 255 / h.max(1)) as u8;
+                rgba[i + 2] = 128;
+                rgba[i + 3] = 255;
+            }
+        }
+        RawFrame {
+            width: w,
+            height: h,
+            rgba,
+        }
+    }
+
+    #[test]
+    fn encoded_frame_is_a_jpeg_the_image_crate_can_read_back() {
+        // The phone decodes with BitmapFactory, which is as strict as
+        // this. If the bytes are not a real JPEG the phone shows
+        // "could not decode" and nothing else explains why.
+        let f = frame(320, 180);
+        let b64 = encode_jpeg_base64(&f, 320).expect("encode");
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64)
+            .expect("valid base64");
+
+        assert_eq!(&bytes[..2], &[0xFF, 0xD8], "no JPEG SOI marker");
+        assert_eq!(&bytes[bytes.len() - 2..], &[0xFF, 0xD9], "no EOI marker");
+
+        let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+            .expect("image crate could not decode the frame");
+        assert_eq!(img.width(), 320);
+        assert_eq!(img.height(), 180);
+    }
+
+    #[test]
+    fn downscaling_respects_the_requested_width() {
+        let f = frame(640, 360);
+        let b64 = encode_jpeg_base64(&f, 320).unwrap();
+        let bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
+        let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
+        assert_eq!(img.width(), 320);
+        // Aspect kept: 640x360 into 320 wide is 180 high.
+        assert_eq!(img.height(), 180);
+    }
+
+    #[test]
+    fn a_wide_frame_does_not_collapse_to_nothing() {
+        // A very wide frame scaled to a small width can round the
+        // height to zero, which produces a zero-length image that no
+        // decoder will accept.
+        let f = frame(4000, 8);
+        let b64 = encode_jpeg_base64(&f, 64).unwrap();
+        let bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
+        let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
+        assert!(img.height() >= 1, "height collapsed to {}", img.height());
+    }
+
+    #[test]
+    fn a_frame_that_needs_no_scaling_keeps_its_size() {
+        let f = frame(160, 90);
+        let b64 = encode_jpeg_base64(&f, 320).unwrap();
+        let bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
+        let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
+        assert_eq!((img.width(), img.height()), (160, 90));
+    }
 }

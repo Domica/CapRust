@@ -44,6 +44,7 @@
     <string name="title_projects">Recent projects</string>
     <string name="msg_loading_projects">Loading ...</string>
     <string name="no_projects">No recent projects on the computer</string>
+    <string name="no_projects_n">CapRust reports %1$d recent projects. Open one on the computer to make it appear here.</string>
     <string name="msg_opening">Opening %1$s</string>
 
     <!-- Settings rows -->

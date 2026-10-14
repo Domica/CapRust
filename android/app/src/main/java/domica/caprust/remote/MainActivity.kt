@@ -428,7 +428,16 @@ class MainActivity : android.app.Activity() {
      * you were already on, which reads as a broken button. Connect is
      * where pairing and disconnecting live anyway.
      */
-    private fun back(): Screen = Screen.Connect
+    /**
+     * Where Back goes.
+     *
+     * Project when a session exists, Connect otherwise. Sending Back to
+     * Connect unconditionally is what made the arrow on the Projects
+     * screen throw away the editor: the user tapped Open, found the
+     * list they expected, went back, and landed on a connection form
+     * they had already filled in.
+     */
+    private fun back(): Screen = if (connected || wanted) Screen.Project else Screen.Connect
 
     /**
      * Set the status line, if a screen showing one is attached.
@@ -472,7 +481,10 @@ class MainActivity : android.app.Activity() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(0, dp(4), 0, dp(4))
         }
-        if (current != Screen.Connect) {
+        // Project is the root of a live session, so it carries no Back --
+        // an arrow there that navigates to the screen you are already
+        // on reads as a dead button, which is exactly what it was.
+        if (current != Screen.Connect && current != Screen.Project) {
             row.addView(btn(getString(R.string.btn_back)) { show(back()) })
         }
         row.addView(TextView(this).apply {
@@ -964,8 +976,16 @@ class MainActivity : android.app.Activity() {
                     JSONArray()
                 }
                 if (arr.length() == 0) {
+                    // Say what the desktop reported rather than a bare
+                    // "nothing here": an empty list and a list that
+                    // failed to arrive look identical from here.
+                    val reported = try {
+                        JSONObject(body).optInt("count", 0)
+                    } catch (_: Exception) {
+                        0
+                    }
                     list.addView(TextView(this@MainActivity).apply {
-                        text = getString(R.string.no_projects)
+                        text = getString(R.string.no_projects_n, reported)
                     })
                     return@runOnUiThread
                 }
