@@ -862,17 +862,17 @@ class MainActivity : android.app.Activity() {
         transport.addView(chip(getString(R.string.act_fwd5)) { sendTransport("seek_fwd") })
         root.addView(transport)
 
-        val previewRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        previewRow.addView(chip(getString(R.string.btn_refresh_preview)) { fetchPreview() })
-        root.addView(previewRow)
+        val previewBtnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        previewBtnRow.addView(chip(getString(R.string.btn_refresh_preview)) { fetchPreview() })
+        root.addView(previewBtnRow)
 
         playheadView = TextView(this).apply { textSize = 12f }
         root.addView(playheadView)
 
-        val previewRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val exportRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         exportButton = btn(getString(R.string.btn_export)) { askExport() }
-        previewRow.addView(exportButton)
-        root.addView(previewRow)
+        exportRow.addView(exportButton)
+        root.addView(exportRow)
 
         // ---- actions ----
         val actions = card()
@@ -1530,71 +1530,88 @@ class MainActivity : android.app.Activity() {
         // The settings area swaps in place. Opening a second dialog for
         // the option list put it behind the sheet that asked for it, so
         // tapping a setting looked like it did nothing at all.
-        fun renderSettings() {
-            body.removeAllViews()
-            body.addView(TextView(this@MainActivity).apply {
-                text = getString(R.string.lbl_export_path_hint)
-            })
-            body.addView(destBox)
-            for ((key, label) in rows) {
-                val row = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                }
-                row.addView(TextView(this@MainActivity).apply {
-                    text = getString(R.string.setting_fmt, getString(label), current[key])
-                    setPadding(0, dp(10), 0, dp(10))
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                row.addView(chip(getString(R.string.act_change_short)) {
-                    showOptions(key, available.optJSONArray(key), current) { renderSettings() }
-                })
-                body.addView(row)
-            }
-        }
-
-        fun showOptions(
-            key: String,
-            options: JSONArray?,
-            cur: MutableMap<String, String>,
-            done: () -> Unit,
-        ) {
-            if (options == null || options.length() == 0) {
-                say(getString(R.string.msg_no_options, key))
-                return
-            }
-            // In-place, not a dialog: a dialog on top of this one is
-            // what made the whole sheet feel dead.
-            body.removeAllViews()
-            body.addView(TextView(this@MainActivity).apply {
-                text = getString(R.string.act_choose, key)
-                setPadding(0, dp(4), 0, dp(4))
-            })
-            for (i in 0 until options.length()) {
-                val o = options.getJSONObject(i)
-                val id = o.optString("id")
-                val label = o.optString("label", id)
-                val marked = if (id == cur[key]) "$label  ✓" else label
-                body.addView(btn(marked) {
-                    client.call(
-                        "set_export_setting",
-                        JSONObject().put("key", key).put("value", id)
-                    ) { ok, reply ->
-                        runOnUiThread {
-                            if (ok) {
-                                cur[key] = id
-                                done()
-                            } else {
-                                say(reply)
-                            }
-                        }
-                    }
-                })
-            }
-            body.addView(btn(getString(R.string.btn_back)) { done() })
-        }
-
-        renderSettings()
+        //
+        // Both renderers are members rather than local functions: two
+        // local functions cannot call each other in Kotlin when the
+        // first is declared first, and a forward reference is exactly
+        // the sort of thing that is only found by a compiler.
+        renderExportSettings(body, destBox, rows, current, available)
         scroll.addView(body)
         dialog.show()
+    }
+
+    /** The destination box plus one row per setting. */
+    private fun renderExportSettings(
+        body: LinearLayout,
+        destBox: EditText,
+        rows: Array<Pair<String, Int>>,
+        current: MutableMap<String, String>,
+        available: JSONObject,
+    ) {
+        body.removeAllViews()
+        body.addView(TextView(this).apply { text = getString(R.string.lbl_export_path_hint) })
+        body.addView(destBox)
+        for ((key, label) in rows) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(TextView(this).apply {
+                text = getString(R.string.setting_fmt, getString(label), current[key])
+                setPadding(0, dp(10), 0, dp(10))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(chip(getString(R.string.act_change_short)) {
+                renderExportOptions(body, destBox, rows, current, available, key)
+            })
+            body.addView(row)
+        }
+    }
+
+    /**
+     * One setting's accepted values, swapped into the sheet.
+     *
+     * In place rather than in a dialog of its own: a second dialog
+     * raised over the first is what made every setting look dead.
+     */
+    private fun renderExportOptions(
+        body: LinearLayout,
+        destBox: EditText,
+        rows: Array<Pair<String, Int>>,
+        current: MutableMap<String, String>,
+        available: JSONObject,
+        key: String,
+    ) {
+        val options = available.optJSONArray(key)
+        if (options == null || options.length() == 0) {
+            say(getString(R.string.msg_no_options, key))
+            return
+        }
+        body.removeAllViews()
+        body.addView(TextView(this).apply {
+            text = getString(R.string.act_choose, key)
+            setPadding(0, dp(4), 0, dp(4))
+        })
+        for (i in 0 until options.length()) {
+            val o = options.getJSONObject(i)
+            val id = o.optString("id")
+            val label = o.optString("label", id)
+            val marked = if (id == current[key]) "$label  ✓" else label
+            body.addView(btn(marked) {
+                client.call(
+                    "set_export_setting",
+                    JSONObject().put("key", key).put("value", id)
+                ) { ok, reply ->
+                    runOnUiThread {
+                        if (ok) {
+                            current[key] = id
+                            renderExportSettings(body, destBox, rows, current, available)
+                        } else {
+                            say(reply)
+                        }
+                    }
+                }
+            })
+        }
+        body.addView(btn(getString(R.string.btn_back)) {
+            renderExportSettings(body, destBox, rows, current, available)
+        })
     }
 
     /**
