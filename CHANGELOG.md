@@ -4,17 +4,30 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.17] — 2026-10-14
+
 ### Added
 
-- **Crash-recovery autosave.** Periodic snapshots in a per-project folder under `%APPDATA%/CapRust/recovery/`; the project file itself is never written to. Presets 1/5/15/30/60 min or any custom interval. On reopen, a prompt offers to restore the unsaved session, discard it, or decide later.
+- **Remote control (MCP over TCP).** Another device can drive the open session through the same tool surface and the same undo stack, so Ctrl+Z on the computer takes back an edit made from the phone. Settings → Paths. Loopback only and off by default; ticking "Allow devices on this network" opens the port to the LAN, which is why a six-digit pairing code is required. The code is valid five minutes and one try only; after pairing a persistent token is stored. Access can be revoked.
 - **Platform timeline templates.** TikTok / Reels / Shorts (9:16), Instagram feed (4:5), YouTube (16:9), Square (1:1). Applying one sets the project geometry and text safe area before any footage is dropped in.
-- **Remote control (MCP over TCP).** Settings → Paths lets another device drive the open session through the same tool surface and the same undo stack. Loopback only and off by default.
+- **Crash-recovery autosave.** Periodic snapshots in a per-project folder under `%APPDATA%/CapRust/recovery/`; the project file itself is never written to. Presets 1/5/15/30/60 min or any custom interval. On reopen, a prompt offers to restore the unsaved session, discard it, or decide later.
+- **New Project shows the shape.** The format picker was a dropdown whose only clue was a tooltip on hover. It is now cards showing the real proportions of each format, with a scale preview and safe-area guides beside them. The dialog is wider and its buttons are larger.
+- **New projects get their own folder.** `<location>/<name>/<name>.caprust`, matching what a saved project already used. Several projects in one folder shared, and overwrote, the same waveform and thumbnail caches. (#66)
+- **Audio items in the media bin draw their own waveform.** A voice memo, a music bed and a room recording were indistinguishable at card size — every audio item was the same coloured block with a music note. Peaks are drawn across most of the card, scaled to the item's own loudest sample.
+- **Effects, transitions and filters can be applied remotely**, from the phone or any MCP client. The id tables moved into `caprust-core` so the desktop panel and a remote client read one list rather than two that can drift.
 
 ### Fixed
 
-- **Applying a template wiped the media bin.** The template's state replaced the project wholesale, taking every imported item and its cached probe/thumbnail/waveform flags with it.
-- **New project dropped the `.caprust` file into the chosen folder.** It now creates `<location>/<name>/<name>.caprust`.
-- **Custom autosave interval spinner lost every keystroke.** Thread-local draft value holds the input until Postavi.
+- **Applying a template wiped the media bin.** The template's state replaced the project wholesale, taking every imported item and its cached probe/thumbnail/waveform flags with it. The media library is now merged. (#65)
+- **Remote control never gave its port back.** The acceptor thread owns the listener and parks in `accept()`, so dropping the bridge only ended the current connection. The LAN toggle drops the bridge to rebind, that rebind then failed, and the failure path switched remote control off — the feature disabled itself, reporting a port conflict with a port CapRust was still holding. (#67)
+- **Remote export settings were reset every frame.** The phone's settings were written back over the export window on every UI frame, so a change made on the computer did not stick and an export always used the defaults. (#68)
+- **A preview frame sent to a remote client was not a JPEG.** The encoder rejects RGBA outright rather than dropping the alpha byte, so every request failed and the client received an error where an image should have been.
+- **Custom autosave interval spinner lost every keystroke.** The value was re-created from the stored interval every frame; a thread-local draft now holds it until **Postavi** is clicked.
+
+### Known issues
+
+- Remote control is new in this release. The Android companion app is still distributed through nightly builds and is not covered by these release notes; it has not had a full pass on a device.
+- Loading a project on a remote client immediately starts playback on the computer. Not yet diagnosed.
 
 ## [0.9.16] — 2026-10-12
 
