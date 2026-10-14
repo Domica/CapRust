@@ -2345,27 +2345,32 @@ impl CapRustApp {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(760.0);
-                // Two columns: what to build on the left, what it will
-                // look like on the right. A single 940px-wide column of
-                // fields reads as a form with nothing to look at, and the
-                // one thing a new project needs to convey is its shape.
-                egui::SidePanel::right("new_project_preview")
-                    .exact_width(320.0)
-                    .default_width(320.0)
-                    .resizable(false)
-                    .show_inside(ui, |ui| {
+                // Two columns laid out by hand.
+                //
+                // A SidePanel here was the obvious way to do it and was
+                // the wrong one: it sized itself against the parent and
+                // painted over the third column of format cards,
+                // swallowing the clicks. Only one of the six was
+                // reachable, and it happened to be the default. A plain
+                // horizontal split cannot overlap anything.
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.add_space(space::M);
+                        ui.label(tr("new-pick-format"));
+                        ui.label(
+                            egui::RichText::new(tr("new-pick-format-hint"))
+                                .small()
+                                .color(egui::Color32::from_gray(150)),
+                        );
+                        ui.add_space(space::S);
+                        self.format_cards(ui);
+                    });
+                    ui.add_space(space::L);
+                    ui.vertical(|ui| {
+                        ui.set_width(300.0);
                         new_project_preview(ui, &self.draft);
                     });
-
-                ui.add_space(space::M);
-                ui.label(tr("new-pick-format"));
-                ui.label(
-                    egui::RichText::new(tr("new-pick-format-hint"))
-                        .small()
-                        .color(egui::Color32::from_gray(150)),
-                );
-                ui.add_space(space::S);
-                self.format_cards(ui);
+                });
 
                 ui.add_space(space::XL);
                 egui::Grid::new("new_project_modal_grid")
@@ -2410,20 +2415,35 @@ impl CapRustApp {
                     });
 
                 ui.add_space(space::XL);
+                // Both buttons sized by hand. Create is the action the
+                // whole dialog exists for, and it was the same height as
+                // Cancel -- which gave the one thing worth pressing no
+                // more presence than the way out.
                 ui.horizontal(|ui| {
                     let can_create = !self.draft.name.trim().is_empty()
                         && !self.draft.location.trim().is_empty();
-                    let resp = button::primary_enabled(ui, can_create, tr("new-button-create"));
+                    let mut create = egui::Button::new(tr("new-button-create"))
+                        .min_size(egui::vec2(180.0, 44.0));
+                    if can_create {
+                        create = create.fill(ui.visuals().selection.bg_fill);
+                    }
                     let resp = if can_create {
-                        resp
+                        ui.add(create)
                     } else {
-                        resp.on_disabled_hover_text(tr("new-button-create-hint"))
+                        // The hint belongs on the response, not on the
+                        // button: a disabled widget never emits hover
+                        // events of its own.
+                        ui.add_enabled(false, create)
+                            .on_disabled_hover_text(tr("new-button-create-hint"))
                     };
                     if resp.clicked() {
                         self.create_project();
                         created = true;
                     }
-                    if ui.button(tr("menu-file-quit")).clicked() {
+                    if ui
+                        .add_sized([120.0, 44.0], egui::Button::new(tr("menu-file-quit")))
+                        .clicked()
+                    {
                         created = true;
                     }
                 });
@@ -12185,87 +12205,104 @@ fn format_card(ui: &mut egui::Ui, preset: &AspectRatio, selected: bool) -> bool 
     // make the grid ragged and defeat the comparison the cards exist
     // for -- every rectangle should be judged against the same frame.
     const CARD_W: f32 = 210.0;
+    const CARD_H: f32 = 172.0;
     const THUMB_H: f32 = 96.0;
     const PAD: f32 = 10.0;
 
-    let card = egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::symmetric(PAD as i8, PAD as i8))
-        .fill(if selected {
+    // The rect is allocated first and everything is painted onto it.
+    //
+    // A Frame::show allocates its own rect and returns a response that
+    // only covers what was allocated inside, so a separate interaction
+    // on top of it lands in the wrong place -- the previous version
+    // drew a second zero-height rect after the frame, which is why
+    // only the default card was ever clickable.
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(CARD_W, CARD_H), egui::Sense::click());
+    let p = ui.painter().with_clip_rect(rect);
+    let accent = ui.visuals().selection.stroke.color;
+
+    p.rect_filled(
+        rect,
+        radius::cr(radius::MD),
+        if selected {
             ui.visuals().selection.bg_fill
         } else {
             ui.visuals().faint_bg_color
-        })
-        .stroke(egui::Stroke::new(
-            2.0,
+        },
+    );
+    p.rect_stroke(
+        rect,
+        radius::cr(radius::MD),
+        egui::Stroke::new(
+            if selected { 2.0 } else { 1.0 },
             if selected {
-                ui.visuals().selection.stroke.color
+                accent
             } else {
                 ui.visuals().widgets.noninteractive.bg_stroke.color
             },
-        ));
+        ),
+        egui::StrokeKind::Inside,
+    );
 
-    card.show(ui, |ui| {
-        ui.set_width(CARD_W - PAD * 2.0);
-        ui.vertical_centered(|ui| {
-            // Fit the frame inside the thumbnail box, preserving the
-            // ratio. A portrait 9:16 becomes a tall sliver and a
-            // 21:9 a wide bar, which is the point.
-            let (bw, bh) = if ratio >= 1.0 {
-                (THUMB_H * ratio, THUMB_H)
-            } else {
-                (THUMB_H, THUMB_H / ratio)
-            };
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(bw.min(THUMB_H * 1.6), bh.min(THUMB_H * 1.6)),
-                egui::Sense::hover(),
-            );
-            let accent = ui.visuals().selection.stroke.color;
-            ui.painter().rect_filled(
-                rect,
-                radius::cr(radius::SM),
-                if selected {
-                    accent.gamma_multiply(0.35)
-                } else {
-                    egui::Color32::from_gray(70)
-                },
-            );
-            ui.painter().rect_stroke(
-                rect,
-                radius::cr(radius::SM),
-                egui::Stroke::new(if selected { 2.0 } else { 1.0 }, accent),
-                egui::StrokeKind::Inside,
-            );
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                format!("{w}x{h}"),
-                egui::FontId::proportional(11.0),
-                ui.visuals().text_color(),
-            );
+    // Fit the frame inside the thumbnail band, preserving the ratio. A
+    // portrait 9:16 becomes a tall sliver and a 21:9 a wide bar, which
+    // is the whole point of showing them side by side.
+    let (bw, bh) = if ratio >= 1.0 {
+        (THUMB_H * ratio, THUMB_H)
+    } else {
+        (THUMB_H, THUMB_H / ratio)
+    };
+    let thumb = egui::Rect::from_center_size(
+        rect.center() - egui::vec2(0.0, CARD_H * 0.5 - THUMB_H * 0.5 - 6.0),
+        egui::vec2(bw.min(CARD_W - PAD * 2.0), bh),
+    );
+    p.rect_filled(
+        thumb,
+        radius::cr(radius::SM),
+        if selected {
+            accent.gamma_multiply(0.35)
+        } else {
+            egui::Color32::from_gray(70)
+        },
+    );
+    p.rect_stroke(
+        thumb,
+        radius::cr(radius::SM),
+        egui::Stroke::new(1.0, accent),
+        egui::StrokeKind::Inside,
+    );
+    p.text(
+        thumb.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{w}x{h}"),
+        egui::FontId::proportional(11.0),
+        ui.visuals().text_color(),
+    );
 
-            ui.add_space(space::S);
-            ui.label(
-                egui::RichText::new(preset.label())
-                    .strong()
-                    .color(if selected {
-                        ui.visuals().text_color()
-                    } else {
-                        ui.visuals().weak_text_color()
-                    }),
-            );
-            ui.label(
-                egui::RichText::new(preset.description())
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-            );
-        });
-    });
-    // `Frame::show` hands back the inner response, which only covers
-    // what was allocated inside. The whole card is clickable, so the
-    // painter is interacted with directly.
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(CARD_W, 0.0), egui::Sense::click());
-    ui.interact(rect, ui.id().with("card"), egui::Sense::click())
-        .clicked()
+    // Two label lines pinned to the bottom of the card, so the grid
+    // stays level whatever the thumbnail's height turns out to be.
+    p.text(
+        egui::pos2(rect.center().x, rect.bottom() - CARD_H * 0.5 + 30.0),
+        egui::Align2::CENTER_CENTER,
+        preset.label(),
+        egui::FontId::proportional(14.0),
+        if selected {
+            ui.visuals().text_color()
+        } else {
+            ui.visuals().weak_text_color()
+        },
+    );
+    p.text(
+        egui::pos2(rect.center().x, rect.bottom() - CARD_H * 0.5 + 48.0),
+        egui::Align2::CENTER_CENTER,
+        preset.description(),
+        egui::FontId::proportional(11.0),
+        ui.visuals().weak_text_color(),
+    );
+
+    response.clicked()
+        || ui
+            .interact(rect, ui.id().with("card"), egui::Sense::click())
+            .clicked()
 }
 
 /// The chosen format, drawn to scale against the panel.
