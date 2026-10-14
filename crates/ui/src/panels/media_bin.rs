@@ -882,6 +882,16 @@ fn draw_card_waveform(ui: &Ui, rect: Rect, peaks: &[f32]) {
     ));
 }
 
+/// Whether a card should carry a duration badge.
+///
+/// Keyed on kind, not on the value. ffprobe reports ~40 ms for a JPEG —
+/// the duration of its single frame — so a bare `duration_ms > 0` check
+/// passed and the badge read `00:00:00.040`, a wall of zeros that tells
+/// the user nothing. An image has no duration to show.
+fn shows_duration_badge(item: &MediaItem) -> bool {
+    item.kind != MediaKind::Image && item.duration_ms > 0
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_card(
     ui: &mut Ui,
@@ -1022,7 +1032,7 @@ fn draw_card(
     );
 
     // Duration badge (bottom-right).
-    if item.duration_ms > 0 {
+    if shows_duration_badge(item) {
         let label = format_ms(item.duration_ms);
         let text_pos = thumb_rect.right_bottom() - Vec2::new(4.0, 3.0);
         let font = FontId::monospace(text::XS);
@@ -1517,6 +1527,36 @@ mod sort_filter_tests {
         items.sort_by_key(|m| m.name.to_lowercase());
         assert_eq!(items[0].name, "a.mp4");
         assert_eq!(items[2].name, "z.mp4");
+    }
+
+    #[test]
+    fn images_never_show_a_duration_badge() {
+        // ffprobe reports ~40 ms for a JPEG (the duration of its single
+        // frame). A bare `duration_ms > 0` check let that through and the
+        // card read "00:00:00.040". The value is not the signal; the kind
+        // is.
+        let mut jpeg = make("a.jpg", MediaKind::Image, 1);
+        jpeg.duration_ms = 40;
+        assert!(!shows_duration_badge(&jpeg));
+
+        // ...and the same is true when the probe never ran at all.
+        let mut png = make("a.png", MediaKind::Image, 1);
+        png.duration_ms = 0;
+        assert!(!shows_duration_badge(&png));
+
+        // Video and audio still get one.
+        let mut mp4 = make("a.mp4", MediaKind::Video, 1);
+        mp4.duration_ms = 40;
+        assert!(shows_duration_badge(&mp4));
+
+        let mut mp3 = make("a.mp3", MediaKind::Audio, 1);
+        mp3.duration_ms = 1234;
+        assert!(shows_duration_badge(&mp3));
+
+        // An unprobed video has nothing to show yet.
+        let mut fresh = make("b.mp4", MediaKind::Video, 2);
+        fresh.duration_ms = 0;
+        assert!(!shows_duration_badge(&fresh));
     }
 
     #[test]

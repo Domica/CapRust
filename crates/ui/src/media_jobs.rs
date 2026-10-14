@@ -97,7 +97,10 @@ impl JobRunner {
                                 // temp dir keyed by media id.
                                 let tmp_dir = std::env::temp_dir().join("caprust-thumbs");
                                 let tmp = tmp_dir.join(format!("{media_id}.jpg"));
-                                let at = caprust_media_io::thumbnail::best_frame_time(duration_ms);
+                                // seek_for returns 0.0 for images: a still
+                                // has one frame at t=0, so any other point
+                                // makes ffmpeg write nothing.
+                                let at = caprust_media_io::thumbnail::seek_for(kind, duration_ms);
                                 match caprust_media_io::thumbnail::extract_jpeg(
                                     ffmpeg, &path, &tmp, at, 320,
                                 ) {
