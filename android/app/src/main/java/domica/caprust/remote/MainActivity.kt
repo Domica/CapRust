@@ -2203,7 +2203,11 @@ private fun seekToFraction(v: View, frac: Float) {
             }
             lines.add(getString(R.string.lbl_effects_on, names.joinToString(", ")))
         }
-        view.text = lines.joinTo("\n")
+        // `text` here resolves to TextView.text, not to String's, so
+        // joinTo's receiver StringBuilder is not an Appendable of the
+        // kind the setter wants. Assign to a local first.
+        val summary = lines.joinTo("\n")
+        view.text = summary
 
         // Length control, only when there is a transition to lengthen.
         // Rebuilding on every selection is cheaper than keeping a
@@ -2353,7 +2357,11 @@ private fun seekToFraction(v: View, frac: Float) {
                 // required here -- a plain toTypedArray() will not
                 // compile against List<String>.
                 row(getString(R.string.act_effects_on_clip)) {
-                    android.app.AlertDialog.Builder(this)
+                    // this@MainActivity, not this: this sheet is built
+                    // inside Dialog(...).apply, so a bare `this` here is
+                    // the Dialog and the builder wants a Context. A
+                    // Dialog is not one.
+                    android.app.AlertDialog.Builder(this@MainActivity)
                         .setTitle(getString(R.string.btn_effects))
                         .setItems(labels.toTypedArray<CharSequence>()) { _, which ->
                             removeEffect(id, ids[which])
