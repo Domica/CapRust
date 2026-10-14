@@ -46,6 +46,9 @@
     <string name="home_open_hint">Choose a project on the computer</string>
     <string name="home_settings_hint">Theme, reconnect, saved connections</string>
     <string name="home_log_hint">Raw request and response log</string>
+    <string name="lbl_log_inline">Log on home screen: %1$s</string>
+    <string name="on">On</string>
+    <string name="off">Off</string>
     <string name="msg_loading_projects">Loading ...</string>
     <string name="no_projects">No recent projects on the computer</string>
     <string name="no_projects_n">CapRust reports %1$d recent projects. Open one on the computer to make it appear here.</string>

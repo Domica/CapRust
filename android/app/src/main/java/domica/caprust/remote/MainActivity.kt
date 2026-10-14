@@ -386,6 +386,20 @@ class MainActivity : android.app.Activity() {
     /** Explains an empty preview area. */
     private var previewNote: TextView? = null
 
+    /**
+ * Whether the log is expanded in place rather than behind a button.
+ *
+ * A setting, not a preference: the log is the only diagnostic
+ * available without adb, and on the home screen it costs a fifth of
+ * the display. Off by default so the menu reads as a menu; on when
+ * something is going wrong and the user has said so once.
+ */
+private var logOn: Boolean
+    get() = getSharedPreferences("caprust", MODE_PRIVATE)
+        .getBoolean("logOn", false)
+    set(v) = getSharedPreferences("caprust", MODE_PRIVATE)
+        .edit().putBoolean("logOn", v).apply()
+
     /** Cached clip fields for the selected row, so the sheet and the
      *  detail panel do not have to re-query. */
     private val clipInfo = HashMap<String, JSONObject>()
@@ -1273,6 +1287,9 @@ class MainActivity : android.app.Activity() {
             chooseReconnect()
         })
 
+        root.addView(btn(getString(R.string.lbl_log_inline, getString(
+            if (logOn) R.string.on else R.string.off))) { toggleInlineLog() })
+
         root.addView(btn(getString(R.string.btn_saved)) { show(Screen.Connections) })
         root.addView(btn(getString(R.string.btn_log)) { show(Screen.Log) })
 
@@ -1311,6 +1328,19 @@ class MainActivity : android.app.Activity() {
      *  feels instant, slow enough not to spin. */
     private fun reconnectDelaySec(): Int =
         getSharedPreferences("caprust", MODE_PRIVATE).getInt("reconnectSec", 5)
+
+    /**
+     * Show the log in place on the home screen, or hide it.
+     *
+     * Rebuilds the screen because the home layout has two shapes: the
+     * log is either a row in the menu or a panel under it, and a view
+     * that has to be moved between them is one more thing that can end
+     * up half-showed.
+     */
+    private fun toggleInlineLog() {
+        logOn = !logOn
+        if (current == Screen.Home) show(Screen.Home)
+    }
 
     /**
      * Screen 5: saved pairings.
