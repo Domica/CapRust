@@ -80,6 +80,9 @@
     <string name="btn_refresh_preview">Refresh preview</string>
     <string name="btn_export">Export</string>
     <string name="lbl_export_path">Destination file</string>
+    <string name="lbl_export_path_hint">Destination file on the computer (full path)</string>
+    <string name="act_change_short">Change</string>
+    <string name="act_choose">Choose %1$s</string>
     <string name="msg_export_starting">Starting export ...</string>
     <string name="msg_export_started">Export started on the computer</string>
     <string name="export_running">Exporting</string>

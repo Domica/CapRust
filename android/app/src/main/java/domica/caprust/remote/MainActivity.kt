@@ -360,6 +360,9 @@ class MainActivity : android.app.Activity() {
     /** Playhead readout under the transport. */
     private var playheadView: TextView? = null
 
+    /** Explains an empty preview area. */
+    private var previewNote: TextView? = null
+
     /** Cached clip fields for the selected row, so the sheet and the
      *  detail panel do not have to re-query. */
     private val clipInfo = HashMap<String, JSONObject>()
@@ -424,7 +427,13 @@ class MainActivity : android.app.Activity() {
                 Screen.Connections -> buildConnections()
             }
         )
-        if (screen == Screen.Project) refresh()
+        if (screen == Screen.Project) {
+            refresh()
+            // Started after the view exists: the poll writes into
+            // previewView and playButton, which are built by
+            // buildProject just above.
+            startLivePolling()
+        }
     }
 
     /**
@@ -831,17 +840,31 @@ class MainActivity : android.app.Activity() {
         root.addView(previewView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
 
+        // Says so when there is nothing to show. An empty black box is
+        // indistinguishable from a broken app, and the reason is
+        // almost always "the preview has not decoded yet".
+        previewNote = TextView(this).apply {
+            text = getString(R.string.preview_none)
+            textSize = 12f
+        }
+        root.addView(previewNote)
+
         // ---- transport ----
-        // Drives the desktop's own playback. Not a local player: the
-        // phone has no timeline, so a play button here that animated
-        // nothing would be worse than no button at all.
+        // Two rows, not one. A LinearLayout does not wrap: four chips
+        // side by side do not fit a phone, and the last one is simply
+        // clipped off the right edge with no scrollbar to hint at it.
+        // The refresh button was the casualty -- it looked like it was
+        // never built.
         val transport = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         playButton = chip(getString(R.string.act_play)) { sendTransport("toggle") }
-        transport.addView(playButton)
+        transport.addView(playButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
         transport.addView(chip(getString(R.string.act_back5)) { sendTransport("seek_back") })
         transport.addView(chip(getString(R.string.act_fwd5)) { sendTransport("seek_fwd") })
-        transport.addView(chip(getString(R.string.btn_refresh_preview)) { fetchPreview() })
         root.addView(transport)
+
+        val previewRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        previewRow.addView(chip(getString(R.string.btn_refresh_preview)) { fetchPreview() })
+        root.addView(previewRow)
 
         playheadView = TextView(this).apply { textSize = 12f }
         root.addView(playheadView)
@@ -1360,6 +1383,30 @@ class MainActivity : android.app.Activity() {
     }
 
     /**
+ * Keep the preview and the transport label in step with the desktop.
+ *
+ * Polled rather than pushed, and only while the Project screen is on
+ * display. It has to be polled: the user can start playback from the
+ * keyboard on the computer, and the phone learns about it nowhere
+ * else. A button that still reads "Play" while the project is playing
+ * is worse than no button.
+ *
+ * Self-stopping. An endless poll would hold the socket open for as
+ * long as the app was backgrounded.
+ */
+    private fun startLivePolling() {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post(object : Runnable {
+            override fun run() {
+                if (current != Screen.Project || !connected) return
+                pollPlayback()
+                fetchPreview()
+                handler.postDelayed(this, 800)
+            }
+        })
+    }
+
+    /**
      * Ask the desktop for its current preview frame.
      *
      * A null frame is a normal answer, not an error: the preview has to
@@ -1382,7 +1429,7 @@ class MainActivity : android.app.Activity() {
                 }
                 if (jpeg.isEmpty()) {
                     view.setImageDrawable(null)
-                    say(getString(R.string.preview_none))
+                    previewNote?.visibility = View.VISIBLE
                     return@runOnUiThread
                 }
                 val bytes = try {
@@ -1401,7 +1448,7 @@ class MainActivity : android.app.Activity() {
                     return@runOnUiThread
                 }
                 view.setImageBitmap(bmp)
-                say("")
+                previewNote?.visibility = View.GONE
             }
         }
     }
@@ -1438,23 +1485,10 @@ class MainActivity : android.app.Activity() {
         }
         val available = s.optJSONObject("available") ?: JSONObject()
 
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(8))
-        }
-
-        // Destination first: it is the one value with no default and
-        // the only one that has to be right.
-        val destBox = EditText(this).apply {
-            hint = getString(R.string.lbl_export_path)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-            setText(s.optString("destination", "").ifEmpty { defaultExportPath() })
-        }
-        col.addView(TextView(this).apply { text = getString(R.string.lbl_export_path) })
-        col.addView(destBox)
-
-        // One row per enum setting. Each row shows the current value
-        // and opens the desktop's own list of accepted values.
+        // Current values, held here and updated in place. The sheet is
+        // rebuilt rather than re-fetched so the desktop's reply is not
+        // needed for the row to show what was just chosen.
+        val current = HashMap<String, String>()
         val rows = arrayOf(
             "resolution" to R.string.lbl_resolution,
             "frame_rate" to R.string.lbl_framerate,
@@ -1462,19 +1496,27 @@ class MainActivity : android.app.Activity() {
             "rate_mode" to R.string.lbl_rate_mode,
             "color_range" to R.string.lbl_colour_range,
         )
-        for ((key, label) in rows) {
-            val current = s.optString(key, "?")
-            col.addView(TextView(this).apply {
-                text = getString(R.string.setting_fmt, getString(label), current)
-            })
-            col.addView(btn(getString(R.string.act_change, getString(label))) {
-                chooseExportOption(key, current, available.optJSONArray(key)) { destBox }
-            })
+        for ((key, _) in rows) current[key] = s.optString(key, "?")
+
+        val destBox = EditText(this).apply {
+            hint = getString(R.string.lbl_export_path)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setText(s.optString("destination", "").ifEmpty { defaultExportPath() })
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
         }
 
+        // Destination first. It is the one value with no default, and
+        // the path is on the computer -- the phone has no filesystem
+        // the desktop can write to, so saying so is the difference
+        // between a working export and a confusing one.
+        body.addView(TextView(this).apply { text = getString(R.string.lbl_export_path_hint) })
+        body.addView(destBox)
+
         val scroll = ScrollView(this)
-        scroll.addView(col)
-        android.app.AlertDialog.Builder(this)
+        val dialog = android.app.AlertDialog.Builder(this)
             .setTitle(getString(R.string.btn_export))
             .setView(scroll)
             .setPositiveButton(getString(R.string.act_export_now)) { _, _ ->
@@ -1483,46 +1525,76 @@ class MainActivity : android.app.Activity() {
                 runExport(dest)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
+            .create()
 
-    /** Pick one of the desktop's accepted values for `key`. */
-    private fun chooseExportOption(
-        key: String,
-        current: String,
-        options: JSONArray?,
-        destBox: () -> EditText,
-    ) {
-        if (options == null || options.length() == 0) {
-            say(getString(R.string.msg_no_options, key))
-            return
-        }
-        val labels = ArrayList<CharSequence>(options.length())
-        val ids = ArrayList<String>(options.length())
-        for (i in 0 until options.length()) {
-            val o = options.getJSONObject(i)
-            val id = o.optString("id")
-            val label = o.optString("label", id)
-            // Mark the current one, so the sheet answers "what is it
-            // set to now" without the user having to remember.
-            labels.add(if (id == current) "$label  ✓" else label)
-            ids.add(id)
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle(key)
-            .setItems(labels.toTypedArray()) { _, which ->
-                val chosen = ids[which]
-                client.call(
-                    "set_export_setting",
-                    JSONObject().put("key", key).put("value", chosen)
-                ) { ok, body ->
-                    runOnUiThread {
-                        if (!ok) say(body) else say(getString(R.string.msg_set, key, chosen))
-                    }
+        // The settings area swaps in place. Opening a second dialog for
+        // the option list put it behind the sheet that asked for it, so
+        // tapping a setting looked like it did nothing at all.
+        fun renderSettings() {
+            body.removeAllViews()
+            body.addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.lbl_export_path_hint)
+            })
+            body.addView(destBox)
+            for ((key, label) in rows) {
+                val row = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
                 }
+                row.addView(TextView(this@MainActivity).apply {
+                    text = getString(R.string.setting_fmt, getString(label), current[key])
+                    setPadding(0, dp(10), 0, dp(10))
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(chip(getString(R.string.act_change_short)) {
+                    showOptions(key, available.optJSONArray(key), current) { renderSettings() }
+                })
+                body.addView(row)
             }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        }
+
+        fun showOptions(
+            key: String,
+            options: JSONArray?,
+            cur: MutableMap<String, String>,
+            done: () -> Unit,
+        ) {
+            if (options == null || options.length() == 0) {
+                say(getString(R.string.msg_no_options, key))
+                return
+            }
+            // In-place, not a dialog: a dialog on top of this one is
+            // what made the whole sheet feel dead.
+            body.removeAllViews()
+            body.addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.act_choose, key)
+                setPadding(0, dp(4), 0, dp(4))
+            })
+            for (i in 0 until options.length()) {
+                val o = options.getJSONObject(i)
+                val id = o.optString("id")
+                val label = o.optString("label", id)
+                val marked = if (id == cur[key]) "$label  ✓" else label
+                body.addView(btn(marked) {
+                    client.call(
+                        "set_export_setting",
+                        JSONObject().put("key", key).put("value", id)
+                    ) { ok, reply ->
+                        runOnUiThread {
+                            if (ok) {
+                                cur[key] = id
+                                done()
+                            } else {
+                                say(reply)
+                            }
+                        }
+                    }
+                })
+            }
+            body.addView(btn(getString(R.string.btn_back)) { done() })
+        }
+
+        renderSettings()
+        scroll.addView(body)
+        dialog.show()
     }
 
     /**
