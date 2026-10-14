@@ -754,6 +754,14 @@ pub struct ExportSettingsMirror {
     color_range: String,
     subtitles_srt: bool,
     advanced: bool,
+    /// Set when a phone actually changed something.
+    ///
+    /// Without this the mirror is written back every frame, so the
+    /// export window on the computer is reset to whatever the phone
+    /// last saw -- and to the defaults, since that is what the mirror
+    /// starts as. Changing a setting in the export window would not
+    /// stick, which is worse than the feature being absent.
+    dirty: bool,
 }
 
 impl ExportSettingsMirror {
@@ -766,6 +774,7 @@ impl ExportSettingsMirror {
             color_range: state.color_range.id().into(),
             subtitles_srt: state.subtitles_srt,
             advanced: state.advanced,
+            dirty: false,
         }
     }
 
@@ -786,6 +795,7 @@ impl ExportSettingsMirror {
     /// Apply a setting. Unknown keys are rejected here so a client
     /// with a stale vocabulary is told rather than silently ignored.
     fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
+        self.dirty = true;
         match key {
             "resolution" => self.resolution = value.into(),
             "frame_rate" => self.frame_rate = value.into(),
@@ -1516,9 +1526,13 @@ impl CapRustApp {
             self.load_project_from(&target);
         }
         // Export settings changed remotely, validated against the real enums
-        // before they reach the export window.
-        if let Err(e) = apply_export_mirror(&mut self.export_state, &self.remote_export) {
-            tracing::warn!("remote control: bad export setting: {e}");
+        // before they reach the export window. Only when something was
+        // actually changed -- see ExportSettingsMirror::dirty.
+        if self.remote_export.dirty {
+            if let Err(e) = apply_export_mirror(&mut self.export_state, &self.remote_export) {
+                tracing::warn!("remote control: bad export setting: {e}");
+            }
+            self.remote_export.dirty = false;
         }
 
         // A transport command, applied now the borrow has ended.

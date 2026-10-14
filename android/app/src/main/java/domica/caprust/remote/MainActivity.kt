@@ -324,6 +324,28 @@ class MainActivity : android.app.Activity() {
 
     private var current = Screen.Connect
 
+    /**
+     * Remember the screen across a rotation.
+     *
+     * Android destroys and recreates the activity for a configuration
+     * change, taking the socket with it. Coming back on Connect is not
+     * a neutral default here: it throws away the session the user was
+     * in the middle of, on a device that has no other way back.
+     */
+    override fun onSaveInstanceState(outState: android.os.Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("screen", current.name)
+    }
+
+    /** Screen name to screen, falling back to Connect on anything
+     *  unrecognised rather than throwing during recreation. */
+    private fun screenFrom(name: String): Screen =
+        try {
+            Screen.valueOf(name)
+        } catch (_: Exception) {
+            Screen.Connect
+        }
+
     private lateinit var client: Client
     // Null while no screen showing that particular view is attached.
     // A reply can arrive after the user has navigated away, and a
@@ -354,8 +376,9 @@ class MainActivity : android.app.Activity() {
     /** Export button, kept so its label can show progress. */
     private var exportButton: Button? = null
 
-    /** Play/pause toggle; its label follows the desktop's state. */
+    /** Play/pause buttons; the active one is highlighted. */
     private var playButton: TextView? = null
+    private var pauseButton: TextView? = null
 
     /** Playhead readout under the transport. */
     private var playheadView: TextView? = null
@@ -402,12 +425,13 @@ class MainActivity : android.app.Activity() {
         applyTheme(themeChoice(), apply = false)
         client = Client(this).also { it.loadToken() }
         client.onEvent = { renderLog() }
-        // Always start on Connect. Deciding from the stored token meant a
-        // stale one opened the editor, where every call failed. The
-        // connect that follows checks the token properly, and only then
-        // moves on -- one round trip, rather than a wrong screen the
-        // user has to back out of.
-        current = Screen.Connect
+        // A rotation destroys and rebuilds the activity, socket and all.
+        // Restoring the screen is what keeps the editor on screen
+        // instead of dropping the user back to a connection form they
+        // already filled in. The socket is gone either way; the
+        // reconnect in onResume is what brings it back.
+        val saved = savedInstanceState?.getString("screen")
+        current = if (saved != null) screenFrom(saved) else Screen.Connect
         show(current)
         if (connected || wanted) refresh()
     }
@@ -856,8 +880,14 @@ class MainActivity : android.app.Activity() {
         // The refresh button was the casualty -- it looked like it was
         // never built.
         val transport = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        playButton = chip(getString(R.string.act_play)) { sendTransport("toggle") }
-        transport.addView(playButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
+        // Two buttons, not one that toggles. A toggle whose label
+        // depends on state it can only learn by polling is a button
+        // that lies for a moment after every press, and pressing it
+        // twice to get back is worse than two honest buttons.
+        playButton = chip(getString(R.string.act_play)) { sendTransport("play") }
+        pauseButton = chip(getString(R.string.act_pause)) { sendTransport("pause") }
+        transport.addView(playButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        transport.addView(pauseButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         transport.addView(chip(getString(R.string.act_back5)) { sendTransport("seek_back") })
         transport.addView(chip(getString(R.string.act_fwd5)) { sendTransport("seek_fwd") })
         root.addView(transport)
@@ -959,8 +989,17 @@ class MainActivity : android.app.Activity() {
         // Landscape on a tablet was throwing away half the screen on a
         // single column. Two columns: timeline and clips on the left,
         // the selected clip's detail on the right.
+        //
+        // The left column scrolls. It holds a 190px preview, two
+        // transport rows and a 150px timeline before the clip list, and
+        // on a landscape phone that is taller than the screen -- so
+        // without a scroller the timeline sits below the fold with no
+        // way to reach it, which is exactly where it was.
         val wide = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        wide.addView(root, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        val leftScroll = ScrollView(this)
+        leftScroll.addView(root, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        wide.addView(leftScroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         val side = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, dp(0), 0)
@@ -1346,11 +1385,12 @@ class MainActivity : android.app.Activity() {
                 runOnUiThread { say(body) }
                 return@call
             }
-            // Read the state back rather than assuming what it did. The
-            // label is the only thing telling the user which state the
-            // desktop is actually in.
+            // Read the state back rather than assuming what it did.
+            // Only the status call: the live poll already fetches the
+            // frame, and asking for both here put a second request on
+            // the same serial queue behind the poll's own, which is
+            // what made the transport stop responding after one press.
             pollPlayback()
-            fetchPreview()
         }
     }
 
@@ -1369,8 +1409,8 @@ class MainActivity : android.app.Activity() {
                 } catch (_: Exception) {
                     -1
                 }
-                playButton?.text = getString(
-                    if (playing) R.string.act_pause else R.string.act_play)
+                playButton?.alpha = if (playing) 0.45f else 1f
+                pauseButton?.alpha = if (playing) 1f else 0.45f
                 playheadView?.text = if (at < 0) "" else formatTime(at)
             }
         }
