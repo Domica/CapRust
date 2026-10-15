@@ -84,9 +84,12 @@ impl BridgeStatus {
 /// port would fail with "address already in use" -- which is what a
 /// LAN toggle does, so the feature would break itself every time the
 /// user changed a setting.
+/// Type alias for the active client's reply channel slot.
+type ReplySlot = Arc<Mutex<Option<(usize, Sender<String>)>>>;
+
 pub struct RemoteBridge {
     incoming: Receiver<String>,
-    outgoing: Arc<Mutex<Option<(usize, Sender<String>)>>>,
+    outgoing: ReplySlot,
     status: Arc<BridgeStatus>,
     /// Set on drop. The acceptor checks it and returns.
     shutdown: Arc<AtomicBool>,
@@ -206,7 +209,7 @@ struct Served {
 fn acceptor(
     listener: TcpListener,
     incoming_tx: Sender<String>,
-    outgoing_slot: Arc<Mutex<Option<(usize, Sender<String>)>>>,
+    outgoing_slot: ReplySlot,
     status: Arc<BridgeStatus>,
     shutdown: Arc<AtomicBool>,
 ) {
