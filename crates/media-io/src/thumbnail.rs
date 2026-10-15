@@ -17,9 +17,20 @@ pub fn extract_jpeg(
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
     }
 
+    // Skip the seek entirely at t=0. `-ss 0` before `-i` makes ffmpeg
+    // emit no frames for still images, and it exits 0 with no output
+    // file -- which reads as success to thumbnail checks. This is the
+    // JPG "no thumbnail" bug: seek_for returns 0.0 for images, so the
+    // command was always asked to seek to exactly the bad point.
+    let seek = if at_sec > 0.0 {
+        vec!["-ss".to_string(), format!("{at_sec:.3}")]
+    } else {
+        Vec::new()
+    };
+
     let status = crate::silent_cmd::silent_command(ffmpeg)
         .args(["-y", "-v", "error"])
-        .args(["-ss", &format!("{at_sec}")])
+        .args(seek)
         .args(["-protocol_whitelist", "file"])
         .arg("-i")
         .arg(input)
