@@ -1,4 +1,4 @@
-use crate::i18n_helper::tr;
+use crate::i18n_helper::{tr, tr_with};
 use crate::media_jobs::JobRunner;
 use crate::panels::asset_browser::AssetBrowserState;
 use crate::panels::clip_properties::{PendingEdit, PropertiesState};
@@ -2459,6 +2459,58 @@ impl CapRustApp {
         self.new_project_modal_open = open && !created;
     }
 
+    /// Files → Import CapCut project.
+    ///
+    /// The folder is picked rather than the file, because a CapCut
+    /// project is a directory: the draft sits inside it beside its
+    /// media and the name lives in a separate JSON. Picking a single
+    /// file would have the user guess which of a dozen files it is.
+    ///
+    /// Nothing is asked about where to save. The import replaces the
+    /// open session and the user saves where they want, the same as
+    /// opening a project -- overwriting an unsaved project is their
+    /// decision to make afterwards, not a question before they have
+    /// even seen what came in.
+    fn import_capcut_project(&mut self) {
+        let Some(dir) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        match caprust_core::capcut_import::import_folder(&dir) {
+            Ok((mut state, report)) => {
+                tracing::info!("capcut import: {}", report.summary());
+
+                // Media whose file is not there would otherwise look
+                // like an empty bin until the user noticed the timeline
+                // was full of clips pointing at nothing.
+                let missing_note = if report.missing_media > 0 {
+                    format!(
+                        "\n{} clips point at files that are not on this \
+                         computer. Relink them from the media bin.",
+                        report.missing_media
+                    )
+                } else {
+                    String::new()
+                };
+                self.toast(format!("{}{missing_note}", report.summary()));
+
+                state.models.merge_missing_defaults();
+                let models_dir = self.settings.effective_models_dir();
+                state.models.scan_local(&models_dir);
+                // A fresh project from an import has no history worth
+                // undoing back into a previous one.
+                self.undo_stack = UndoStack::new();
+                self.project = state;
+                self.selected_clips.clear();
+                self.mode = AppMode::Editor;
+                self.check_missing_media_on_load();
+            }
+            Err(e) => {
+                let why = e.to_string();
+                self.toast_error(tr_with("toast-capcut-import-failed", &[("err", &why)]));
+            }
+        }
+    }
+
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -2481,6 +2533,10 @@ impl CapRustApp {
                             let p = f.to_string_lossy().to_string();
                             self.load_project_from(&p);
                         }
+                        ui.close_menu();
+                    }
+                    if ui.button(tr("menu-file-import-capcut")).clicked() {
+                        self.import_capcut_project();
                         ui.close_menu();
                     }
                     let save_lbl = if self.settings.enable_shortcuts {

@@ -1,6 +1,7 @@
 pub mod aspect_ratio;
 pub mod beat;
 pub mod cache;
+pub mod capcut_import;
 pub mod clip;
 pub mod commands;
 pub mod ffmpeg;
