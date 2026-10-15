@@ -2500,11 +2500,36 @@ impl CapRustApp {
                 state.models.scan_local(&models_dir);
                 // A fresh project from an import has no history worth
                 // undoing back into a previous one.
+                // Set project home BEFORE moving state in, same as
+                // load_project_from, so save/thumbnails/waveforms have a
+                // folder to resolve. The imported folder is the project's
+                // home rather than a .caprust file location.
+                state.project_path = Some(dir.to_string_lossy().to_string());
                 self.undo_stack = UndoStack::new();
                 self.project = state;
                 self.selected_clips.clear();
                 self.mode = AppMode::Editor;
+                // Now mirror load_project_from's backfill passes:
+                let (relinked, created) = self.project.relink_orphan_media_refs();
+                if relinked > 0 || created > 0 {
+                    tracing::info!(
+                        "import: relinked {} orphan refs, created {} missing media",
+                        relinked,
+                        created
+                    );
+                }
+                self.backfill_missing_probes();
+                self.regen_missing_thumbnails();
+                self.audio_cache = AudioCacheState::default();
+                if self.ffmpeg_status.ffmpeg.is_some() {
+                    let h = self.project.audio_render_hash();
+                    self.spawn_audio_cache_render(h);
+                }
+                let loaded_hash = self.project.render_hash();
+                self.last_saved_hash = Some(loaded_hash);
+                self.last_autosave_hash = Some(loaded_hash);
                 self.check_missing_media_on_load();
+                self.backfill_waveforms();
             }
             Err(e) => {
                 let why = e.to_string();
