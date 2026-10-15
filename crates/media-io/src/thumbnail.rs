@@ -23,7 +23,24 @@ pub fn extract_jpeg(
         .args(["-protocol_whitelist", "file"])
         .arg("-i")
         .arg(input)
-        .args(["-frames:v", "1", "-vf", &format!("scale={width}:-1")])
+        .args(["-frames:v", "1"])
+        // HEIC/HEIF/AVIF are tile-grid images. ffmpeg builds a complex
+        // filtergraph (xstack) to stitch them, and `-vf` on top of that
+        // fails with "Simple and complex filtering cannot be used
+        // together". Let ffmpeg write the full still, and let the caller
+        // scale it if it ever needs to be smaller.
+        .args(
+            match input
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("heic") | Some("heif") | Some("avif") => Vec::new(),
+                _ => vec!["-vf".to_string(), format!("scale={width}:-1")],
+            },
+        )
+        .args(["-update", "1"])
         .arg(out)
         .status()
         .with_context(|| format!("spawn ffmpeg thumbnail for {}", input.display()))?;
