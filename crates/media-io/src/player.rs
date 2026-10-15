@@ -28,7 +28,15 @@ pub fn decode_frame_rgba(
     // ~40-60ms with these flags.
     let mut child = crate::silent_cmd::silent_command(ffmpeg)
         .args(["-v", "error"])
-        .args(["-ss", &format!("{at_sec:.3}")])
+        // Same t=0 seek bug as thumbnail extraction: some ffmpeg builds
+        // emit no frame at all for still images when `-ss 0` precedes
+        // the input. Let the seek be omitted at zero and only add it
+        // for real frame times.
+        .args(if at_sec > 0.0 {
+            vec!["-ss".to_string(), format!("{at_sec:.3}")]
+        } else {
+            Vec::new()
+        })
         .args(["-protocol_whitelist", "file"])
         .arg("-i")
         .arg(input)

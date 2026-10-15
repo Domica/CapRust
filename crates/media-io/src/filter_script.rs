@@ -69,7 +69,7 @@ pub fn swap_filter_complex(args: &mut [String]) -> Result<Option<FilterScript>> 
     }
 
     let script = FilterScript::write(&args[pos + 1])?;
-    args[pos] = "-filter_complex_script".to_string();
+    args[pos] = "-/filter_complex".to_string();
     args[pos + 1] = script.path().to_string_lossy().to_string();
     Ok(Some(script))
 }
@@ -131,7 +131,7 @@ mod tests {
         let guard = swap_filter_complex(&mut args)
             .expect("swap")
             .expect("pair found");
-        assert_eq!(args[1], "-filter_complex_script");
+        assert_eq!(args[1], "-/filter_complex");
         assert_eq!(
             std::fs::read_to_string(&args[2]).unwrap().len(),
             graph.len()
