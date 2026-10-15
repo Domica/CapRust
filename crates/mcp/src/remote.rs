@@ -346,20 +346,34 @@ fn write_loop(
     generation: usize,
 ) {
     loop {
-        // A newer connection took over. Its writer owns the replies now.
-        if status.generation.load(Ordering::Relaxed) != generation {
-            break;
-        }
-        // Held only for the recv, so the next connection's writer is not
-        // blocked behind a long wait.
+        // The generation check has to be INSIDE the lock, immediately
+        // before the recv. Checking it out here is not enough: a writer
+        // that has been preempted is most likely sitting in
+        // `recv_timeout` at the moment its replacement arrives, and a
+        // reply queued after that would be handed to the dying writer,
+        // written to a socket that is already shut down, and lost. The
+        // new client then waits for a reply that was thrown away --
+        // which is a phone that appears connected and hangs.
+        //
+        // Inside the lock, a superseded writer breaks without ever
+        // calling recv, so it cannot take what is not its own.
         let next = {
             let Ok(rx) = outgoing.lock() else {
                 break;
             };
+            if status.generation.load(Ordering::Relaxed) != generation {
+                break;
+            }
             rx.recv_timeout(POLL)
         };
         match next {
             Ok(resp) => {
+                // Replaced between the recv and the write. Writing is
+                // harmless -- the socket is closed, so it errors -- but
+                // there is nothing to recover and no one to tell.
+                if status.generation.load(Ordering::Relaxed) != generation {
+                    break;
+                }
                 if writeln!(write_half, "{resp}").is_err() || write_half.flush().is_err() {
                     break;
                 }
@@ -428,8 +442,25 @@ mod tests {
         }
         assert!(served > 0, "the second client was never served");
 
+        // Retry the read, but never re-send: the point is that the one
+        // reply produced for this request reaches *this* client. A lost
+        // reply shows up as a timeout here, which is what CI caught.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let mut line = String::new();
-        r.read_line(&mut line).expect("second client is served");
+        loop {
+            match r.read_line(&mut line) {
+                Ok(_) => break,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    if std::time::Instant::now() >= deadline {
+                        panic!("second client never got its reply: {e}");
+                    }
+                }
+                Err(e) => panic!("second client read failed: {e}"),
+            }
+        }
         assert!(
             line.contains("served"),
             "second client got no reply: {line}"
