@@ -853,9 +853,13 @@ private var logOn: Boolean
                 connected = ok
                 if (ok) {
                     say(getString(R.string.msg_connected_to, host))
-                    // Same check as a manual connect: the socket being
-                    // open says nothing about whether the token works.
-                    if (current == Screen.Connect) checkServerThenPrompt()
+                    // Always verify the token, not only from the Connect
+                    // screen. After a rotation the socket is new and the
+                    // screen is restored to whatever it was, so gating
+                    // this on `current == Screen.Connect` skipped it
+                    // entirely: the app came back "connected" with a
+                    // token it had never checked, and every call failed.
+                    checkServerThenPrompt()
                 } else {
                     say(getString(R.string.msg_reconnect_failed, err))
                     val every = reconnectDelaySec()
@@ -2129,7 +2133,11 @@ private fun seekToFraction(v: View, frac: Float) {
                     // The link is up and the token works, but no project has been
                     // chosen yet. The editor comes after that choice,
                     // not before it.
-                    ok -> show(Screen.Home)
+                    // Only go to Home when there was nothing to come back to.
+                    // After a rotation the previous screen is already
+                    // restored; replacing it with Home threw away the
+                    // screen the user was on.
+                    ok -> if (current == Screen.Connect) show(Screen.Home)
                     isAuthFailure(body) -> {
                         client.setToken(null)
                         client.clearToken()
@@ -2293,7 +2301,15 @@ private fun seekToFraction(v: View, frac: Float) {
         }
         // Feed the drawn map from the same array the list uses, so the
         // two can never disagree about what is on the timeline.
-        timeline?.setClips(arr, lastDurationMs)
+        //
+        // A duration of 1 ms puts every clip at the right edge of the
+        // ruler and leaves the map unreadable. After a rotation the
+        // summary has not arrived yet, so `lastDurationMs` is still its
+        // initial 1 -- falling back to a sane value keeps the timeline
+        // drawn rather than squashed against the edge until the first
+        // refresh lands.
+        val scale = if (lastDurationMs > 1) lastDurationMs else 60_000L
+        timeline?.setClips(arr, scale)
         timeline?.setSelected(selectedClip)
         if (arr.length() == 0) {
             val empty = TextView(this)

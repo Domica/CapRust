@@ -118,6 +118,44 @@ impl PreviewPlayer {
     pub fn raw_frame(&self) -> Option<&RawFrame> {
         self.frame.as_ref()
     }
+
+    /// Keep the pixels behind a frame that is already on screen.
+    ///
+    /// Deliberately not a public field. Every rendering path that sets
+    /// `texture` has to set this too, and while the field was `pub`
+    /// three of them did not -- so `raw_frame()` stayed `None` through
+    /// the whole of playback and a remote client asking for a frame got
+    /// `{"frame": null}` while the preview was plainly working on the
+    /// desktop. A setter is the only way to make the pairing the only
+    /// way in.
+    pub fn capture_frame(&mut self, width: usize, height: usize, rgba: &[u8]) {
+        self.frame = Some(RawFrame {
+            width,
+            height,
+            rgba: rgba.to_vec(),
+        });
+    }
+
+    /// Show a frame and keep a copy of its pixels, together.
+    ///
+    /// This is the only way a caller should update the texture, because
+    /// it is the only way that cannot half-do the job. Setting
+    /// `texture` by hand and forgetting the pixels compiles fine and
+    /// produces a preview that works on the desktop and is invisible
+    /// over MCP -- which is exactly what happened.
+    pub fn publish_frame(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        width: usize,
+        height: usize,
+        rgba: &[u8],
+    ) {
+        let img = egui::ColorImage::from_rgba_unmultiplied([width, height], rgba);
+        self.texture = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));
+        self.has_frame = true;
+        self.capture_frame(width, height, rgba);
+    }
 }
 
 impl std::fmt::Debug for PreviewPlayer {
@@ -226,10 +264,16 @@ impl PreviewPlayer {
 
     /// Poll for completed frames. Uploads RGBA → egui texture.
     pub fn poll(&mut self, ctx: &egui::Context) {
-        let Some(rx) = self.rx.as_ref() else {
-            return;
-        };
-        while let Ok(res) = rx.try_recv() {
+        // Drain the channel first, then publish. Holding `rx` across a
+        // `&mut self` call borrows self twice, so the results are taken
+        // into a local and uploaded afterwards.
+        let mut ready = Vec::new();
+        if let Some(rx) = self.rx.as_ref() {
+            while let Ok(res) = rx.try_recv() {
+                ready.push(res);
+            }
+        }
+        for res in ready {
             // If we've moved on to another key since this result was
             // produced, drop it (it's stale).
             if self.pending != Some(res.key) {
@@ -246,17 +290,9 @@ impl PreviewPlayer {
             if res.rgba.len() < expected {
                 continue;
             }
-            let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &res.rgba[..expected]);
             let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
-            let handle = ctx.load_texture(name, img, egui::TextureOptions::LINEAR);
-            self.frame = Some(RawFrame {
-                width: w,
-                height: h,
-                rgba: res.rgba[..expected].to_vec(),
-            });
-            self.texture = Some(handle);
+            self.publish_frame(ctx, &name, w, h, &res.rgba[..expected]);
             self.last_key = Some(res.key);
-            self.has_frame = true;
             self.decoded += 1;
         }
     }
@@ -325,15 +361,7 @@ impl PreviewPlayer {
         if buf.len() < expected {
             return false;
         }
-        let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
-        let handle = ctx.load_texture("preview-stream", img, egui::TextureOptions::LINEAR);
-        self.frame = Some(RawFrame {
-            width: w,
-            height: h,
-            rgba: buf[..expected].to_vec(),
-        });
-        self.texture = Some(handle);
-        self.has_frame = true;
+        self.publish_frame(ctx, "preview-stream", w, h, &buf[..expected]);
         self.decoded += 1;
         true
     }
@@ -361,5 +389,58 @@ impl PreviewPlayer {
         self.last_key = None;
         self.cancel_pending();
         self.has_frame = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PreviewPlayer;
+
+    /// The phone sees no frame because `frame` was never populated.
+    ///
+    /// `RemoteSession::preview_frame` answers from `raw_frame()`, and
+    /// every rendering site in `app.rs` set `texture` and `has_frame`
+    /// on the player without touching it. So the preview was perfect on
+    /// the desktop and `{"frame": null}` over MCP, for as long as
+    /// anyone cared to look. This asserts the round trip that made the
+    /// bug invisible.
+    #[test]
+    fn publish_frame_keeps_the_pixels_for_the_remote_reader() {
+        let mut player = PreviewPlayer::default();
+        assert!(player.raw_frame().is_none());
+
+        let w = 64usize;
+        let h = 32usize;
+        let rgba = vec![200u8; w * h * 4];
+        player.publish_frame(&egui::Context::default(), "test", w, h, &rgba);
+
+        let held = player.raw_frame().expect("frame kept for the reader");
+        assert_eq!((held.width, held.height), (w, h));
+        assert_eq!(held.rgba.len(), w * h * 4);
+        assert_eq!(held.rgba[0], 200);
+    }
+
+    /// Nothing may assign the texture directly.
+    ///
+    /// `texture` stays `pub` for reading, and that is the whole hazard:
+    /// a rendering site that writes it gets a working desktop preview
+    /// and an empty phone preview, with no compiler complaint. The only
+    /// way to see it is to look for the pattern, so this looks.
+    #[test]
+    fn no_rendering_path_assigns_the_texture_directly() {
+        let src = include_str!("app.rs");
+        for (i, line) in src.lines().enumerate() {
+            let t = line.trim();
+            if t.starts_with("//") || t.starts_with("assert!") {
+                continue;
+            }
+            assert!(
+                !t.contains(".texture = Some("),
+                "app.rs:{} assigns the texture directly, so the pixels are \
+                 not kept and preview_frame answers null. Use \
+                 PreviewPlayer::publish_frame instead: {t}",
+                i + 1
+            );
+        }
     }
 }

@@ -9181,12 +9181,19 @@ impl CapRustApp {
                     let h = r.height as usize;
                     let expected = w * h * 4;
                     if buf.len() >= expected {
-                        let img =
-                            egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
-                        let handle =
-                            ctx.load_texture("preview-timeline", img, egui::TextureOptions::LINEAR);
-                        self.preview_player.texture = Some(handle);
-                        self.preview_player.has_frame = true;
+                        // publish_frame, not a bare texture assignment:
+                        // RemoteSession::preview_frame reads the pixels
+                        // from the player, so a frame shown without being
+                        // captured is invisible over MCP -- which is what
+                        // made preview_frame answer null while the
+                        // desktop played happily.
+                        self.preview_player.publish_frame(
+                            &ctx,
+                            "preview-timeline",
+                            w,
+                            h,
+                            &buf[..expected],
+                        );
 
                         // Re-anchor wall clock to the first consumed
                         // frame of this session. Without this, wall_ms
@@ -9381,12 +9388,13 @@ impl CapRustApp {
                     let h = r.height as usize;
                     let expected = w * h * 4;
                     if buf.len() >= expected {
-                        let img =
-                            egui::ColorImage::from_rgba_unmultiplied([w, h], &buf[..expected]);
-                        let handle =
-                            ctx.load_texture("preview-timeline", img, egui::TextureOptions::LINEAR);
-                        self.preview_player.texture = Some(handle);
-                        self.preview_player.has_frame = true;
+                        self.preview_player.publish_frame(
+                            &ctx,
+                            "preview-timeline",
+                            w,
+                            h,
+                            &buf[..expected],
+                        );
                         got_frame = true;
                     }
                 }
@@ -12036,7 +12044,48 @@ pub struct TextOverlayDrag {
 #[cfg(test)]
 mod preview_encoding_tests {
     use super::encode_jpeg_base64;
-    use crate::preview_player::RawFrame;
+    use crate::preview_player::{PreviewPlayer, RawFrame};
+
+    /// The bug this pins: `RemoteSession::preview_frame` answers from
+    /// `player.raw_frame()`, while every rendering path in app.rs sets
+    /// `texture` and `has_frame` on the player. Nothing set the pixels.
+    ///
+    /// So a remote client got `{"frame": null}` for the whole time
+    /// playback was running -- and playback on the desktop was plainly
+    /// working, which is what made it look like the phone rather than
+    /// the bridge.
+    ///
+    /// `poll_stream` did set `frame`, correctly, and was called from
+    /// nowhere. That asymmetry is the whole defect: a correct helper
+    /// that nothing invoked, and an inline path that half-updated the
+    /// struct.
+    #[test]
+    fn a_preview_frame_survives_to_the_remote_reader() {
+        let mut player = PreviewPlayer::default();
+        assert!(
+            player.raw_frame().is_none(),
+            "nothing decoded yet, so there is no frame to send"
+        );
+
+        let w = 64;
+        let h = 32;
+        let rgba = vec![200u8; w * h * 4];
+        // publish_frame is the only path that sets the texture, so
+        // showing a frame and keeping it are the same act and cannot
+        // come apart. This is the invariant that was missing: three
+        // rendering sites assigned `texture` directly and left `frame`
+        // as None.
+        player.publish_frame(&egui::Context::default(), "test", w, h, &rgba);
+
+        let held = player.raw_frame().expect("frame kept for the reader");
+        assert_eq!((held.width, held.height), (w, h));
+        assert_eq!(held.rgba.len(), w * h * 4);
+
+        // And it must survive the encode the remote path runs.
+        let jpeg = encode_jpeg_base64(held, 320).expect("encode");
+        assert!(!jpeg.is_empty());
+        assert!(!jpeg.contains("null"));
+    }
 
     fn frame(w: usize, h: usize) -> RawFrame {
         let mut rgba = vec![0u8; w * h * 4];
