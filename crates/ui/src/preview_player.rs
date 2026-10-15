@@ -86,6 +86,7 @@ pub struct PreviewPlayer {
     /// Key currently being decoded (as far as the UI knows).
     pub pending: Option<FrameKey>,
     pub has_frame: bool,
+    pub last_error: Option<String>,
     pub decoded: u64,
     slot: Option<Arc<Slot>>,
     /// Active streaming decoder (only while playing).
@@ -212,6 +213,7 @@ impl PreviewPlayer {
             last_key: None,
             pending: None,
             has_frame: false,
+            last_error: None,
             decoded: 0,
             slot: Some(slot),
             rx: Some(rx),
@@ -260,6 +262,7 @@ impl PreviewPlayer {
             at_sec: rounded as f64 / 1000.0,
         });
         self.pending = Some(key);
+        self.last_error = None;
     }
 
     /// Poll for completed frames. Uploads RGBA → egui texture.
@@ -281,7 +284,8 @@ impl PreviewPlayer {
             }
             self.pending = None;
 
-            if res.error.is_some() {
+            if let Some(err) = res.error.as_ref() {
+                self.last_error = Some(err.clone());
                 continue;
             }
             let w = res.key.width as usize;

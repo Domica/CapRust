@@ -9551,15 +9551,19 @@ impl CapRustApp {
             overlay_ctx = Some((draw_rect, tex_size));
         } else {
             let msg = if self.ffmpeg_status.ffmpeg.is_none() {
-                "FFmpeg not detected — set it in Settings → Paths"
+                "FFmpeg not detected — set it in Settings → Paths".to_string()
             } else if clip_info.is_none() {
                 if self.project.clips.is_empty() {
-                    "No clips on timeline"
+                    "No clips on timeline".to_string()
                 } else {
-                    "Playhead is not over a video clip"
+                    "Playhead is not over a video clip".to_string()
                 }
+            } else if let Some(err) = &self.preview_player.last_error {
+                // Surface the ffmpeg failure (missing decoder, bad
+                // path, …) instead of sitting on "Decoding…" forever.
+                format!("Decode failed: {err}")
             } else {
-                "Decoding…"
+                "Decoding…".to_string()
             };
             ui.painter().text(
                 rect.center(),
