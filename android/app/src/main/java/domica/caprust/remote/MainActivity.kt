@@ -46,6 +46,11 @@ class Client(private val ctx: Context) {
 
     private val io = Executors.newSingleThreadExecutor()
     private val net = Executors.newSingleThreadExecutor()
+
+    /** How many lines may arrive before a reply is given up on. Bounds
+     *  the id-matching loop in [raw]; a server sending only
+     *  notifications would otherwise spin here. */
+    private val MAX_LINES_PER_REPLY = 16
     private val main = Handler(Looper.getMainLooper())
 
     private var socket: Socket? = null
@@ -93,7 +98,11 @@ class Client(private val ctx: Context) {
             // Short connect timeout: a wrong IP should say so in a few
             // seconds rather than hanging the button forever.
             s.connect(InetSocketAddress(host, port), 4000)
-            s.soTimeout = 8000
+            // Generous. The desktop answers requests from its UI tick,
+            // so a busy or backgrounded window makes the reply late --
+            // it does not make it wrong, and a stale reply is now
+            // skipped by id rather than handed to the wrong caller.
+            s.soTimeout = 20000
             if (gen != generation) {
                 // A newer connect won the race while we were dialling.
                 s.close()
@@ -173,22 +182,50 @@ class Client(private val ctx: Context) {
             try {
                 val w = writer ?: throw IllegalStateException("not connected")
                 val r = reader ?: throw IllegalStateException("not connected")
+                val id = nextId++
                 val req = JSONObject()
                     .put("jsonrpc", "2.0")
-                    .put("id", nextId++)
+                    .put("id", id)
                     .put("method", method)
                     .put("params", params)
                 w.write(req.toString())
                 w.newLine()
                 w.flush()
                 note("> $req")
-                val line = r.readLine() ?: throw IllegalStateException("connection closed")
-                note("< $line")
+
+                // Read until the reply carries *our* id. The transport is
+                // one request/one response in order, so under normal use
+                // the first line is already the right one -- but a call
+                // that timed out leaves its reply sitting in the socket,
+                // and the next call used to hand that reply to whoever
+                // asked next. That is how pairing reported "no token in
+                // response" against a desktop that had paired fine: the
+                // line read belonged to the earlier tools/list.
+                //
+                // Bounded, so a server that only ever sends notifications
+                // cannot spin here forever.
+                var line: String? = null
+                for (_ in 0..MAX_LINES_PER_REPLY) {
+                    val got = r.readLine() ?: throw IllegalStateException("connection closed")
+                    note("< $got")
+                    val envelope = runCatching { JSONObject(got) }.getOrNull()
+                    if (envelope == null) {
+                        line = got
+                        break
+                    }
+                    if (!envelope.has("id") || envelope.optLong("id", -1L) == id.toLong()) {
+                        line = got
+                        break
+                    }
+                    note("~ skipped a reply for id ${envelope.optLong("id", -1L)}")
+                }
+                val text = line
+                    ?: throw IllegalStateException("no reply for id $id after $MAX_LINES_PER_REPLY lines")
                 if (gen != generation) {
                     note("~ reply dropped: connection was replaced")
                     return@execute
                 }
-                val v = JSONObject(line)
+                val v = JSONObject(text)
                 if (v.has("error")) {
                     val e = v.getJSONObject("error")
                     done(false, v, "(${e.optInt("code")}) ${e.optString("message")}")
@@ -198,10 +235,27 @@ class Client(private val ctx: Context) {
             } catch (e: Exception) {
                 val why = e.message ?: e.javaClass.simpleName
                 note("! $why")
+                // A read that failed leaves the stream at an unknown
+                // offset. Anything still in flight would be handed to the
+                // next caller, so the socket is now unusable: say so
+                // rather than return a stranger's reply.
+                kill()
                 if (gen != generation) return@execute
                 done(false, JSONObject(), why)
             }
         }
+
+    /** Drop the socket without touching the reconnect bookkeeping.
+     *
+     * Called when a read has failed, so the next call cannot inherit a
+     * half-consumed stream. The user reconnects; [onEvent] tells them.
+     */
+    private fun kill() {
+        writer = null
+        reader = null
+        closeQuietly()
+        post { onEvent?.invoke("-- link lost") }
+    }
 
     fun disconnect() = net.execute {
         generation++

@@ -443,6 +443,83 @@ mod tests {
     }
 
     #[test]
+    fn a_phone_can_list_tools_and_pair_over_the_bridge() {
+        // End to end, in the order the phone does it: tools/list, then
+        // auth, each write followed by a read of the very next line.
+        //
+        // This is deliberately the same shape as the client's `raw()`:
+        // write a request, read one line, parse it. If this passes, the
+        // desktop is serving the phone correctly and any pairing failure
+        // belongs to the client.
+        use crate::server::{Ctx, Server};
+        use caprust_core::commands::UndoStack;
+        use caprust_core::project::ProjectState;
+
+        let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+        let port = bridge.port();
+        let mut server = Server::new();
+
+        let client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut w = client.try_clone().unwrap();
+        let mut r = BufReader::new(client);
+
+        let mut project = ProjectState::default();
+        let mut undo = UndoStack::new();
+        let path = std::path::PathBuf::from("test.caprust");
+
+        let mut ask = |raw: &str, w: &mut TcpStream, server: &mut Server| -> serde_json::Value {
+            w.write_all(raw.as_bytes()).unwrap();
+            w.write_all(b"\n").unwrap();
+            w.flush().unwrap();
+            let mut handled = 0;
+            for _ in 0..40 {
+                handled += bridge.drain(8, |line| {
+                    let mut ctx = Ctx {
+                        project: &mut project,
+                        undo: &mut undo,
+                        project_path: &path,
+                        session: None,
+                    };
+                    Some(server.handle_line(line, &mut ctx).unwrap_or_default())
+                });
+                if handled > 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(handled > 0, "nothing drained for {raw}");
+            let mut line = String::new();
+            r.read_line(&mut line).expect("reply arrives");
+            serde_json::from_str(&line).expect("reply is valid JSON")
+        };
+
+        // 1. Capability check.
+        let listed = ask(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
+            &mut w,
+            &mut server,
+        );
+        assert!(listed.get("error").is_none(), "tools/list failed: {listed}");
+        let tools = listed["result"]["tools"].as_array().expect("tools array");
+        assert!(!tools.is_empty(), "tool list came back empty");
+
+        // 2. Pairing. The code is one-shot, so it is minted here and
+        // redeemed once, exactly as the settings panel does.
+        let code = server.auth_mut().begin_pairing();
+        let paired = ask(
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"auth","params":{{"code":"{code}"}}}}"#),
+            &mut w,
+            &mut server,
+        );
+        assert!(paired.get("error").is_none(), "auth failed: {paired}");
+        let token = paired["result"]["token"].as_str().unwrap_or("");
+        assert!(!token.is_empty(), "auth succeeded but returned no token");
+    }
+
+    #[test]
     fn a_connected_client_is_reported_connected() {
         // Narrowest version of the bug: `connected` was never set true
         // on accept, so write_loop saw "peer gone" and tore the socket
