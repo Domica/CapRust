@@ -205,7 +205,9 @@ class Client(private val ctx: Context) {
                 // Bounded, so a server that only ever sends notifications
                 // cannot spin here forever.
                 var line: String? = null
-                for (_ in 0..MAX_LINES_PER_REPLY) {
+                // `attempt` rather than `_`: Kotlin reserves the underscore for unused
+                // parameters and rejects it as a loop variable here.
+                for (attempt in 0..MAX_LINES_PER_REPLY) {
                     val got = r.readLine() ?: throw IllegalStateException("connection closed")
                     note("< $got")
                     val envelope = runCatching { JSONObject(got) }.getOrNull()
