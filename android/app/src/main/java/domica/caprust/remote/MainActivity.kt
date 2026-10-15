@@ -241,8 +241,11 @@ class Client(private val ctx: Context) {
                 // offset. Anything still in flight would be handed to the
                 // next caller, so the socket is now unusable: say so
                 // rather than return a stranger's reply.
+                if (gen != generation) {
+                    note("~ failure ignored: connection was replaced")
+                    return@execute
+                }
                 kill()
-                if (gen != generation) return@execute
                 done(false, JSONObject(), why)
             }
         }
@@ -542,13 +545,7 @@ private var logOn: Boolean
             // failure worth bouncing the user out of.
             if (line == "-- link lost" || line == "-- disconnected") {
                 connected = false
-                // `wanted` is left alone on purpose: a reconnect
-                // interval the user set is theirs to keep. Sitting on
-                // Connect is the fallback surface, and a successful
-                // retry walks back into the editor by itself.
-                runOnUiThread {
-                    if (current != Screen.Connect) show(Screen.Connect)
-                }
+                runOnUiThread { handleLinkLost() }
             }
         }
         // A rotation destroys and rebuilds the activity, socket and all.
@@ -1095,7 +1092,7 @@ private var logOn: Boolean
                 selectedClip = id
                 timeline?.setSelected(id)
                 selectedView?.text = clipInfo[id]?.let { describe(id, it) } ?: ""
-                showClipSheet()
+                showTransitionInfo()
             }
         }
         root.addView(timeline, LinearLayout.LayoutParams(
@@ -1110,6 +1107,13 @@ private var logOn: Boolean
         presetsRow.addView(chip(getString(R.string.btn_effects)) { showPresetPicker("effect") })
         presetsRow.addView(chip(getString(R.string.btn_filters)) { showPresetPicker("filter") })
         presetsRow.addView(chip(getString(R.string.btn_transitions)) { showPresetPicker("transition") })
+        // The sheet used to open by itself when a clip was tapped, which
+        // made selecting a clip and then reaching for Effects impossible:
+        // the dialog covered them. Now a tap only selects, and this is
+        // the way into the per-clip actions.
+        presetsRow.addView(chip(getString(R.string.btn_clip_actions)) {
+            if (selectedClip == null) say(getString(R.string.msg_tap_clip)) else showClipSheet()
+        })
         presets.addView(presetsRow)
 
         // What is actually on the selected clip, and the length of its
@@ -1210,6 +1214,26 @@ private var logOn: Boolean
      * therefore means "accepted", not "loaded", so the wait for the
      * new project is a refresh rather than an immediate re-read.
      */
+    /**
+     * The link dropped under us.
+     *
+     * Retries first, because a dropped link is usually the phone's Wi-Fi
+     * blinking and the user should not have to notice. Only when there
+     * is nothing to dial, or no interval is configured, does the app go
+     * back to Connect -- which still has the host and port in it, so it
+     * is a place to recover from rather than a dead end.
+     */
+    private fun handleLinkLost() {
+        val host = sharedPrefsHost()
+        val every = reconnectDelaySec()
+        if (host.isNotEmpty() && every > 0) {
+            say(getString(R.string.msg_reconnecting, host))
+            attemptConnect()
+            return
+        }
+        if (current != Screen.Connect) show(Screen.Connect)
+    }
+
     private fun buildProjects(): View {
         val root = column()
         root.addView(header(getString(R.string.title_projects)))
@@ -1742,7 +1766,14 @@ private var logOn: Boolean
                 if (current != Screen.Project || !connected) return
                 pollPlayback()
                 fetchPreview()
-                handler.postDelayed(this, 800)
+                // 1.2 s, not 800 ms. The desktop answers remote requests
+                // from its UI tick, and a phone asking for a preview
+                // frame and the playhead every 800 ms is 2.5 requests a
+                // second against a render loop that also has to survive
+                // its own frame. The frame is the expensive half, so it
+                // gets its own slower cadence and the cheap playhead
+                // readout keeps the transport honest.
+                handler.postDelayed(this, 1200)
             }
         })
     }
@@ -1793,8 +1824,14 @@ private fun seekToFraction(v: View, frac: Float) {
                     say(body)
                     return@runOnUiThread
                 }
+                // optString on a JSON null yields the literal four characters "null",
+                // not an empty string. The desktop answers with
+                // {"frame": null} until the preview has decoded, so that
+                // path used to hand "null" to Base64 and report a bad
+                // frame instead of saying there is nothing yet.
                 val jpeg = try {
-                    JSONObject(body).optString("frame")
+                    val parsed = JSONObject(body)
+                    if (parsed.isNull("frame")) "" else parsed.optString("frame")
                 } catch (_: Exception) {
                     ""
                 }
@@ -2286,8 +2323,11 @@ private fun seekToFraction(v: View, frac: Float) {
                     timeBox.setText(mid.toString())
                 }
                 selectedView?.text = describe(id, c)
+                // Select, do not pop the action sheet. Tapping a row
+                // opened a dialog, so selecting a clip to look at it was
+                // impossible -- and the sheet covered the Effects and
+                // Transitions buttons it was meant to lead to.
                 showTransitionInfo()
-                showClipSheet()
             }
             row.tag = id
             clipList?.addView(row)
