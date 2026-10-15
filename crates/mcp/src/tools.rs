@@ -896,11 +896,7 @@ fn set_transition(
     .to_string())
 }
 
-fn remove_effect(
-    args: &Value,
-    project: &mut ProjectState,
-    undo: &mut UndoStack,
-) -> Result<String> {
+fn remove_effect(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> Result<String> {
     let clip_id = parse_uuid(args, "clip_id")?;
     let effect_id = args
         .get("effect_id")

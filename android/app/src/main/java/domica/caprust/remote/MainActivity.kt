@@ -243,9 +243,13 @@ class Client(private val ctx: Context) {
                 return@raw
             }
             val names = ArrayList<String>()
-            // raw() hands back the whole envelope, so the result is
-            // nested under "result" and the array under "tools".
-            resp.optJSONObject("result")?.optJSONArray("tools")?.let { arr ->
+            // raw() already unwraps "result" before calling back -- that
+            // is why call() reads resp.optString("token") and
+            // resp.optJSONArray("content") with no "result" hop. Looking
+            // for a nested "result" here found nothing, so the tool list
+            // came back empty and every connect ended at "could not read
+            // the tool list". The array is directly on resp.
+            resp.optJSONArray("tools")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     arr.optJSONObject(i)?.optString("name")?.let { names.add(it) }
                 }
@@ -320,10 +324,28 @@ class MainActivity : android.app.Activity() {
         "preview_frame", "start_export", "export_status",
         "preview_transport", "preview_status",
         "export_settings", "set_export_setting",
+    )
+
+    /**
+     * Tools this app can use if the desktop has them, and does without
+     * if it does not.
+     *
+     * Separate from [requiredTools] on purpose. A feature added to the
+     * app must not become a gate: putting `remove_effect` in the
+     * required list made every desktop one build older refuse to talk to
+     * the phone at all, which reads as "the app is broken" rather than
+     * "one button is missing". A phone is expected to outlive any single
+     * desktop build.
+     */
+    private val optionalTools = listOf(
         "remove_effect",
     )
 
     private var current = Screen.Connect
+
+    /** Whether this desktop has remove_effect. Guards the button that
+     *  needs it; a desktop without it is older, not broken. */
+    private var hasRemoveEffect = false
 
     /**
      * Remember the screen across a rotation.
@@ -1934,6 +1956,9 @@ private fun seekToFraction(v: View, frac: Float) {
                     say(getString(R.string.msg_desktop_old, missing.joinToString(", ")))
                     return@runOnUiThread
                 }
+                // Recorded, not required. The features that need them
+                // hide themselves when these are absent.
+                hasRemoveEffect = "remove_effect" in names
                 verifyTokenOrPrompt()
             }
         }
@@ -2338,7 +2363,7 @@ private fun seekToFraction(v: View, frac: Float) {
             // before this but never remove it, so a mistake on the
             // phone had to be undone from the computer.
             val applied = info.optJSONArray("effects")
-            if (applied != null && applied.length() > 0) {
+            if (hasRemoveEffect && applied != null && applied.length() > 0) {
                 val labels = ArrayList<CharSequence>(applied.length())
                 val ids = ArrayList<String>(applied.length())
                 for (i in 0 until applied.length()) {

@@ -6,16 +6,34 @@
 //! socket lives here, on its own thread, and the UI thread drains a
 //! queue of lines once per frame.
 //!
-//! One client at a time. A second connection waits rather than
-//! interleaving, because the project and its undo stack are
+//! One client at a time. A second connection preempts the first rather
+//! than interleaving, because the project and its undo stack are
 //! single-owner and two writers would race.
+//!
+//! "Preempts" rather than "waits" is the whole design. The acceptor
+//! used to serve each connection inline, which meant it was blocked in
+//! `write_loop` for as long as that client stayed connected -- and not
+//! in `accept()` at all. Two things broke from that one fact:
+//!
+//!   * A client that vanished without the desktop noticing (Wi-Fi
+//!     drop, NAT timeout) kept the acceptor parked. New connections
+//!     queued in the backlog and were never accepted, so a phone that
+//!     reconnected appeared connected and then hung.
+//!   * `Drop` wakes the acceptor with one throwaway connection. With a
+//!     client attached, nothing was in `accept()` to accept it, so the
+//!     port stayed bound and the next bind failed -- which is exactly
+//!     what toggling the setting does.
+//!
+//! So each connection is served on its own thread and the acceptor goes
+//! straight back to `accept()`. The newcomer shuts the old socket down,
+//! which unblocks its threads immediately.
 
 use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How often the writer checks whether the client vanished. Bounds how
@@ -28,6 +46,10 @@ pub struct BridgeStatus {
     connected: AtomicBool,
     port: AtomicU64,
     requests: AtomicU64,
+    /// Which connection is current. A connection that is being torn
+    /// down must not clear `connected` on its way out, or it would
+    /// report the client that replaced it as gone.
+    generation: AtomicUsize,
 }
 
 impl BridgeStatus {
@@ -36,6 +58,7 @@ impl BridgeStatus {
             connected: AtomicBool::new(false),
             port: AtomicU64::from(port as u64),
             requests: AtomicU64::new(0),
+            generation: AtomicUsize::new(0),
         }
     }
 
@@ -165,6 +188,14 @@ impl RemoteBridge {
     }
 }
 
+/// The connection currently being served, so a newcomer can evict it.
+struct Served {
+    /// Kept purely to shut the socket down. `shutdown()` on a socket
+    /// blocked in `read` or `write` unblocks it immediately, which is
+    /// the only reliable way to interrupt a thread parked in the kernel.
+    stream: TcpStream,
+}
+
 fn acceptor(
     listener: TcpListener,
     incoming_tx: Sender<String>,
@@ -172,9 +203,16 @@ fn acceptor(
     status: Arc<BridgeStatus>,
     shutdown: Arc<AtomicBool>,
 ) {
+    // mpsc::Receiver is neither Clone nor Send-usable from two threads
+    // at once, so the writer threads take turns on it behind a mutex.
+    // Only one client is ever served, so contention is a non-issue.
+    let outgoing = Arc::new(Mutex::new(outgoing_rx));
+    let served: Arc<Mutex<Option<Served>>> = Arc::new(Mutex::new(None));
+
     loop {
         if shutdown.load(Ordering::Relaxed) {
             tracing::info!("mcp: acceptor shutting down, releasing the port");
+            drop(listener);
             return;
         }
         let (stream, addr) = match listener.accept() {
@@ -191,9 +229,24 @@ fn acceptor(
         // long as the process lives.
         if shutdown.load(Ordering::Relaxed) {
             tracing::info!("mcp: acceptor shutting down, releasing the port");
+            drop(listener);
             return;
         }
-        tracing::info!("mcp: remote client connected from {addr}");
+
+        // A new connection takes the slot. Shutting the old socket down
+        // is what releases its threads; without this the previous
+        // client would keep holding `connected` and its writer would
+        // still be draining replies meant for the newcomer.
+        if let Ok(mut slot) = served.lock() {
+            if let Some(previous) = slot.take() {
+                tracing::info!("mcp: new client from {addr} supersedes the previous one");
+                let _ = previous.stream.shutdown(Shutdown::Both);
+            }
+        }
+
+        let generation = status.generation.fetch_add(1, Ordering::Relaxed) + 1;
+        status.generation.store(generation, Ordering::Relaxed);
+        tracing::info!("mcp: remote client connected from {addr} (gen {generation})");
 
         let read_half = match stream.try_clone() {
             Ok(s) => s,
@@ -202,27 +255,61 @@ fn acceptor(
                 continue;
             }
         };
-        let mut write_half: TcpStream = stream;
+        // A third clone kept purely for eviction.
+        let evict = match stream.try_clone() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("mcp: could not keep an eviction handle: {e}");
+                continue;
+            }
+        };
 
-        let reader_status = Arc::clone(&status);
         let reader_incoming = incoming_tx.clone();
-        let reader = std::thread::Builder::new()
-            .name("caprust-mcp-reader".into())
-            .spawn(move || read_loop(read_half, reader_incoming, reader_status));
+        let reader_status = Arc::clone(&status);
+        let reader_gen = generation;
+        let writer_out = Arc::clone(&outgoing);
+        let writer_status = Arc::clone(&status);
+        let writer_gen = generation;
 
-        status.connected.store(true, Ordering::Relaxed);
-        write_loop(&mut write_half, &outgoing_rx, &status);
+        let spawned = std::thread::Builder::new()
+            .name("caprust-mcp-conn".into())
+            .spawn(move || {
+                let reader = std::thread::Builder::new()
+                    .name("caprust-mcp-reader".into())
+                    .spawn({
+                        let status = Arc::clone(&reader_status);
+                        move || read_loop(read_half, reader_incoming, status, reader_gen)
+                    });
 
-        // The reader only ends when the peer does, or when the channel
-        // dies with the app. Join so no thread outlives its connection.
-        if let Ok(handle) = reader {
-            let _ = handle.join();
+                let mut write_half = stream;
+                write_loop(&mut write_half, &writer_out, &writer_status, writer_gen);
+                // Leaving write_loop means the socket is finished with.
+                // Shutting it down releases the reader even if the peer
+                // never closed.
+                let _ = write_half.shutdown(Shutdown::Both);
+                if let Ok(handle) = reader {
+                    let _ = handle.join();
+                }
+                tracing::info!("mcp: remote client from {addr} finished (gen {writer_gen})");
+            });
+
+        if let Err(e) = spawned {
+            tracing::warn!("mcp: could not spawn connection thread: {e}");
+            continue;
         }
-        tracing::info!("mcp: remote client from {addr} disconnected");
+
+        if let Ok(mut slot) = served.lock() {
+            *slot = Some(Served { stream: evict });
+        }
     }
 }
 
-fn read_loop(read_half: TcpStream, incoming: Sender<String>, status: Arc<BridgeStatus>) {
+fn read_loop(
+    read_half: TcpStream,
+    incoming: Sender<String>,
+    status: Arc<BridgeStatus>,
+    generation: usize,
+) {
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
     loop {
@@ -237,12 +324,34 @@ fn read_loop(read_half: TcpStream, incoming: Sender<String>, status: Arc<BridgeS
             }
         }
     }
-    status.connected.store(false, Ordering::Relaxed);
+    // Only the current connection may report the client as gone. An
+    // evicted connection clears the flag on its way out, which would
+    // otherwise mark the client that replaced it as disconnected.
+    if status.generation.load(Ordering::Relaxed) == generation {
+        status.connected.store(false, Ordering::Relaxed);
+    }
 }
 
-fn write_loop(write_half: &mut TcpStream, outgoing: &Receiver<String>, status: &BridgeStatus) {
+fn write_loop(
+    write_half: &mut TcpStream,
+    outgoing: &Mutex<Receiver<String>>,
+    status: &BridgeStatus,
+    generation: usize,
+) {
     loop {
-        match outgoing.recv_timeout(POLL) {
+        // A newer connection took over. Its writer owns the replies now.
+        if status.generation.load(Ordering::Relaxed) != generation {
+            break;
+        }
+        // Held only for the recv, so the next connection's writer is not
+        // blocked behind a long wait.
+        let next = {
+            let Ok(rx) = outgoing.lock() else {
+                break;
+            };
+            rx.recv_timeout(POLL)
+        };
+        match next {
             Ok(resp) => {
                 if writeln!(write_half, "{resp}").is_err() || write_half.flush().is_err() {
                     break;
@@ -250,9 +359,9 @@ fn write_loop(write_half: &mut TcpStream, outgoing: &Receiver<String>, status: &
             }
             Err(RecvTimeoutError::Timeout) => {
                 // The reader clears `connected` on EOF. Checking here is
-                // what lets the acceptor move on to the next client
-                // instead of blocking forever on a dead socket.
-                if !status.connected() {
+                // what lets this writer let go of a dead socket instead
+                // of holding it until the process ends.
+                if !status.connected() && status.generation.load(Ordering::Relaxed) == generation {
                     break;
                 }
             }
@@ -265,6 +374,122 @@ fn write_loop(write_half: &mut TcpStream, outgoing: &Receiver<String>, status: &
 mod tests {
     use super::*;
     use std::io::BufReader;
+
+    #[test]
+    fn a_new_connection_preempts_the_previous_client() {
+        // The phone dropping off Wi-Fi does not close its socket. The
+        // desktop keeps the connection half-open and the acceptor stayed
+        // parked serving it, so the phone's reconnect sat in the backlog
+        // unanswered: it looked connected and then hung on every call.
+        //
+        // Newest-wins is the only behaviour that survives that, because
+        // it does not require the desktop to notice the old peer is
+        // gone before it can accept anyone.
+        let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+        let port = bridge.port();
+
+        // First client connects and is left completely idle, never
+        // closed, exactly like a phone that lost its network.
+        let _stale = TcpStream::connect(("127.0.0.1", port)).expect("first client");
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Second client must be served even though the first is still
+        // open and silent.
+        let fresh = TcpStream::connect(("127.0.0.1", port)).expect("second client");
+        fresh
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut w = fresh.try_clone().unwrap();
+        let mut r = BufReader::new(fresh);
+        w.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n")
+            .unwrap();
+        w.flush().unwrap();
+
+        let mut served = 0;
+        for _ in 0..40 {
+            served += bridge.drain(4, |line| {
+                if line.contains("tools/list") {
+                    Some("{\"served\":true}\n".to_string())
+                } else {
+                    None
+                }
+            });
+            if served > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(served > 0, "the second client was never served");
+
+        let mut line = String::new();
+        r.read_line(&mut line).expect("second client is served");
+        assert!(
+            line.contains("served"),
+            "second client got no reply: {line}"
+        );
+    }
+
+    #[test]
+    fn dropping_the_bridge_with_a_client_attached_releases_the_port() {
+        // The other port-release tests drop the bridge with nobody
+        // connected, so the acceptor is parked in accept() and the
+        // wake-up connection works. With a client attached the acceptor
+        // is not in accept() at all -- it is blocked in write_loop
+        // serving that client -- so the throwaway connection is never
+        // accepted, the thread never notices the flag, and the port is
+        // still held when the app tries to rebind.
+        //
+        // That is the ordinary case: the user leaves the phone
+        // connected and then turns the setting off and on again.
+        let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+        let port = bridge.port();
+
+        let client = TcpStream::connect(("127.0.0.1", port)).expect("client connects");
+        // Bounded, so a failure fails instead of hanging the suite.
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        // Prove the client is actually being served before dropping, so
+        // a failure below cannot be blamed on a connection that never
+        // arrived.
+        let mut w = client.try_clone().unwrap();
+        let mut r = BufReader::new(client.try_clone().unwrap());
+        w.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n")
+            .unwrap();
+        w.flush().unwrap();
+        // drain() before the request has reached the channel finds nothing,
+        // so poll for it rather than calling once and hoping.
+        let mut served = 0;
+        for _ in 0..40 {
+            served += bridge.drain(4, |line| {
+                if line.contains("tools/list") {
+                    Some("{\"ok\":true}\n".to_string())
+                } else {
+                    None
+                }
+            });
+            if served > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(served > 0, "the request never reached the bridge");
+        let mut line = String::new();
+        r.read_line(&mut line).expect("client is served");
+        assert!(line.contains("ok"), "client got no reply: {line}");
+
+        drop(bridge);
+        // Client is still open and idle -- it never closes.
+        drop(w);
+        std::thread::sleep(Duration::from_millis(500));
+
+        let again = RemoteBridge::spawn("127.0.0.1", port);
+        assert!(
+            again.is_ok(),
+            "port {port} was still held after drop with a client attached: {}",
+            again.err().map(|e| e.to_string()).unwrap_or_default()
+        );
+    }
 
     #[test]
     fn dropping_the_bridge_releases_the_port() {
