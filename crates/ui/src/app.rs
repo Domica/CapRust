@@ -8165,10 +8165,21 @@ impl CapRustApp {
                     .find(|m| m.id == mid)
                     .cloned();
                 let Some(item) = item else { continue };
-                let dur = if item.duration_ms > 0 {
-                    item.duration_ms
-                } else {
-                    3000
+                // Photos are stills. ffprobe reports a sub-second nil
+                // duration (or 0) for them, which used to create
+                // 0.04-second clips that could not be grabbed or dragged.
+                // Seed a 3 s box and let stills stretch up to 10 s.
+                const IMAGE_DEFAULT_MS: u64 = 3_000;
+                const IMAGE_MAX_MS: u64 = 10_000;
+                let dur = match item.kind {
+                    MediaKind::Image => item.duration_ms.clamp(IMAGE_DEFAULT_MS, IMAGE_MAX_MS),
+                    _ => {
+                        if item.duration_ms > 0 {
+                            item.duration_ms
+                        } else {
+                            3000
+                        }
+                    }
                 };
                 let mut clip = match item.kind {
                     MediaKind::Video => Clip::new_video(&item.path, ti, cursor_ms, dur),
@@ -8176,11 +8187,13 @@ impl CapRustApp {
                     MediaKind::Image => Clip::new_image(&item.path, ti, cursor_ms, dur),
                 };
                 clip.media_id = Some(item.id);
-                // Cap growth at the true source length. When ffprobe has
-                // not finished yet, item.duration_ms is 0: keep the cap
-                // at 0 (unlimited) and let the probe handler tighten it
-                // once the real duration lands.
-                clip.source_duration_ms = item.duration_ms;
+                // Cap growth at a useful maximum for stills. Media probe
+                // duration is irrelevant for JPG/HEIC and must not cap a
+                // photo at 0.04 s.
+                clip.source_duration_ms = match item.kind {
+                    MediaKind::Image => IMAGE_MAX_MS,
+                    _ => item.duration_ms,
+                };
                 added.push(clip.id);
                 cursor_ms = cursor_ms.saturating_add(dur);
                 clips.push(clip);
@@ -9242,10 +9255,18 @@ impl CapRustApp {
             //
             // If there is no audio track at all (audio_player is
             // None), the gate is trivially open.
+            // Without the timeout this can deadlock: the audio player
+            // waits for PCM from the same ffmpeg child whose stdout we
+            // are holding because we are waiting for the audio player.
+            // A silent 10 % CPU preview and no frames is the symptom.
             let audio_playing = self
                 .audio_player
                 .as_ref()
-                .is_none_or(|ap| ap.playhead_ms() > 0);
+                .is_none_or(|ap| ap.playhead_ms() > 0)
+                || self
+                    .playback_started_at
+                    .map(|t| t.elapsed() >= std::time::Duration::from_millis(3_000))
+                    .unwrap_or(false);
             if audio_playing {
                 if let Some(r) = self.preview_renderer.as_ref() {
                     while let Some(frame) = r.try_next() {

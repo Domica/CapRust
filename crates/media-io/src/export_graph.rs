@@ -3008,6 +3008,37 @@ fn clip_source_path(ct: &caprust_core::ClipType) -> Option<&str> {
     }
 }
 
+/// Preview inputs for HEIC-family stills must not go straight into the
+/// filtergraph: ffmpeg then selects a 512x512 HEIC tile stream, which
+/// zooms that tile and loses the full frame / rotation. The media job
+/// has already written a whole-frame JPEG thumbnail into the project
+/// cache, so for preview use that file when it exists.
+fn preview_input_for_image(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::Clip,
+    path: &str,
+) -> String {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let is_heic_family = matches!(ext.as_str(), "heic" | "heif" | "avif");
+    if !is_heic_family {
+        return path.to_string();
+    }
+    let (Some(media_id), Some(project_path)) = (clip.media_id, project.project_path.as_ref())
+    else {
+        return path.to_string();
+    };
+    let jpg = caprust_core::cache::thumbnail_path(std::path::Path::new(project_path), media_id);
+    if jpg.is_file() {
+        jpg.to_string_lossy().to_string()
+    } else {
+        path.to_string()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn plan_from_project(
     project: &caprust_core::ProjectState,
@@ -3215,7 +3246,8 @@ pub fn plan_from_project(
                     } else {
                         (dur_sec, clip_start)
                     };
-                    let idx = register_input(&mut inputs, path, 0.0, visible_dur);
+                    let input_path = preview_input_for_image(project, c, path);
+                    let idx = register_input(&mut inputs, &input_path, 0.0, visible_dur);
                     video_clips.push(VideoClip {
                         input_index: idx,
                         timeline_start_sec: new_start,
