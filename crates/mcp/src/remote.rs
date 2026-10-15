@@ -86,7 +86,7 @@ impl BridgeStatus {
 /// user changed a setting.
 pub struct RemoteBridge {
     incoming: Receiver<String>,
-    outgoing: Sender<String>,
+    outgoing: Arc<Mutex<Option<(usize, Sender<String>)>>>,
     status: Arc<BridgeStatus>,
     /// Set on drop. The acceptor checks it and returns.
     shutdown: Arc<AtomicBool>,
@@ -117,7 +117,8 @@ impl RemoteBridge {
         let status = Arc::new(BridgeStatus::new(bound));
 
         let (incoming_tx, incoming_rx) = mpsc::channel::<String>();
-        let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>();
+
+        let outgoing_slot = Arc::new(Mutex::new(None));
 
         // Read before the listener is moved into the thread below.
         let addr = listener.local_addr().context("read bound address")?;
@@ -125,13 +126,14 @@ impl RemoteBridge {
         let acceptor_shutdown = Arc::clone(&shutdown);
 
         let acceptor_status = Arc::clone(&status);
+        let bridge_outgoing = Arc::clone(&outgoing_slot);
         std::thread::Builder::new()
             .name("caprust-mcp-acceptor".into())
             .spawn(move || {
                 acceptor(
                     listener,
                     incoming_tx,
-                    outgoing_rx,
+                    Arc::clone(&outgoing_slot),
                     acceptor_status,
                     acceptor_shutdown,
                 )
@@ -141,7 +143,7 @@ impl RemoteBridge {
         tracing::info!("mcp: remote bridge listening on {host}:{bound}");
         Ok(Self {
             incoming: incoming_rx,
-            outgoing: outgoing_tx,
+            outgoing: bridge_outgoing,
             status,
             shutdown,
             addr,
@@ -178,8 +180,13 @@ impl RemoteBridge {
             if let Some(resp) = f(&line) {
                 // A closed channel means the socket is gone; dropping
                 // the reply is correct, not an error worth raising.
-                if self.outgoing.send(resp).is_err() {
-                    tracing::debug!("mcp: response channel closed, client gone");
+                let outgoing_gone = self
+                    .outgoing
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.as_ref().map(|(_, tx)| tx.send(resp).is_err()))
+                    .unwrap_or(false);
+                if outgoing_gone {
                     break;
                 }
             }
@@ -199,14 +206,11 @@ struct Served {
 fn acceptor(
     listener: TcpListener,
     incoming_tx: Sender<String>,
-    outgoing_rx: Receiver<String>,
+    outgoing_slot: Arc<Mutex<Option<(usize, Sender<String>)>>>,
     status: Arc<BridgeStatus>,
     shutdown: Arc<AtomicBool>,
 ) {
-    // mpsc::Receiver is neither Clone nor Send-usable from two threads
-    // at once, so the writer threads take turns on it behind a mutex.
-    // Only one client is ever served, so contention is a non-issue.
-    let outgoing = Arc::new(Mutex::new(outgoing_rx));
+    // Each connection gets its own reply channel; no shared receiver.
     let served: Arc<Mutex<Option<Served>>> = Arc::new(Mutex::new(None));
 
     loop {
@@ -243,6 +247,11 @@ fn acceptor(
                 let _ = previous.stream.shutdown(Shutdown::Both);
             }
         }
+        if let Ok(mut slot) = outgoing_slot.lock() {
+            *slot = None;
+        }
+
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>();
 
         let generation = status.generation.fetch_add(1, Ordering::Relaxed) + 1;
         status.generation.store(generation, Ordering::Relaxed);
@@ -254,6 +263,10 @@ fn acceptor(
         // that could connect, then got a broken pipe on its first write.
         status.connected.store(true, Ordering::Relaxed);
         tracing::info!("mcp: remote client connected from {addr} (gen {generation})");
+
+        if let Ok(mut slot) = outgoing_slot.lock() {
+            *slot = Some((generation, outgoing_tx.clone()));
+        }
 
         let read_half = match stream.try_clone() {
             Ok(s) => s,
@@ -274,9 +287,9 @@ fn acceptor(
         let reader_incoming = incoming_tx.clone();
         let reader_status = Arc::clone(&status);
         let reader_gen = generation;
-        let writer_out = Arc::clone(&outgoing);
         let writer_status = Arc::clone(&status);
         let writer_gen = generation;
+        let exit_slot = Arc::clone(&outgoing_slot);
 
         let spawned = std::thread::Builder::new()
             .name("caprust-mcp-conn".into())
@@ -289,13 +302,18 @@ fn acceptor(
                     });
 
                 let mut write_half = stream;
-                write_loop(&mut write_half, &writer_out, &writer_status, writer_gen);
+                write_loop(&mut write_half, outgoing_rx, &writer_status, writer_gen);
                 // Leaving write_loop means the socket is finished with.
                 // Shutting it down releases the reader even if the peer
                 // never closed.
                 let _ = write_half.shutdown(Shutdown::Both);
                 if let Ok(handle) = reader {
                     let _ = handle.join();
+                }
+                if let Ok(mut slot) = exit_slot.lock() {
+                    if slot.as_ref().map(|(g, _)| *g).unwrap_or(0) == generation {
+                        *slot = None;
+                    }
                 }
                 tracing::info!("mcp: remote client from {addr} finished (gen {writer_gen})");
             });
@@ -341,31 +359,15 @@ fn read_loop(
 
 fn write_loop(
     write_half: &mut TcpStream,
-    outgoing: &Mutex<Receiver<String>>,
+    outgoing: Receiver<String>,
     status: &BridgeStatus,
     generation: usize,
 ) {
     loop {
-        // The generation check has to be INSIDE the lock, immediately
-        // before the recv. Checking it out here is not enough: a writer
-        // that has been preempted is most likely sitting in
-        // `recv_timeout` at the moment its replacement arrives, and a
-        // reply queued after that would be handed to the dying writer,
-        // written to a socket that is already shut down, and lost. The
-        // new client then waits for a reply that was thrown away --
-        // which is a phone that appears connected and hangs.
-        //
-        // Inside the lock, a superseded writer breaks without ever
-        // calling recv, so it cannot take what is not its own.
-        let next = {
-            let Ok(rx) = outgoing.lock() else {
-                break;
-            };
-            if status.generation.load(Ordering::Relaxed) != generation {
-                break;
-            }
-            rx.recv_timeout(POLL)
-        };
+        if status.generation.load(Ordering::Relaxed) != generation {
+            break;
+        }
+        let next = outgoing.recv_timeout(POLL);
         match next {
             Ok(resp) => {
                 // Replaced between the recv and the write. Writing is
