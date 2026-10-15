@@ -384,6 +384,7 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
     let mut lane_text = 0usize;
 
     for t in &draft.tracks {
+        let slot = state.tracks.len();
         let kind = if let Some(first) = t.segments.first() {
             if let Some(mat) = by_id.get(first.material_id.as_str()) {
                 // The file extension is what ffmpeg will see. CapCut often
@@ -426,21 +427,20 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
 
         let lane = match kind {
             TrackKind::Video => {
-                let l = lane_video;
                 lane_video += 1;
-                l
+                lane_video - 1
             }
             TrackKind::Audio => {
-                let l = lane_audio;
                 lane_audio += 1;
-                l
+                lane_audio - 1
             }
             _ => {
-                let l = lane_text;
                 lane_text += 1;
-                l
+                lane_text - 1
             }
         };
+        let track_index = slot;
+        let _ = lane;
 
         let mut placed = 0usize;
         for seg in &t.segments {
@@ -483,7 +483,7 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
                                 .map(str::to_string)
                         })
                         .unwrap_or_default();
-                    let mut clip = Clip::new_text(&text, lane, start, dur, false);
+                    let mut clip = Clip::new_text(&text, track_index, start, dur, false);
                     apply_audio_mix(&mut clip, seg);
                     state.clips.push(clip);
                     report.text_clips += 1;
@@ -513,9 +513,9 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
                         media.add(&path, guess_kind(&path));
                     }
                     let mut clip = match guess_kind(&path) {
-                        MediaKind::Image => Clip::new_image(&path, lane, start, dur),
-                        MediaKind::Audio => Clip::new_audio(&path, lane, start, dur),
-                        _ => Clip::new_video(&path, lane, start, dur),
+                        MediaKind::Image => Clip::new_image(&path, track_index, start, dur),
+                        MediaKind::Audio => Clip::new_audio(&path, track_index, start, dur),
+                        _ => Clip::new_video(&path, track_index, start, dur),
                     };
                     clip.source_offset_ms = src_offset;
                     apply_audio_mix(&mut clip, seg);

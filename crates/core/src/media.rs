@@ -143,7 +143,9 @@ pub fn guess_kind(path: &str) -> Option<MediaKind> {
     match ext.as_str() {
         "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "wmv" | "flv" => Some(MediaKind::Video),
         "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus" => Some(MediaKind::Audio),
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tiff" => Some(MediaKind::Image),
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tiff" | "heic" | "heif" | "avif" => {
+            Some(MediaKind::Image)
+        }
         _ => None,
     }
 }
@@ -151,7 +153,9 @@ pub fn guess_kind(path: &str) -> Option<MediaKind> {
 /// Supported extensions for file dialogs.
 pub const VIDEO_EXTS: &[&str] = &["mp4", "mov", "avi", "mkv", "webm", "m4v", "wmv", "flv"];
 pub const AUDIO_EXTS: &[&str] = &["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"];
-pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"];
+pub const IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "heic", "heif", "avif",
+];
 
 #[cfg(test)]
 mod media_dedup_tests {
