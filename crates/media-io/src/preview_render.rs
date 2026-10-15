@@ -110,10 +110,25 @@ fn push_plan_inputs(args: &mut Vec<String>, plan: &RenderPlan, fps: f64) {
 
     for inp in &plan.inputs {
         if image_indices.contains(&inp.ffmpeg_index) {
-            args.push("-loop".into());
-            args.push("1".into());
-            args.push("-framerate".into());
-            args.push(format!("{fps:.6}"));
+            // `-loop 1` is an image2 demuxer option and ffmpeg's HEIC
+            // demuxer rejects it. `-stream_loop -1` works for both,
+            // and needs no demuxer support. `-framerate` is likewise
+            // not accepted by the HEIC demuxer, so HEIC inputs only
+            // get the stream loop and let the output set `-r {fps}`.
+            let stream_rate_ok = !matches!(
+                inp.path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
+                Some("heic") | Some("heif") | Some("avif")
+            );
+            args.push("-stream_loop".into());
+            args.push("-1".into());
+            if stream_rate_ok {
+                args.push("-framerate".into());
+                args.push(format!("{fps:.6}"));
+            }
         } else if inp.source_start_sec > 0.0001 {
             // Seek optimization (2a): ffmpeg jumps to the offset
             // at demuxer level, skipping decode of everything
