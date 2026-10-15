@@ -45,6 +45,11 @@ impl FilterScript {
 /// when there is no `-filter_complex` pair. The caller must keep the
 /// guard alive until the ffmpeg child exits (it deletes the file on
 /// drop).
+/// Windows caps a child-process command line at 32767 characters.
+/// Stay comfortably under it so NULL separators and quoting never push
+/// this over the edge.
+const MAX_INLINE_CMDLINE: usize = 30_000;
+
 pub fn swap_filter_complex(args: &mut [String]) -> Result<Option<FilterScript>> {
     let Some(pos) = args.iter().position(|a| a == "-filter_complex") else {
         return Ok(None);
@@ -52,6 +57,17 @@ pub fn swap_filter_complex(args: &mut [String]) -> Result<Option<FilterScript>> 
     if pos + 1 >= args.len() {
         anyhow::bail!("-filter_complex without a filtergraph argument");
     }
+
+    // Do not force a script file for short commands. Some ffmpeg
+    // wrappers/sandboxes reject `-filter_complex_script`, and inline
+    // is both simpler and avoids the temp file when argv fits. The
+    // script path remains for the long Windows commands it was added
+    // for.
+    let estimated = args.iter().map(|a| a.len() + 1).sum::<usize>();
+    if estimated <= MAX_INLINE_CMDLINE {
+        return Ok(None);
+    }
+
     let script = FilterScript::write(&args[pos + 1])?;
     args[pos] = "-filter_complex_script".to_string();
     args[pos + 1] = script.path().to_string_lossy().to_string();
@@ -88,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn swap_replaces_pair_and_keeps_rest() {
+    fn short_command_keeps_filter_complex_inline() {
         let mut args = vec![
             "-y".to_string(),
             "-filter_complex".to_string(),
@@ -96,11 +112,30 @@ mod tests {
             "-map".to_string(),
             "[v]".to_string(),
         ];
+        let swapped = swap_filter_complex(&mut args).expect("swap");
+        assert!(swapped.is_none(), "short commands must stay inline");
+        assert_eq!(args[1], "-filter_complex");
+        assert_eq!(args[2], "[0:v]null[v]");
+    }
+
+    #[test]
+    fn long_command_swaps_to_script_and_keeps_rest() {
+        let graph = "[0:v]null[v]".repeat(MAX_INLINE_CMDLINE / 12 + 2);
+        let mut args = vec![
+            "-y".to_string(),
+            "-filter_complex".to_string(),
+            graph.clone(),
+            "-map".to_string(),
+            "[v]".to_string(),
+        ];
         let guard = swap_filter_complex(&mut args)
             .expect("swap")
             .expect("pair found");
         assert_eq!(args[1], "-filter_complex_script");
-        assert_eq!(std::fs::read_to_string(&args[2]).unwrap(), "[0:v]null[v]");
+        assert_eq!(
+            std::fs::read_to_string(&args[2]).unwrap().len(),
+            graph.len()
+        );
         assert_eq!(args[3], "-map");
         assert!(guard.path().exists());
     }
