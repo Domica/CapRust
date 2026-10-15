@@ -68,6 +68,9 @@ struct Canvas {
 struct DraftTrack {
     #[serde(rename = "type", default)]
     kind: String,
+    /// Read to be *counted*, not to route lanes. CapCut sets `attribute:
+    /// 1` on whichever track is the current main one, regardless of type,
+    /// so it does not say anything about what the lane should be.
     #[serde(default)]
     attribute: i64,
     #[serde(default)]
@@ -166,6 +169,8 @@ pub struct ImportReport {
     pub unsupported: usize,
     /// Segments dropped because their track type has no CapRust home.
     pub unsupported_tracks: usize,
+    /// Tracks CapCut flagged as the main lane. Informational only.
+    pub pinned_tracks: usize,
     pub tracks: Vec<(String, TrackKind, usize)>,
 }
 
@@ -218,20 +223,16 @@ const DRAFT_MARKERS: &[&str] = &["tracks", "materials", "canvas_config"];
 
 /// Parse the text of a draft, rejecting anything that is not one.
 fn parse_draft(text: &str, what: &str) -> anyhow::Result<Draft> {
-    let value: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| anyhow::anyhow!("{what} is not valid JSON: {e}"))?;
-    let is_draft = value.is_object()
-        && DRAFT_MARKERS
-            .iter()
-            .any(|k| value.get(*k).is_some());
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| anyhow::anyhow!("{what} is not valid JSON: {e}"))?;
+    let is_draft = value.is_object() && DRAFT_MARKERS.iter().any(|k| value.get(*k).is_some());
     if !is_draft {
         anyhow::bail!(
             "{what} does not look like a CapCut draft: none of {} are present",
             DRAFT_MARKERS.join(", ")
         );
     }
-    serde_json::from_str(text)
-        .map_err(|e| anyhow::anyhow!("{what} is not a CapCut draft: {e}"))
+    serde_json::from_str(text).map_err(|e| anyhow::anyhow!("{what} is not a CapCut draft: {e}"))
 }
 
 /// Read a draft from a CapCut project folder and turn it into a project.
@@ -317,6 +318,11 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
         + draft.materials.audio_effects.len()
         + draft.materials.stickers.len();
 
+    // How many tracks CapCut flagged as the main lane. Worth reporting: it
+    // is the closest the draft comes to saying what the user considered
+    // primary, and it no longer affects the lane it lands on.
+    let pinned = draft.tracks.iter().filter(|t| t.attribute == 1).count();
+
     let mut state = ProjectState {
         name: project_name,
         base_resolution: draft.canvas_config.width.max(320),
@@ -367,18 +373,21 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
     let mut lane_video = 0usize;
     let mut lane_audio = 0usize;
     let mut lane_text = 0usize;
-    let mut lane_overlay = 0usize;
-
+    
     for t in &draft.tracks {
-        let overlay = t.attribute == 1;
         let kind = match t.kind.as_str() {
-            "video" | "sticker" if overlay => TrackKind::Overlay,
+            // The lane follows the *kind* first. CapCut sets
+            // `attribute: 1` per track regardless of type, so gating the
+            // lane on it put music on the pinned lane above every video.
             "video" => TrackKind::Video,
             "audio" => TrackKind::Audio,
             "text" => TrackKind::Text,
-            // Stickers and effects that are not the pinned lane have no
-            // CapRust home. Counted separately from the material
-            // tally so a track type is not counted twice.
+            // A sticker is a picture with a position. There is no
+            // CapRust clip type that keeps the position, so it becomes an
+            // image clip: visible, with CapCut's placement lost.
+            "sticker" => TrackKind::Video,
+            // Everything else has no CapRust home. Counted separately
+            // from the material tally so a type is not counted twice.
             _ => {
                 report.unsupported_tracks += t.segments.len();
                 continue;
@@ -386,11 +395,6 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
         };
 
         let lane = match kind {
-            TrackKind::Overlay => {
-                let l = lane_overlay;
-                lane_overlay += 1;
-                l
-            }
             TrackKind::Video => {
                 let l = lane_video;
                 lane_video += 1;
@@ -413,15 +417,12 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
             let Some(mat) = by_id.get(seg.material_id.as_str()) else {
                 report.skipped.push(format!(
                     "segment {} references material {} which is not in the draft",
-                    seg.id_or_unknown(), seg.material_id
+                    seg.id_or_unknown(),
+                    seg.material_id
                 ));
                 continue;
             };
-            let target = seg
-                .target_timerange
-                .as_ref()
-                .cloned()
-                .unwrap_or_default();
+            let target = seg.target_timerange.as_ref().cloned().unwrap_or_default();
             let start = ms(target.start);
             let dur = ms(target.duration);
             // Where the clip begins in its source file. A CapCut segment
@@ -430,27 +431,28 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
             // zero, so the trim itself would be lost.
             let src_offset = ms(seg.source_timerange.as_ref().map(|t| t.start).unwrap_or(0));
             if target.duration == 0 {
-                report.skipped.push(format!(
-                    "segment {} has no duration",
-                    seg.id_or_unknown()
-                ));
+                report
+                    .skipped
+                    .push(format!("segment {} has no duration", seg.id_or_unknown()));
                 continue;
             }
 
             match kind {
                 TrackKind::Text => {
-                    // CapCut keeps the words in the material's `content`
-                    // as a JSON-encoded string.
-                    let body = mat.content.clone().unwrap_or_default();
-                    let text = if body.trim().is_empty() {
-                        seg.content
-                            .as_ref()
-                            .and_then(|c| c.get("text").and_then(|t| t.as_str()))
-                            .unwrap_or("")
-                            .to_string()
-                    } else {
-                        strip_json_string(&body)
-                    };
+                    // Read the words out of the material. A real draft
+                    // stores them as a JSON *object* --
+                    // {"text": "...", "styles": [...]} -- so the obvious
+                    // trim-and-use-it reads back as raw JSON in the
+                    // properties panel. CapCut also wraps them as a JSON
+                    // string in some drafts, so both shapes are tried.
+                    let text = extract_text(&mat.content)
+                        .or_else(|| {
+                            seg.content
+                                .as_ref()
+                                .and_then(|c| c.get("text").and_then(|t| t.as_str()))
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_default();
                     let mut clip = Clip::new_text(&text, lane, start, dur, false);
                     apply_audio_mix(&mut clip, seg);
                     state.clips.push(clip);
@@ -460,10 +462,9 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
                 _ => {
                     let path = local_path(&mat.path);
                     if path.is_empty() {
-                        report.skipped.push(format!(
-                            "{} has no file path",
-                            mat.name_hint(seg)
-                        ));
+                        report
+                            .skipped
+                            .push(format!("{} has no file path", mat.name_hint(seg)));
                         continue;
                     }
                     // Missing media is the normal case for a draft that
@@ -508,21 +509,42 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
     }
 
     state.media = media;
+    report.pinned_tracks = pinned;
     (state, report)
 }
 
-/// CapCut wraps a text material's `content` as a JSON-encoded string, so
-/// the value is itself a quoted JSON string. Unwrap one layer when it
-/// parses as one; otherwise use it verbatim, because some drafts store
-/// plain text there.
-fn strip_json_string(raw: &str) -> String {
+/// Pull the words out of a text material's `content`.
+///
+/// Three shapes occur in real drafts and all three are worth handling:
+///
+///   * a JSON object `{"text": "...", "styles": [...]}` -- the common one
+///   * a JSON-encoded *string* of that same object
+///   * the words as plain text
+///
+/// The object case matters most. Treating the value as text shows the
+/// user their own words wrapped in `{"text": ...}` in the properties
+/// panel, which is exactly what happened.
+fn extract_text(content: &Option<String>) -> Option<String> {
+    let raw = content.as_ref()?;
     let t = raw.trim();
-    if t.starts_with('"') {
-        if let Ok(s) = serde_json::from_str::<String>(t) {
-            return s;
+    if t.is_empty() {
+        return None;
+    }
+    // Object first.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+        if let Some(s) = v.get("text").and_then(|x| x.as_str()) {
+            return Some(s.to_string());
+        }
+        // A bare string literal decodes to itself. Some drafts wrap the
+        // object one more layer as a JSON-encoded string, so try parsing
+        // that string again rather than handing the raw JSON back as the
+        // clip's text.
+        if let Some(inner) = v.as_str() {
+            return extract_text(&Some(inner.to_string()));
         }
     }
-    raw.to_string()
+    // Some drafts store the words as plain text with no JSON around them.
+    Some(raw.to_string())
 }
 
 fn apply_audio_mix(clip: &mut Clip, seg: &Segment) {
@@ -692,10 +714,11 @@ mod tests {
         assert_eq!(report.tracks.len(), 2);
     }
 
-    /// `attribute: 1` is CapCut's pinned main lane. It maps to Overlay,
-    /// which in CapRust renders above everything.
+    /// `attribute: 1` is CapCut's pinned main lane, and it is set per track
+    /// regardless of type. It used to map video to Overlay, which put the
+    /// main lane above everything and, worse, put music there too.
     #[test]
-    fn the_pinned_track_becomes_the_overlay_lane() {
+    fn the_pinned_track_stays_a_video_lane() {
         let json = r#"{
             "tracks": [{"type": "video", "attribute": 1, "segments": [{"material_id": "V1",
              "target_timerange": {"start": 0, "duration": 1000000}}]}],
@@ -703,7 +726,7 @@ mod tests {
         }"#;
         let draft: Draft = serde_json::from_str(json).unwrap();
         let (state, _) = build(draft, "test".into());
-        assert_eq!(state.tracks[0].kind, TrackKind::Overlay);
+        assert_eq!(state.tracks[0].kind, TrackKind::Video);
     }
 
     /// The same file referenced by many segments must appear once in the
@@ -742,21 +765,106 @@ mod tests {
 
     /// CapCut stores a text material's words JSON-encoded inside
     /// `content`, so the importer has to unwrap one layer rather than
-    /// showing the user escaped quotes.
+    /// The shape a real draft actually uses: `content` is a JSON object
+    /// carrying the words under `text`. Reading it as plain text is what
+    /// put `{"text": ...}` in the user's properties panel.
     #[test]
-    fn text_content_is_unwrapped() {
+    fn text_content_is_read_as_an_object() {
         let json = r#"{
             "tracks": [{"type": "text", "attribute": 0, "segments": [{"material_id": "T1",
              "target_timerange": {"start": 0, "duration": 2000000}}]}],
-            "materials": {"texts": [{"id": "T1", "content": "\"Hello there\""}]}
+            "materials": {"texts": [{"id": "T1",
+                "content": "{\"text\":\"Hello there\",\"styles\":[]}"}]}
         }"#;
         let draft: Draft = serde_json::from_str(json).unwrap();
         let (state, report) = build(draft, "test".into());
         assert_eq!(report.text_clips, 1);
         match &state.clips[0].clip_type {
-            ClipType::TextOverlay { content, .. } => assert_eq!(content, "Hello there"),
+            ClipType::TextOverlay { content, .. } => {
+                assert_eq!(content, "Hello there");
+                assert!(
+                    !content.contains("\"text\""),
+                    "the raw JSON leaked into the clip: {content}"
+                );
+            }
             other => panic!("expected a text clip, got {other:?}"),
         }
+    }
+
+    /// The other shape: the same object, JSON-encoded as a string.
+    #[test]
+    fn text_content_is_unwrapped_when_json_encoded() {
+        let json = r#"{
+            "tracks": [{"type": "text", "attribute": 0, "segments": [{"material_id": "T1",
+             "target_timerange": {"start": 0, "duration": 2000000}}]}],
+            "materials": {"texts": [{"id": "T1",
+                "content": "\"{\\\"text\\\":\\\"Hi\\\"}\""}]}
+        }"#;
+        let draft: Draft = serde_json::from_str(json).unwrap();
+        let (state, _) = build(draft, "test".into());
+        match &state.clips[0].clip_type {
+            ClipType::TextOverlay { content, .. } => assert_eq!(content, "Hi"),
+            other => panic!("expected a text clip, got {other:?}"),
+        }
+    }
+
+    /// Plain text with no JSON around it, which some drafts do carry.
+    #[test]
+    fn plain_text_content_is_used_verbatim() {
+        let json = r#"{
+            "tracks": [{"type": "text", "attribute": 0, "segments": [{"material_id": "T1",
+             "target_timerange": {"start": 0, "duration": 2000000}}]}],
+            "materials": {"texts": [{"id": "T1", "content": "Just words"}]}
+        }"#;
+        let draft: Draft = serde_json::from_str(json).unwrap();
+        let (state, _) = build(draft, "test".into());
+        match &state.clips[0].clip_type {
+            ClipType::TextOverlay { content, .. } => assert_eq!(content, "Just words"),
+            other => panic!("expected a text clip, got {other:?}"),
+        }
+    }
+
+    /// `attribute: 1` is set per track regardless of type, so gating the
+    /// lane on it put music on the pinned lane above every video.
+    #[test]
+    fn audio_never_lands_on_the_pinned_lane() {
+        let json = r#"{
+            "tracks": [
+                {"type": "video", "attribute": 1, "segments": [{"material_id": "V1",
+                 "target_timerange": {"start": 0, "duration": 1000000}}]},
+                {"type": "audio", "attribute": 1, "segments": [{"material_id": "A1",
+                 "target_timerange": {"start": 0, "duration": 1000000}}]}
+            ],
+            "materials": {
+                "videos": [{"id": "V1", "type": "video", "path": "a.mp4"}],
+                "audios": [{"id": "A1", "type": "extract_music", "path": "a.mp3"}]
+            }
+        }"#;
+        let draft: Draft = serde_json::from_str(json).unwrap();
+        let (state, _) = build(draft, "test".into());
+        assert_eq!(state.tracks.len(), 2);
+        assert_eq!(state.tracks[0].kind, TrackKind::Video);
+        assert_eq!(
+            state.tracks[1].kind,
+            TrackKind::Audio,
+            "a pinned audio track is still an audio lane"
+        );
+    }
+
+    /// A sticker is a picture with a position. There is no CapRust clip
+    /// type that keeps the position, so it becomes an image clip rather
+    /// than being dropped.
+    #[test]
+    fn a_sticker_becomes_an_image_clip() {
+        let json = r#"{
+            "tracks": [{"type": "sticker", "attribute": 0, "segments": [{"material_id": "S1",
+             "target_timerange": {"start": 0, "duration": 1000000}}]}],
+            "materials": {"stickers": [{"id": "S1", "type": "sticker", "path": "a.png"}]}
+        }"#;
+        let draft: Draft = serde_json::from_str(json).unwrap();
+        let (state, report) = build(draft, "test".into());
+        assert_eq!(report.clips, 1, "a sticker is kept, not dropped");
+        assert!(matches!(state.clips[0].clip_type, ClipType::Image { .. }));
     }
 
     /// Not a CapCut draft at all. The message has to name the file so the

@@ -2471,7 +2471,9 @@ impl CapRustApp {
     /// opening a project -- overwriting an unsaved project is their
     /// decision to make afterwards, not a question before they have
     /// even seen what came in.
-    fn import_capcut_project(&mut self) {
+    /// Folder picker + import, kept separate from the menu item so the
+    /// handler body is a straight line and the error path is obvious.
+    fn import_capcut_interactive(&mut self) {
         let Some(dir) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
@@ -2536,7 +2538,7 @@ impl CapRustApp {
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-file-import-capcut")).clicked() {
-                        self.import_capcut_project();
+                        self.import_capcut_interactive();
                         ui.close_menu();
                     }
                     let save_lbl = if self.settings.enable_shortcuts {
