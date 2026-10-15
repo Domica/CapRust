@@ -246,6 +246,13 @@ fn acceptor(
 
         let generation = status.generation.fetch_add(1, Ordering::Relaxed) + 1;
         status.generation.store(generation, Ordering::Relaxed);
+        // Set before the writer thread starts. `write_loop` treats
+        // `connected == false` as "the peer is gone" and exits, tearing
+        // the socket down -- so forgetting this line makes every
+        // connection die the moment it is accepted. It was lost in the
+        // move to per-connection threads, and the symptom was a phone
+        // that could connect, then got a broken pipe on its first write.
+        status.connected.store(true, Ordering::Relaxed);
         tracing::info!("mcp: remote client connected from {addr} (gen {generation})");
 
         let read_half = match stream.try_clone() {
@@ -426,6 +433,56 @@ mod tests {
         assert!(
             line.contains("served"),
             "second client got no reply: {line}"
+        );
+
+        // The status the settings panel shows must agree with reality.
+        assert!(
+            bridge.status().connected(),
+            "the bridge reports no client while one is attached and served"
+        );
+    }
+
+    #[test]
+    fn a_connected_client_is_reported_connected() {
+        // Narrowest version of the bug: `connected` was never set true
+        // on accept, so write_loop saw "peer gone" and tore the socket
+        // down the moment it was accepted. A phone got a broken pipe on
+        // its first write.
+        let bridge = RemoteBridge::spawn("127.0.0.1", 0).unwrap();
+        assert!(!bridge.status().connected(), "nothing is connected yet");
+
+        let client = TcpStream::connect(("127.0.0.1", bridge.port())).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut w = client.try_clone().unwrap();
+        let mut r = BufReader::new(client);
+        w.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n")
+            .unwrap();
+        w.flush().unwrap();
+
+        let mut served = 0;
+        for _ in 0..40 {
+            served += bridge.drain(4, |line| {
+                if line.contains("tools/list") {
+                    Some("{\"served\":true}\n".to_string())
+                } else {
+                    None
+                }
+            });
+            if served > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(served > 0, "the request never reached the bridge");
+
+        let mut line = String::new();
+        r.read_line(&mut line).expect("client is served");
+        assert!(line.contains("served"), "no reply: {line}");
+        assert!(
+            bridge.status().connected(),
+            "bridge says disconnected while a client is attached and served"
         );
     }
 
