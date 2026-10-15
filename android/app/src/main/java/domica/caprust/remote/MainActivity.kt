@@ -1,4 +1,4 @@
-﻿package domica.caprust.remote
+package domica.caprust.remote
 
 import android.content.Context
 import android.os.Handler
@@ -529,7 +529,28 @@ private var logOn: Boolean
         super.onCreate(savedInstanceState)
         applyTheme(themeChoice(), apply = false)
         client = Client(this).also { it.loadToken() }
-        client.onEvent = { renderLog() }
+        client.onEvent = { line ->
+            renderLog()
+            // A lost link used to be a log line and nothing else: the
+            // app stayed on whatever screen it was on, every control
+            // failed with "not connected", and there was no way back to
+            // Connect from there. The user saw the log change and
+            // nothing else happen.
+            //
+            // Matches on the marker rather than on any transport text,
+            // so a plain disconnect notice is not mistaken for a
+            // failure worth bouncing the user out of.
+            if (line == "-- link lost" || line == "-- disconnected") {
+                connected = false
+                // `wanted` is left alone on purpose: a reconnect
+                // interval the user set is theirs to keep. Sitting on
+                // Connect is the fallback surface, and a successful
+                // retry walks back into the editor by itself.
+                runOnUiThread {
+                    if (current != Screen.Connect) show(Screen.Connect)
+                }
+            }
+        }
         // A rotation destroys and rebuilds the activity, socket and all.
         // Restoring the screen is what keeps the editor on screen
         // instead of dropping the user back to a connection form they
@@ -957,6 +978,11 @@ private var logOn: Boolean
         ))
         root.addView(status)
 
+        // Views that landscape moves into the right-hand column. Kept in one
+        // list, in the order they were added to `root`, so the move
+        // below cannot scramble them.
+        val movable = ArrayList<View>()
+
         // ---- preview ----
         // A frame is several KB of JPEG, so it is polled rather than
         // pushed: the phone does not know when the playhead moves on
@@ -987,6 +1013,8 @@ private var logOn: Boolean
             textSize = 12f
         }
         root.addView(previewNote)
+        movable.add(previewView!!)
+        movable.add(previewNote!!)
 
         // ---- transport ----
         // Two rows, not one. A LinearLayout does not wrap: four chips
@@ -1006,18 +1034,22 @@ private var logOn: Boolean
         transport.addView(chip(getString(R.string.act_back5)) { sendTransport("seek_back") })
         transport.addView(chip(getString(R.string.act_fwd5)) { sendTransport("seek_fwd") })
         root.addView(transport)
+        movable.add(transport)
 
         val previewBtnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         previewBtnRow.addView(chip(getString(R.string.btn_refresh_preview)) { fetchPreview() })
         root.addView(previewBtnRow)
+        movable.add(previewBtnRow)
 
         playheadView = TextView(this).apply { textSize = 12f }
         root.addView(playheadView)
+        movable.add(playheadView!!)
 
         val exportRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         exportButton = btn(getString(R.string.btn_export)) { askExport() }
         exportRow.addView(exportButton)
         root.addView(exportRow)
+        movable.add(exportRow)
 
         // ---- actions ----
         val actions = card()
@@ -1087,9 +1119,11 @@ private var logOn: Boolean
         transitionInfo = TextView(this).apply { textSize = 12f }
         presets.addView(transitionInfo)
         root.addView(presets)
+        movable.add(presets)
 
         lengthHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(lengthHost)
+        movable.add(lengthHost!!)
 
         root.addView(sectionTitle(getString(R.string.title_clips)))
 
@@ -1129,12 +1163,35 @@ private var logOn: Boolean
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, dp(0), 0)
         }
+        // The right column used to hold nothing but the selected clip's
+        // description, which is empty until a clip is tapped -- so half
+        // a landscape tablet was blank. What lives on the right while
+        // working is the preview and the transport, and on a wide screen
+        // they read better beside the timeline than above it.
+        for (v in movable) {
+            root.removeView(v)
+            side.addView(
+                v,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
         side.addView(
             selectedInfo(),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
+        )
+        // The clip list follows the moved views, so it needs room on the
+        // left rather than the weight 3 it had when it was the only
+        // thing below them.
+        clipScroll?.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            3f
         )
         wide.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         return wide

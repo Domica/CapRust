@@ -9291,6 +9291,14 @@ impl CapRustApp {
             self.preview_player.stop_stream();
             self.preview_player.cancel_pending();
 
+            // The comment above said "stop audio" and the code did not.
+            // `stop_stream` only ends the video decoder; the cpal
+            // player keeps pulling from its own PCM file on its own
+            // thread, so pausing left the audio running against a frozen
+            // frame. Dropping it signals the reader and joins it.
+            // Recreated on the next play, so nothing is lost.
+            self.audio_player = None;
+
             // K1c: fire a new one-shot when the render hash changed.
             // The renderer is left running until it produces its first
             // frame (or the deadline expires). That makes filtered
@@ -9757,6 +9765,10 @@ impl CapRustApp {
                 self.playhead_ms = total_ms;
                 self.preview.playing = false;
                 self.preview_player.stop_stream();
+                // Same omission as the pause branch: reaching the end
+                // stopped the video and left the audio playing past the
+                // last frame.
+                self.audio_player = None;
                 if let Some(mut r) = self.preview_renderer.take() {
                     r.kill();
                 }
