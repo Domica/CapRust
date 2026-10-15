@@ -246,7 +246,12 @@ pub fn import_folder(folder: &Path) -> anyhow::Result<(ProjectState, ImportRepor
     })?;
     let draft = parse_draft(&text, &path.display().to_string())?;
     let name = read_name(folder);
-    Ok(build(draft, name))
+    let (mut state, report) = build(draft, name);
+    // A freshly imported project still needs a home on disk so save,
+    // thumbnails and waveforms can resolve (otherwise project_path
+    // stays None and project_file_path() returns None).
+    state.project_path = Some(folder.to_string_lossy().to_string());
+    Ok((state, report))
 }
 
 /// Read a draft from an explicit file. For callers that already have the
@@ -259,7 +264,11 @@ pub fn import_file(path: &Path) -> anyhow::Result<(ProjectState, ImportReport)> 
         .parent()
         .map(read_name)
         .unwrap_or_else(|| "Imported CapCut project".to_string());
-    Ok(build(draft, name))
+    let (mut state, report) = build(draft, name);
+    if let Some(parent) = path.parent() {
+        state.project_path = Some(parent.to_string_lossy().to_string());
+    }
+    Ok((state, report))
 }
 
 // ── the conversion ───────────────────────────────────────────────────────
@@ -373,24 +382,45 @@ fn build(draft: Draft, project_name: String) -> (ProjectState, ImportReport) {
     let mut lane_video = 0usize;
     let mut lane_audio = 0usize;
     let mut lane_text = 0usize;
-    
+
     for t in &draft.tracks {
-        let kind = match t.kind.as_str() {
-            // The lane follows the *kind* first. CapCut sets
-            // `attribute: 1` per track regardless of type, so gating the
-            // lane on it put music on the pinned lane above every video.
-            "video" => TrackKind::Video,
-            "audio" => TrackKind::Audio,
-            "text" => TrackKind::Text,
-            // A sticker is a picture with a position. There is no
-            // CapRust clip type that keeps the position, so it becomes an
-            // image clip: visible, with CapCut's placement lost.
-            "sticker" => TrackKind::Video,
-            // Everything else has no CapRust home. Counted separately
-            // from the material tally so a type is not counted twice.
-            _ => {
-                report.unsupported_tracks += t.segments.len();
-                continue;
+        let kind = if let Some(first) = t.segments.first() {
+            if let Some(mat) = by_id.get(first.material_id.as_str()) {
+                // The file extension is what ffmpeg will see. CapCut often
+                // labels photos imported from a phone as `video`, so the
+                // extension is the ground truth.
+                let ext = mat
+                    .path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match ext.as_str() {
+                    "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus" | "mka" | "wma"
+                    | "aiff" | "aif" => TrackKind::Audio,
+                    // A photo: it goes on a video lane, where it is
+                    // drawn for its full duration. Not a footage clip.
+                    "heic" | "heif" | "avif" => TrackKind::Video,
+                    _ => match t.kind.as_str() {
+                        "audio" => TrackKind::Audio,
+                        "text" => TrackKind::Text,
+                        _ => TrackKind::Video,
+                    },
+                }
+            } else {
+                // Material not found in the draft - fall back to track type
+                match t.kind.as_str() {
+                    "audio" => TrackKind::Audio,
+                    "text" => TrackKind::Text,
+                    _ => TrackKind::Video,
+                }
+            }
+        } else {
+            // No segments on this track - fall back to track type
+            match t.kind.as_str() {
+                "audio" => TrackKind::Audio,
+                "text" => TrackKind::Text,
+                _ => TrackKind::Video,
             }
         };
 
