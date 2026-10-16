@@ -8652,6 +8652,7 @@ impl CapRustApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_preview_panel(ui);
         });
+
     }
 
     /// One zone: a picker across the top, the chosen panel underneath.
