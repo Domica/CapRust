@@ -48,6 +48,14 @@ pub struct SettingsEvents {
     pub remote_pair_requested: bool,
     /// Forget the token and kill every live remote session.
     pub remote_revoke_requested: bool,
+    /// The user picked a dock preset in Appearance -> Layout. The panel
+    /// can write the choice into settings, but rebuilding the dock tree
+    /// is the app's job -- that is where `dock_state` lives, and doing it
+    /// here would mean reaching into it from a panel.
+    pub layout_preset_requested: Option<crate::dock::LayoutPreset>,
+    /// The user asked to go back to following their own saved
+    /// arrangement.
+    pub layout_reset_requested: bool,
 }
 
 /// Transient status the settings panel renders but the app owns.
@@ -84,6 +92,8 @@ pub fn show(
         theme_import_requested: false,
         remote_pair_requested: false,
         remote_revoke_requested: false,
+        layout_preset_requested: None,
+        layout_reset_requested: false,
     };
 
     ui.horizontal(|ui| {
@@ -161,6 +171,27 @@ pub fn show(
 // Appearance
 // ---------------------------------------------------------------------------
 
+fn layout_mode_key(mode: caprust_core::LayoutMode) -> &'static str {
+    match mode {
+        caprust_core::LayoutMode::Default => "set-appearance-layout-default",
+        caprust_core::LayoutMode::Dockable => "set-appearance-layout-dockable",
+    }
+}
+
+fn layout_hint_key(mode: caprust_core::LayoutMode) -> &'static str {
+    match mode {
+        caprust_core::LayoutMode::Default => "set-appearance-layout-default-hint",
+        caprust_core::LayoutMode::Dockable => "set-appearance-layout-dockable-hint",
+    }
+}
+
+fn layout_hint2_key(mode: caprust_core::LayoutMode) -> &'static str {
+    match mode {
+        caprust_core::LayoutMode::Default => "set-appearance-layout-default-hint2",
+        caprust_core::LayoutMode::Dockable => "set-appearance-layout-dockable-hint2",
+    }
+}
+
 fn show_appearance(
     ui: &mut Ui,
     theme: &mut Theme,
@@ -211,6 +242,81 @@ fn show_appearance(
             theme.accent = rgb;
         }
     });
+
+    ui.add_space(space::L);
+
+    // --- Layout ---
+    ui.label(egui::RichText::new(tr("set-appearance-layout")).strong());
+    ui.add_space(space::XS);
+    ui.horizontal(|ui| {
+        ui.label(tr("set-appearance-layout-mode"));
+        let modes = [
+            caprust_core::LayoutMode::Default,
+            caprust_core::LayoutMode::Dockable,
+        ];
+        let labels: Vec<_> = modes.iter().map(|m| tr(layout_mode_key(*m))).collect();
+        let selected = modes
+            .iter()
+            .position(|m| *m == settings.layout)
+            .unwrap_or(0);
+        let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+        if let Some(i) = clicked {
+            if i != selected {
+                settings.layout = modes[i];
+                // Picking a mode without a preset would leave Dockable
+                // pointing at nothing, which falls through to the saved
+                // tree -- so the switch would appear to do nothing.
+                // Classic is the right seed because it *is* the
+                // arrangement a fresh install gets, so Dockable lands
+                // where Default would have anyway instead of somewhere
+                // new and unasked-for.
+                if settings.layout == caprust_core::LayoutMode::Dockable
+                    && settings.layout_preset.is_none()
+                {
+                    settings.layout_preset =
+                        Some(crate::dock::LayoutPreset::Classic.id().to_string());
+                    ev.layout_preset_requested = Some(crate::dock::LayoutPreset::Classic);
+                }
+            }
+        }
+    });
+
+    if settings.layout == caprust_core::LayoutMode::Dockable {
+        ui.horizontal(|ui| {
+            ui.label(tr("set-appearance-layout-preset"));
+            let presets = crate::dock::LayoutPreset::all();
+            let current = settings
+                .layout_preset
+                .as_deref()
+                .and_then(crate::dock::LayoutPreset::from_id);
+            let label = current
+                .map(|p| tr(p.label_key()))
+                .unwrap_or_else(|| tr("set-appearance-layout-preset-none"));
+            egui::ComboBox::from_id_salt("layout_preset_combo")
+                .selected_text(label)
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for p in presets {
+                        let sel = settings.layout_preset.as_deref() == Some(p.id());
+                        if ui.selectable_label(sel, tr(p.label_key())).clicked() {
+                            settings.layout_preset = Some(p.id().to_string());
+                            ev.layout_preset_requested = Some(p);
+                        }
+                    }
+                });
+        });
+    }
+
+    ui.label(
+        egui::RichText::new(tr(layout_hint_key(settings.layout)))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.label(
+        egui::RichText::new(tr(layout_hint2_key(settings.layout)))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
 
     ui.add_space(space::L);
 

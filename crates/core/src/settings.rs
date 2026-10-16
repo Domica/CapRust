@@ -73,6 +73,23 @@ pub struct AppSettings {
     /// `dock::default_dock_state()`.
     #[serde(default)]
     pub dock_layout: Option<String>,
+    /// Where the editor's panel arrangement comes from.
+    ///
+    /// See [`LayoutMode`]. Defaults to `Default`, which means "whatever
+    /// is in `dock_layout`" -- so an existing install that has dragged
+    /// its panels around opens exactly as it did before this field
+    /// existed.
+    #[serde(default, deserialize_with = "deserialize_layout_mode")]
+    pub layout: LayoutMode,
+    /// Stable id of the dock preset `Dockable` follows. `None` means the
+    /// user has not picked one, in which case `Dockable` falls back to
+    /// the same starting arrangement as `Default`.
+    ///
+    /// A string rather than the enum itself because the presets live in
+    /// the UI crate, which depends on this one and not the other way
+    /// round.
+    #[serde(default)]
+    pub layout_preset: Option<String>,
     /// Captions translation source language. "auto" lets MyMemory
     /// guess; otherwise a two-letter code.
     #[serde(default = "default_translate_source")]
@@ -189,6 +206,60 @@ fn default_translate_target() -> String {
     "hr".to_string()
 }
 
+/// Where the editor's panel arrangement comes from.
+///
+/// Both modes render the dock tree; what differs is which tree. The
+/// distinction matters because a dock layout is saved in two ways that
+/// used to fight each other: the user's dragged arrangement, and a named
+/// preset applied from the View menu. The menu version was one-shot --
+/// it overwrote the dragged tree and then never came back, so on the
+/// next launch the user was back where they started, with no record that
+/// they had ever asked for something else.
+///
+/// `Default` keeps the old behaviour exactly: your dragged arrangement
+/// is yours. `Dockable` remembers the preset you chose and re-applies it
+/// on every launch, so a known shape is guaranteed rather than
+/// inherited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutMode {
+    /// Follow the dock tree saved on this machine, or the built-in
+    /// starting arrangement on a fresh install. This is what the app
+    /// has always done and stays the default so nothing moves under an
+    /// existing user.
+    #[default]
+    Default,
+    /// Follow the preset named in [`AppSettings::layout_preset`],
+    /// rebuilt on every launch.
+    Dockable,
+}
+
+/// Tolerant `Deserialize` for [`LayoutMode`].
+///
+/// A settings file is a user's file: it gets hand-edited, synced between
+/// machines running different CapRust versions, and restored from
+/// backups taken months apart. An unrecognised mode name is therefore a
+/// normal condition, not corruption. Deriving would fail the entire
+/// load and cost the user every other setting over one they cannot even
+/// see the effect of; falling back costs them the preset, which they can
+/// pick again in a click.
+///
+/// Serialisation stays strict -- the file this build writes always
+/// contains a name this build understands.
+fn deserialize_layout_mode<'de, D>(d: D) -> Result<LayoutMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(match raw.as_str() {
+        "dockable" => LayoutMode::Dockable,
+        _ => {
+            tracing::warn!("unknown layout mode {raw:?}; falling back to Default");
+            LayoutMode::Default
+        }
+    })
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -209,6 +280,8 @@ impl Default for AppSettings {
             ffmpeg_prompt_dismissed: false,
             docked_panels: Vec::new(),
             dock_layout: None,
+            layout: LayoutMode::Default,
+            layout_preset: None,
             translate_source_lang: default_translate_source(),
             translate_target_lang: default_translate_target(),
             translate_email: None,
@@ -691,6 +764,8 @@ mod tests {
             translate_email: Some("user@example.com".into()),
             dock_layout: Some(r#"{"x":1}"#.into()),
             docked_panels: vec!["text".into(), "effects".into()],
+            layout: LayoutMode::Dockable,
+            layout_preset: Some("timeline-focus".into()),
             ..Default::default()
         };
 
@@ -706,8 +781,64 @@ mod tests {
         assert_eq!(a.translate_email, b.translate_email);
         assert_eq!(a.dock_layout, b.dock_layout);
         assert_eq!(a.docked_panels, b.docked_panels);
+        assert_eq!(a.layout, b.layout);
+        assert_eq!(a.layout_preset, b.layout_preset);
 
         let _ = fs::remove_file(&p);
+    }
+
+    /// An install that predates these fields must open on exactly the
+    /// layout it had, not on a reset one. This is the whole reason the
+    /// mode defaults to `Default`.
+    #[test]
+    fn settings_without_layout_fields_keep_the_existing_dock() {
+        let old = AppSettings {
+            dock_layout: Some(r#"{"main":["Preview"]}"#.into()),
+            ..Default::default()
+        };
+        let mut json = serde_json::to_value(&old).unwrap();
+        // A file written before these fields existed has no such keys.
+        let map = json.as_object_mut().unwrap();
+        map.remove("layout");
+        map.remove("layout_preset");
+
+        let back: AppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.layout, LayoutMode::Default);
+        assert_eq!(back.layout_preset, None);
+        assert_eq!(back.dock_layout.as_deref(), Some(r#"{"main":["Preview"]}"#));
+    }
+
+    #[test]
+    fn layout_mode_round_trips_through_its_stored_names() {
+        for (mode, text) in [
+            (LayoutMode::Default, r#""default""#),
+            (LayoutMode::Dockable, r#""dockable""#),
+        ] {
+            let s = AppSettings {
+                layout: mode,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&s).unwrap();
+            assert!(
+                json.contains(text),
+                "{mode:?} should serialise as {text}, got {json}"
+            );
+            assert_eq!(
+                serde_json::from_str::<AppSettings>(&json).unwrap().layout,
+                mode
+            );
+        }
+    }
+
+    /// An unknown mode in a hand-edited or newer settings file must not
+    /// take the editor down with it. Falling back to `Default` costs the
+    /// user their preset; failing to load costs them every other setting.
+    #[test]
+    fn an_unknown_layout_mode_falls_back_instead_of_failing() {
+        let mut json = serde_json::to_value(AppSettings::default()).unwrap();
+        json["layout"] = serde_json::json!("hyperdrive");
+        let back: AppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.layout, LayoutMode::Default);
     }
 
     #[test]

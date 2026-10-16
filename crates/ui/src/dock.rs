@@ -125,6 +125,27 @@ impl LayoutPreset {
             Self::PreviewFocus => "menu-view-layout-preview-focus",
         }
     }
+
+    /// Stable id written to `AppSettings::layout_preset`.
+    ///
+    /// These strings outlive the enum: a preset picked in one release has
+    /// to still resolve in the next one, so renaming a variant must not
+    /// change its id. Unknown ids resolve to `None` rather than to some
+    /// arbitrary preset -- a layout the user cannot recognise appearing
+    /// after an upgrade is worse than the built-in starting one.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::WideTimeline => "wide-timeline",
+            Self::TimelineFocus => "timeline-focus",
+            Self::PreviewFocus => "preview-focus",
+        }
+    }
+
+    /// Resolve a stored id back to a preset.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::all().into_iter().find(|p| p.id() == id)
+    }
 }
 
 /// Build one of the alternative editor layouts.
@@ -325,4 +346,74 @@ pub fn material_style(ctx: &egui::Context, theme: &crate::theme::Theme) -> egui_
     style.buttons.close_tab_bg_fill = egui::Color32::TRANSPARENT;
 
     style
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// A preset id has to outlive the enum variant it came from. If a
+    /// rename changed the stored string, a user who picked "wide
+    /// timeline" would silently get a different layout -- or, worse, a
+    /// fallback -- the next time they opened the app.
+    #[test]
+    fn preset_ids_are_stable_strings() {
+        let ids: Vec<&str> = LayoutPreset::all().iter().map(|p| p.id()).collect();
+        assert_eq!(
+            ids,
+            [
+                "classic",
+                "wide-timeline",
+                "timeline-focus",
+                "preview-focus"
+            ]
+        );
+    }
+
+    #[test]
+    fn every_preset_resolves_back_from_its_id() {
+        for p in LayoutPreset::all() {
+            assert_eq!(LayoutPreset::from_id(p.id()), Some(p));
+        }
+    }
+
+    /// An id from a preset that no longer exists must not resolve to
+    /// some other layout. Falling through to `None` lets the caller keep
+    /// the user's saved tree instead of silently rearranging the editor.
+    #[test]
+    fn an_unknown_preset_id_resolves_to_nothing() {
+        assert_eq!(LayoutPreset::from_id("cinerama"), None);
+        assert_eq!(LayoutPreset::from_id(""), None);
+    }
+
+    /// Two presets must not share an id, or picking one would tick both.
+    #[test]
+    fn preset_ids_are_unique() {
+        let mut ids: Vec<&str> = LayoutPreset::all().iter().map(|p| p.id()).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len());
+    }
+
+    /// Each preset has to produce a different tree, otherwise the picker
+    /// offers four names for one layout.
+    #[test]
+    fn presets_produce_distinct_trees() {
+        let mut seen: Vec<String> = Vec::new();
+        for p in LayoutPreset::all() {
+            let json = serde_json::to_string(&preset_dock_state(p)).expect("tree serialises");
+            assert!(!seen.contains(&json), "{p:?} duplicates another preset");
+            seen.push(json);
+        }
+    }
+
+    /// Classic is what a fresh install gets, so it must be the same tree
+    /// the app falls back to when there is nothing saved.
+    #[test]
+    fn classic_is_the_starting_tree() {
+        let a = serde_json::to_string(&preset_dock_state(LayoutPreset::Classic)).unwrap();
+        let b = serde_json::to_string(&default_dock_state()).unwrap();
+        assert_eq!(a, b);
+    }
 }

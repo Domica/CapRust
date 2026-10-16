@@ -1117,13 +1117,7 @@ impl CapRustApp {
             screen_record: crate::panels::screen_record::ScreenRecordState::new_defaults(),
             #[cfg(windows)]
             screen_record_open: false,
-            dock_state: settings
-                .dock_layout
-                .as_ref()
-                .and_then(|json| {
-                    serde_json::from_str::<egui_dock::DockState<crate::dock::Tab>>(json).ok()
-                })
-                .unwrap_or_else(crate::dock::default_dock_state),
+            dock_state: starting_dock_state(&settings),
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
@@ -2545,26 +2539,45 @@ impl CapRustApp {
                         }
                         ui.close_menu();
                     }
-                    // Process-based importers. Discovered from
-                    // %APPDATA%/CapRust/importers; a missing directory is
-                    // simply no entries, so this branch never shows when
-                    // nothing is installed.
-                    for plugin in self.available_importers() {
-                        let label = plugin.manifest.name.clone();
-                        if ui.button(label).clicked() {
-                            let picked = match plugin.manifest.kinds.first().map(String::as_str) {
-                                Some("capcut") | Some("otio") => rfd::FileDialog::new()
-                                    .pick_folder()
-                                    .map(|p| p.to_string_lossy().to_string()),
-                                _ => rfd::FileDialog::new()
-                                    .pick_file()
-                                    .map(|p| p.to_string_lossy().to_string()),
-                            };
-                            if let Some(path) = picked {
-                                self.run_importer(&plugin, &path);
+                    // Process-based importers, under one entry rather
+                    // than one per plugin. They are discovered from
+                    // %APPDATA%/CapRust/importers, so what appears here
+                    // depends on what the user installed -- a build of
+                    // CapRust should not advertise importers it does not
+                    // ship. A missing directory is simply no entries, and
+                    // the entry hides itself.
+                    let importers = self.available_importers();
+                    if !importers.is_empty() {
+                        ui.menu_button(tr("menu-file-import-other"), |ui| {
+                            for plugin in importers {
+                                let label = plugin.manifest.name.clone();
+                                if ui.button(label).clicked() {
+                                    // The plugin says whether it reads a
+                                    // file or a project folder. Matching
+                                    // on the kind instead meant OTIO -- a
+                                    // single JSON document -- opened a
+                                    // folder picker, and any new plugin
+                                    // had to be added to a hardcoded list
+                                    // in the host to get the right dialog.
+                                    let picked = match plugin.manifest.target {
+                                        caprust_core::importer::ImportTarget::Folder => {
+                                            rfd::FileDialog::new()
+                                                .pick_folder()
+                                                .map(|p| p.to_string_lossy().to_string())
+                                        }
+                                        caprust_core::importer::ImportTarget::File => {
+                                            rfd::FileDialog::new()
+                                                .pick_file()
+                                                .map(|p| p.to_string_lossy().to_string())
+                                        }
+                                    };
+                                    if let Some(path) = picked {
+                                        self.run_importer(&plugin, &path);
+                                    }
+                                    ui.close_menu();
+                                }
                             }
-                            ui.close_menu();
-                        }
+                        });
                     }
                     let save_lbl = if self.settings.enable_shortcuts {
                         format!("{}  (Ctrl+S)", tr("menu-file-save"))
@@ -2759,18 +2772,29 @@ impl CapRustApp {
                             }
                         }
                     });
+                    // A radio group, like Tab layout above, rather
+                    // than a row of buttons. The old buttons could not
+                    // show which layout was in effect, so after dragging
+                    // a panel there was no way to tell what the menu
+                    // would give you back.
                     ui.menu_button(tr("menu-view-layout"), |ui| {
                         for p in crate::dock::LayoutPreset::all() {
-                            if ui.button(tr(p.label_key())).clicked() {
-                                self.dock_state = crate::dock::preset_dock_state(p);
-                                tracing::info!("dock layout preset applied: {:?}", p);
+                            let sel = self.settings.layout_preset.as_deref() == Some(p.id());
+                            if ui.selectable_label(sel, tr(p.label_key())).clicked() {
+                                self.apply_layout_preset(p);
                                 ui.close_menu();
                             }
                         }
                         ui.separator();
-                        if ui.button(tr("menu-view-layout-reset")).clicked() {
-                            self.dock_state = crate::dock::default_dock_state();
-                            tracing::info!("dock layout reset to default");
+                        let following_saved = self.settings.layout_preset.is_none();
+                        if ui
+                            .selectable_label(
+                                following_saved,
+                                tr("menu-view-layout-my-arrangement"),
+                            )
+                            .clicked()
+                        {
+                            self.reset_layout();
                             ui.close_menu();
                         }
                     });
@@ -8228,16 +8252,40 @@ impl CapRustApp {
         }
     }
 
+    /// Switch the editor to a named dock preset and remember the choice.
+    ///
+    /// Selecting a preset also puts the app in `Dockable`, because "I
+    /// want this layout every time" and "I want my dragged layout" are
+    /// different requests and the menu cannot offer both at once. The
+    /// preset is written to settings and re-applied on the next launch,
+    /// which is what the old View-menu buttons failed to do: they
+    /// overwrote the dock tree and then let the save tick store that
+    /// tree as if the user had dragged it there, so the choice never
+    /// survived a restart and there was no way back to the default
+    /// arrangement without hand-editing the settings file.
+    fn apply_layout_preset(&mut self, preset: crate::dock::LayoutPreset) {
+        self.dock_state = crate::dock::preset_dock_state(preset);
+        self.settings.layout = caprust_core::LayoutMode::Dockable;
+        self.settings.layout_preset = Some(preset.id().to_string());
+        tracing::info!("dock layout preset applied: {:?} ({})", preset, preset.id());
+    }
+
+    /// Go back to following the arrangement saved on this machine and
+    /// drop the preset. The arrangement itself is reset to the built-in
+    /// one, because by this point "saved arrangement" and "whatever the
+    /// preset left behind" are the same tree.
+    fn reset_layout(&mut self) {
+        self.dock_state = crate::dock::default_dock_state();
+        self.settings.layout = caprust_core::LayoutMode::Default;
+        self.settings.layout_preset = None;
+        tracing::info!("dock layout reset to default");
+    }
+
     /// New dock-based layout. Fallback to the classic layout via
     /// `show_editor_classic` while the migration is in progress; flip
     /// `USE_DOCK_LAYOUT` to compare them.
     fn show_editor(&mut self, ctx: &egui::Context) {
-        const USE_DOCK_LAYOUT: bool = true;
-        if USE_DOCK_LAYOUT {
-            self.show_editor_dock(ctx);
-        } else {
-            self.show_editor_classic(ctx);
-        }
+        self.show_editor_dock(ctx);
     }
 
     fn show_editor_dock(&mut self, ctx: &egui::Context) {
@@ -11406,6 +11454,12 @@ impl CapRustApp {
                 if ev.theme_import_requested {
                     self.handle_theme_import();
                 }
+                if let Some(p) = ev.layout_preset_requested {
+                    self.apply_layout_preset(p);
+                }
+                if ev.layout_reset_requested {
+                    self.reset_layout();
+                }
                 if ev.save {
                     // Re-detect ffmpeg with new paths
                     self.ffmpeg_status = caprust_core::detect_ffmpeg(&self.settings);
@@ -12064,6 +12118,41 @@ impl eframe::App for CapRustApp {
     }
 }
 
+/// The dock tree the editor opens with, given the persisted settings.
+///
+/// `Dockable` rebuilds from the named preset every launch, so a user who
+/// picked "wide timeline" on a 13-inch laptop gets it on a 27-inch one
+/// too. An id that no longer resolves -- a preset renamed or removed in a
+/// later release -- falls through to the saved tree rather than to the
+/// built-in one, because a machine that already has a saved arrangement
+/// should keep it.
+///
+/// `Default` reads the saved tree, or the built-in starting arrangement
+/// on a fresh install. This is the path every existing install takes and
+/// is deliberately unchanged by the layout feature.
+fn starting_dock_state(
+    settings: &caprust_core::AppSettings,
+) -> egui_dock::DockState<crate::dock::Tab> {
+    let saved = || {
+        settings.dock_layout.as_ref().and_then(|json| {
+            serde_json::from_str::<egui_dock::DockState<crate::dock::Tab>>(json).ok()
+        })
+    };
+
+    if settings.layout == caprust_core::LayoutMode::Dockable {
+        if let Some(id) = settings.layout_preset.as_deref() {
+            match crate::dock::LayoutPreset::from_id(id) {
+                Some(p) => return crate::dock::preset_dock_state(p),
+                None => tracing::warn!(
+                    "saved dock preset {id:?} is not a preset this build knows; using the saved layout"
+                ),
+            }
+        }
+    }
+
+    saved().unwrap_or_else(crate::dock::default_dock_state)
+}
+
 /// Register the Phosphor icon font family.
 fn setup_phosphor_fonts(ctx: &egui::Context, family: crate::theme::UiFontFamily) {
     let mut fonts = egui::FontDefinitions::default();
@@ -12265,6 +12354,187 @@ mod preview_encoding_tests {
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
         let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
         assert_eq!((img.width(), img.height()), (160, 90));
+    }
+}
+
+#[cfg(test)]
+mod app_layout_tests {
+    use super::starting_dock_state;
+    use crate::dock::{default_dock_state, preset_dock_state, LayoutPreset};
+    use caprust_core::{AppSettings, LayoutMode};
+    use egui_dock::DockState;
+    use serde_json::Value;
+
+    type Tree = DockState<crate::dock::Tab>;
+
+    /// A dock tree carries its rectangles, and those are written by
+    /// egui_dock during layout rather than by the code that builds the
+    /// tree. A tree that has never been shown has `null` rectangles,
+    /// which do not survive a round trip through serde -- and neither do
+    /// they have any business being compared. Strip them and compare the
+    /// structure: which panels sit where, and how the space is divided.
+    fn shape(state: &Tree) -> Value {
+        fn strip(v: &mut Value) {
+            if let Some(map) = v.as_object_mut() {
+                map.remove("rect");
+                map.remove("viewport");
+                for (_k, child) in map.iter_mut() {
+                    strip(child);
+                }
+            } else if let Some(arr) = v.as_array_mut() {
+                for child in arr.iter_mut() {
+                    strip(child);
+                }
+            }
+        }
+        let mut v = serde_json::to_value(state).expect("tree serialises");
+        strip(&mut v);
+        v
+    }
+
+    /// Stand in for a settings file written by a previous session.
+    ///
+    /// A real one has laid-out rectangles, so the nulls a fresh tree
+    /// carries are filled in here too. Without this the test would be
+    /// measuring egui_dock's layout pass rather than the layout choice.
+    fn stored(state: &Tree) -> String {
+        fn fill(v: &mut Value) {
+            if let Some(map) = v.as_object_mut() {
+                for (k, child) in map.iter_mut() {
+                    if k == "rect" || k == "viewport" {
+                        fill_rect(child);
+                    } else {
+                        fill(child);
+                    }
+                }
+            } else if let Some(arr) = v.as_array_mut() {
+                for child in arr.iter_mut() {
+                    fill(child);
+                }
+            }
+        }
+        // Rectangles are `{"min": {"x": null, "y": null}, ...}`, so the
+        // nulls sit inside the object rather than replacing it.
+        fn fill_rect(v: &mut Value) {
+            if v.is_null() {
+                *v = serde_json::json!(0.0);
+                return;
+            }
+            if let Some(map) = v.as_object_mut() {
+                for child in map.values_mut() {
+                    fill_rect(child);
+                }
+            } else if let Some(arr) = v.as_array_mut() {
+                for child in arr.iter_mut() {
+                    fill_rect(child);
+                }
+            }
+        }
+        let mut v = serde_json::to_value(state).expect("tree serialises");
+        fill(&mut v);
+        serde_json::to_string(&v).expect("stored tree serialises")
+    }
+
+    fn settings_with(
+        layout: LayoutMode,
+        preset: Option<&str>,
+        saved: Option<&Tree>,
+    ) -> AppSettings {
+        AppSettings {
+            dock_layout: saved.map(stored),
+            layout,
+            layout_preset: preset.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// The promise the default mode makes: nothing moves under someone
+    /// who has already arranged their panels. Without this the feature
+    /// would reset every existing install's layout on first launch.
+    #[test]
+    fn default_mode_opens_the_saved_arrangement() {
+        let saved = preset_dock_state(LayoutPreset::WideTimeline);
+        let settings = settings_with(LayoutMode::Default, None, Some(&saved));
+        assert_eq!(
+            shape(&starting_dock_state(&settings)),
+            shape(&saved),
+            "default mode must not rearrange what the user saved"
+        );
+    }
+
+    /// A fresh install has nothing saved, so it gets the built-in tree.
+    #[test]
+    fn default_mode_with_nothing_saved_uses_the_built_in_tree() {
+        let settings = AppSettings::default();
+        assert_eq!(
+            shape(&starting_dock_state(&settings)),
+            shape(&default_dock_state())
+        );
+    }
+
+    /// The whole point of Dockable: the preset wins over the saved tree,
+    /// so the layout is the same on every launch and every screen.
+    #[test]
+    fn dockable_mode_rebuilds_the_preset_every_launch() {
+        let settings = settings_with(
+            LayoutMode::Dockable,
+            Some("wide-timeline"),
+            Some(&preset_dock_state(LayoutPreset::PreviewFocus)),
+        );
+        assert_eq!(
+            shape(&starting_dock_state(&settings)),
+            shape(&preset_dock_state(LayoutPreset::WideTimeline)),
+            "the preset must win over the saved tree"
+        );
+    }
+
+    /// A preset id from a future or hand-edited settings file. Falling
+    /// back to the saved tree keeps the user's layout; falling back to
+    /// the built-in one would throw away an arrangement they made.
+    #[test]
+    fn an_unknown_preset_keeps_the_saved_arrangement() {
+        let saved = preset_dock_state(LayoutPreset::TimelineFocus);
+        let settings = settings_with(LayoutMode::Dockable, Some("cinerama"), Some(&saved));
+        assert_eq!(shape(&starting_dock_state(&settings)), shape(&saved));
+    }
+
+    /// Unparseable saved JSON is not a reason to lose the mode: the
+    /// preset still resolves.
+    #[test]
+    fn dockable_survives_unparseable_saved_json() {
+        let mut settings = settings_with(LayoutMode::Dockable, Some("timeline-focus"), None);
+        settings.dock_layout = Some("{ not json".into());
+        assert_eq!(
+            shape(&starting_dock_state(&settings)),
+            shape(&preset_dock_state(LayoutPreset::TimelineFocus))
+        );
+    }
+
+    /// Dockable with no preset named is the state a hand-edited settings
+    /// file can leave behind. It must behave like Default rather than
+    /// opening an empty editor.
+    #[test]
+    fn dockable_without_a_preset_behaves_like_default() {
+        let saved = preset_dock_state(LayoutPreset::WideTimeline);
+        let settings = settings_with(LayoutMode::Dockable, None, Some(&saved));
+        assert_eq!(shape(&starting_dock_state(&settings)), shape(&saved));
+    }
+
+    /// Every preset must survive a save and reload, or `Dockable` would
+    /// quietly become `Default` after one restart. This is the check
+    /// that the null-rectangle problem cannot come back unnoticed.
+    #[test]
+    fn every_preset_survives_a_store_and_reload() {
+        for p in LayoutPreset::all() {
+            let tree = preset_dock_state(p);
+            let settings = settings_with(LayoutMode::Dockable, Some(p.id()), Some(&tree));
+            let opened = starting_dock_state(&settings);
+            assert_eq!(
+                shape(&opened),
+                shape(&preset_dock_state(p)),
+                "{p:?} did not come back as itself"
+            );
+        }
     }
 }
 

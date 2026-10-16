@@ -62,6 +62,31 @@ pub struct ImporterManifest {
     /// Import kinds this plugin handles ("capcut", "otio", ...).
     #[serde(default)]
     pub kinds: Vec<String>,
+    /// Whether the user picks one file or a folder. Defaults to `File`,
+    /// which is what an interchange format is.
+    #[serde(default)]
+    pub target: ImportTarget,
+}
+
+/// What the user is asked to pick before a plugin runs.
+///
+/// The host used to decide this by matching the plugin's kind against a
+/// hardcoded list, which meant a plugin was either in that list and got
+/// a folder dialog or out of it and got a file dialog -- with no way for
+/// the plugin to say which it actually needs. An OTIO timeline is a
+/// single JSON file and was being asked for as a folder.
+///
+/// The plugin states it. `kinds` stays descriptive: it is what the
+/// format calls itself, not a UI instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportTarget {
+    /// One file -- the common case for an interchange format.
+    #[default]
+    File,
+    /// A folder the plugin reads a project out of, like a video
+    /// editor's own project directory.
+    Folder,
 }
 
 fn default_version() -> String {
@@ -243,6 +268,38 @@ pub fn run_import(plugin: &ImporterPlugin, path: &Path) -> Result<crate::Project
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_manifest_without_a_target_asks_for_a_file() {
+        // Every plugin written before `target` existed means "a file",
+        // which is the only reading of the old protocol that does not
+        // change behaviour under it.
+        let m: ImporterManifest =
+            serde_json::from_str(r#"{"id":"org.x.y","name":"Y","protocol":1,"kinds":["otio"]}"#)
+                .unwrap();
+        assert_eq!(m.target, ImportTarget::File);
+    }
+
+    #[test]
+    fn a_target_reads_back_from_its_stored_names() {
+        for (target, text) in [
+            (ImportTarget::File, r#""file""#),
+            (ImportTarget::Folder, r#""folder""#),
+        ] {
+            let m = ImporterManifest {
+                id: "org.x.y".into(),
+                name: "Y".into(),
+                version: "1".into(),
+                protocol: PROTOCOL,
+                kinds: vec!["y".into()],
+                target,
+            };
+            let json = serde_json::to_string(&m).unwrap();
+            assert!(json.contains(text), "{target:?} should serialise as {text}");
+            let back: ImporterManifest = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.target, target);
+        }
+    }
 
     #[test]
     fn manifest_defaults_are_stable() {
