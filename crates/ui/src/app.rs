@@ -354,6 +354,9 @@ pub struct CapRustApp {
     /// Dock tree that owns every editor panel. Replaces the fixed
     /// SidePanel / CentralPanel layout. See `crate::dock`.
     pub dock_state: egui_dock::DockState<crate::dock::Tab>,
+    /// Zone contents for the fixed editor. Only read there -- the dock
+    /// editor keeps using `dock_state`.
+    pub modern: ModernState,
     pub preview: PreviewState,
     pub selected_clips: Vec<uuid::Uuid>,
     pub clip_drag: Option<ClipDrag>,
@@ -1118,6 +1121,7 @@ impl CapRustApp {
             #[cfg(windows)]
             screen_record_open: false,
             dock_state: starting_dock_state(&settings),
+            modern: ModernState::default(),
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
@@ -8363,50 +8367,164 @@ impl CapRustApp {
     /// The vertical strip of category icons that a modern editor puts
     /// down the far left is deliberately not copied: it would be a
     /// second way into the same panels for no gain here, and the asset
-    /// browser already carries those categories as tabs.
+    /// Fixed zones, no dragging.
+    ///
+    ///   ┌──────────┬───────────────┬─────────────┐
+    ///   │  browser │               │  properties │
+    ///   │ (top)    │    preview    │             │
+    ///   ├──────────┤               ├─────────────┤
+    ///   │ effects  │               │  plugins    │
+    ///   │ trans.   │               │ (swappable) │
+    ///   │ filters  │               │             │
+    ///   │ text     │               │             │
+    ///   └──────────┴───────────────┴─────────────┘
+    ///   │            timeline                    │
+    ///   └────────────────────────────────────────┘
+    ///
+    /// The zones are fixed; their contents are not. That is the whole
+    /// reason this is a second editor rather than an arrangement of the
+    /// dock: you stop spending time putting panels back, and stop
+    /// wondering where one went, while still being able to put the one
+    /// you actually need on screen.
+    ///
+    /// The zone headers are tab strips running down the side rather than
+    /// across the top. Horizontal tabs inside a narrow column leave
+    /// room for two labels, and they read as an older interface; a
+    /// vertical list uses the column it is already in.
     fn show_editor_modern(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
 
-        // Keep the plugin browser's scan set in sync with Settings →
-        // Paths (custom CLAP dir). Resetting `scanned` triggers a
-        // rescan with the new set on the next panel render.
         self.sync_plugin_scan_dirs();
 
-        egui::SidePanel::left("left_panel")
+        // Left column: browser above, creative tools below.
+        egui::SidePanel::left("modern_left")
             .resizable(true)
-            .default_width(280.0)
-            .min_width(120.0)
+            .default_width(250.0)
+            .min_width(140.0)
+            .max_width(420.0)
             .show(ctx, |ui| {
-                let out = crate::panels::asset_browser::show(
-                    ui,
-                    &mut self.project,
-                    &mut self.asset_browser,
-                    &mut self.media_bin,
-                );
-                // Sync tab_layout back to media_bin
-                self.media_bin.tab_layout = self.asset_browser.tab_layout;
-                self.handle_asset_browser_output(out);
+                ui.vertical_centered_justified(|ui| {
+                    egui::TopBottomPanel::top("modern_left_top")
+                        .resizable(true)
+                        .default_height(ui.available_height() * 0.5)
+                        .show_inside(ui, |ui| {
+                            let mut tab = self.modern.left_top;
+                            self.render_zone_tabs(ui, &BROWSER_TABS, &mut tab);
+                            self.modern.left_top = tab;
+                            ui.separator();
+                            self.render_assets_panel(ui, tab);
+                        });
+
+                    egui::TopBottomPanel::bottom("modern_left_bottom")
+                        .resizable(true)
+                        .default_height(ui.available_height() * 0.5)
+                        .show_inside(ui, |ui| {
+                            let mut tab = self.modern.left_bottom;
+                            self.render_zone_tabs(ui, &CREATIVE_TABS, &mut tab);
+                            self.modern.left_bottom = tab;
+                            ui.separator();
+                            self.render_assets_panel(ui, tab);
+                        });
+                });
             });
 
-        egui::SidePanel::right("right_panel")
+        // Right column: properties above, whatever else you need below.
+        egui::SidePanel::right("modern_right")
             .resizable(true)
-            .default_width(280.0)
+            .default_width(300.0)
             .min_width(240.0)
+            .max_width(460.0)
             .show(ctx, |ui| {
-                self.render_properties_panel(ui);
+                ui.vertical_centered_justified(|ui| {
+                    egui::TopBottomPanel::top("modern_right_top")
+                        .resizable(true)
+                        .default_height(ui.available_height() * 0.5)
+                        .show_inside(ui, |ui| {
+                            self.render_properties_panel(ui);
+                        });
+
+                    egui::TopBottomPanel::bottom("modern_right_bottom")
+                        .resizable(true)
+                        .default_height(ui.available_height() * 0.5)
+                        .show_inside(ui, |ui| {
+                            let mut panel = self.modern.right_bottom;
+                            self.render_panel_tabs(ui, &mut panel);
+                            self.modern.right_bottom = panel;
+                            ui.separator();
+                            self.render_right_panel(ui, panel);
+                        });
+                });
             });
 
-        // Jobs bar sits above the timeline so it's visible from any
-        // panel. It auto-hides when no jobs are live.
         self.show_jobs_bar(ctx);
-
         self.show_timeline(ctx);
 
-        // Central preview (frame + transport)
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_preview_panel(ui);
         });
+    }
+
+    /// A vertical tab strip for one zone.
+    ///
+    /// Only the tabs asked for are offered, so each zone has a short list
+    /// rather than all eight. The header names what is showing, which
+    /// matters once two zones show different things at the same time.
+    fn render_zone_tabs(
+        &mut self,
+        ui: &mut egui::Ui,
+        offered: &[crate::panels::asset_browser::AssetTab],
+        selected: &mut crate::panels::asset_browser::AssetTab,
+    ) {
+        ui.label(egui::RichText::new(tr(selected.label())).strong());
+        ui.vertical(|ui| {
+            for tab in offered {
+                let sel = *selected == *tab;
+                if ui.selectable_label(sel, tr(tab.label())).clicked() {
+                    *selected = *tab;
+                }
+            }
+        });
+    }
+
+    /// The tab strip for the swappable bottom-right zone.
+    fn render_panel_tabs(&mut self, ui: &mut egui::Ui, selected: &mut RightPanel) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr(selected.key())).strong());
+            ui.separator();
+        });
+        ui.vertical(|ui| {
+            for p in RightPanel::all() {
+                let sel = *selected == p;
+                if ui.selectable_label(sel, tr(p.key())).clicked() {
+                    *selected = p;
+                }
+            }
+        });
+    }
+
+    /// Body of the swappable bottom-right zone.
+    ///
+    /// Most of what belongs there is an asset tab, so it goes through the
+    /// same renderer the dock uses -- one browser, one set of filter
+    /// state, whichever editor you are in.
+    fn render_right_panel(&mut self, ui: &mut egui::Ui, panel: RightPanel) {
+        if let Some(tab) = panel.asset_tab() {
+            self.render_assets_panel(ui, tab);
+            return;
+        }
+        match panel {
+            RightPanel::MasterChain => self.render_master_chain_panel(ui),
+            RightPanel::MultiCam => self.render_multicam_panel(ui),
+            // Handled as an asset tab above.
+            RightPanel::Plugins
+            | RightPanel::Media
+            | RightPanel::Sound
+            | RightPanel::Effects
+            | RightPanel::Transitions
+            | RightPanel::Filters
+            | RightPanel::Text => {}
+        }
     }
 
     /// Properties panel body. Migrated out of the SidePanel::right
@@ -12197,6 +12315,108 @@ pub(crate) fn layout_mode_hint_key(mode: caprust_core::LayoutMode) -> &'static s
 ///
 /// `Default` reads the saved tree, or the built-in starting arrangement
 /// on a fresh install. This is the path every existing install takes and
+/// The two left zones. Split this way because they answer different
+/// questions: the top one is where media lives, the bottom one is where
+/// you reach for something to put *on* the media.
+pub(crate) const BROWSER_TABS: [crate::panels::asset_browser::AssetTab; 4] = [
+    crate::panels::asset_browser::AssetTab::Media,
+    crate::panels::asset_browser::AssetTab::Plugins,
+    crate::panels::asset_browser::AssetTab::Sfx,
+    crate::panels::asset_browser::AssetTab::Templates,
+];
+
+pub(crate) const CREATIVE_TABS: [crate::panels::asset_browser::AssetTab; 4] = [
+    crate::panels::asset_browser::AssetTab::Effects,
+    crate::panels::asset_browser::AssetTab::Transitions,
+    crate::panels::asset_browser::AssetTab::Filters,
+    crate::panels::asset_browser::AssetTab::Text,
+];
+
+/// What each zone of the fixed editor is showing.
+///
+/// Two zones on the left, two on the right, and nothing else to configure.
+/// The zones are fixed -- that is the point of this editor, and the reason
+/// it exists next to the dock rather than as another arrangement of it --
+/// but their contents are the user's to choose.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ModernState {
+    /// Top-left: the browser (media, plugins, sound, templates).
+    pub left_top: crate::panels::asset_browser::AssetTab,
+    /// Bottom-left: the creative tools (effects, transitions, filters, text).
+    pub left_bottom: crate::panels::asset_browser::AssetTab,
+    /// Bottom-right: whatever the clip needs beyond its properties.
+    pub right_bottom: RightPanel,
+}
+
+/// What can sit in the bottom-right zone.
+///
+/// Properties stay at the top on their own -- they are the one thing you
+/// almost always want while editing a clip. The bottom zone is the
+/// "and also this" panel, and it is the only one the user has a reason to
+/// swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RightPanel {
+    /// The plugin browser: the panel you reach for when the clip needs an
+    /// effect the built-ins do not cover.
+    #[default]
+    Plugins,
+    MasterChain,
+    MultiCam,
+    Media,
+    Sound,
+    Effects,
+    Transitions,
+    Filters,
+    Text,
+}
+
+impl RightPanel {
+    pub fn all() -> [Self; 9] {
+        [
+            Self::Plugins,
+            Self::MasterChain,
+            Self::MultiCam,
+            Self::Media,
+            Self::Sound,
+            Self::Effects,
+            Self::Transitions,
+            Self::Filters,
+            Self::Text,
+        ]
+    }
+
+    /// Key for the i18n label. The asset tabs are shared with the
+    /// browser, so this reuses their keys rather than inventing near
+    /// duplicates that will drift.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Plugins => "asset-tab-plugins",
+            Self::MasterChain => "dock-tab-master",
+            Self::MultiCam => "dock-tab-multicam",
+            Self::Media => "asset-tab-media",
+            Self::Sound => "asset-tab-sfx",
+            Self::Effects => "asset-tab-effects",
+            Self::Transitions => "asset-tab-transitions",
+            Self::Filters => "asset-tab-filters",
+            Self::Text => "asset-tab-text",
+        }
+    }
+
+    /// The asset tab this panel renders, when it is one.
+    pub fn asset_tab(self) -> Option<crate::panels::asset_browser::AssetTab> {
+        use crate::panels::asset_browser::AssetTab;
+        Some(match self {
+            Self::Media => AssetTab::Media,
+            Self::Sound => AssetTab::Sfx,
+            Self::Effects => AssetTab::Effects,
+            Self::Transitions => AssetTab::Transitions,
+            Self::Filters => AssetTab::Filters,
+            Self::Text => AssetTab::Text,
+            _ => return None,
+        })
+    }
+}
+
 /// The dock tree, ready for the editor to render.
 ///
 /// The dock exists in both editors -- `Modern` draws its own fixed
