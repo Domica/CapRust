@@ -35,6 +35,51 @@ pub enum Tab {
 }
 
 impl Tab {
+    /// Every panel the editor can put in a zone.
+    ///
+    /// `Preview` and `Timeline` are in the list because a zone can show
+    /// them -- the fixed frame puts them in the centre and along the
+    /// bottom, but nothing stops someone putting a second timeline in a
+    /// side column, and refusing would be an arbitrary limit.
+    pub fn all() -> [Self; 13] {
+        [
+            Self::AssetMedia,
+            Self::AssetTransitions,
+            Self::AssetEffects,
+            Self::AssetFilters,
+            Self::AssetText,
+            Self::AssetTemplates,
+            Self::AssetPlugins,
+            Self::AssetSfx,
+            Self::Preview,
+            Self::Properties,
+            Self::Timeline,
+            Self::MasterChain,
+            Self::MultiCam,
+        ]
+    }
+
+    /// Icon for the zone picker. Asset tabs already have one; the
+    /// standalone panels need a stand-in, and the closest thing to a
+    /// spare glyph is used rather than inventing a parallel set.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::AssetMedia => crate::panels::asset_browser::AssetTab::Media.icon(),
+            Self::AssetTransitions => crate::panels::asset_browser::AssetTab::Transitions.icon(),
+            Self::AssetEffects => crate::panels::asset_browser::AssetTab::Effects.icon(),
+            Self::AssetFilters => crate::panels::asset_browser::AssetTab::Filters.icon(),
+            Self::AssetText => crate::panels::asset_browser::AssetTab::Text.icon(),
+            Self::AssetTemplates => crate::panels::asset_browser::AssetTab::Templates.icon(),
+            Self::AssetPlugins => crate::panels::asset_browser::AssetTab::Plugins.icon(),
+            Self::AssetSfx => crate::panels::asset_browser::AssetTab::Sfx.icon(),
+            Self::Preview => "🎞",
+            Self::Properties => "⚙",
+            Self::Timeline => "⏱",
+            Self::MasterChain => "🎚",
+            Self::MultiCam => "📷",
+        }
+    }
+
     /// FTL key for the tab title.
     pub fn title_key(&self) -> &'static str {
         match self {
