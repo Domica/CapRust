@@ -8614,16 +8614,25 @@ impl CapRustApp {
         self.show_timeline(ctx);
 
         let screen_w = ctx.screen_rect().width();
-        let side_w = screen_w * 0.2;
+        // Column widths depend on timeline size: S=20/60/20, M=20/80/0, L=0/100/0
+        let (left_w, right_w, _) = match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => (screen_w * 0.20, screen_w * 0.20, screen_w * 0.60),
+            caprust_core::TimelineSize::M => (screen_w * 0.20, 0.0, screen_w * 0.80),
+            caprust_core::TimelineSize::L => (0.0, 0.0, screen_w * 1.00),
+        };
+        let _side_h = ctx.screen_rect().height() - self.timeline_height_default() - self.timeline_height_min();
 
         egui::SidePanel::left("modern_left")
             .resizable(true)
-            .default_width(side_w)
+            .default_width(left_w)
             .min_width(140.0)
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
                 let avail = ui.available_height();
-                let top_h = avail * 0.5;
+                let top_h = avail * match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => 0.7,
+            caprust_core::TimelineSize::M | caprust_core::TimelineSize::L => 0.5,
+        };
                 let bot_h = avail - top_h;
 
                 egui::TopBottomPanel::top("modern_left_top")
@@ -8642,12 +8651,15 @@ impl CapRustApp {
 
         egui::SidePanel::right("modern_right")
             .resizable(true)
-            .default_width(side_w)
+            .default_width(right_w)
             .min_width(240.0)
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
                 let avail = ui.available_height();
-                let top_h = avail * 0.5;
+                let top_h = avail * match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => 0.7,
+            caprust_core::TimelineSize::M | caprust_core::TimelineSize::L => 0.5,
+        };
                 let bot_h = avail - top_h;
 
                 egui::TopBottomPanel::top("modern_right_top")
@@ -8672,10 +8684,12 @@ impl CapRustApp {
     /// One zone: a picker across the top, the chosen panel underneath.
     fn render_zone(&mut self, ui: &mut egui::Ui, zone: Zone) {
         let current = zone.tab(&self.modern);
+        let accent = self.theme.accent_color();
         let frame = egui::Frame::group(ui.style())
             .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(egui::Margin::same(8))
-            .stroke(egui::Stroke::new(1.5, ui.visuals().window_stroke.color))
+            .stroke(egui::Stroke::new(1.5, accent.gamma_multiply(1.2)))
+            .fill(ui.style().visuals.window_fill())
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.menu_button(
