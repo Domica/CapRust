@@ -110,12 +110,13 @@ fn push_plan_inputs(args: &mut Vec<String>, plan: &RenderPlan, fps: f64) {
 
     for inp in &plan.inputs {
         if image_indices.contains(&inp.ffmpeg_index) {
-            // `-loop 1` is an image2 demuxer option and ffmpeg's HEIC
-            // demuxer rejects it. `-stream_loop -1` works for both,
-            // and needs no demuxer support. `-framerate` is likewise
-            // not accepted by the HEIC demuxer, so HEIC inputs only
-            // get the stream loop and let the output set `-r {fps}`.
-            let stream_rate_ok = !matches!(
+            // Two demuxer quirks:
+            // 1. JPG/PNG/WebP output frames through image2, which needs
+            //    `-loop 1`; `-stream_loop -1` emits zero bytes for them.
+            // 2. The HEIC demuxer rejects `-loop`/`-framerate`, but the
+            //    plan normally feeds preview the cached JPEG instead of
+            //    HEIC. If it still gets raw HEIC, use `-stream_loop`.
+            let is_heic_family = matches!(
                 inp.path
                     .extension()
                     .and_then(|e| e.to_str())
@@ -123,9 +124,12 @@ fn push_plan_inputs(args: &mut Vec<String>, plan: &RenderPlan, fps: f64) {
                     .as_deref(),
                 Some("heic") | Some("heif") | Some("avif")
             );
-            args.push("-stream_loop".into());
-            args.push("-1".into());
-            if stream_rate_ok {
+            if is_heic_family {
+                args.push("-stream_loop".into());
+                args.push("-1".into());
+            } else {
+                args.push("-loop".into());
+                args.push("1".into());
                 args.push("-framerate".into());
                 args.push(format!("{fps:.6}"));
             }
