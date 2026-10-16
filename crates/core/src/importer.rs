@@ -180,21 +180,64 @@ pub fn discover(dir: &Path) -> Vec<ImporterPlugin> {
     found
 }
 
+/// Overlay a plugin's project JSON onto a default `ProjectState`.
+///
+/// A plugin only has to know the fields it actually produced — name,
+/// clips, tracks, media, frame rate, aspect ratio. Everything else
+/// comes from the default, so a model change on this side (a new field,
+/// a renamed one) does not break plugins that were written against an
+/// older shape. That matters for third-party plugins: recompiling them
+/// on every release would make the whole feature unusable.
+///
+/// The overlay recurses rather than replacing whole top-level fields. A
+/// plugin that sends `{"media": {"items": [...]}}` must not have to know
+/// that `MediaLibrary` also carries a private `next_added_at` counter
+/// with no serde default — dropping it silently restarts the media bin's
+/// sort order every time the user adds a file. Nested objects merge key
+/// by key; arrays and scalars replace wholesale, because there is no
+/// sensible partial merge of a list of clips.
+///
+/// Keys the host does not know are dropped at every level rather than
+/// rejected, so a plugin built against a newer model still loads the
+/// parts this build understands. The mirror-image gap — a field the host
+/// has since renamed — resolves to the default rather than an error,
+/// which is the right way round: the user still gets a project.
+pub fn merge_project(base: &crate::ProjectState, incoming: &Value) -> Result<crate::ProjectState> {
+    let mut merged = serde_json::to_value(base)?;
+    overlay(&mut merged, incoming);
+    Ok(serde_json::from_value(merged)?)
+}
+
+/// Merge `patch` into `base` in place, keeping only keys `base` already
+/// has. Objects recurse; every other value replaces.
+fn overlay(base: &mut Value, patch: &Value) {
+    match (base, patch) {
+        (Value::Object(b), Value::Object(p)) => {
+            for (key, val) in p {
+                if let Some(slot) = b.get_mut(key) {
+                    overlay(slot, val);
+                }
+            }
+        }
+        (b, p) => *b = p.clone(),
+    }
+}
+
 /// Ask a plugin to import `path` and return the project JSON it
-/// produced. The caller deserialises into `ProjectState`.
+/// produced. The caller overlays it on a default project with
+/// [`merge_project`] and deserialises into `ProjectState`.
 ///
 /// The plugin process is spawned fresh per import. Import is a
 /// one-shot operation, so keeping it around would only leak handles;
 /// a plugin that wants to stay warm can be implemented as a separate
 /// long-lived kind later.
-pub fn run_import(plugin: &ImporterPlugin, path: &Path) -> Result<Value> {
+pub fn run_import(plugin: &ImporterPlugin, path: &Path) -> Result<crate::ProjectState> {
     let mut proc = PluginProcess::spawn(&plugin.exe)?;
     let result = proc.call("import", json!({"path": path, "kind": plugin.manifest.kinds.first().map(String::as_str).unwrap_or("")}))?;
-    let project = result
+    let patch = result
         .get("project")
-        .cloned()
         .ok_or_else(|| anyhow::anyhow!("plugin returned no project"))?;
-    Ok(project)
+    merge_project(&crate::ProjectState::default(), patch)
 }
 
 #[cfg(test)]
@@ -207,6 +250,102 @@ mod tests {
         assert_eq!(m.protocol, PROTOCOL);
         assert_eq!(m.version, "0.0.0");
         assert!(m.kinds.is_empty());
+    }
+
+    #[test]
+    fn merge_keeps_defaults_for_absent_fields() {
+        let base = crate::ProjectState::default();
+        let patch = json!({"name": "from plugin", "base_resolution": 3840});
+        let merged = merge_project(&base, &patch).unwrap();
+        assert_eq!(merged.name, "from plugin");
+        assert_eq!(merged.base_resolution, 3840);
+        // Untouched fields still hold their default -- including the
+        // default track set, which is what a plugin gets for free when
+        // it does not care about lanes.
+        assert_eq!(merged.locale, base.locale);
+        assert_eq!(merged.tracks.len(), base.tracks.len());
+    }
+
+    #[test]
+    fn merge_keeps_nested_fields_the_plugin_does_not_know_about() {
+        // `media` carries a private `next_added_at` with no serde
+        // default. A plugin sending only `items` must not drop it.
+        let base = crate::ProjectState::default();
+        let as_json = serde_json::to_value(&base).unwrap();
+        assert!(
+            as_json["media"].get("next_added_at").is_some(),
+            "premise: the media object does carry the counter"
+        );
+        let patch = json!({"media": {"items": []}});
+        // Deserialising would fail outright if the counter were missing.
+        merge_project(&base, &patch).expect("items-only media");
+    }
+
+    /// An array replaces wholesale. There is no partial merge of a list
+    /// of clips, and there is no way to fill in a clip's missing fields
+    /// from the default track set anyway -- the default is an empty
+    /// clip list, not a template. A plugin therefore has to write every
+    /// field its model types do not default, which is why both bundled
+    /// plugins emit ids and the four track flags explicitly.
+    #[test]
+    fn merge_replaces_arrays_wholesale() {
+        let base = crate::ProjectState::default();
+        assert!(!base.tracks.is_empty(), "premise: defaults have tracks");
+        let id = uuid::Uuid::new_v4();
+        let patch = json!({"tracks": [{
+            "id": id.to_string(),
+            "name": "V1",
+            "kind": "Video",
+            "locked": false,
+            "visible": true,
+            "muted": true,
+            "height": 80.0,
+        }]});
+        let merged = merge_project(&base, &patch).expect("a complete track");
+        assert_eq!(merged.tracks.len(), 1, "the array replaced, not merged");
+        assert_eq!(merged.tracks[0].id, id);
+        assert!(merged.tracks[0].muted, "the plugin's own value wins");
+        assert!(
+            !merged.tracks[0].locked,
+            "a field the plugin sent false and the default also has false"
+        );
+    }
+
+    /// The other shape of the recursion: a nested *object* merges key by
+    /// key, so a plugin that only knows the frame rate it read does not
+    /// have to restate anything else about it.
+    #[test]
+    fn merge_fills_in_a_partial_nested_object() {
+        let base = crate::ProjectState::default();
+        let patch = json!({"frame_rate": {"num": 60}});
+        let merged = merge_project(&base, &patch).expect("partial frame rate");
+        assert_eq!(merged.frame_rate.num, 60);
+        // `den` was not sent, so the default's denominator stands.
+        assert_eq!(merged.frame_rate.den, base.frame_rate.den);
+    }
+
+    #[test]
+    fn merge_ignores_keys_this_build_does_not_know() {
+        let base = crate::ProjectState::default();
+        let patch = json!({
+            "name": "x",
+            "field_from_the_future": {"a": 1},
+            "media": {"items": [], "also_from_the_future": 2},
+        });
+        let merged = merge_project(&base, &patch).unwrap();
+        assert_eq!(merged.name, "x");
+    }
+
+    #[test]
+    fn merge_roundtrips_a_serialised_project_unchanged() {
+        let base = crate::ProjectState {
+            name: "round trip".into(),
+            ..Default::default()
+        };
+        let as_json = serde_json::to_value(&base).unwrap();
+        let merged = merge_project(&crate::ProjectState::default(), &as_json).unwrap();
+        assert_eq!(merged.name, "round trip");
+        assert_eq!(merged.base_resolution, base.base_resolution);
     }
 
     #[test]

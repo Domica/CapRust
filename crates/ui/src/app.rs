@@ -2490,28 +2490,33 @@ impl CapRustApp {
     fn run_importer(&mut self, plugin: &caprust_core::importer::ImporterPlugin, path: &str) {
         let src = std::path::Path::new(path);
         match caprust_core::importer::run_import(plugin, src) {
-            Ok(json) => match serde_json::from_value::<ProjectState>(json) {
-                Ok(mut state) => {
+            Ok(mut state) => {
+                // A plugin that imports a *folder* (a CapCut project, a
+                // Premiere sequence bundle) knows the project belongs in
+                // that folder, not above it. Taking `src.parent()`
+                // unconditionally put the cache one level too high and
+                // thumbnails resolved against the wrong root. Only fill
+                // it in when the plugin had nothing to say.
+                if state.project_path.is_none() {
                     state.project_path = src.parent().map(|p| p.to_string_lossy().to_string());
-                    state.models.merge_missing_defaults();
-                    let models_dir = self.settings.effective_models_dir();
-                    state.models.scan_local(&models_dir);
-                    self.undo_stack = UndoStack::new();
-                    self.project = state;
-                    self.selected_clips.clear();
-                    self.mode = AppMode::Editor;
-                    self.backfill_missing_probes();
-                    self.regen_missing_thumbnails();
-                    self.audio_cache = AudioCacheState::default();
-                    let h = self.project.render_hash();
-                    self.last_saved_hash = Some(h);
-                    self.last_autosave_hash = Some(h);
-                    self.check_missing_media_on_load();
-                    self.backfill_waveforms();
-                    self.toast(tr("menu-file-import-done"));
                 }
-                Err(e) => self.toast_error(format!("{}: {e}", tr("toast-import-failed"))),
-            },
+                state.models.merge_missing_defaults();
+                let models_dir = self.settings.effective_models_dir();
+                state.models.scan_local(&models_dir);
+                self.undo_stack = UndoStack::new();
+                self.project = state;
+                self.selected_clips.clear();
+                self.mode = AppMode::Editor;
+                self.backfill_missing_probes();
+                self.regen_missing_thumbnails();
+                self.audio_cache = AudioCacheState::default();
+                let h = self.project.render_hash();
+                self.last_saved_hash = Some(h);
+                self.last_autosave_hash = Some(h);
+                self.check_missing_media_on_load();
+                self.backfill_waveforms();
+                self.toast(tr("menu-file-import-done"));
+            }
             Err(e) => self.toast_error(format!("{}: {e}", tr("toast-import-failed"))),
         }
     }

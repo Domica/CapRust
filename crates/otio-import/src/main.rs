@@ -98,6 +98,13 @@ fn import(path: &Path) -> Result<Value> {
     let otio_tracks = collect_tracks(tracks_stack);
 
     let mut out_tracks: Vec<Value> = Vec::new();
+    // Lane numbering for *display* counts per kind, so a timeline with a
+    // video track and an audio track is called V1/A1 rather than V1/A2.
+    // The clip's `track_index`, by contrast, is its position in the lane
+    // list -- using the per-kind number there would put the audio on the
+    // second video lane.
+    let mut named_video = 0usize;
+    let mut named_audio = 0usize;
     let mut out_clips: Vec<Value> = Vec::new();
     let mut media: Vec<Value> = Vec::new();
     let mut seen_paths: Vec<String> = Vec::new();
@@ -110,13 +117,22 @@ fn import(path: &Path) -> Result<Value> {
             "Audio" => "Audio",
             _ => "Video",
         };
+        let lane_name = if kind == "Audio" {
+            named_audio += 1;
+            format!("A{named_audio}")
+        } else {
+            named_video += 1;
+            format!("V{named_video}")
+        };
         out_tracks.push(json!({
-            "name": format!("{}{}", match kind { "Audio" => "A", _ => "V" }, lane + 1),
+            "id": uuid::Uuid::new_v4().to_string(),
+            "name": lane_name,
             "kind": kind,
+            "locked": false,
             "visible": true,
             "muted": false,
-            "locked": false,
             "pinned": false,
+            "height": 64.0,
             "volume_db": 0.0,
         }));
 
@@ -142,23 +158,21 @@ fn import(path: &Path) -> Result<Value> {
         }
     }
 
-    // OTIO carries no resolution; 1920x1080 is the interchange default
-    // and the user can change it in Settings right after import.
+    // Only the fields OTIO actually carries. The host overlays these on
+    // a default project, so export settings, model registry and anything
+    // added to the model later come from the host, not from here.
+    // `end_ms`/`missing_media` are returned to the host for the toast;
+    // the host drops keys it does not recognise.
     Ok(json!({
         "name": timeline_name,
         "clips": out_clips,
-        "aspect_ratio": { "kind": "Preset", "index": 3 },
+        // AspectRatio is an externally-tagged enum on the host side.
+        "aspect_ratio": "Landscape16x9",
         "base_resolution": 1920,
-        "export_settings": {},
-        "locale": "en",
         "frame_rate": { "num": rate as u32, "den": 1 },
-        "project_path": null,
-        "media": { "items": media, "next_added_at": media.len() + 1 },
-        "models": { "entries": [], "custom": [] },
+        "locale": "en",
+        "media": { "items": media },
         "tracks": out_tracks,
-        "master_plugins": [],
-        "multicam_groups": [],
-        "beat_grids": {},
         "otio_report": { "end_ms": end_ms, "missing_media": missing },
     }))
 }
@@ -427,6 +441,14 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("s.mp3"));
+        // Lane numbering is per kind for the name and global for the
+        // index: one video track and one audio track are V1 and A1, and
+        // the audio clip sits on lane index 1.
+        let tracks = project["tracks"].as_array().unwrap();
+        assert_eq!(tracks[0]["name"], "V1");
+        assert_eq!(tracks[1]["name"], "A1");
+        assert_eq!(clips[0]["track_index"], 0);
+        assert_eq!(clips[1]["track_index"], 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
