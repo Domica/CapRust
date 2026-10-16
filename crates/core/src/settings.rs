@@ -73,21 +73,22 @@ pub struct AppSettings {
     /// `dock::default_dock_state()`.
     #[serde(default)]
     pub dock_layout: Option<String>,
-    /// Where the editor's panel arrangement comes from.
+    /// Which editor to show.
     ///
-    /// See [`LayoutMode`]. Defaults to `Default`, which means "whatever
-    /// is in `dock_layout`" -- so an existing install that has dragged
-    /// its panels around opens exactly as it did before this field
-    /// existed.
+    /// See [`LayoutMode`]. Defaults to `Default`, which means the dock
+    /// and whatever is in `dock_layout` -- so an existing install that
+    /// has dragged its panels around opens exactly as it did before this
+    /// field existed.
     #[serde(default, deserialize_with = "deserialize_layout_mode")]
     pub layout: LayoutMode,
-    /// Stable id of the dock preset `Dockable` follows. `None` means the
-    /// user has not picked one, in which case `Dockable` falls back to
-    /// the same starting arrangement as `Default`.
+    /// Stable id of the dock preset the editor opens on. `None` means
+    /// the user has not picked one and the arrangement saved on this
+    /// machine stands.
     ///
-    /// A string rather than the enum itself because the presets live in
-    /// the UI crate, which depends on this one and not the other way
-    /// round.
+    /// Only meaningful in `Default`; `Modern` has fixed panels and
+    /// nothing to remember. A string rather than the enum itself because
+    /// the presets live in the UI crate, which depends on this one and
+    /// not the other way round.
     #[serde(default)]
     pub layout_preset: Option<String>,
     /// Captions translation source language. "auto" lets MyMemory
@@ -206,32 +207,27 @@ fn default_translate_target() -> String {
     "hr".to_string()
 }
 
-/// Where the editor's panel arrangement comes from.
+/// How the editor arranges its panels.
 ///
-/// Both modes render the dock tree; what differs is which tree. The
-/// distinction matters because a dock layout is saved in two ways that
-/// used to fight each other: the user's dragged arrangement, and a named
-/// preset applied from the View menu. The menu version was one-shot --
-/// it overwrote the dragged tree and then never came back, so on the
-/// next launch the user was back where they started, with no record that
-/// they had ever asked for something else.
+/// Two editors, not two settings. `Default` is the dock: every panel is
+/// a tab in a tree that can be dragged anywhere. `Modern` is fixed --
+/// media on the left, preview in the middle, properties on the right,
+/// timeline across the bottom -- with nothing to drag. That is the shape
+/// a clip editor is expected to have, and it costs nothing to keep on a
+/// second screen.
 ///
-/// `Default` keeps the old behaviour exactly: your dragged arrangement
-/// is yours. `Dockable` remembers the preset you chose and re-applies it
-/// on every launch, so a known shape is guaranteed rather than
-/// inherited.
+/// Default because that is what the app has always done. Putting
+/// everyone on a layout they never chose on upgrade is not a default, it
+/// is an interruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LayoutMode {
-    /// Follow the dock tree saved on this machine, or the built-in
-    /// starting arrangement on a fresh install. This is what the app
-    /// has always done and stays the default so nothing moves under an
-    /// existing user.
+    /// The rearrangeable dock, using the tree saved on this machine or
+    /// the preset in [`AppSettings::layout_preset`].
     #[default]
     Default,
-    /// Follow the preset named in [`AppSettings::layout_preset`],
-    /// rebuilt on every launch.
-    Dockable,
+    /// Fixed panels.
+    Modern,
 }
 
 /// Tolerant `Deserialize` for [`LayoutMode`].
@@ -252,7 +248,7 @@ where
 {
     let raw = String::deserialize(d)?;
     Ok(match raw.as_str() {
-        "dockable" => LayoutMode::Dockable,
+        "modern" => LayoutMode::Modern,
         _ => {
             tracing::warn!("unknown layout mode {raw:?}; falling back to Default");
             LayoutMode::Default
@@ -764,7 +760,7 @@ mod tests {
             translate_email: Some("user@example.com".into()),
             dock_layout: Some(r#"{"x":1}"#.into()),
             docked_panels: vec!["text".into(), "effects".into()],
-            layout: LayoutMode::Dockable,
+            layout: LayoutMode::Modern,
             layout_preset: Some("timeline-focus".into()),
             ..Default::default()
         };
@@ -812,7 +808,7 @@ mod tests {
     fn layout_mode_round_trips_through_its_stored_names() {
         for (mode, text) in [
             (LayoutMode::Default, r#""default""#),
-            (LayoutMode::Dockable, r#""dockable""#),
+            (LayoutMode::Modern, r#""modern""#),
         ] {
             let s = AppSettings {
                 layout: mode,

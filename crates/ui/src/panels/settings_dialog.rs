@@ -171,27 +171,6 @@ pub fn show(
 // Appearance
 // ---------------------------------------------------------------------------
 
-fn layout_mode_key(mode: caprust_core::LayoutMode) -> &'static str {
-    match mode {
-        caprust_core::LayoutMode::Default => "set-appearance-layout-default",
-        caprust_core::LayoutMode::Dockable => "set-appearance-layout-dockable",
-    }
-}
-
-fn layout_hint_key(mode: caprust_core::LayoutMode) -> &'static str {
-    match mode {
-        caprust_core::LayoutMode::Default => "set-appearance-layout-default-hint",
-        caprust_core::LayoutMode::Dockable => "set-appearance-layout-dockable-hint",
-    }
-}
-
-fn layout_hint2_key(mode: caprust_core::LayoutMode) -> &'static str {
-    match mode {
-        caprust_core::LayoutMode::Default => "set-appearance-layout-default-hint2",
-        caprust_core::LayoutMode::Dockable => "set-appearance-layout-dockable-hint2",
-    }
-}
-
 fn show_appearance(
     ui: &mut Ui,
     theme: &mut Theme,
@@ -252,9 +231,12 @@ fn show_appearance(
         ui.label(tr("set-appearance-layout-mode"));
         let modes = [
             caprust_core::LayoutMode::Default,
-            caprust_core::LayoutMode::Dockable,
+            caprust_core::LayoutMode::Modern,
         ];
-        let labels: Vec<_> = modes.iter().map(|m| tr(layout_mode_key(*m))).collect();
+        let labels: Vec<_> = modes
+            .iter()
+            .map(|m| tr(crate::app::layout_mode_key(*m)))
+            .collect();
         let selected = modes
             .iter()
             .position(|m| *m == settings.layout)
@@ -263,40 +245,45 @@ fn show_appearance(
         if let Some(i) = clicked {
             if i != selected {
                 settings.layout = modes[i];
-                // Picking a mode without a preset would leave Dockable
-                // pointing at nothing, which falls through to the saved
-                // tree -- so the switch would appear to do nothing.
-                // Classic is the right seed because it *is* the
-                // arrangement a fresh install gets, so Dockable lands
-                // where Default would have anyway instead of somewhere
-                // new and unasked-for.
-                if settings.layout == caprust_core::LayoutMode::Dockable
-                    && settings.layout_preset.is_none()
-                {
-                    settings.layout_preset =
-                        Some(crate::dock::LayoutPreset::Classic.id().to_string());
-                    ev.layout_preset_requested = Some(crate::dock::LayoutPreset::Classic);
-                }
             }
         }
     });
+    ui.label(
+        egui::RichText::new(match settings.layout {
+            caprust_core::LayoutMode::Default => tr("set-appearance-layout-default-hint"),
+            caprust_core::LayoutMode::Modern => tr("set-appearance-layout-modern-hint"),
+        })
+        .small()
+        .color(egui::Color32::from_gray(150)),
+    );
 
-    if settings.layout == caprust_core::LayoutMode::Dockable {
+    // The dock arrangements only mean something in the dock. Showing a
+    // picker that does nothing reads as broken, so it appears with the
+    // mode it belongs to.
+    if settings.layout == caprust_core::LayoutMode::Default {
         ui.horizontal(|ui| {
             ui.label(tr("set-appearance-layout-preset"));
-            let presets = crate::dock::LayoutPreset::all();
             let current = settings
                 .layout_preset
                 .as_deref()
                 .and_then(crate::dock::LayoutPreset::from_id);
             let label = current
                 .map(|p| tr(p.label_key()))
-                .unwrap_or_else(|| tr("set-appearance-layout-preset-none"));
+                .unwrap_or_else(|| tr("menu-view-layout-my-arrangement"));
             egui::ComboBox::from_id_salt("layout_preset_combo")
                 .selected_text(label)
                 .width(200.0)
                 .show_ui(ui, |ui| {
-                    for p in presets {
+                    let following_saved = settings.layout_preset.is_none();
+                    if ui
+                        .selectable_label(following_saved, tr("menu-view-layout-my-arrangement"))
+                        .clicked()
+                    {
+                        settings.layout_preset = None;
+                        ev.layout_reset_requested = true;
+                    }
+                    ui.separator();
+                    for p in crate::dock::LayoutPreset::all() {
                         let sel = settings.layout_preset.as_deref() == Some(p.id());
                         if ui.selectable_label(sel, tr(p.label_key())).clicked() {
                             settings.layout_preset = Some(p.id().to_string());
@@ -306,17 +293,6 @@ fn show_appearance(
                 });
         });
     }
-
-    ui.label(
-        egui::RichText::new(tr(layout_hint_key(settings.layout)))
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
-    ui.label(
-        egui::RichText::new(tr(layout_hint2_key(settings.layout)))
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
 
     ui.add_space(space::L);
 

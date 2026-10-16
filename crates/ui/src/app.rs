@@ -2772,32 +2772,52 @@ impl CapRustApp {
                             }
                         }
                     });
-                    // A radio group, like Tab layout above, rather
-                    // than a row of buttons. The old buttons could not
-                    // show which layout was in effect, so after dragging
-                    // a panel there was no way to tell what the menu
-                    // would give you back.
+                    // The editor itself. Two of them, chosen here and
+                    // in Settings -> Appearance -> Layout.
                     ui.menu_button(tr("menu-view-layout"), |ui| {
-                        for p in crate::dock::LayoutPreset::all() {
-                            let sel = self.settings.layout_preset.as_deref() == Some(p.id());
-                            if ui.selectable_label(sel, tr(p.label_key())).clicked() {
-                                self.apply_layout_preset(p);
+                        for m in [
+                            caprust_core::LayoutMode::Default,
+                            caprust_core::LayoutMode::Modern,
+                        ] {
+                            let sel = self.settings.layout == m;
+                            if ui
+                                .selectable_label(sel, tr(layout_mode_key(m)))
+                                .on_hover_text(tr(layout_mode_hint_key(m)))
+                                .clicked()
+                            {
+                                self.set_layout_mode(m);
                                 ui.close_menu();
                             }
                         }
-                        ui.separator();
-                        let following_saved = self.settings.layout_preset.is_none();
-                        if ui
-                            .selectable_label(
-                                following_saved,
-                                tr("menu-view-layout-my-arrangement"),
-                            )
-                            .clicked()
-                        {
-                            self.reset_layout();
-                            ui.close_menu();
-                        }
                     });
+
+                    // Arrangements *within* the dock. Only meaningful in
+                    // Default; Modern has fixed panels, and a menu full
+                    // of choices that do nothing reads as broken rather
+                    // than as unavailable, so it is hidden instead.
+                    if self.settings.layout == caprust_core::LayoutMode::Default {
+                        ui.menu_button(tr("menu-view-dock-presets"), |ui| {
+                            for p in crate::dock::LayoutPreset::all() {
+                                let sel = self.settings.layout_preset.as_deref() == Some(p.id());
+                                if ui.selectable_label(sel, tr(p.label_key())).clicked() {
+                                    self.apply_layout_preset(p);
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
+                            let following_saved = self.settings.layout_preset.is_none();
+                            if ui
+                                .selectable_label(
+                                    following_saved,
+                                    tr("menu-view-layout-my-arrangement"),
+                                )
+                                .clicked()
+                            {
+                                self.reset_layout();
+                                ui.close_menu();
+                            }
+                        });
+                    }
                 });
 
                 if file_menu.inner.is_some() {
@@ -8252,6 +8272,20 @@ impl CapRustApp {
         }
     }
 
+    /// Switch between the two editors.
+    ///
+    /// Leaving `Modern` for `Default` restores the dock exactly as the
+    /// user left it, because the dock tree is kept either way -- going
+    /// to Modern and back does not cost you the arrangement you spent
+    /// ten minutes on.
+    fn set_layout_mode(&mut self, mode: caprust_core::LayoutMode) {
+        if self.settings.layout == mode {
+            return;
+        }
+        self.settings.layout = mode;
+        tracing::info!("layout mode: {mode:?}");
+    }
+
     /// Switch the editor to a named dock preset and remember the choice.
     ///
     /// Selecting a preset also puts the app in `Dockable`, because "I
@@ -8265,7 +8299,6 @@ impl CapRustApp {
     /// arrangement without hand-editing the settings file.
     fn apply_layout_preset(&mut self, preset: crate::dock::LayoutPreset) {
         self.dock_state = crate::dock::preset_dock_state(preset);
-        self.settings.layout = caprust_core::LayoutMode::Dockable;
         self.settings.layout_preset = Some(preset.id().to_string());
         tracing::info!("dock layout preset applied: {:?} ({})", preset, preset.id());
     }
@@ -8281,18 +8314,26 @@ impl CapRustApp {
         tracing::info!("dock layout reset to default");
     }
 
-    /// New dock-based layout. Fallback to the classic layout via
-    /// `show_editor_classic` while the migration is in progress; flip
-    /// `USE_DOCK_LAYOUT` to compare them.
+    /// Which editor this session shows.
+    ///
+    /// Two real renderers, not one dock with a different arrangement.
+    /// They differ in what a user can do, not in how it is spaced: the
+    /// dock has tabs you drag between and resave, `Modern` has fixed
+    /// panels and nothing to move. Offering only presets over the dock
+    /// would have made the choice a matter of taste about ratios, which
+    /// is not what someone picking an editor is deciding.
     fn show_editor(&mut self, ctx: &egui::Context) {
-        self.show_editor_dock(ctx);
+        match self.settings.layout {
+            caprust_core::LayoutMode::Default => self.show_editor_dock(ctx),
+            caprust_core::LayoutMode::Modern => self.show_editor_modern(ctx),
+        }
     }
 
     fn show_editor_dock(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
         // Jobs bar sits above the timeline so it is visible from any
-        // panel. In classic mode show_editor_classic calls this; in
+        // panel. In the modern layout show_editor_modern calls this; in
         // docked mode we need our own call or the bar never renders.
         self.show_jobs_bar(ctx);
 
@@ -8311,8 +8352,19 @@ impl CapRustApp {
         self.dock_state = ds;
     }
 
-    #[allow(dead_code)]
-    fn show_editor_classic(&mut self, ctx: &egui::Context) {
+    /// Fixed panels: media on the left, properties on the right, the
+    /// preview in the middle, the timeline across the bottom.
+    ///
+    /// The shape an editor is expected to have before you have arranged
+    /// anything, and the one that stays put when the window changes. No
+    /// tabs to click through, no drag handles, nothing to re-do on a
+    /// second monitor.
+    ///
+    /// The vertical strip of category icons that a modern editor puts
+    /// down the far left is deliberately not copied: it would be a
+    /// second way into the same panels for no gain here, and the asset
+    /// browser already carries those categories as tabs.
+    fn show_editor_modern(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
 
@@ -12118,6 +12170,22 @@ impl eframe::App for CapRustApp {
     }
 }
 
+/// i18n key for a layout mode's menu label. Lives here because the View
+/// menu and the Settings dialog both need it and neither owns it.
+pub(crate) fn layout_mode_key(mode: caprust_core::LayoutMode) -> &'static str {
+    match mode {
+        caprust_core::LayoutMode::Default => "menu-view-layout-default",
+        caprust_core::LayoutMode::Modern => "menu-view-layout-modern",
+    }
+}
+
+pub(crate) fn layout_mode_hint_key(mode: caprust_core::LayoutMode) -> &'static str {
+    match mode {
+        caprust_core::LayoutMode::Default => "menu-view-layout-default-hint",
+        caprust_core::LayoutMode::Modern => "menu-view-layout-modern-hint",
+    }
+}
+
 /// The dock tree the editor opens with, given the persisted settings.
 ///
 /// `Dockable` rebuilds from the named preset every launch, so a user who
@@ -12129,7 +12197,22 @@ impl eframe::App for CapRustApp {
 ///
 /// `Default` reads the saved tree, or the built-in starting arrangement
 /// on a fresh install. This is the path every existing install takes and
-/// is deliberately unchanged by the layout feature.
+/// The dock tree, ready for the editor to render.
+///
+/// The dock exists in both editors -- `Modern` draws its own fixed
+/// panels, but the tree is still kept so switching between them does not
+/// cost anyone the arrangement they made. This picks the tree to start
+/// from.
+///
+/// A named preset is rebuilt on every launch, so a user who picked "wide
+/// timeline" on a 13-inch laptop gets it on a 27-inch one too. An id that
+/// no longer resolves -- a preset renamed or removed in a later release --
+/// falls through to the saved tree rather than to the built-in one,
+/// because a machine that already has a saved arrangement should keep it.
+///
+/// The preset belongs to `Default`. `Modern` has fixed panels, so reading
+/// one there would be a choice the user did not make; the saved tree
+/// stands so going to Modern and back restores what was there.
 fn starting_dock_state(
     settings: &caprust_core::AppSettings,
 ) -> egui_dock::DockState<crate::dock::Tab> {
@@ -12139,7 +12222,7 @@ fn starting_dock_state(
         })
     };
 
-    if settings.layout == caprust_core::LayoutMode::Dockable {
+    if settings.layout == caprust_core::LayoutMode::Default {
         if let Some(id) = settings.layout_preset.as_deref() {
             match crate::dock::LayoutPreset::from_id(id) {
                 Some(p) => return crate::dock::preset_dock_state(p),
@@ -12472,12 +12555,14 @@ mod app_layout_tests {
         );
     }
 
-    /// The whole point of Dockable: the preset wins over the saved tree,
-    /// so the layout is the same on every launch and every screen.
+    /// A preset wins over the saved tree, so the arrangement is the same
+    /// on every launch and every screen. This is what made the old View
+    /// menu buttons useless: they applied a preset once and then let the
+    /// save tick store that tree as if the user had dragged it there.
     #[test]
-    fn dockable_mode_rebuilds_the_preset_every_launch() {
+    fn a_preset_is_rebuilt_on_every_launch() {
         let settings = settings_with(
-            LayoutMode::Dockable,
+            LayoutMode::Default,
             Some("wide-timeline"),
             Some(&preset_dock_state(LayoutPreset::PreviewFocus)),
         );
@@ -12494,7 +12579,7 @@ mod app_layout_tests {
     #[test]
     fn an_unknown_preset_keeps_the_saved_arrangement() {
         let saved = preset_dock_state(LayoutPreset::TimelineFocus);
-        let settings = settings_with(LayoutMode::Dockable, Some("cinerama"), Some(&saved));
+        let settings = settings_with(LayoutMode::Default, Some("cinerama"), Some(&saved));
         assert_eq!(shape(&starting_dock_state(&settings)), shape(&saved));
     }
 
@@ -12502,7 +12587,7 @@ mod app_layout_tests {
     /// preset still resolves.
     #[test]
     fn dockable_survives_unparseable_saved_json() {
-        let mut settings = settings_with(LayoutMode::Dockable, Some("timeline-focus"), None);
+        let mut settings = settings_with(LayoutMode::Default, Some("timeline-focus"), None);
         settings.dock_layout = Some("{ not json".into());
         assert_eq!(
             shape(&starting_dock_state(&settings)),
@@ -12510,13 +12595,27 @@ mod app_layout_tests {
         );
     }
 
-    /// Dockable with no preset named is the state a hand-edited settings
-    /// file can leave behind. It must behave like Default rather than
-    /// opening an empty editor.
+    /// A hand-edited settings file can leave a preset named while the
+    /// mode is the fixed editor. There the preset does not apply, and the
+    /// saved tree stands so going to Modern and back restores what the
+    /// user made rather than a preset they picked months ago.
     #[test]
-    fn dockable_without_a_preset_behaves_like_default() {
+    fn a_preset_is_ignored_in_the_modern_editor() {
         let saved = preset_dock_state(LayoutPreset::WideTimeline);
-        let settings = settings_with(LayoutMode::Dockable, None, Some(&saved));
+        let settings = settings_with(LayoutMode::Modern, Some("timeline-focus"), Some(&saved));
+        assert_eq!(
+            shape(&starting_dock_state(&settings)),
+            shape(&saved),
+            "Modern has fixed panels; a dock preset is not a choice it made"
+        );
+    }
+
+    /// Without a preset named the dock is the saved tree, or the built-in
+    /// one on a fresh install.
+    #[test]
+    fn without_a_preset_the_saved_arrangement_stands() {
+        let saved = preset_dock_state(LayoutPreset::WideTimeline);
+        let settings = settings_with(LayoutMode::Default, None, Some(&saved));
         assert_eq!(shape(&starting_dock_state(&settings)), shape(&saved));
     }
 
@@ -12527,7 +12626,7 @@ mod app_layout_tests {
     fn every_preset_survives_a_store_and_reload() {
         for p in LayoutPreset::all() {
             let tree = preset_dock_state(p);
-            let settings = settings_with(LayoutMode::Dockable, Some(p.id()), Some(&tree));
+            let settings = settings_with(LayoutMode::Default, Some(p.id()), Some(&tree));
             let opened = starting_dock_state(&settings);
             assert_eq!(
                 shape(&opened),
