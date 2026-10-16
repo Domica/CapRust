@@ -5666,21 +5666,60 @@ impl CapRustApp {
         }
     }
 
+    /// How much vertical room the timeline gets.
+    fn timeline_height_default(&self) -> f32 {
+        match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => 180.0,
+            caprust_core::TimelineSize::M => 280.0,
+            caprust_core::TimelineSize::L => 420.0,
+        }
+    }
+
+    fn timeline_height_min(&self) -> f32 {
+        match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => 120.0,
+            caprust_core::TimelineSize::M => 180.0,
+            caprust_core::TimelineSize::L => 240.0,
+        }
+    }
+
+    /// The picker lives on the timeline itself so the user does not open
+    /// Settings for something this small: S fits the space under the
+    /// preview, M reaches across the screen, L reaches further and gives
+    /// the tracks more room.
     fn show_timeline(&mut self, ctx: &egui::Context) {
         let screen_h = ctx.screen_rect().height();
+        let def = self.timeline_height_default();
+        let min = self.timeline_height_min();
         egui::TopBottomPanel::bottom("timeline")
             .resizable(true)
-            .default_height(280.0)
-            .min_height(180.0)
-            .max_height(screen_h * 0.8)
+            .default_height(def)
+            .min_height(min)
+            .max_height(screen_h * 0.85)
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(tr("menu-timeline-size")).strong());
+                    let sizes = [
+                        caprust_core::TimelineSize::S,
+                        caprust_core::TimelineSize::M,
+                        caprust_core::TimelineSize::L,
+                    ];
+                    let labels: Vec<_> = sizes.iter().map(|s| tr(timeline_size_key(*s))).collect();
+                    let selected = sizes
+                        .iter()
+                        .position(|s| *s == self.settings.timeline_size)
+                        .unwrap_or(0);
+                    let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+                    if let Some(i) = clicked {
+                        if i != selected {
+                            self.settings.timeline_size = sizes[i];
+                        }
+                    }
+                });
+                ui.separator();
                 self.render_timeline_panel(ui);
             });
     }
-    /// Timeline panel body. Migrated out of the TopBottomPanel
-    /// closure so the dock viewer can render it inside a Tab::Timeline
-    /// zone. `ctx` stays a `&Context` (shadowing the cloned owned
-    /// value) so the extracted body compiles unchanged.
     pub(crate) fn render_timeline_panel(&mut self, ui: &mut egui::Ui) {
         let ctx_owned = ui.ctx().clone();
         let ctx: &egui::Context = &ctx_owned;
@@ -12437,6 +12476,14 @@ pub(crate) fn layout_mode_hint_key(mode: caprust_core::LayoutMode) -> &'static s
     match mode {
         caprust_core::LayoutMode::Default => "menu-view-layout-default-hint",
         caprust_core::LayoutMode::Modern => "menu-view-layout-modern-hint",
+    }
+}
+
+pub(crate) fn timeline_size_key(size: caprust_core::TimelineSize) -> &'static str {
+    match size {
+        caprust_core::TimelineSize::S => "menu-timeline-size-s",
+        caprust_core::TimelineSize::M => "menu-timeline-size-m",
+        caprust_core::TimelineSize::L => "menu-timeline-size-l",
     }
 }
 

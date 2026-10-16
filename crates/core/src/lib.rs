@@ -28,7 +28,7 @@ pub use frame_rate::FrameRate;
 pub use media::{MediaItem, MediaKind, MediaLibrary};
 pub use models::{ModelInfo, ModelKind, ModelRegistry, ModelStatus};
 pub use project::ProjectState;
-pub use settings::{detect_ffmpeg, AppSettings, FfmpegStatus, LayoutMode};
+pub use settings::{detect_ffmpeg, AppSettings, FfmpegStatus, LayoutMode, TimelineSize};
 pub use track::{Track, TrackKind};
 
 pub mod plugin;

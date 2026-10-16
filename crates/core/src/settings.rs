@@ -81,6 +81,8 @@ pub struct AppSettings {
     /// field existed.
     #[serde(default, deserialize_with = "deserialize_layout_mode")]
     pub layout: LayoutMode,
+    #[serde(default, deserialize_with = "deserialize_timeline_size")]
+    pub timeline_size: TimelineSize,
     /// Stable id of the dock preset the editor opens on. `None` means
     /// the user has not picked one and the arrangement saved on this
     /// machine stands.
@@ -220,6 +222,32 @@ fn default_translate_target() -> String {
 /// everyone on a layout they never chose on upgrade is not a default, it
 /// is an interruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TimelineSize {
+    #[default]
+    S,
+    M,
+    L,
+}
+
+impl TimelineSize {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::S => "s",
+            Self::M => "m",
+            Self::L => "l",
+        }
+    }
+    pub fn default_height(self) -> f32 {
+        match self {
+            Self::S => 180.0,
+            Self::M => 280.0,
+            Self::L => 420.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LayoutMode {
     /// The rearrangeable dock, using the tree saved on this machine or
@@ -242,6 +270,18 @@ pub enum LayoutMode {
 ///
 /// Serialisation stays strict -- the file this build writes always
 /// contains a name this build understands.
+fn deserialize_timeline_size<'de, D>(d: D) -> Result<TimelineSize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(match raw.as_str() {
+        "m" => TimelineSize::M,
+        "l" => TimelineSize::L,
+        _ => TimelineSize::S,
+    })
+}
+
 fn deserialize_layout_mode<'de, D>(d: D) -> Result<LayoutMode, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -278,6 +318,7 @@ impl Default for AppSettings {
             dock_layout: None,
             layout: LayoutMode::Default,
             layout_preset: None,
+            timeline_size: TimelineSize::S,
             translate_source_lang: default_translate_source(),
             translate_target_lang: default_translate_target(),
             translate_email: None,
