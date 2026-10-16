@@ -7,6 +7,7 @@ members = [
     "crates/app",
     "crates/mcp",
     "crates/screen-record",
+    "crates/otio-import",
 ]
 resolver = "2"
 
