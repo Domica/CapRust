@@ -5723,7 +5723,12 @@ impl CapRustApp {
     pub(crate) fn render_timeline_panel(&mut self, ui: &mut egui::Ui) {
         let ctx_owned = ui.ctx().clone();
         let ctx: &egui::Context = &ctx_owned;
-        ui.set_min_height(180.0);
+        let min_h = match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => 140.0,
+            caprust_core::TimelineSize::M => 240.0,
+            caprust_core::TimelineSize::L => 360.0,
+        };
+        ui.set_min_height(min_h);
         self.project.models.tick_downloads(1.0 / 60.0);
         self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
 
@@ -5855,7 +5860,12 @@ impl CapRustApp {
                     ui.allocate_space(egui::vec2(header_w, ruler_h));
                     for &idx in &order {
                         let mut track = updated_tracks[idx].clone();
-                        let row_h = track.height;
+                        let row_h = track.height
+            * match self.settings.timeline_size {
+                caprust_core::TimelineSize::S => 1.0,
+                caprust_core::TimelineSize::M => 1.3,
+                caprust_core::TimelineSize::L => 1.7,
+            };
                         let h_resp = ui.allocate_ui_with_layout(
                             egui::vec2(header_w, row_h),
                             egui::Layout::top_down(egui::Align::Min),
@@ -6086,7 +6096,12 @@ impl CapRustApp {
                     let mut lane_stack_bottom: Option<f32> = None;
                     for &idx in &order {
                         let track = &updated_tracks[idx];
-                        let row_h = track.height;
+                        let row_h = track.height
+            * match self.settings.timeline_size {
+                caprust_core::TimelineSize::S => 1.0,
+                caprust_core::TimelineSize::M => 1.3,
+                caprust_core::TimelineSize::L => 1.7,
+            };
                         let (lane_rect, lane_resp) = ui.allocate_exact_size(
                             egui::vec2(viewport_w, row_h),
                             egui::Sense::hover(),
@@ -8652,30 +8667,52 @@ impl CapRustApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_preview_panel(ui);
         });
-
     }
 
     /// One zone: a picker across the top, the chosen panel underneath.
     fn render_zone(&mut self, ui: &mut egui::Ui, zone: Zone) {
         let current = zone.tab(&self.modern);
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(tr(current.title_key())).strong());
-            ui.add_space(ui.available_width() * 0.5);
-            ui.menu_button("▾", |ui| {
-                for tab in crate::dock::Tab::all() {
-                    let sel = current == tab;
-                    if ui
-                        .selectable_label(sel, format!("{}  {}", tab.icon(), tr(tab.title_key())))
-                        .clicked()
-                    {
-                        zone.set(&mut self.modern, tab);
-                        ui.close_menu();
-                    }
-                }
+        let frame = egui::Frame::group(ui.style())
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(8))
+            .stroke(egui::Stroke::new(1.5, ui.visuals().window_stroke.color))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.menu_button(
+                        egui::RichText::new(format!(
+                            "{}  {}",
+                            current.icon(),
+                            tr(current.title_key())
+                        ))
+                        .size(16.0),
+                        |ui| {
+                            for tab in crate::dock::Tab::all() {
+                                let sel = current == tab;
+                                if ui
+                                    .selectable_label(
+                                        sel,
+                                        format!("{}  {}", tab.icon(), tr(tab.title_key())),
+                                    )
+                                    .clicked()
+                                {
+                                    zone.set(&mut self.modern, tab);
+                                    ui.close_menu();
+                                }
+                            }
+                        },
+                    );
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(tr(current.title_key()))
+                                .strong()
+                                .size(15.0),
+                        );
+                    });
+                });
+                ui.separator();
+                self.render_tab_body(ui, current);
             });
-        });
-        ui.separator();
-        self.render_tab_body(ui, current);
+        let _ = frame;
     }
 
     /// Body of one panel, whichever zone it is sitting in.
