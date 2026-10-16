@@ -34,6 +34,10 @@ pub enum Tab {
     MultiCam,
 }
 
+impl Default for Tab {
+    fn default() -> Self { Self::AssetMedia }
+}
+
 impl Tab {
     /// Every panel the editor can put in a zone.
     ///

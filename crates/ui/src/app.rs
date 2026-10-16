@@ -8640,7 +8640,9 @@ impl CapRustApp {
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
                 let avail = ui.available_height();
-                let top_h = avail * 0.55; // Top zone takes slightly more space
+                // Dynamic split: collapsed timeline gives zones more space evenly
+                let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
+                let top_h = avail * split;
                 let bot_h = avail - top_h;
 
                 egui::TopBottomPanel::top("modern_left_top")
@@ -8664,7 +8666,9 @@ impl CapRustApp {
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
                 let avail = ui.available_height();
-                let top_h = avail * 0.55; // Top zone takes slightly more space
+                // Dynamic split: collapsed timeline gives zones more space evenly
+                let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
+                let top_h = avail * split;
                 let bot_h = avail - top_h;
 
                 egui::TopBottomPanel::top("modern_right_top")
@@ -8686,7 +8690,7 @@ impl CapRustApp {
         });
     }
 
-    /// One zone: a picker across the top, the chosen panel underneath.
+    /// One zone: stacked cards (up to 3 like poker cards) with a picker.
     fn render_zone(&mut self, ui: &mut egui::Ui, zone: Zone) {
         let current = zone.tab(&self.modern);
         let accent = self.theme.accent_color();
@@ -12580,23 +12584,73 @@ pub enum Zone {
 }
 
 impl Zone {
-    /// The panel this zone is showing.
+    /// The active panel this zone is showing (first in the stack).
     pub fn tab(self, state: &ModernState) -> crate::dock::Tab {
         match self {
-            Self::LeftTop => state.left_top,
-            Self::LeftBottom => state.left_bottom,
-            Self::RightTop => state.right_top,
-            Self::RightBottom => state.right_bottom,
+            Self::LeftTop => state.left_top.first().cloned().unwrap_or_default(),
+            Self::LeftBottom => state.left_bottom.first().cloned().unwrap_or_default(),
+            Self::RightTop => state.right_top.first().cloned().unwrap_or_default(),
+            Self::RightBottom => state.right_bottom.first().cloned().unwrap_or_default(),
         }
     }
 
-    /// Replace the panel in this zone.
+    /// Get all stacked tabs in this zone (up to 3, like poker cards).
+    pub fn stacked_tabs(self, state: &ModernState) -> Vec<crate::dock::Tab> {
+        match self {
+            Self::LeftTop => state.left_top.clone(),
+            Self::LeftBottom => state.left_bottom.clone(),
+            Self::RightTop => state.right_top.clone(),
+            Self::RightBottom => state.right_bottom.clone(),
+        }
+    }
+
+    /// Replace the active panel in this zone (first in stack, up to 3 max).
     pub fn set(self, state: &mut ModernState, tab: crate::dock::Tab) {
         match self {
-            Self::LeftTop => state.left_top = tab,
-            Self::LeftBottom => state.left_bottom = tab,
-            Self::RightTop => state.right_top = tab,
-            Self::RightBottom => state.right_bottom = tab,
+            Self::LeftTop => {
+                if !state.left_top.contains(&tab) {
+                    state.left_top.insert(0, tab);
+                    if state.left_top.len() > 3 {
+                        state.left_top.pop();
+                    }
+                } else {
+                    state.left_top.retain(|t| *t != tab);
+                    state.left_top.insert(0, tab);
+                }
+            }
+            Self::LeftBottom => {
+                if !state.left_bottom.contains(&tab) {
+                    state.left_bottom.insert(0, tab);
+                    if state.left_bottom.len() > 3 {
+                        state.left_bottom.pop();
+                    }
+                } else {
+                    state.left_bottom.retain(|t| *t != tab);
+                    state.left_bottom.insert(0, tab);
+                }
+            }
+            Self::RightTop => {
+                if !state.right_top.contains(&tab) {
+                    state.right_top.insert(0, tab);
+                    if state.right_top.len() > 3 {
+                        state.right_top.pop();
+                    }
+                } else {
+                    state.right_top.retain(|t| *t != tab);
+                    state.right_top.insert(0, tab);
+                }
+            }
+            Self::RightBottom => {
+                if !state.right_bottom.contains(&tab) {
+                    state.right_bottom.insert(0, tab);
+                    if state.right_bottom.len() > 3 {
+                        state.right_bottom.pop();
+                    }
+                } else {
+                    state.right_bottom.retain(|t| *t != tab);
+                    state.right_bottom.insert(0, tab);
+                }
+            }
         }
     }
 }
@@ -12609,14 +12663,14 @@ impl Zone {
 /// where the moving happens. Two editors, two different jobs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModernState {
-    /// Top-left: the browser (media, plugins, sound, templates).
-    pub left_top: crate::dock::Tab,
-    /// Bottom-left: the creative tools (effects, transitions, filters, text).
-    pub left_bottom: crate::dock::Tab,
-    /// Top-right: clip properties, or whatever else you want there.
-    pub right_top: crate::dock::Tab,
-    /// Bottom-right: the "and also this" panel.
-    pub right_bottom: crate::dock::Tab,
+    /// Top-left: stacked up to 3 tabs (like poker cards).
+    pub left_top: Vec<crate::dock::Tab>,
+    /// Bottom-left: stacked up to 3 tabs.
+    pub left_bottom: Vec<crate::dock::Tab>,
+    /// Top-right: stacked up to 3 tabs.
+    pub right_top: Vec<crate::dock::Tab>,
+    /// Bottom-right: stacked up to 3 tabs.
+    pub right_bottom: Vec<crate::dock::Tab>,
 }
 
 impl Default for ModernState {
@@ -12625,10 +12679,10 @@ impl Default for ModernState {
     fn default() -> Self {
         use crate::dock::Tab;
         Self {
-            left_top: Tab::AssetMedia,
-            left_bottom: Tab::AssetEffects,
-            right_top: Tab::Properties,
-            right_bottom: Tab::AssetPlugins,
+            left_top: vec![Tab::AssetMedia],
+            left_bottom: vec![Tab::AssetEffects],
+            right_top: vec![Tab::Properties],
+            right_bottom: vec![Tab::AssetPlugins],
         }
     }
 }
