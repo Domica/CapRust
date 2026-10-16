@@ -332,6 +332,8 @@ pub struct CapRustApp {
     /// A missing-media scan that was postponed because a recovery
     /// offer was on screen. Runs as soon as that offer is answered.
     pub pending_missing_scan: bool,
+    /// Timeline collapsed: minimizes timeline so zones expand evenly.
+    pub timeline_collapsed: bool,
 
     // ---- Remote control (MCP over TCP) ----
     /// Protocol state for the in-app MCP server. Holds no project data;
@@ -1113,6 +1115,7 @@ impl CapRustApp {
             recovery_prompt: None,
             recovery_slot_path: None,
             pending_missing_scan: false,
+            timeline_collapsed: false,
             mcp_server: Default::default(),
             remote_bridge: None,
             remote_last_batch: 0,
@@ -5689,8 +5692,11 @@ impl CapRustApp {
     /// the tracks more room.
     fn show_timeline(&mut self, ctx: &egui::Context) {
         let screen_h = ctx.screen_rect().height();
-        let def = self.timeline_height_default();
-        let min = self.timeline_height_min();
+        let (def, min) = if self.timeline_collapsed {
+            (60.0, 30.0) // Minimal height when collapsed
+        } else {
+            (self.timeline_height_default(), self.timeline_height_min())
+        };
         egui::TopBottomPanel::bottom("timeline")
             .resizable(true)
             .default_height(def)
@@ -5715,6 +5721,11 @@ impl CapRustApp {
                             self.settings.timeline_size = sizes[i];
                         }
                     }
+                    // Collapse toggle: collapse timeline and expand zones
+                    if ui.button("⏷").clicked() {
+                        self.timeline_collapsed = !self.timeline_collapsed;
+                    }
+                    ui.label(if self.timeline_collapsed { "◀ Collapsed" } else { "▶ Expanded" });
                 });
                 ui.separator();
                 self.render_timeline_panel(ui);
@@ -8629,10 +8640,7 @@ impl CapRustApp {
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
                 let avail = ui.available_height();
-                let top_h = avail * match self.settings.timeline_size {
-            caprust_core::TimelineSize::S => 0.7,
-            caprust_core::TimelineSize::M | caprust_core::TimelineSize::L => 0.5,
-        };
+                let top_h = avail * 0.55; // Top zone takes slightly more space
                 let bot_h = avail - top_h;
 
                 egui::TopBottomPanel::top("modern_left_top")
@@ -8656,10 +8664,7 @@ impl CapRustApp {
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
                 let avail = ui.available_height();
-                let top_h = avail * match self.settings.timeline_size {
-            caprust_core::TimelineSize::S => 0.7,
-            caprust_core::TimelineSize::M | caprust_core::TimelineSize::L => 0.5,
-        };
+                let top_h = avail * 0.55; // Top zone takes slightly more space
                 let bot_h = avail - top_h;
 
                 egui::TopBottomPanel::top("modern_right_top")
@@ -8685,11 +8690,21 @@ impl CapRustApp {
     fn render_zone(&mut self, ui: &mut egui::Ui, zone: Zone) {
         let current = zone.tab(&self.modern);
         let accent = self.theme.accent_color();
+        // 3D-shaded frame: bright top-left, dark bottom-right, accent-tinted fill
+        let highlight = accent.gamma_multiply(1.4);
+        let shadow = accent.gamma_multiply(0.35);
+        let bg_fill = ui.style().visuals.window_fill().gamma_multiply(1.05);
         let frame = egui::Frame::group(ui.style())
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(8))
-            .stroke(egui::Stroke::new(1.5, accent.gamma_multiply(1.2)))
-            .fill(ui.style().visuals.window_fill())
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin::same(10))
+            .stroke(egui::Stroke::new(1.5, shadow))
+            .fill(bg_fill)
+            .shadow(egui::epaint::Shadow {
+                offset: [4, 4],
+                blur: 8,
+                spread: 1,
+                color: highlight,
+            })
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.menu_button(
