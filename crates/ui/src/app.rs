@@ -566,6 +566,9 @@ pub struct CapRustApp {
     pub export_finished_path: Option<String>,
     /// Clip currently being streamed in preview (None = no stream).
     pub preview_renderer: Option<PreviewRenderer>,
+    /// Importers found on disk, scanned once. The File menu is rebuilt
+    /// every frame, so the directory is not re-read per frame.
+    pub importer_cache: Option<Vec<caprust_core::importer::ImporterPlugin>>,
     pub last_frame_instant: Option<std::time::Instant>,
     pub last_streamed_clip: Option<uuid::Uuid>,
     /// Set to true when the user seeks; forces the preview stream to restart.
@@ -1199,6 +1202,7 @@ impl CapRustApp {
             export_tracker: None,
             export_finished_path: None,
             preview_renderer: None,
+            importer_cache: None,
             last_frame_instant: None,
             last_streamed_clip: None,
             stream_needs_restart: false,
@@ -2459,6 +2463,59 @@ impl CapRustApp {
         self.new_project_modal_open = open && !created;
     }
 
+    /// Importers installed under `%APPDATA%/CapRust/importers`.
+    /// Cached after the first scan; the menu is rebuilt every frame, so
+    /// rescanning here would stat the directory 60 times a second.
+    fn available_importers(&mut self) -> Vec<caprust_core::importer::ImporterPlugin> {
+        if self.importer_cache.is_none() {
+            let dir = self.importer_dir();
+            let found = caprust_core::importer::discover(&dir);
+            tracing::info!("importers: found {} in {}", found.len(), dir.display());
+            self.importer_cache = Some(found);
+        }
+        self.importer_cache.clone().unwrap_or_default()
+    }
+
+    fn importer_dir(&self) -> std::path::PathBuf {
+        std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default()
+            .join("CapRust")
+            .join("importers")
+    }
+
+    /// Run one importer and replace the current project with what it
+    /// returns. Mirrors the load path: models backfilled, undo reset,
+    /// thumbnails regenerated.
+    fn run_importer(&mut self, plugin: &caprust_core::importer::ImporterPlugin, path: &str) {
+        let src = std::path::Path::new(path);
+        match caprust_core::importer::run_import(plugin, src) {
+            Ok(json) => match serde_json::from_value::<ProjectState>(json) {
+                Ok(mut state) => {
+                    state.project_path = src.parent().map(|p| p.to_string_lossy().to_string());
+                    state.models.merge_missing_defaults();
+                    let models_dir = self.settings.effective_models_dir();
+                    state.models.scan_local(&models_dir);
+                    self.undo_stack = UndoStack::new();
+                    self.project = state;
+                    self.selected_clips.clear();
+                    self.mode = AppMode::Editor;
+                    self.backfill_missing_probes();
+                    self.regen_missing_thumbnails();
+                    self.audio_cache = AudioCacheState::default();
+                    let h = self.project.render_hash();
+                    self.last_saved_hash = Some(h);
+                    self.last_autosave_hash = Some(h);
+                    self.check_missing_media_on_load();
+                    self.backfill_waveforms();
+                    self.toast(tr("menu-file-import-done"));
+                }
+                Err(e) => self.toast_error(format!("{}: {e}", tr("toast-import-failed"))),
+            },
+            Err(e) => self.toast_error(format!("{}: {e}", tr("toast-import-failed"))),
+        }
+    }
+
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -2482,6 +2539,27 @@ impl CapRustApp {
                             self.load_project_from(&p);
                         }
                         ui.close_menu();
+                    }
+                    // Process-based importers. Discovered from
+                    // %APPDATA%/CapRust/importers; a missing directory is
+                    // simply no entries, so this branch never shows when
+                    // nothing is installed.
+                    for plugin in self.available_importers() {
+                        let label = plugin.manifest.name.clone();
+                        if ui.button(label).clicked() {
+                            let picked = match plugin.manifest.kinds.first().map(String::as_str) {
+                                Some("capcut") | Some("otio") => rfd::FileDialog::new()
+                                    .pick_folder()
+                                    .map(|p| p.to_string_lossy().to_string()),
+                                _ => rfd::FileDialog::new()
+                                    .pick_file()
+                                    .map(|p| p.to_string_lossy().to_string()),
+                            };
+                            if let Some(path) = picked {
+                                self.run_importer(&plugin, &path);
+                            }
+                            ui.close_menu();
+                        }
                     }
                     let save_lbl = if self.settings.enable_shortcuts {
                         format!("{}  (Ctrl+S)", tr("menu-file-save"))

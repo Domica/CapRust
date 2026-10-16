@@ -983,3 +983,6 @@ new-pick-format = Choose a format
 new-pick-format-hint = Pick what the video is for. The preview shows the real shape.
 new-preview-header = Preview
 
+# --- Import plugins ---
+menu-file-import-done = Import complete.
+toast-import-failed = Import failed: { $err }

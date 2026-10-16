@@ -983,3 +983,6 @@ new-pick-format = Odaberi format
 new-pick-format-hint = Odaberi za što je video. Prikaz pokazuje stvarni oblik.
 new-preview-header = Prikaz
 
+# --- Import plugins ---
+menu-file-import-done = Uvoz dovršen.
+toast-import-failed = Uvoz nije uspio: { $err }
