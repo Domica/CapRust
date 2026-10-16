@@ -8390,12 +8390,121 @@ impl CapRustApp {
     /// The zone headers are tab strips running down the side rather than
     /// across the top. Horizontal tabs inside a narrow column leave
     /// room for two labels, and they read as an older interface; a
-    /// vertical list uses the column it is already in.
+    /// Four dock zones in a fixed frame.
+    ///
+    ///   ┌──────────┬───────────────┬─────────────┐
+    ///   │  browser │               │  properties │
+    ///   │ (dock)   │    preview    │   (dock)    │
+    ///   ├──────────┤               ├─────────────┤
+    ///   │ effects  │               │  plugins    │
+    ///   │ (dock)   │               │   (dock)    │
+    ///   └──────────┴───────────────┴─────────────┘
+    ///   │              timeline                    │
+    ///   └──────────────────────────────────────────┘
+    ///
+    /// The frame is fixed; the docks inside it are not. Each zone is a
+    /// real egui_dock area, so dragging a tab offers the same positions
+    /// it offers in the dock editor -- tab, below, side, above -- and a
+    /// zone can be split, collapsed and put back. The user is not locked
+    /// into one arrangement, they are spared having to build it from
+    /// scratch every time the window moves.
+    ///
+    /// The frame is what separates this from the dock editor. There, one
+    /// tree fills the window and everything is negotiable, including
+    /// which quarter of the screen the timeline gets. Here the four
+    /// zones are where a clip editor puts them, and the docks handle the
+    /// Four dock zones in a fixed frame.
+    ///
+    ///   ┌──────────┬───────────────┬─────────────┐
+    ///   │  browser │               │  properties │
+    ///   │  (dock)  │    preview    │   (dock)    │
+    ///   ├──────────┤               ├─────────────┤
+    ///   │ effects  │               │  plugins    │
+    ///   │  (dock)  │               │   (dock)    │
+    ///   └──────────┴───────────────┴─────────────┘
+    ///   │              timeline                    │
+    ///   └──────────────────────────────────────────┘
+    ///
+    /// The frame is fixed; the docks inside it are not. Each zone is a
+    /// real egui_dock area, so dragging a tab offers the same positions
+    /// it offers in the dock editor -- stacked tab, below, side, above --
+    /// and a zone can be split, collapsed and put back. Nothing is locked
+    /// to a cell; the user is spared having to rebuild the arrangement
+    /// from scratch every time the window moves.
+    ///
+    /// The frame is what separates this from the dock editor. There, one
+    /// tree fills the window and everything is negotiable, including
+    /// which quarter of the screen the timeline gets. Here the four
+    /// zones sit where a clip editor puts them, and the docks handle the
+    /// rest.
+    ///
+    /// `modern` is moved out of `self` first because a dock borrows its
+    /// tree for the duration of the frame while the viewer needs `self`
+    /// Four dock zones in a fixed frame.
+    ///
+    ///   ┌──────────┬───────────────┬─────────────┐
+    ///   │  browser │               │  properties │
+    ///   │  (dock)  │    preview    │   (dock)    │
+    ///   ├──────────┤               ├─────────────┤
+    ///   │ effects  │               │  plugins    │
+    ///   │  (dock)  │               │   (dock)    │
+    ///   └──────────┴───────────────┴─────────────┘
+    ///   │              timeline                    │
+    ///   └──────────────────────────────────────────┘
+    ///
+    /// The frame is fixed; the docks inside it are not. Each zone is a
+    /// real egui_dock area, so dragging a tab offers the same positions
+    /// it offers in the dock editor -- stacked tab, below, side, above --
+    /// and a zone can be split, collapsed and put back. Nothing is locked
+    /// to a cell; the user is spared having to rebuild the arrangement
+    /// from scratch every time the window moves.
+    ///
+    /// The frame is what separates this from the dock editor. There, one
+    /// tree fills the window and everything is negotiable, including
+    /// which quarter of the screen the timeline gets. Here the four
+    /// zones sit where a clip editor puts them, and the docks handle the
+    /// rest.
+    ///
+    /// `modern` is moved out of `self` first: a dock borrows its tree for
+    /// the frame while the viewer borrows the app, and holding the two
+    /// apart is what lets both exist. The viewer reborrows rather than
+    /// Four dock zones in a fixed frame.
+    ///
+    ///   ┌──────────┬───────────────┬─────────────┐
+    ///   │  browser │               │  properties │
+    ///   │  (dock)  │    preview    │   (dock)    │
+    ///   ├──────────┤               ├─────────────┤
+    ///   │ effects  │               │  plugins    │
+    ///   │  (dock)  │               │   (dock)    │
+    ///   └──────────┴───────────────┴─────────────┘
+    ///   │              timeline                    │
+    ///   └──────────────────────────────────────────┘
+    ///
+    /// The frame is fixed; the docks inside it are not. Each zone is a
+    /// real egui_dock area, so dragging a tab offers the same positions
+    /// it offers in the dock editor -- stacked tab, below, side, above --
+    /// and a zone can be split, collapsed and put back. Nothing is locked
+    /// to a cell; the user is spared having to rebuild the arrangement
+    /// from scratch every time the window moves.
+    ///
+    /// The frame is what separates this from the dock editor. There, one
+    /// tree fills the window and everything is negotiable, including
+    /// which quarter of the screen the timeline gets. Here the four
+    /// zones sit where a clip editor puts them, and the docks handle the
+    /// rest.
+    ///
+    /// `modern` is moved out of `self` first: a dock borrows its tree for
+    /// the frame while the viewer borrows the app, and holding the two
+    /// apart is what lets both exist. The viewer reborrows rather than
+    /// moves, which is what lets the same app appear in all four docks.
     fn show_editor_modern(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
         self.show_toolbar(ctx);
 
         self.sync_plugin_scan_dirs();
+
+        let style = crate::dock::material_style(ctx, &self.theme);
+        let mut modern = std::mem::take(&mut self.modern);
 
         // Left column: browser above, creative tools below.
         egui::SidePanel::left("modern_left")
@@ -8404,29 +8513,29 @@ impl CapRustApp {
             .min_width(140.0)
             .max_width(420.0)
             .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    egui::TopBottomPanel::top("modern_left_top")
-                        .resizable(true)
-                        .default_height(ui.available_height() * 0.5)
-                        .show_inside(ui, |ui| {
-                            let mut tab = self.modern.left_top;
-                            self.render_zone_tabs(ui, &BROWSER_TABS, &mut tab);
-                            self.modern.left_top = tab;
-                            ui.separator();
-                            self.render_assets_panel(ui, tab);
-                        });
+                let avail = ui.available_height();
+                let top_h = avail * 0.5;
+                let bot_h = avail - top_h;
 
-                    egui::TopBottomPanel::bottom("modern_left_bottom")
-                        .resizable(true)
-                        .default_height(ui.available_height() * 0.5)
-                        .show_inside(ui, |ui| {
-                            let mut tab = self.modern.left_bottom;
-                            self.render_zone_tabs(ui, &CREATIVE_TABS, &mut tab);
-                            self.modern.left_bottom = tab;
-                            ui.separator();
-                            self.render_assets_panel(ui, tab);
-                        });
-                });
+                egui::TopBottomPanel::top("modern_left_top")
+                    .resizable(true)
+                    .default_height(top_h)
+                    .show_inside(ui, |ui| {
+                        let dock =
+                            egui_dock::DockArea::new(&mut modern.left_top).style(style.clone());
+                        let mut viewer = crate::dock::AppTabViewer { app: &mut *self };
+                        dock.show_inside(ui, &mut viewer);
+                    });
+
+                egui::TopBottomPanel::bottom("modern_left_bottom")
+                    .resizable(true)
+                    .default_height(bot_h)
+                    .show_inside(ui, |ui| {
+                        let dock =
+                            egui_dock::DockArea::new(&mut modern.left_bottom).style(style.clone());
+                        let mut viewer = crate::dock::AppTabViewer { app: &mut *self };
+                        dock.show_inside(ui, &mut viewer);
+                    });
             });
 
         // Right column: properties above, whatever else you need below.
@@ -8436,25 +8545,29 @@ impl CapRustApp {
             .min_width(240.0)
             .max_width(460.0)
             .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    egui::TopBottomPanel::top("modern_right_top")
-                        .resizable(true)
-                        .default_height(ui.available_height() * 0.5)
-                        .show_inside(ui, |ui| {
-                            self.render_properties_panel(ui);
-                        });
+                let avail = ui.available_height();
+                let top_h = avail * 0.5;
+                let bot_h = avail - top_h;
 
-                    egui::TopBottomPanel::bottom("modern_right_bottom")
-                        .resizable(true)
-                        .default_height(ui.available_height() * 0.5)
-                        .show_inside(ui, |ui| {
-                            let mut panel = self.modern.right_bottom;
-                            self.render_panel_tabs(ui, &mut panel);
-                            self.modern.right_bottom = panel;
-                            ui.separator();
-                            self.render_right_panel(ui, panel);
-                        });
-                });
+                egui::TopBottomPanel::top("modern_right_top")
+                    .resizable(true)
+                    .default_height(top_h)
+                    .show_inside(ui, |ui| {
+                        let dock =
+                            egui_dock::DockArea::new(&mut modern.right_top).style(style.clone());
+                        let mut viewer = crate::dock::AppTabViewer { app: &mut *self };
+                        dock.show_inside(ui, &mut viewer);
+                    });
+
+                egui::TopBottomPanel::bottom("modern_right_bottom")
+                    .resizable(true)
+                    .default_height(bot_h)
+                    .show_inside(ui, |ui| {
+                        let dock =
+                            egui_dock::DockArea::new(&mut modern.right_bottom).style(style.clone());
+                        let mut viewer = crate::dock::AppTabViewer { app: &mut *self };
+                        dock.show_inside(ui, &mut viewer);
+                    });
             });
 
         self.show_jobs_bar(ctx);
@@ -8463,68 +8576,8 @@ impl CapRustApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_preview_panel(ui);
         });
-    }
 
-    /// A vertical tab strip for one zone.
-    ///
-    /// Only the tabs asked for are offered, so each zone has a short list
-    /// rather than all eight. The header names what is showing, which
-    /// matters once two zones show different things at the same time.
-    fn render_zone_tabs(
-        &mut self,
-        ui: &mut egui::Ui,
-        offered: &[crate::panels::asset_browser::AssetTab],
-        selected: &mut crate::panels::asset_browser::AssetTab,
-    ) {
-        ui.label(egui::RichText::new(tr(selected.label())).strong());
-        ui.vertical(|ui| {
-            for tab in offered {
-                let sel = *selected == *tab;
-                if ui.selectable_label(sel, tr(tab.label())).clicked() {
-                    *selected = *tab;
-                }
-            }
-        });
-    }
-
-    /// The tab strip for the swappable bottom-right zone.
-    fn render_panel_tabs(&mut self, ui: &mut egui::Ui, selected: &mut RightPanel) {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(tr(selected.key())).strong());
-            ui.separator();
-        });
-        ui.vertical(|ui| {
-            for p in RightPanel::all() {
-                let sel = *selected == p;
-                if ui.selectable_label(sel, tr(p.key())).clicked() {
-                    *selected = p;
-                }
-            }
-        });
-    }
-
-    /// Body of the swappable bottom-right zone.
-    ///
-    /// Most of what belongs there is an asset tab, so it goes through the
-    /// same renderer the dock uses -- one browser, one set of filter
-    /// state, whichever editor you are in.
-    fn render_right_panel(&mut self, ui: &mut egui::Ui, panel: RightPanel) {
-        if let Some(tab) = panel.asset_tab() {
-            self.render_assets_panel(ui, tab);
-            return;
-        }
-        match panel {
-            RightPanel::MasterChain => self.render_master_chain_panel(ui),
-            RightPanel::MultiCam => self.render_multicam_panel(ui),
-            // Handled as an asset tab above.
-            RightPanel::Plugins
-            | RightPanel::Media
-            | RightPanel::Sound
-            | RightPanel::Effects
-            | RightPanel::Transitions
-            | RightPanel::Filters
-            | RightPanel::Text => {}
-        }
+        self.modern = modern;
     }
 
     /// Properties panel body. Migrated out of the SidePanel::right
@@ -12315,105 +12368,45 @@ pub(crate) fn layout_mode_hint_key(mode: caprust_core::LayoutMode) -> &'static s
 ///
 /// `Default` reads the saved tree, or the built-in starting arrangement
 /// on a fresh install. This is the path every existing install takes and
-/// The two left zones. Split this way because they answer different
-/// questions: the top one is where media lives, the bottom one is where
-/// you reach for something to put *on* the media.
-pub(crate) const BROWSER_TABS: [crate::panels::asset_browser::AssetTab; 4] = [
-    crate::panels::asset_browser::AssetTab::Media,
-    crate::panels::asset_browser::AssetTab::Plugins,
-    crate::panels::asset_browser::AssetTab::Sfx,
-    crate::panels::asset_browser::AssetTab::Templates,
-];
-
-pub(crate) const CREATIVE_TABS: [crate::panels::asset_browser::AssetTab; 4] = [
-    crate::panels::asset_browser::AssetTab::Effects,
-    crate::panels::asset_browser::AssetTab::Transitions,
-    crate::panels::asset_browser::AssetTab::Filters,
-    crate::panels::asset_browser::AssetTab::Text,
-];
-
-/// What each zone of the fixed editor is showing.
+/// What each zone of the fixed editor is holding.
 ///
-/// Two zones on the left, two on the right, and nothing else to configure.
-/// The zones are fixed -- that is the point of this editor, and the reason
-/// it exists next to the dock rather than as another arrangement of it --
-/// but their contents are the user's to choose.
-#[derive(Debug, Default, Clone, PartialEq)]
+/// Four docks, one per zone, in a frame that does not move. Each is a
+/// real `egui_dock::DockState`, so a tab can be dragged to any position
+/// the dock offers and a zone can be split or collapsed -- the frame is
+/// fixed, its contents are not.
+#[derive(Debug, Clone)]
 pub struct ModernState {
     /// Top-left: the browser (media, plugins, sound, templates).
-    pub left_top: crate::panels::asset_browser::AssetTab,
+    pub left_top: egui_dock::DockState<crate::dock::Tab>,
     /// Bottom-left: the creative tools (effects, transitions, filters, text).
-    pub left_bottom: crate::panels::asset_browser::AssetTab,
+    pub left_bottom: egui_dock::DockState<crate::dock::Tab>,
+    /// Top-right: clip properties, which is where the dock puts them too.
+    pub right_top: egui_dock::DockState<crate::dock::Tab>,
     /// Bottom-right: whatever the clip needs beyond its properties.
-    pub right_bottom: RightPanel,
+    pub right_bottom: egui_dock::DockState<crate::dock::Tab>,
 }
 
-/// What can sit in the bottom-right zone.
-///
-/// Properties stay at the top on their own -- they are the one thing you
-/// almost always want while editing a clip. The bottom zone is the
-/// "and also this" panel, and it is the only one the user has a reason to
-/// swap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RightPanel {
-    /// The plugin browser: the panel you reach for when the clip needs an
-    /// effect the built-ins do not cover.
-    #[default]
-    Plugins,
-    MasterChain,
-    MultiCam,
-    Media,
-    Sound,
-    Effects,
-    Transitions,
-    Filters,
-    Text,
-}
-
-impl RightPanel {
-    pub fn all() -> [Self; 9] {
-        [
-            Self::Plugins,
-            Self::MasterChain,
-            Self::MultiCam,
-            Self::Media,
-            Self::Sound,
-            Self::Effects,
-            Self::Transitions,
-            Self::Filters,
-            Self::Text,
-        ]
-    }
-
-    /// Key for the i18n label. The asset tabs are shared with the
-    /// browser, so this reuses their keys rather than inventing near
-    /// duplicates that will drift.
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Plugins => "asset-tab-plugins",
-            Self::MasterChain => "dock-tab-master",
-            Self::MultiCam => "dock-tab-multicam",
-            Self::Media => "asset-tab-media",
-            Self::Sound => "asset-tab-sfx",
-            Self::Effects => "asset-tab-effects",
-            Self::Transitions => "asset-tab-transitions",
-            Self::Filters => "asset-tab-filters",
-            Self::Text => "asset-tab-text",
+impl Default for ModernState {
+    /// The starting zones, in the order a clip editor is expected to
+    /// have them.
+    fn default() -> Self {
+        use crate::dock::Tab;
+        Self {
+            left_top: egui_dock::DockState::new(vec![
+                Tab::AssetMedia,
+                Tab::AssetPlugins,
+                Tab::AssetSfx,
+                Tab::AssetTemplates,
+            ]),
+            left_bottom: egui_dock::DockState::new(vec![
+                Tab::AssetEffects,
+                Tab::AssetTransitions,
+                Tab::AssetFilters,
+                Tab::AssetText,
+            ]),
+            right_top: egui_dock::DockState::new(vec![Tab::Properties]),
+            right_bottom: egui_dock::DockState::new(vec![Tab::AssetPlugins]),
         }
-    }
-
-    /// The asset tab this panel renders, when it is one.
-    pub fn asset_tab(self) -> Option<crate::panels::asset_browser::AssetTab> {
-        use crate::panels::asset_browser::AssetTab;
-        Some(match self {
-            Self::Media => AssetTab::Media,
-            Self::Sound => AssetTab::Sfx,
-            Self::Effects => AssetTab::Effects,
-            Self::Transitions => AssetTab::Transitions,
-            Self::Filters => AssetTab::Filters,
-            Self::Text => AssetTab::Text,
-            _ => return None,
-        })
     }
 }
 
