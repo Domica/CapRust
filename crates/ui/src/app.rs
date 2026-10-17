@@ -12621,10 +12621,10 @@ impl Zone {
     /// The active panel this zone is showing (first in the stack).
     pub fn tab(self, state: &ModernState) -> crate::dock::Tab {
         match self {
-            Self::LeftTop => state.left_top.first().cloned().unwrap_or_default(),
-            Self::LeftBottom => state.left_bottom.first().cloned().unwrap_or_default(),
-            Self::RightTop => state.right_top.first().cloned().unwrap_or_default(),
-            Self::RightBottom => state.right_bottom.first().cloned().unwrap_or_default(),
+            Self::LeftTop => state.left_top.first().cloned().unwrap_or(crate::dock::Tab::AssetMedia),
+            Self::LeftBottom => state.left_bottom.first().cloned().unwrap_or(crate::dock::Tab::AssetEffects),
+            Self::RightTop => state.right_top.first().cloned().unwrap_or(crate::dock::Tab::Properties),
+            Self::RightBottom => state.right_bottom.first().cloned().unwrap_or(crate::dock::Tab::AssetPlugins),
         }
     }
 
