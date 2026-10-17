@@ -5874,8 +5874,9 @@ impl CapRustApp {
             if ui
                 .add(egui::Button::new(
                     egui::RichText::new(format!(
-                        "▴  {}",
-                        tr(crate::dock::Tab::Timeline.title_key())
+                        "{}  {}",
+                        crate::dock::Tab::Timeline.icon(),
+                        tr("menu-timeline-show")
                     ))
                     .size(12.0),
                 ))
@@ -5950,7 +5951,9 @@ impl CapRustApp {
             // Collapse stays out here as well as inside the dropdown: buried
             // in a menu it read as missing.
             if ui
-                .add(egui::Button::new(egui::RichText::new("▼").size(12.0)))
+                .add(egui::Button::new(
+                    egui::RichText::new(tr("menu-timeline-hide")).size(12.0),
+                ))
                 .on_hover_text(tr("menu-timeline-collapse"))
                 .clicked()
             {
@@ -8912,31 +8915,33 @@ impl CapRustApp {
         };
 
         // Sidebars run the full height of the frame, past the timeline.
+        //
+        // A hidden sidebar is one that is never shown. Asking a panel for a
+        // width of zero did not hide it -- it still drew, at its previous
+        // width or at the preset -- which is why L kept a 20% column and M
+        // kept two. A panel that is not shown claims no space at all, so the
+        // middle gets exactly the width the size asked for.
         let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
-        egui::SidePanel::left(egui::Id::new((
-            "modern_left",
-            self.settings.timeline_size,
-            left_on,
-        )))
-        .resizable(true)
-        .default_width(left_w)
-        .min_width(0.0)
-        .max_width(area.width() * 0.5)
-        .show(ctx, |ui| {
-            self.show_zone_column(ui, split, true);
-        });
-        egui::SidePanel::right(egui::Id::new((
-            "modern_right",
-            self.settings.timeline_size,
-            right_on,
-        )))
-        .resizable(true)
-        .default_width(right_w)
-        .min_width(0.0)
-        .max_width(area.width() * 0.5)
-        .show(ctx, |ui| {
-            self.show_zone_column(ui, split, false);
-        });
+        if left_on {
+            egui::SidePanel::left(egui::Id::new(("modern_left", self.settings.timeline_size)))
+                .resizable(true)
+                .default_width(left_w)
+                .min_width(200.0)
+                .max_width(area.width() * 0.5)
+                .show(ctx, |ui| {
+                    self.show_zone_column(ui, split, true);
+                });
+        }
+        if right_on {
+            egui::SidePanel::right(egui::Id::new(("modern_right", self.settings.timeline_size)))
+                .resizable(true)
+                .default_width(right_w)
+                .min_width(220.0)
+                .max_width(area.width() * 0.5)
+                .show(ctx, |ui| {
+                    self.show_zone_column(ui, split, false);
+                });
+        }
 
         // The middle column is whatever the sidebars left. The timeline is
         // drawn inside it rather than as a bottom panel, which is the whole
@@ -9050,22 +9055,20 @@ impl CapRustApp {
         let stack = zone.stacked_tabs(&self.modern);
         let accent = self.theme.accent_color();
 
-        // Bevel: a dark edge along the bottom-right and a lit edge along the
-        // top-left, both drawn on the same rounded rect. A single uniform
-        // stroke -- which is all `Frame` gives -- reads as a flat outline,
-        // which is what "it is not 3D" was about. The lit edge is derived
-        // from the card's own fill so it works in light and dark themes.
-        let card_fill = ui.style().visuals.extreme_bg_color.gamma_multiply(1.04);
-        let lit = ui
-            .style()
-            .visuals
-            .widgets
-            .noninteractive
-            .bg_stroke
-            .color
-            .gamma_multiply(1.9);
-        let shade = accent.gamma_multiply(0.55);
+        // The card is raised off the column, and a raised thing needs three
+        // things to read as raised: a lit edge on the side facing the light,
+        // a dark edge opposite it, and a cast shadow below. One uniform
+        // stroke -- all `Frame` gives -- is a flat outline, which is what
+        // "the border is not 3D" was about.
+        //
+        // The lit edge is the card's own fill pushed towards white rather
+        // than a theme colour, so it stays visible in both light and dark.
+        let card_fill = ui.style().visuals.extreme_bg_color.gamma_multiply(1.06);
+        let lit = card_fill.gamma_multiply(1.9);
+        let shade = card_fill.gamma_multiply(0.35);
+        let accent_edge = accent.gamma_multiply(0.85);
         let rounding = egui::CornerRadius::same(10);
+        const RAISED: f32 = 2.0;
 
         let outer = egui::Frame::new()
             .fill(card_fill)
@@ -9096,20 +9099,39 @@ impl CapRustApp {
                 }
             });
 
-        // The bevel, drawn on the frame's own rect.
+        // The bevel and the cast shadow, drawn on the frame's own rect.
         let rect = outer.response.rect;
         let painter = ui.painter_at(rect);
+        // Cast shadow first, so the edges sit on top of it.
+        let shadow_rect = rect.translate(egui::vec2(RAISED, RAISED)).expand(RAISED);
+        for i in (1..=3).rev() {
+            let t = i as f32 / 3.0;
+            painter.rect_stroke(
+                shadow_rect.expand(i as f32),
+                rounding,
+                egui::Stroke::new(1.0, shade.gamma_multiply(0.10 * t)),
+                egui::StrokeKind::Outside,
+            );
+        }
+        // Dark edge on the shadow side, then the accent hairline just inside
+        // it, then the lit edge up and to the left.
         painter.rect_stroke(
             rect,
             rounding,
-            egui::Stroke::new(1.0, shade),
+            egui::Stroke::new(1.5, accent_edge),
             egui::StrokeKind::Middle,
         );
         painter.rect_stroke(
-            rect.translate(egui::vec2(-1.0, -1.0)),
+            rect.translate(egui::vec2(-RAISED, -RAISED)),
             rounding,
-            egui::Stroke::new(1.0, lit),
+            egui::Stroke::new(1.5, lit),
             egui::StrokeKind::Inside,
+        );
+        painter.rect_stroke(
+            rect.translate(egui::vec2(RAISED, RAISED)),
+            rounding,
+            egui::Stroke::new(1.5, shade),
+            egui::StrokeKind::Outside,
         );
     }
 
@@ -9157,17 +9179,16 @@ impl CapRustApp {
         picker_ui.menu_button(egui::RichText::new(label).size(15.0), |ui| {
             for tab in crate::dock::Tab::all() {
                 let sel = front == Some(tab);
-                let stacked_here = stack.contains(&tab);
+                // Where the card sits in the stack, as a number. This used
+                // to be a caret glyph the UI font does not carry, so it
+                // rendered as an empty box.
+                let place = stack.iter().position(|t| *t == tab).map(|i| i + 1);
+                let marker = match place {
+                    Some(n) => format!("{n}) "),
+                    None => "  ".to_string(),
+                };
                 if ui
-                    .selectable_label(
-                        sel,
-                        format!(
-                            "{}  {}{}",
-                            tab.icon(),
-                            tr(tab.title_key()),
-                            if stacked_here && !sel { "  ▾" } else { "" }
-                        ),
-                    )
+                    .selectable_label(sel, format!("{marker}{}", tr(tab.title_key())))
                     .clicked()
                 {
                     zone.set(&mut self.modern, tab);
@@ -9289,7 +9310,7 @@ impl CapRustApp {
                     .layout(egui::Layout::top_down(egui::Align::Center)),
             );
             if minus_ui
-                .add(egui::Button::new(egui::RichText::new("−").size(13.0)))
+                .add(egui::Button::new(egui::RichText::new("-").size(13.0)))
                 .on_hover_text(tr("menu-zone-remove-stack"))
                 .clicked()
             {

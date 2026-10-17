@@ -1025,3 +1025,5 @@ menu-zone-remove-right-top = Desno · gornji slot
 menu-zone-remove-right-bottom = Desno · donji slot
 menu-timeline-reset-size = Natrag na postavku veličine
 menu-zone-remove-stack = Ukloni zadnji panel iz ovog slota
+menu-timeline-hide = Sakrij timeline
+menu-timeline-show = Prikaži timeline

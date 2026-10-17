@@ -1025,3 +1025,5 @@ menu-zone-remove-right-top = Rechts · oberer Platz
 menu-zone-remove-right-bottom = Rechts · unterer Platz
 menu-timeline-reset-size = Zurück zur Größeneinstellung
 menu-zone-remove-stack = Letztes Panel aus diesem Platz entfernen
+menu-timeline-hide = Timeline ausblenden
+menu-timeline-show = Timeline einblenden
