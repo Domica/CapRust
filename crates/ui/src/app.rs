@@ -65,11 +65,11 @@ const TIMELINE_HANDLE_HEIGHT: f32 = 26.0;
 
 /// Draw `add` into one rectangle of the Modern frame.
 ///
-/// The frame is laid out as rectangles rather than through egui's panels,
-/// because a panel can only claim space from an edge and this frame needs the
-/// timeline to span a fraction of the width while both sidebars run past it
-/// at full height. An `Area` at a fixed position with the rectangle's size
-/// and clip does that without keeping a size of its own between frames.
+/// Kept for the regions that are not panels. Anything that can be a panel
+/// should be one: `exact_width` and `exact_height` do in one call what a
+/// hand-placed rectangle has to keep getting right about clipping, focus and
+/// pointer ordering.
+#[allow(dead_code)]
 fn draw_region(
     ctx: &egui::Context,
     id: &'static str,
@@ -8825,97 +8825,100 @@ impl CapRustApp {
         // only what is left.
         self.show_jobs_bar(ctx);
 
-        // The whole Modern frame is laid out here rather than by egui's
-        // panels.
+        // Sidebars and the middle, as fractions of the window's width.
         //
-        // `SidePanel` and `TopBottomPanel` can only claim their space from
-        // the edges, so they cannot express "the timeline spans 60% and the
-        // two sidebars run past it at full height", which is what S is.
-        // Getting that meant fighting the panels: a zero `default_width`
-        // clamped back to `min_width`, and a resizable panel remembered a
-        // dragged height that `default_height` could not override. So the
-        // frame is computed as rectangles and each region is drawn into the
-        // rectangle it was given, with no stored sizes anywhere.
+        // S keeps both sidebars at 20% and the timeline takes the middle
+        // 60%; M drops the left one so the timeline takes that side and
+        // spans 80%; L drops both and it spans the window.
+        //
+        // `exact_width` rather than `default_width`: a default is only a
+        // starting hint, and on the first frame the panel clamps it up to
+        // `min_width`, which is why a 0% sidebar kept showing at 140px.
+        // `exact_width` is the width, every frame, and `min_width(0)` lets
+        // it actually reach zero.
         let area = ctx.available_rect();
-
-        // Sidebars and the middle, as fractions of the frame's width.
-        // S keeps both sidebars and the timeline sits between them; M drops
-        // the left one and the timeline takes that side; L drops both.
         let (left_frac, right_frac) = match self.settings.timeline_size {
             caprust_core::TimelineSize::S => (0.20, 0.20),
             caprust_core::TimelineSize::M => (0.0, 0.20),
             caprust_core::TimelineSize::L => (0.0, 0.0),
         };
-        let left_w = area.width() * left_frac;
-        let right_w = area.width() * right_frac;
-        let timeline_h = self.timeline_height(area.height());
-
-        let left_rect = egui::Rect::from_min_size(area.min, egui::vec2(left_w, area.height()));
-        let right_rect = egui::Rect::from_min_size(
-            egui::pos2(area.max.x - right_w, area.min.y),
-            egui::vec2(right_w, area.height()),
-        );
-        let middle_x0 = area.min.x + left_w;
-        let middle_x1 = area.max.x - right_w;
+        let left_w = (area.width() * left_frac).min(area.width() * 0.5);
+        let right_w = (area.width() * right_frac).min(area.width() * 0.5);
 
         // Sidebars run the full height of the frame, past the timeline.
         let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
-        if left_w > 1.0 {
-            draw_region(ctx, "modern_left", left_rect, |ui| {
+        egui::SidePanel::left("modern_left")
+            .resizable(true)
+            .exact_width(left_w)
+            .min_width(0.0)
+            .show(ctx, |ui| {
                 self.show_zone_column(ui, split, true);
             });
-        }
-        if right_w > 1.0 {
-            draw_region(ctx, "modern_right", right_rect, |ui| {
+        egui::SidePanel::right("modern_right")
+            .resizable(true)
+            .exact_width(right_w)
+            .min_width(0.0)
+            .show(ctx, |ui| {
                 self.show_zone_column(ui, split, false);
             });
-        }
 
-        // The middle column: preview on top, timeline band underneath for
-        // as much width as this size gives it.
-        let middle_w = (middle_x1 - middle_x0).max(0.0);
-        let preview_h = (area.height() - timeline_h).max(80.0);
-        let preview_rect = egui::Rect::from_min_size(
-            area.min + egui::vec2(left_w, 0.0),
-            egui::vec2(middle_w, preview_h),
-        );
-        if middle_w > 1.0 {
-            draw_region(ctx, "modern_preview", preview_rect, |ui| {
-                self.render_preview_panel(ui);
-            });
+        // The middle column is whatever the sidebars left. The timeline is
+        // drawn inside it rather than as a bottom panel, which is the whole
+        // reason the widths above can change: a bottom panel always spans
+        // the window, and the sidebars would have to stop above it.
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let avail_h = ui.available_height();
+            let width = ui.available_width();
+            let timeline_h = self.timeline_height(avail_h);
+            let band_h = if self.timeline_collapsed {
+                TIMELINE_HANDLE_HEIGHT
+            } else {
+                timeline_h
+            };
+            let preview_h = (avail_h - band_h).max(80.0);
 
-            // The handle sits on the seam, drawn last so it is on top of
-            // both regions.
-            let seam = egui::Rect::from_min_size(
-                egui::pos2(middle_x0, preview_rect.max.y - 5.0),
-                egui::vec2(middle_w, 10.0),
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, preview_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_height(preview_h);
+                    self.render_preview_panel(ui);
+                },
             );
-            draw_region(ctx, "modern_timeline_seam", seam, |ui| {
-                self.timeline_drag_separator(ui, 5.0, area.height() * 0.7);
-            });
-        }
 
-        let tl_rect = egui::Rect::from_min_size(
-            egui::pos2(middle_x0, area.max.y - timeline_h),
-            egui::vec2(middle_w, timeline_h),
-        );
-        if !self.timeline_collapsed && middle_w > 1.0 {
-            draw_region(ctx, "modern_timeline", tl_rect, |ui| {
-                self.show_timeline_header(ui);
-                ui.separator();
-                self.render_timeline_panel(ui);
-            });
-        } else {
-            // Collapsed: a handle along the bottom of the middle column, so
-            // the timeline can be brought back.
-            let handle = egui::Rect::from_min_size(
-                egui::pos2(middle_x0, area.max.y - TIMELINE_HANDLE_HEIGHT),
-                egui::vec2(middle_w, TIMELINE_HANDLE_HEIGHT),
-            );
-            draw_region(ctx, "modern_timeline_handle", handle, |ui| {
-                self.show_timeline_handle(ui);
-            });
-        }
+            if self.timeline_collapsed {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, band_h),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        self.show_timeline_handle(ui);
+                    },
+                );
+            } else {
+                // The seam sits on the boundary between the two bands and
+                // takes a few pixels from each, so it can be grabbed either
+                // side of the line.
+                let seam_h = 9.0;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, seam_h),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        self.timeline_drag_separator(ui, seam_h * 0.5, avail_h * 0.7);
+                    },
+                );
+                let body_h = (band_h - seam_h).max(60.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, body_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_height(body_h);
+                        self.show_timeline_header(ui);
+                        ui.separator();
+                        self.render_timeline_panel(ui);
+                    },
+                );
+            }
+        });
     }
 
     /// One side column of the Modern editor: two zones filling the whole
@@ -9118,11 +9121,14 @@ impl CapRustApp {
             name_ui.label(egui::RichText::new(tr(tab.title_key())).strong().size(15.0));
         }
 
-        // Background tabs, standing proud of the strip's top edge.
+        // Background tabs, standing proud of the strip's top edge, laid out
+        // from the right edge leftwards so the add/remove button always sits
+        // past the last of them.
         let painter = ui.painter_at(rect);
         let tab_h = rect.height() + 6.0;
+        const CTRL_W: f32 = 22.0;
         for (i, tab) in behind.iter().enumerate() {
-            let x0 = rect.max.x - (behind_n - i as f32) * tab_zone_w;
+            let x0 = rect.max.x - CTRL_W - (behind_n - i as f32) * tab_zone_w;
             let tab_rect = egui::Rect::from_min_size(
                 egui::pos2(x0, rect.min.y - 6.0),
                 egui::vec2(tab_zone_w, tab_h),
@@ -9162,29 +9168,40 @@ impl CapRustApp {
             }
         }
 
-        // `+` to deepen the stack, on the far left of the tab run.
-        if stack.len() < 3 {
-            let plus_w = 20.0;
-            let plus_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.max.x - (behind_n * tab_zone_w) - plus_w, rect.min.y),
-                egui::vec2(plus_w, rect.height()),
-            );
-            let mut plus_ui = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(plus_rect)
-                    .layout(egui::Layout::top_down(egui::Align::Center)),
-            );
-            if plus_ui
+        // Add / remove, past every stacked tab on the right.
+        //
+        // One control that turns into the other: while there is room it adds
+        // a card, and once the stack is full it takes the back card off
+        // again. Without the second half there was no way back down to a
+        // single card once three had been added -- `+` simply vanished and
+        // the stack could only grow.
+        let ctrl_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.max.x - CTRL_W, rect.min.y),
+            egui::vec2(CTRL_W, rect.height()),
+        );
+        let mut ctrl_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(ctrl_rect)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        let full = stack.len() >= 3;
+        let resp = if full {
+            ctrl_ui
+                .add(egui::Button::new(egui::RichText::new("−").size(13.0)))
+                .on_hover_text(tr("menu-zone-remove-stack"))
+        } else {
+            ctrl_ui
                 .add(egui::Button::new(egui::RichText::new("+").size(13.0)))
                 .on_hover_text(tr("menu-zone-add-stack"))
-                .clicked()
+        };
+        if resp.clicked() {
+            if full {
+                zone.drop_back(&mut self.modern);
+            } else if let Some(next) = crate::dock::Tab::all()
+                .into_iter()
+                .find(|t| !stack.contains(t))
             {
-                if let Some(next) = crate::dock::Tab::all()
-                    .into_iter()
-                    .find(|t| !stack.contains(t))
-                {
-                    zone.set(&mut self.modern, next);
-                }
+                zone.set(&mut self.modern, next);
             }
         }
     }
@@ -13138,6 +13155,22 @@ impl Zone {
             Self::LeftBottom => crate::dock::Tab::AssetEffects,
             Self::RightTop => crate::dock::Tab::Properties,
             Self::RightBottom => crate::dock::Tab::AssetPlugins,
+        }
+    }
+
+    /// Take the back card off the stack.
+    ///
+    /// Without this the stack could only grow: `+` disappeared at three and
+    /// there was no way back to a single card.
+    pub fn drop_back(self, state: &mut ModernState) {
+        let stack = match self {
+            Self::LeftTop => &mut state.left_top,
+            Self::LeftBottom => &mut state.left_bottom,
+            Self::RightTop => &mut state.right_top,
+            Self::RightBottom => &mut state.right_bottom,
+        };
+        if stack.len() > 1 {
+            stack.pop();
         }
     }
 
