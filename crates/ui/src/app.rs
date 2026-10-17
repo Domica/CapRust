@@ -8896,12 +8896,19 @@ impl CapRustApp {
         // the preset so choosing a new size starts a clean panel instead of
         // resurrecting a width set under the old one.
         let area = ctx.available_rect();
+        //
+        // The sidebars keep their width at every size. What changes is how
+        // much of the width the timeline takes: at S it sits between the two
+        // sidebars, at M it takes the space the right sidebar gave up, and at
+        // L it crosses both of them. Hiding a sidebar outright was the wrong
+        // reading -- at L the columns stay, and only the timeline's own band
+        // of height runs past them.
         let (left_frac, right_frac) = match self.settings.timeline_size {
             caprust_core::TimelineSize::S => (0.20, 0.20),
-            caprust_core::TimelineSize::M => (0.0, 0.20),
-            caprust_core::TimelineSize::L => (0.0, 0.0),
+            caprust_core::TimelineSize::M => (0.20, 0.00),
+            caprust_core::TimelineSize::L => (0.20, 0.20),
         };
-        let left_on = self.modern_left_on && left_frac > 0.0;
+        let left_on = self.modern_left_on;
         let right_on = self.modern_right_on && right_frac > 0.0;
         let left_w = if left_on {
             (area.width() * left_frac).min(area.width() * 0.5)
@@ -8922,6 +8929,68 @@ impl CapRustApp {
         // kept two. A panel that is not shown claims no space at all, so the
         // middle gets exactly the width the size asked for.
         let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
+
+        // L is the one size where the timeline leaves the middle column.
+        //
+        // At S and M it is drawn inside the `CentralPanel`, so it is exactly
+        // as wide as the space between the sidebars. At L it has to cross
+        // both of them, which a panel inside the centre cannot do -- so it
+        // becomes a real bottom panel first, taking the band across the whole
+        // window, and the sidebars are then drawn into what is left above
+        // it. That is the whole difference from S: the columns keep running
+        // beside the preview and only stop at the timeline's own height.
+        if self.settings.timeline_size == caprust_core::TimelineSize::L {
+            let band_h = if self.timeline_collapsed {
+                TIMELINE_HANDLE_HEIGHT
+            } else {
+                self.timeline_height(ctx.available_rect().height())
+                    .max(self.timeline_content_height())
+                    .min(ctx.available_rect().height() * 0.8)
+            };
+            egui::TopBottomPanel::bottom("modern_timeline")
+                .resizable(false)
+                .exact_height(band_h)
+                .show(ctx, |ui| {
+                    if self.timeline_collapsed {
+                        self.show_timeline_handle(ui);
+                    } else {
+                        self.show_timeline_header(ui);
+                        ui.separator();
+                        self.render_timeline_panel(ui);
+                    }
+                });
+
+            let above = ctx.available_rect();
+            let lw = (above.width() * left_frac).min(above.width() * 0.5);
+            let rw = (above.width() * right_frac).min(above.width() * 0.5);
+            // One container a side, filling the height beside the preview.
+            // At L there is no reason to split the column in two: the only
+            // thing below it is the timeline, and that has the full width.
+            if left_on && lw > 1.0 {
+                draw_region(
+                    ctx,
+                    "modern_left_l",
+                    egui::Rect::from_min_size(above.min, egui::vec2(lw, above.height())),
+                    |ui| self.render_zone(ui, Zone::LeftTop),
+                );
+            }
+            if right_on && rw > 1.0 {
+                draw_region(
+                    ctx,
+                    "modern_right_l",
+                    egui::Rect::from_min_size(
+                        egui::pos2(above.max.x - rw, above.min.y),
+                        egui::vec2(rw, above.height()),
+                    ),
+                    |ui| self.render_zone(ui, Zone::RightTop),
+                );
+            }
+            egui::CentralPanel::default().show(ctx, |ui| {
+                self.render_preview_panel(ui);
+            });
+            return;
+        }
+
         if left_on {
             egui::SidePanel::left(egui::Id::new(("modern_left", self.settings.timeline_size)))
                 .resizable(true)
