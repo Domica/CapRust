@@ -1006,3 +1006,12 @@ new-preview-header = Prikaz
 # --- Import plugins ---
 menu-file-import-done = Uvoz dovršen.
 toast-import-failed = Uvoz nije uspio: { $err }
+menu-zone-none = Ništa (prazan slot)
+menu-view-modern-zones = Zone modernog uređivanja
+menu-view-modern-add = Dodaj kontejner
+menu-view-modern-remove = Ukloni kontejner
+menu-zone-add-left-top = Lijevo gore
+menu-zone-add-left-bottom = Lijevo dolje
+menu-zone-add-right-top = Desno gore
+menu-zone-add-right-bottom = Desno dolje
+menu-zone-clear = isprazni

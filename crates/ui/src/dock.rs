@@ -15,9 +15,10 @@ use crate::i18n_helper::tr;
 use crate::theme::tokens::{elev, radius};
 
 /// One panel that can live anywhere in the dock tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Tab {
     // Asset browser tabs (six of them, all starting in the left zone).
+    #[default]
     AssetMedia,
     AssetTransitions,
     AssetEffects,
@@ -32,12 +33,6 @@ pub enum Tab {
     Timeline,
     MasterChain,
     MultiCam,
-}
-
-impl Default for Tab {
-    fn default() -> Self {
-        Self::AssetMedia
-    }
 }
 
 impl Tab {

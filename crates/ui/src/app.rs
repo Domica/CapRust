@@ -2834,7 +2834,7 @@ impl CapRustApp {
                                         zone.title_text(),
                                         tr("menu-zone-clear")
                                     );
-                                    if ui.button(format!("{}", label)).clicked() {
+                                    if ui.button(label).clicked() {
                                         zone.clear_zone(&mut self.modern);
                                         ui.close_menu();
                                     }

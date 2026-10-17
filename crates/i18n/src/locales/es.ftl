@@ -1006,3 +1006,12 @@ new-preview-header = Vista previa
 # --- Import plugins ---
 menu-file-import-done = Importación completada.
 toast-import-failed = La importación falló: { $err }
+menu-zone-none = Ninguno (hueco vacío)
+menu-view-modern-zones = Zonas del editor moderno
+menu-view-modern-add = Añadir contenedor
+menu-view-modern-remove = Quitar contenedor
+menu-zone-add-left-top = Izquierda arriba
+menu-zone-add-left-bottom = Izquierda abajo
+menu-zone-add-right-top = Derecha arriba
+menu-zone-add-right-bottom = Derecha abajo
+menu-zone-clear = vaciar
