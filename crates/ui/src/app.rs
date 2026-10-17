@@ -63,6 +63,11 @@ fn default_projects_dir() -> String {
 /// back, so it has to stay reachable.
 const TIMELINE_HANDLE_HEIGHT: f32 = 26.0;
 
+/// Everything in the timeline above the tracks: the title strip, the
+/// separator and the toolbar. Used to size the band so the lanes are never
+/// cut off by the bottom of the window.
+const TIMELINE_CHROME_H: f32 = 68.0;
+
 /// Draw `add` into one rectangle of the Modern frame.
 ///
 /// Kept for the regions that are not panels. Anything that can be a panel
@@ -367,6 +372,12 @@ pub struct CapRustApp {
     /// timeline follows `settings.timeline_size`; picking a size clears this,
     /// which is what makes S/M/L win over an earlier drag.
     pub timeline_drag: Option<f32>,
+    /// Sidebar visibility for the Modern editor. The timeline size presets
+    /// these, but they can be set by hand afterwards -- at M and L the preset
+    /// turns a sidebar off, and without a way to turn it back on the left
+    /// column was simply gone with no way to fill it.
+    pub modern_left_on: bool,
+    pub modern_right_on: bool,
 
     // ---- Remote control (MCP over TCP) ----
     /// Protocol state for the in-app MCP server. Holds no project data;
@@ -1150,6 +1161,8 @@ impl CapRustApp {
             pending_missing_scan: false,
             timeline_collapsed: false,
             timeline_drag: None,
+            modern_left_on: true,
+            modern_right_on: true,
             mcp_server: Default::default(),
             remote_bridge: None,
             remote_last_batch: 0,
@@ -2835,6 +2848,16 @@ impl CapRustApp {
                     // Modern editor zone management submenu
                     if self.settings.layout == caprust_core::LayoutMode::Modern {
                         ui.menu_button(tr("menu-view-modern-zones"), |ui| {
+                            // Visibility first. The timeline size preset
+                            // hides a sidebar at M and L, and without this
+                            // the left column was simply gone with nothing
+                            // to bring it back.
+                            // The panel id carries these flags, so a sidebar
+                            // coming back starts at the preset width rather
+                            // than its last dragged one.
+                            ui.checkbox(&mut self.modern_left_on, tr("menu-zone-side-left"));
+                            ui.checkbox(&mut self.modern_right_on, tr("menu-zone-side-right"));
+                            ui.separator();
                             // Add container, then which side. Both menus go
                             // through `Zone::set`, which inserts at the front
                             // and caps the stack at three -- pushing onto the
@@ -5794,6 +5817,22 @@ impl CapRustApp {
         base.clamp(80.0, (area_h * 0.7).max(80.0))
     }
 
+    /// What the timeline needs in order to show every track.
+    ///
+    /// The band has to be at least this tall or the lanes run off the bottom
+    /// of the window, which is what happened at M: the setting asked for
+    /// 280px and the five lanes with the ruler and the toolbar needed more,
+    /// so the bottom tracks were simply cut away.
+    fn timeline_content_height(&self) -> f32 {
+        let factor = match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => 1.0,
+            caprust_core::TimelineSize::M => 1.3,
+            caprust_core::TimelineSize::L => 1.7,
+        };
+        let lanes: f32 = self.project.tracks.iter().map(|t| t.height * factor).sum();
+        TIMELINE_CHROME_H + crate::timeline::ruler::RULER_HEIGHT + lanes
+    }
+
     /// Drag handle between the preview and the timeline.
     ///
     /// Returns the new height when the user pulled it this frame. The handle
@@ -5866,11 +5905,12 @@ impl CapRustApp {
 
             ui.menu_button(
                 egui::RichText::new(format!(
-                    "{}  {}",
+                    "{}  {}  {}",
                     crate::dock::Tab::Timeline.icon(),
-                    sizes[selected].as_str().to_uppercase()
+                    sizes[selected].as_str().to_uppercase(),
+                    tr(timeline_size_key(sizes[selected])),
                 ))
-                .size(15.0),
+                .size(14.0),
                 |ui| {
                     ui.label(
                         egui::RichText::new(tr("menu-timeline-size"))
@@ -5907,7 +5947,18 @@ impl CapRustApp {
                 },
             );
 
-            let spacer = ((ui.available_width() - 130.0) * 0.5).max(0.0);
+            // Collapse stays out here as well as inside the dropdown: buried
+            // in a menu it read as missing.
+            if ui
+                .add(egui::Button::new(egui::RichText::new("▼").size(12.0)))
+                .on_hover_text(tr("menu-timeline-collapse"))
+                .clicked()
+            {
+                self.timeline_collapsed = true;
+                self.timeline_drag = None;
+            }
+
+            let spacer = ((ui.available_width() - 190.0) * 0.5).max(0.0);
             ui.add_space(spacer);
             ui.label(
                 egui::RichText::new(tr(crate::dock::Tab::Timeline.title_key()))
@@ -5915,12 +5966,14 @@ impl CapRustApp {
                     .size(15.0),
             );
 
-            if self.timeline_drag.is_some() {
-                ui.label(
-                    egui::RichText::new(tr("menu-timeline-reset-size"))
-                        .size(10.0)
-                        .color(ui.visuals().weak_text_color()),
-                );
+            if self.timeline_drag.is_some()
+                && ui
+                    .add(egui::Button::new(
+                        egui::RichText::new(tr("menu-timeline-reset-size")).size(10.0),
+                    ))
+                    .clicked()
+            {
+                self.timeline_drag = None;
             }
         });
     }
@@ -8831,36 +8884,59 @@ impl CapRustApp {
         // 60%; M drops the left one so the timeline takes that side and
         // spans 80%; L drops both and it spans the window.
         //
-        // `exact_width` rather than `default_width`: a default is only a
-        // starting hint, and on the first frame the panel clamps it up to
-        // `min_width`, which is why a 0% sidebar kept showing at 140px.
-        // `exact_width` is the width, every frame, and `min_width(0)` lets
-        // it actually reach zero.
+        // The preset is the *starting* width, not a constant one. Forcing it
+        // every frame with `exact_width` made the sidebars impossible to
+        // resize -- the handle was there, the drag moved, and the next frame
+        // put it back, so the only direction that felt alive was the one
+        // that shrank the gap. `default_width` seeds the panel, the user
+        // drags it wherever they like afterwards, and the panel id carries
+        // the preset so choosing a new size starts a clean panel instead of
+        // resurrecting a width set under the old one.
         let area = ctx.available_rect();
         let (left_frac, right_frac) = match self.settings.timeline_size {
             caprust_core::TimelineSize::S => (0.20, 0.20),
             caprust_core::TimelineSize::M => (0.0, 0.20),
             caprust_core::TimelineSize::L => (0.0, 0.0),
         };
-        let left_w = (area.width() * left_frac).min(area.width() * 0.5);
-        let right_w = (area.width() * right_frac).min(area.width() * 0.5);
+        let left_on = self.modern_left_on && left_frac > 0.0;
+        let right_on = self.modern_right_on && right_frac > 0.0;
+        let left_w = if left_on {
+            (area.width() * left_frac).min(area.width() * 0.5)
+        } else {
+            0.0
+        };
+        let right_w = if right_on {
+            (area.width() * right_frac).min(area.width() * 0.5)
+        } else {
+            0.0
+        };
 
         // Sidebars run the full height of the frame, past the timeline.
         let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
-        egui::SidePanel::left("modern_left")
-            .resizable(true)
-            .exact_width(left_w)
-            .min_width(0.0)
-            .show(ctx, |ui| {
-                self.show_zone_column(ui, split, true);
-            });
-        egui::SidePanel::right("modern_right")
-            .resizable(true)
-            .exact_width(right_w)
-            .min_width(0.0)
-            .show(ctx, |ui| {
-                self.show_zone_column(ui, split, false);
-            });
+        egui::SidePanel::left(egui::Id::new((
+            "modern_left",
+            self.settings.timeline_size,
+            left_on,
+        )))
+        .resizable(true)
+        .default_width(left_w)
+        .min_width(0.0)
+        .max_width(area.width() * 0.5)
+        .show(ctx, |ui| {
+            self.show_zone_column(ui, split, true);
+        });
+        egui::SidePanel::right(egui::Id::new((
+            "modern_right",
+            self.settings.timeline_size,
+            right_on,
+        )))
+        .resizable(true)
+        .default_width(right_w)
+        .min_width(0.0)
+        .max_width(area.width() * 0.5)
+        .show(ctx, |ui| {
+            self.show_zone_column(ui, split, false);
+        });
 
         // The middle column is whatever the sidebars left. The timeline is
         // drawn inside it rather than as a bottom panel, which is the whole
@@ -8869,11 +8945,13 @@ impl CapRustApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let avail_h = ui.available_height();
             let width = ui.available_width();
-            let timeline_h = self.timeline_height(avail_h);
             let band_h = if self.timeline_collapsed {
                 TIMELINE_HANDLE_HEIGHT
             } else {
-                timeline_h
+                // Never smaller than the tracks need, so nothing is cut off.
+                self.timeline_height(avail_h)
+                    .max(self.timeline_content_height())
+                    .min(avail_h * 0.8)
             };
             let preview_h = (avail_h - band_h).max(80.0);
 
@@ -9170,40 +9248,56 @@ impl CapRustApp {
 
         // Add / remove, past every stacked tab on the right.
         //
-        // One control that turns into the other: while there is room it adds
-        // a card, and once the stack is full it takes the back card off
-        // again. Without the second half there was no way back down to a
-        // single card once three had been added -- `+` simply vanished and
-        // the stack could only grow.
-        let ctrl_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.max.x - CTRL_W, rect.min.y),
-            egui::vec2(CTRL_W, rect.height()),
-        );
-        let mut ctrl_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(ctrl_rect)
-                .layout(egui::Layout::top_down(egui::Align::Center)),
-        );
-        let full = stack.len() >= 3;
-        let resp = if full {
-            ctrl_ui
-                .add(egui::Button::new(egui::RichText::new("−").size(13.0)))
-                .on_hover_text(tr("menu-zone-remove-stack"))
-        } else {
-            ctrl_ui
+        // Two controls, not one that swaps. `+` stays rightmost as asked;
+        // `−` sits just inside it and is live at every depth above one.
+        // A single swapping button could only remove at three, so a stack
+        // that reached three could come down to two and then no further --
+        // there was no way back to a single card.
+        let mut ctrl_x = rect.max.x;
+        if stack.len() < 3 {
+            let plus_rect = egui::Rect::from_min_size(
+                egui::pos2(ctrl_x - CTRL_W, rect.min.y),
+                egui::vec2(CTRL_W, rect.height()),
+            );
+            let mut plus_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(plus_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            if plus_ui
                 .add(egui::Button::new(egui::RichText::new("+").size(13.0)))
                 .on_hover_text(tr("menu-zone-add-stack"))
-        };
-        if resp.clicked() {
-            if full {
-                zone.drop_back(&mut self.modern);
-            } else if let Some(next) = crate::dock::Tab::all()
-                .into_iter()
-                .find(|t| !stack.contains(t))
+                .clicked()
             {
-                zone.set(&mut self.modern, next);
+                if let Some(next) = crate::dock::Tab::all()
+                    .into_iter()
+                    .find(|t| !stack.contains(t))
+                {
+                    zone.set(&mut self.modern, next);
+                }
             }
+            ctrl_x -= CTRL_W;
         }
+        if stack.len() > 1 {
+            let minus_rect = egui::Rect::from_min_size(
+                egui::pos2(ctrl_x - CTRL_W, rect.min.y),
+                egui::vec2(CTRL_W, rect.height()),
+            );
+            let mut minus_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(minus_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            if minus_ui
+                .add(egui::Button::new(egui::RichText::new("−").size(13.0)))
+                .on_hover_text(tr("menu-zone-remove-stack"))
+                .clicked()
+            {
+                zone.drop_back(&mut self.modern);
+            }
+            ctrl_x -= CTRL_W;
+        }
+        let _ = ctrl_x;
     }
 
     /// Body of one panel, whichever zone it is sitting in.

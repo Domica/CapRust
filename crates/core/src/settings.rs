@@ -221,7 +221,7 @@ fn default_translate_target() -> String {
 /// Default because that is what the app has always done. Putting
 /// everyone on a layout they never chose on upgrade is not a default, it
 /// is an interruption.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TimelineSize {
     #[default]
