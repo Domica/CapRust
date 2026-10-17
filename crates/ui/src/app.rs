@@ -58,6 +58,11 @@ fn default_projects_dir() -> String {
         .unwrap_or_else(|_| ".".into())
 }
 
+/// Height of the Modern timeline when collapsed: the header strip plus the
+/// toolbar, so the tracks are still one row tall and the pointer still finds
+/// something to click.
+const TIMELINE_COLLAPSED_HEIGHT: f32 = 96.0;
+
 /// Severity of a toast. Error toasts get a red accent and read as
 /// failures; Info is the default for confirmations and status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2801,40 +2806,45 @@ impl CapRustApp {
                     // Modern editor zone management submenu
                     if self.settings.layout == caprust_core::LayoutMode::Modern {
                         ui.menu_button(tr("menu-view-modern-zones"), |ui| {
+                            // Add container, then which side. Both menus go
+                            // through `Zone::set`, which inserts at the front
+                            // and caps the stack at three -- pushing onto the
+                            // `Vec` directly would leave the new card
+                            // invisible behind the existing ones, which is why
+                            // this menu appeared to do nothing.
                             ui.menu_button(tr("menu-view-modern-add"), |ui| {
-                                if ui.button(tr("menu-zone-add-left-top")).clicked() {
-                                    self.modern.left_top.push(crate::dock::Tab::AssetMedia);
-                                    ui.close_menu();
-                                }
-                                if ui.button(tr("menu-zone-add-left-bottom")).clicked() {
-                                    self.modern.left_bottom.push(crate::dock::Tab::AssetEffects);
-                                    ui.close_menu();
-                                }
-                                if ui.button(tr("menu-zone-add-right-top")).clicked() {
-                                    self.modern.right_top.push(crate::dock::Tab::Properties);
-                                    ui.close_menu();
-                                }
-                                if ui.button(tr("menu-zone-add-right-bottom")).clicked() {
-                                    self.modern
-                                        .right_bottom
-                                        .push(crate::dock::Tab::AssetPlugins);
-                                    ui.close_menu();
-                                }
+                                ui.menu_button(tr("menu-zone-side-left"), |ui| {
+                                    for (zone, label) in [
+                                        (Zone::LeftTop, "menu-zone-add-left-top"),
+                                        (Zone::LeftBottom, "menu-zone-add-left-bottom"),
+                                    ] {
+                                        if ui.button(tr(label)).clicked() {
+                                            zone.add_next(&mut self.modern);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                                ui.menu_button(tr("menu-zone-side-right"), |ui| {
+                                    for (zone, label) in [
+                                        (Zone::RightTop, "menu-zone-add-right-top"),
+                                        (Zone::RightBottom, "menu-zone-add-right-bottom"),
+                                    ] {
+                                        if ui.button(tr(label)).clicked() {
+                                            zone.add_next(&mut self.modern);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
                             });
                             ui.separator();
                             ui.menu_button(tr("menu-view-modern-remove"), |ui| {
-                                for zone in [
-                                    Zone::LeftTop,
-                                    Zone::LeftBottom,
-                                    Zone::RightTop,
-                                    Zone::RightBottom,
+                                for (zone, label) in [
+                                    (Zone::LeftTop, "menu-zone-remove-left-top"),
+                                    (Zone::LeftBottom, "menu-zone-remove-left-bottom"),
+                                    (Zone::RightTop, "menu-zone-remove-right-top"),
+                                    (Zone::RightBottom, "menu-zone-remove-right-bottom"),
                                 ] {
-                                    let label = format!(
-                                        "{} - {}",
-                                        zone.title_text(),
-                                        tr("menu-zone-clear")
-                                    );
-                                    if ui.button(label).clicked() {
+                                    if ui.button(tr(label)).clicked() {
                                         zone.clear_zone(&mut self.modern);
                                         ui.close_menu();
                                     }
@@ -5723,6 +5733,8 @@ impl CapRustApp {
         }
     }
 
+    /// Height of one track row at each timeline size. Used to scale the
+    /// lanes so L really is taller than S, not just a taller box.
     fn timeline_height_min(&self) -> f32 {
         match self.settings.timeline_size {
             caprust_core::TimelineSize::S => 120.0,
@@ -5735,21 +5747,32 @@ impl CapRustApp {
     /// Settings for something this small: S fits the space under the
     /// preview, M reaches across the screen, L reaches further and gives
     /// the tracks more room.
+    ///
+    /// The panel is *not* resizable. A resizable `TopBottomPanel` writes the
+    /// dragged height into egui's context state and from then on ignores
+    /// `default_height`, so switching L back to S left the timeline where
+    /// the drag had put it -- the "it does not move back down" report. With
+    /// `exact_height` the height is recomputed every frame, so S/M/L and the
+    /// collapse toggle are the only controls and they always take effect.
     fn show_timeline(&mut self, ctx: &egui::Context) {
         let screen_h = ctx.screen_rect().height();
-        let (def, min) = if self.timeline_collapsed {
-            (60.0, 30.0) // Minimal height when collapsed
+        let wanted = if self.timeline_collapsed {
+            TIMELINE_COLLAPSED_HEIGHT
         } else {
-            (self.timeline_height_default(), self.timeline_height_min())
+            self.timeline_height_default()
         };
+        // Never let the timeline eat more than the window can give, or the
+        // columns above it are pushed off-screen. The floor is one track row
+        // so the lanes never collapse to nothing.
+        let height = wanted
+            .max(self.timeline_height_min())
+            .clamp(80.0, (screen_h * 0.85).max(80.0));
+
         egui::TopBottomPanel::bottom("timeline")
-            .resizable(true)
-            .default_height(def)
-            .min_height(min)
-            .max_height(screen_h * 0.85)
+            .resizable(false)
+            .exact_height(height)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(tr("menu-timeline-size")).strong());
                     let sizes = [
                         caprust_core::TimelineSize::S,
                         caprust_core::TimelineSize::M,
@@ -5760,21 +5783,33 @@ impl CapRustApp {
                         .iter()
                         .position(|s| *s == self.settings.timeline_size)
                         .unwrap_or(0);
+                    if self.timeline_collapsed {
+                        // Picking a size is also how you un-collapse: the
+                        // control has to stay reachable while collapsed.
+                        ui.label(egui::RichText::new("▸").size(14.0));
+                    }
                     let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
                     if let Some(i) = clicked {
                         if i != selected {
                             self.settings.timeline_size = sizes[i];
+                            // Choosing an explicit size while collapsed is a
+                            // request to see the timeline again.
+                            self.timeline_collapsed = false;
                         }
                     }
-                    // Collapse toggle: collapse timeline and expand zones
-                    if ui.button("⏷").clicked() {
+
+                    let arrow = if self.timeline_collapsed {
+                        "▶"
+                    } else {
+                        "▼"
+                    };
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(arrow).size(12.0)))
+                        .on_hover_text(tr("menu-timeline-collapse"))
+                        .clicked()
+                    {
                         self.timeline_collapsed = !self.timeline_collapsed;
                     }
-                    ui.label(if self.timeline_collapsed {
-                        "◀ Collapsed"
-                    } else {
-                        "▶ Expanded"
-                    });
                 });
                 ui.separator();
                 self.render_timeline_panel(ui);
@@ -5783,10 +5818,18 @@ impl CapRustApp {
     pub(crate) fn render_timeline_panel(&mut self, ui: &mut egui::Ui) {
         let ctx_owned = ui.ctx().clone();
         let ctx: &egui::Context = &ctx_owned;
-        let min_h = match self.settings.timeline_size {
-            caprust_core::TimelineSize::S => 140.0,
-            caprust_core::TimelineSize::M => 240.0,
-            caprust_core::TimelineSize::L => 360.0,
+        // The body must never ask for more room than the panel was given,
+        // or `set_min_height` fights `exact_height` and the panel grows
+        // back. Collapsed means the tracks keep their pixels but nothing
+        // else claims space.
+        let min_h = if self.timeline_collapsed {
+            0.0
+        } else {
+            match self.settings.timeline_size {
+                caprust_core::TimelineSize::S => 140.0,
+                caprust_core::TimelineSize::M => 240.0,
+                caprust_core::TimelineSize::L => 360.0,
+            }
         };
         ui.set_min_height(min_h);
         self.project.models.tick_downloads(1.0 / 60.0);
@@ -8674,15 +8717,24 @@ impl CapRustApp {
         self.show_timeline(ctx);
 
         let screen_w = ctx.screen_rect().width();
-        // Column widths depend on timeline size: S=20/60/20, M=20/80/0, L=0/100/0
-        let (left_w, right_w, _) = match self.settings.timeline_size {
-            caprust_core::TimelineSize::S => (screen_w * 0.20, screen_w * 0.20, screen_w * 0.60),
-            caprust_core::TimelineSize::M => (screen_w * 0.20, 0.0, screen_w * 0.80),
-            caprust_core::TimelineSize::L => (0.0, 0.0, screen_w * 1.00),
+        let (left_w, right_w) = match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => (screen_w * 0.20, screen_w * 0.20),
+            caprust_core::TimelineSize::M => (screen_w * 0.20, screen_w * 0.20),
+            caprust_core::TimelineSize::L => (screen_w * 0.20, screen_w * 0.20),
         };
-        let _side_h = ctx.screen_rect().height()
-            - self.timeline_height_default()
-            - self.timeline_height_min();
+
+        // Zones are allocated, not `TopBottomPanel::top`/`bottom`.
+        //
+        // Those two remember a dragged height in egui's context state, and
+        // `default_height` is only consulted on the first frame. Once a
+        // column had been dragged the two panels kept the stale sizes,
+        // stopped meeting in the middle and left a band of dead space --
+        // which is the "the right side is not filled" report, and the same
+        // reason dragging the timeline left the upper zones glued in place.
+        // Both heights here come from the available height every frame, so
+        // the two always add up to exactly what the column was given, and
+        // they return to that split the moment the timeline size changes.
+        let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
 
         egui::SidePanel::left("modern_left")
             .resizable(true)
@@ -8690,24 +8742,7 @@ impl CapRustApp {
             .min_width(140.0)
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
-                let avail = ui.available_height();
-                // Dynamic split: collapsed timeline gives zones more space evenly
-                let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
-                let top_h = avail * split;
-                let bot_h = avail - top_h;
-
-                egui::TopBottomPanel::top("modern_left_top")
-                    .resizable(true)
-                    .default_height(top_h)
-                    .show_inside(ui, |ui| {
-                        self.render_zone(ui, Zone::LeftTop);
-                    });
-                egui::TopBottomPanel::bottom("modern_left_bottom")
-                    .resizable(true)
-                    .default_height(bot_h)
-                    .show_inside(ui, |ui| {
-                        self.render_zone(ui, Zone::LeftBottom);
-                    });
+                self.show_zone_column(ui, split, true);
             });
 
         egui::SidePanel::right("modern_right")
@@ -8716,24 +8751,7 @@ impl CapRustApp {
             .min_width(240.0)
             .max_width(screen_w * 0.5)
             .show(ctx, |ui| {
-                let avail = ui.available_height();
-                // Dynamic split: collapsed timeline gives zones more space evenly
-                let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
-                let top_h = avail * split;
-                let bot_h = avail - top_h;
-
-                egui::TopBottomPanel::top("modern_right_top")
-                    .resizable(true)
-                    .default_height(top_h)
-                    .show_inside(ui, |ui| {
-                        self.render_zone(ui, Zone::RightTop);
-                    });
-                egui::TopBottomPanel::bottom("modern_right_bottom")
-                    .resizable(true)
-                    .default_height(bot_h)
-                    .show_inside(ui, |ui| {
-                        self.render_zone(ui, Zone::RightBottom);
-                    });
+                self.show_zone_column(ui, split, false);
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -8741,62 +8759,238 @@ impl CapRustApp {
         });
     }
 
-    /// One zone: stacked cards (up to 3 like poker cards) with a picker.
+    /// One side column of the Modern editor: two zones filling the whole
+    /// column height, with a small gap between them.
+    ///
+    /// `split` is the fraction of the column the top zone takes. The gap is
+    /// subtracted before dividing, so the two zones plus the gap always
+    /// equal the height the column was handed -- no dead band, whatever the
+    /// timeline is doing.
+    fn show_zone_column(&mut self, ui: &mut egui::Ui, split: f32, left: bool) {
+        const GAP: f32 = 6.0;
+        let (top, bottom) = if left {
+            (Zone::LeftTop, Zone::LeftBottom)
+        } else {
+            (Zone::RightTop, Zone::RightBottom)
+        };
+
+        let avail_h = ui.available_height();
+        let usable = (avail_h - GAP).max(0.0);
+        let top_h = usable * split;
+        let bot_h = usable - top_h;
+        let width = ui.available_width();
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, top_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(top_h);
+                self.render_zone(ui, top);
+            },
+        );
+        ui.add_space(GAP);
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, bot_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(bot_h);
+                self.render_zone(ui, bottom);
+            },
+        );
+    }
+
+    /// One zone: a stack of up to three cards, like a hand held face-down.
+    ///
+    /// The front card carries the panel and the whole zone's title. The ones
+    /// behind it show only their icon and name on a thin strip, each one
+    /// offset a little further down-right and dimmer, so the stack reads as
+    /// depth rather than as a list. Clicking a strip brings that card to the
+    /// front.
     fn render_zone(&mut self, ui: &mut egui::Ui, zone: Zone) {
-        let current = zone.tab(&self.modern);
+        let stack = zone.stacked_tabs(&self.modern);
         let accent = self.theme.accent_color();
-        // 3D-shaded frame: bright top-left, dark bottom-right, accent-tinted fill
-        let highlight = accent.gamma_multiply(1.4);
-        let shadow = accent.gamma_multiply(0.35);
-        let bg_fill = ui.style().visuals.window_fill().gamma_multiply(1.05);
-        let frame = egui::Frame::group(ui.style())
-            .corner_radius(egui::CornerRadius::same(12))
-            .inner_margin(egui::Margin::same(10))
-            .stroke(egui::Stroke::new(1.5, shadow))
-            .fill(bg_fill)
-            .shadow(egui::epaint::Shadow {
-                offset: [4, 4],
-                blur: 8,
-                spread: 1,
-                color: highlight,
-            })
+
+        // Bevel: a dark edge along the bottom-right and a lit edge along the
+        // top-left, both drawn on the same rounded rect. A single uniform
+        // stroke -- which is all `Frame` gives -- reads as a flat outline,
+        // which is what "it is not 3D" was about. The lit edge is derived
+        // from the card's own fill so it works in light and dark themes.
+        let card_fill = ui.style().visuals.extreme_bg_color.gamma_multiply(1.04);
+        let lit = ui
+            .style()
+            .visuals
+            .widgets
+            .noninteractive
+            .bg_stroke
+            .color
+            .gamma_multiply(1.9);
+        let shade = accent.gamma_multiply(0.55);
+        let rounding = egui::CornerRadius::same(10);
+
+        let outer = egui::Frame::new()
+            .fill(card_fill)
+            .corner_radius(rounding)
+            .inner_margin(egui::Margin::same(8))
+            .outer_margin(egui::Margin::same(4))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.menu_button(
-                        egui::RichText::new(format!(
-                            "{}  {}",
-                            current.icon(),
-                            tr(current.title_key())
-                        ))
-                        .size(16.0),
-                        |ui| {
-                            for tab in crate::dock::Tab::all() {
-                                let sel = current == tab;
-                                if ui
-                                    .selectable_label(
-                                        sel,
-                                        format!("{}  {}", tab.icon(), tr(tab.title_key())),
-                                    )
-                                    .clicked()
-                                {
-                                    zone.set(&mut self.modern, tab);
-                                    ui.close_menu();
-                                }
-                            }
-                        },
-                    );
-                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(tr(current.title_key()))
-                                .strong()
-                                .size(15.0),
-                        );
-                    });
-                });
+                self.render_zone_header(ui, zone, &stack);
                 ui.separator();
-                self.render_tab_body(ui, current);
+
+                // Cards behind the front one, painted first so the front
+                // card's fill covers their overlap.
+                for (i, tab) in stack.iter().enumerate().skip(1).rev() {
+                    let depth = i as f32;
+                    let dims = 1.0 - 0.22 * depth;
+                    let card_h = 22.0 + depth * 2.0;
+                    // Reserve a little less than the full width so the
+                    // rightward offset stays inside the frame.
+                    let w = (ui.available_width() - depth * 6.0).max(40.0);
+                    let (slot, _) =
+                        ui.allocate_exact_size(egui::vec2(w, card_h), egui::Sense::hover());
+                    // Each card behind is nudged right and down, so three
+                    // of them read as one stack of cards.
+                    let card = slot.translate(egui::vec2(depth * 6.0, depth * 3.0));
+                    let painter = ui.painter();
+                    painter.rect_filled(
+                        card,
+                        egui::CornerRadius::same(8),
+                        card_fill.gamma_multiply(dims * 0.9),
+                    );
+                    painter.rect_stroke(
+                        card,
+                        egui::CornerRadius::same(8),
+                        egui::Stroke::new(1.0, shade.gamma_multiply(dims)),
+                        egui::StrokeKind::Inside,
+                    );
+                    let style = ui.style();
+                    let _ = style;
+                    // Draw the label with a real child `Ui` on the card's
+                    // rect: `Painter::layout` is not worth the argument
+                    // churn for one line of text.
+                    let mut card_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(card)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
+                    card_ui.label(
+                        egui::RichText::new(format!("{}  {}", tab.icon(), tr(tab.title_key())))
+                            .size(11.0 + depth)
+                            .color(ui.visuals().weak_text_color().gamma_multiply(dims)),
+                    );
+                    if ui
+                        .interact(
+                            card,
+                            ui.id().with(("zone_card", tab.title_key())),
+                            egui::Sense::click(),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        zone.promote(&mut self.modern, *tab);
+                    }
+                }
+
+                if let Some(front) = stack.first().copied() {
+                    self.render_tab_body(ui, front);
+                } else {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(tr("menu-zone-empty"))
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.add_space(4.0);
+                }
             });
-        let _ = frame;
+
+        // The bevel, drawn on the frame's own rect.
+        let rect = outer.response.rect;
+        let painter = ui.painter_at(rect);
+        painter.rect_stroke(
+            rect,
+            rounding,
+            egui::Stroke::new(1.0, shade),
+            egui::StrokeKind::Middle,
+        );
+        painter.rect_stroke(
+            rect.translate(egui::vec2(-1.0, -1.0)),
+            rounding,
+            egui::Stroke::new(1.0, lit),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    /// The zone's title strip: dropdown on the left, name in the middle,
+    /// stack depth and an add button on the right.
+    fn render_zone_header(&mut self, ui: &mut egui::Ui, zone: Zone, stack: &[crate::dock::Tab]) {
+        let current = zone.tab(&self.modern);
+        ui.horizontal(|ui| {
+            ui.menu_button(
+                egui::RichText::new(format!("{}  {}", current.icon(), tr(current.title_key())))
+                    .size(15.0),
+                |ui| {
+                    for tab in crate::dock::Tab::all() {
+                        let sel = stack.first() == Some(&tab);
+                        let behind = stack.contains(&tab);
+                        if ui
+                            .selectable_label(
+                                sel,
+                                format!(
+                                    "{}  {}{}",
+                                    tab.icon(),
+                                    tr(tab.title_key()),
+                                    if behind && !sel { "   ▾" } else { "" }
+                                ),
+                            )
+                            .clicked()
+                        {
+                            zone.set(&mut self.modern, tab);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .selectable_label(stack.is_empty(), tr("menu-zone-none"))
+                        .clicked()
+                    {
+                        zone.clear_zone(&mut self.modern);
+                        ui.close_menu();
+                    }
+                },
+            );
+
+            // Title centred in whatever is left after the two ends.
+            let spacer = ((ui.available_width() - 110.0) * 0.5).max(0.0);
+            ui.add_space(spacer);
+            ui.label(
+                egui::RichText::new(tr(current.title_key()))
+                    .strong()
+                    .size(15.0),
+            );
+
+            if stack.len() > 1 {
+                ui.label(
+                    egui::RichText::new(format!("{}/{}", stack.len(), 3))
+                        .size(11.0)
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+            if stack.len() < 3 {
+                if ui
+                    .add(egui::Button::new(egui::RichText::new("+").size(14.0)))
+                    .on_hover_text(tr("menu-zone-add-stack"))
+                    .clicked()
+                {
+                    if let Some(next) = crate::dock::Tab::all()
+                        .into_iter()
+                        .find(|t| !stack.contains(t))
+                    {
+                        zone.set(&mut self.modern, next);
+                    }
+                }
+            } else {
+                ui.add_space(18.0);
+            }
+        });
     }
 
     /// Body of one panel, whichever zone it is sitting in.
@@ -12718,6 +12912,50 @@ impl Zone {
                     state.right_bottom.insert(0, tab);
                 }
             }
+        }
+    }
+
+    /// Put the first panel this zone does not already hold at the front.
+    ///
+    /// Used by View -> Add container. An empty zone takes the editor's
+    /// default for that slot, so adding to a cleared zone gets the zone back
+    /// rather than leaving it blank.
+    pub fn add_next(self, state: &mut ModernState) {
+        let fallback = self.default_tab();
+        let existing: Vec<crate::dock::Tab> = match self {
+            Self::LeftTop => state.left_top.clone(),
+            Self::LeftBottom => state.left_bottom.clone(),
+            Self::RightTop => state.right_top.clone(),
+            Self::RightBottom => state.right_bottom.clone(),
+        };
+        let next = crate::dock::Tab::all()
+            .into_iter()
+            .find(|t| !existing.contains(t))
+            .unwrap_or(fallback);
+        self.set(state, next);
+    }
+
+    /// The panel a zone falls back to, and what `None` leaves behind.
+    pub fn default_tab(self) -> crate::dock::Tab {
+        match self {
+            Self::LeftTop => crate::dock::Tab::AssetMedia,
+            Self::LeftBottom => crate::dock::Tab::AssetEffects,
+            Self::RightTop => crate::dock::Tab::Properties,
+            Self::RightBottom => crate::dock::Tab::AssetPlugins,
+        }
+    }
+
+    /// Bring a card that is already in this zone to the front.
+    pub fn promote(self, state: &mut ModernState, tab: crate::dock::Tab) {
+        let stack = match self {
+            Self::LeftTop => &mut state.left_top,
+            Self::LeftBottom => &mut state.left_bottom,
+            Self::RightTop => &mut state.right_top,
+            Self::RightBottom => &mut state.right_bottom,
+        };
+        if let Some(at) = stack.iter().position(|t| *t == tab) {
+            let tab = stack.remove(at);
+            stack.insert(0, tab);
         }
     }
 
