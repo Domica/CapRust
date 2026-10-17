@@ -35,7 +35,9 @@ pub enum Tab {
 }
 
 impl Default for Tab {
-    fn default() -> Self { Self::AssetMedia }
+    fn default() -> Self {
+        Self::AssetMedia
+    }
 }
 
 impl Tab {

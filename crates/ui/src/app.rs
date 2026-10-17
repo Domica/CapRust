@@ -2815,14 +2815,25 @@ impl CapRustApp {
                                     ui.close_menu();
                                 }
                                 if ui.button(tr("menu-zone-add-right-bottom")).clicked() {
-                                    self.modern.right_bottom.push(crate::dock::Tab::AssetPlugins);
+                                    self.modern
+                                        .right_bottom
+                                        .push(crate::dock::Tab::AssetPlugins);
                                     ui.close_menu();
                                 }
                             });
                             ui.separator();
                             ui.menu_button(tr("menu-view-modern-remove"), |ui| {
-                                for zone in [Zone::LeftTop, Zone::LeftBottom, Zone::RightTop, Zone::RightBottom] {
-                                    let label = format!("{} - {}", zone.title_text(), tr("menu-zone-clear"));
+                                for zone in [
+                                    Zone::LeftTop,
+                                    Zone::LeftBottom,
+                                    Zone::RightTop,
+                                    Zone::RightBottom,
+                                ] {
+                                    let label = format!(
+                                        "{} - {}",
+                                        zone.title_text(),
+                                        tr("menu-zone-clear")
+                                    );
                                     if ui.button(format!("{}", label)).clicked() {
                                         zone.clear_zone(&mut self.modern);
                                         ui.close_menu();
@@ -5759,7 +5770,11 @@ impl CapRustApp {
                     if ui.button("⏷").clicked() {
                         self.timeline_collapsed = !self.timeline_collapsed;
                     }
-                    ui.label(if self.timeline_collapsed { "◀ Collapsed" } else { "▶ Expanded" });
+                    ui.label(if self.timeline_collapsed {
+                        "◀ Collapsed"
+                    } else {
+                        "▶ Expanded"
+                    });
                 });
                 ui.separator();
                 self.render_timeline_panel(ui);
@@ -8665,7 +8680,9 @@ impl CapRustApp {
             caprust_core::TimelineSize::M => (screen_w * 0.20, 0.0, screen_w * 0.80),
             caprust_core::TimelineSize::L => (0.0, 0.0, screen_w * 1.00),
         };
-        let _side_h = ctx.screen_rect().height() - self.timeline_height_default() - self.timeline_height_min();
+        let _side_h = ctx.screen_rect().height()
+            - self.timeline_height_default()
+            - self.timeline_height_min();
 
         egui::SidePanel::left("modern_left")
             .resizable(true)
@@ -12621,10 +12638,26 @@ impl Zone {
     /// The active panel this zone is showing (first in the stack).
     pub fn tab(self, state: &ModernState) -> crate::dock::Tab {
         match self {
-            Self::LeftTop => state.left_top.first().cloned().unwrap_or(crate::dock::Tab::AssetMedia),
-            Self::LeftBottom => state.left_bottom.first().cloned().unwrap_or(crate::dock::Tab::AssetEffects),
-            Self::RightTop => state.right_top.first().cloned().unwrap_or(crate::dock::Tab::Properties),
-            Self::RightBottom => state.right_bottom.first().cloned().unwrap_or(crate::dock::Tab::AssetPlugins),
+            Self::LeftTop => state
+                .left_top
+                .first()
+                .cloned()
+                .unwrap_or(crate::dock::Tab::AssetMedia),
+            Self::LeftBottom => state
+                .left_bottom
+                .first()
+                .cloned()
+                .unwrap_or(crate::dock::Tab::AssetEffects),
+            Self::RightTop => state
+                .right_top
+                .first()
+                .cloned()
+                .unwrap_or(crate::dock::Tab::Properties),
+            Self::RightBottom => state
+                .right_bottom
+                .first()
+                .cloned()
+                .unwrap_or(crate::dock::Tab::AssetPlugins),
         }
     }
 
