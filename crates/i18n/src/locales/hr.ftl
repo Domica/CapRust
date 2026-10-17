@@ -1023,3 +1023,4 @@ menu-zone-remove-left-top = Lijevo · gornji slot
 menu-zone-remove-left-bottom = Lijevo · donji slot
 menu-zone-remove-right-top = Desno · gornji slot
 menu-zone-remove-right-bottom = Desno · donji slot
+menu-timeline-reset-size = Natrag na postavku veličine

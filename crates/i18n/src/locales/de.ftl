@@ -1023,3 +1023,4 @@ menu-zone-remove-left-top = Links · oberer Platz
 menu-zone-remove-left-bottom = Links · unterer Platz
 menu-zone-remove-right-top = Rechts · oberer Platz
 menu-zone-remove-right-bottom = Rechts · unterer Platz
+menu-timeline-reset-size = Zurück zur Größeneinstellung

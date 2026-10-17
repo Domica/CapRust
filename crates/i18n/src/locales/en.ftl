@@ -1023,3 +1023,4 @@ menu-zone-remove-left-top = Left · top slot
 menu-zone-remove-left-bottom = Left · bottom slot
 menu-zone-remove-right-top = Right · top slot
 menu-zone-remove-right-bottom = Right · bottom slot
+menu-timeline-reset-size = Back to the size setting

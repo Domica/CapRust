@@ -1023,3 +1023,4 @@ menu-zone-remove-left-top = Sinistra · slot superiore
 menu-zone-remove-left-bottom = Sinistra · slot inferiore
 menu-zone-remove-right-top = Destra · slot superiore
 menu-zone-remove-right-bottom = Destra · slot inferiore
+menu-timeline-reset-size = Torna all'impostazione di dimensione

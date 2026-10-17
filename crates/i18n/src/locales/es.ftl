@@ -1023,3 +1023,4 @@ menu-zone-remove-left-top = Izquierda · ranura superior
 menu-zone-remove-left-bottom = Izquierda · ranura inferior
 menu-zone-remove-right-top = Derecha · ranura superior
 menu-zone-remove-right-bottom = Derecha · ranura inferior
+menu-timeline-reset-size = Volver al ajuste de tamaño

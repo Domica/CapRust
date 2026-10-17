@@ -58,10 +58,33 @@ fn default_projects_dir() -> String {
         .unwrap_or_else(|_| ".".into())
 }
 
-/// Height of the Modern timeline when collapsed: the header strip plus the
-/// toolbar, so the tracks are still one row tall and the pointer still finds
-/// something to click.
-const TIMELINE_COLLAPSED_HEIGHT: f32 = 96.0;
+/// Height of the strip left along the bottom of the Modern editor when the
+/// timeline is collapsed. It carries the control that brings the timeline
+/// back, so it has to stay reachable.
+const TIMELINE_HANDLE_HEIGHT: f32 = 26.0;
+
+/// Draw `add` into one rectangle of the Modern frame.
+///
+/// The frame is laid out as rectangles rather than through egui's panels,
+/// because a panel can only claim space from an edge and this frame needs the
+/// timeline to span a fraction of the width while both sidebars run past it
+/// at full height. An `Area` at a fixed position with the rectangle's size
+/// and clip does that without keeping a size of its own between frames.
+fn draw_region(
+    ctx: &egui::Context,
+    id: &'static str,
+    rect: egui::Rect,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Area::new(egui::Id::new(id))
+        .fixed_pos(rect.min)
+        .order(egui::Order::Middle)
+        .show(ctx, |ui| {
+            ui.set_max_size(rect.size());
+            ui.set_clip_rect(rect);
+            add(ui);
+        });
+}
 
 /// Severity of a toast. Error toasts get a red accent and read as
 /// failures; Info is the default for confirmations and status.
@@ -337,8 +360,13 @@ pub struct CapRustApp {
     /// A missing-media scan that was postponed because a recovery
     /// offer was on screen. Runs as soon as that offer is answered.
     pub pending_missing_scan: bool,
-    /// Timeline collapsed: minimizes timeline so zones expand evenly.
+    /// Timeline collapsed: the timeline is replaced by a handle strip and
+    /// the columns take the whole height.
     pub timeline_collapsed: bool,
+    /// Height the user dragged the Modern timeline to. `None` means the
+    /// timeline follows `settings.timeline_size`; picking a size clears this,
+    /// which is what makes S/M/L win over an earlier drag.
+    pub timeline_drag: Option<f32>,
 
     // ---- Remote control (MCP over TCP) ----
     /// Protocol state for the in-app MCP server. Holds no project data;
@@ -1121,6 +1149,7 @@ impl CapRustApp {
             recovery_slot_path: None,
             pending_missing_scan: false,
             timeline_collapsed: false,
+            timeline_drag: None,
             mcp_server: Default::default(),
             remote_bridge: None,
             remote_last_batch: 0,
@@ -5743,78 +5772,159 @@ impl CapRustApp {
         }
     }
 
-    /// The picker lives on the timeline itself so the user does not open
-    /// Settings for something this small: S fits the space under the
-    /// preview, M reaches across the screen, L reaches further and gives
-    /// the tracks more room.
+    /// The timeline's own height, in logical pixels.
     ///
-    /// The panel is *not* resizable. A resizable `TopBottomPanel` writes the
-    /// dragged height into egui's context state and from then on ignores
-    /// `default_height`, so switching L back to S left the timeline where
-    /// the drag had put it -- the "it does not move back down" report. With
-    /// `exact_height` the height is recomputed every frame, so S/M/L and the
-    /// collapse toggle are the only controls and they always take effect.
-    fn show_timeline(&mut self, ctx: &egui::Context) {
-        let screen_h = ctx.screen_rect().height();
-        let wanted = if self.timeline_collapsed {
-            TIMELINE_COLLAPSED_HEIGHT
-        } else {
-            self.timeline_height_default()
-        };
-        // Never let the timeline eat more than the window can give, or the
-        // columns above it are pushed off-screen. The floor is one track row
-        // so the lanes never collapse to nothing.
-        let height = wanted
-            .max(self.timeline_height_min())
-            .clamp(80.0, (screen_h * 0.85).max(80.0));
+    /// `timeline_drag` is the height the user pulled to, and it wins while
+    /// it is set -- dragging is still allowed, because that is how the
+    /// timeline has always been sized and taking it away made the layout
+    /// feel fixed. What changed is who remembers it: a resizable
+    /// `TopBottomPanel` stores the dragged height in egui's context state,
+    /// where `default_height` can no longer reach it, and picking a size
+    /// afterwards did nothing. Here the drag lives in a field the selector
+    /// clears, so S/M/L always wins over the drag and the timeline always
+    /// comes back to where the size says it should be.
+    fn timeline_height(&self, area_h: f32) -> f32 {
+        if self.timeline_collapsed {
+            return TIMELINE_HANDLE_HEIGHT;
+        }
+        let base = self
+            .timeline_drag
+            .unwrap_or_else(|| self.timeline_height_default())
+            .max(self.timeline_height_min());
+        base.clamp(80.0, (area_h * 0.7).max(80.0))
+    }
 
-        egui::TopBottomPanel::bottom("timeline")
-            .resizable(false)
-            .exact_height(height)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let sizes = [
-                        caprust_core::TimelineSize::S,
-                        caprust_core::TimelineSize::M,
-                        caprust_core::TimelineSize::L,
-                    ];
-                    let labels: Vec<_> = sizes.iter().map(|s| tr(timeline_size_key(*s))).collect();
-                    let selected = sizes
-                        .iter()
-                        .position(|s| *s == self.settings.timeline_size)
-                        .unwrap_or(0);
-                    if self.timeline_collapsed {
-                        // Picking a size is also how you un-collapse: the
-                        // control has to stay reachable while collapsed.
-                        ui.label(egui::RichText::new("▸").size(14.0));
-                    }
-                    let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
-                    if let Some(i) = clicked {
-                        if i != selected {
-                            self.settings.timeline_size = sizes[i];
-                            // Choosing an explicit size while collapsed is a
-                            // request to see the timeline again.
+    /// Drag handle between the preview and the timeline.
+    ///
+    /// Returns the new height when the user pulled it this frame. The handle
+    /// is drawn in its own layer so it sits on the boundary regardless of
+    /// what the two regions painted.
+    fn timeline_drag_separator(&mut self, ui: &mut egui::Ui, y: f32, max_h: f32) {
+        const HANDLE: f32 = 7.0;
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(ui.available_width() * 0.5, y),
+            egui::vec2(ui.available_width(), HANDLE),
+        );
+        let painter = ui.painter_at(rect);
+        let resp = ui.interact(rect, ui.id().with("timeline_drag"), egui::Sense::drag());
+        let accent = self.theme.accent_color();
+        let hot = resp.hovered() || resp.dragged();
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(3),
+            if hot {
+                accent.gamma_multiply(0.55)
+            } else {
+                ui.visuals().widgets.noninteractive.bg_stroke.color
+            },
+        );
+
+        if resp.dragged() {
+            // `dy` is negative when the pointer moves up, which is a taller
+            // timeline, so the sign is flipped.
+            let dy = ui.input(|i| i.pointer.delta().y);
+            let next = (self.timeline_drag.unwrap_or(self.timeline_height_default()) - dy)
+                .clamp(self.timeline_height_min(), max_h);
+            self.timeline_drag = Some(next);
+        }
+    }
+
+    /// The strip left along the bottom when the timeline is collapsed.
+    fn show_timeline_handle(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_centered(|ui| {
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new(format!(
+                        "▴  {}",
+                        tr(crate::dock::Tab::Timeline.title_key())
+                    ))
+                    .size(12.0),
+                ))
+                .on_hover_text(tr("menu-timeline-collapse"))
+                .clicked()
+            {
+                self.timeline_collapsed = false;
+                self.timeline_drag = None;
+            }
+        });
+    }
+
+    /// The timeline's title strip: the picker lives in the dropdown on the
+    /// left, the title sits in the middle, like every other container in
+    /// this editor.
+    fn show_timeline_header(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let sizes = [
+                caprust_core::TimelineSize::S,
+                caprust_core::TimelineSize::M,
+                caprust_core::TimelineSize::L,
+            ];
+            let selected = sizes
+                .iter()
+                .position(|s| *s == self.settings.timeline_size)
+                .unwrap_or(0);
+
+            ui.menu_button(
+                egui::RichText::new(format!(
+                    "{}  {}",
+                    crate::dock::Tab::Timeline.icon(),
+                    sizes[selected].as_str().to_uppercase()
+                ))
+                .size(15.0),
+                |ui| {
+                    ui.label(
+                        egui::RichText::new(tr("menu-timeline-size"))
+                            .strong()
+                            .size(12.0),
+                    );
+                    ui.separator();
+                    for (i, size) in sizes.iter().enumerate() {
+                        let label = format!(
+                            "{}   {}",
+                            if i == selected { "●" } else { "○" },
+                            tr(timeline_size_key(*size))
+                        );
+                        if ui.selectable_label(i == selected, label).clicked() {
+                            self.settings.timeline_size = *size;
+                            // Picking a size is a request to see the
+                            // timeline at that size, so the drag that set
+                            // some other height is dropped.
+                            self.timeline_drag = None;
                             self.timeline_collapsed = false;
+                            ui.close_menu();
                         }
                     }
-
-                    let arrow = if self.timeline_collapsed {
-                        "▶"
-                    } else {
-                        "▼"
-                    };
-                    if ui
-                        .add(egui::Button::new(egui::RichText::new(arrow).size(12.0)))
-                        .on_hover_text(tr("menu-timeline-collapse"))
-                        .clicked()
-                    {
-                        self.timeline_collapsed = !self.timeline_collapsed;
+                    ui.separator();
+                    if ui.button(tr("menu-timeline-collapse")).clicked() {
+                        self.timeline_collapsed = true;
+                        self.timeline_drag = None;
+                        ui.close_menu();
                     }
-                });
-                ui.separator();
-                self.render_timeline_panel(ui);
-            });
+                    if ui.button(tr("menu-timeline-reset-size")).clicked() {
+                        self.timeline_drag = None;
+                        ui.close_menu();
+                    }
+                },
+            );
+
+            let spacer = ((ui.available_width() - 130.0) * 0.5).max(0.0);
+            ui.add_space(spacer);
+            ui.label(
+                egui::RichText::new(tr(crate::dock::Tab::Timeline.title_key()))
+                    .strong()
+                    .size(15.0),
+            );
+
+            if self.timeline_drag.is_some() {
+                ui.label(
+                    egui::RichText::new(tr("menu-timeline-reset-size"))
+                        .size(10.0)
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+        });
     }
+
     pub(crate) fn render_timeline_panel(&mut self, ui: &mut egui::Ui) {
         let ctx_owned = ui.ctx().clone();
         let ctx: &egui::Context = &ctx_owned;
@@ -8714,49 +8824,98 @@ impl CapRustApp {
         // Bottom first: it reserves its space, so the columns below see
         // only what is left.
         self.show_jobs_bar(ctx);
-        self.show_timeline(ctx);
 
-        let screen_w = ctx.screen_rect().width();
-        let (left_w, right_w) = match self.settings.timeline_size {
-            caprust_core::TimelineSize::S => (screen_w * 0.20, screen_w * 0.20),
-            caprust_core::TimelineSize::M => (screen_w * 0.20, screen_w * 0.20),
-            caprust_core::TimelineSize::L => (screen_w * 0.20, screen_w * 0.20),
-        };
-
-        // Zones are allocated, not `TopBottomPanel::top`/`bottom`.
+        // The whole Modern frame is laid out here rather than by egui's
+        // panels.
         //
-        // Those two remember a dragged height in egui's context state, and
-        // `default_height` is only consulted on the first frame. Once a
-        // column had been dragged the two panels kept the stale sizes,
-        // stopped meeting in the middle and left a band of dead space --
-        // which is the "the right side is not filled" report, and the same
-        // reason dragging the timeline left the upper zones glued in place.
-        // Both heights here come from the available height every frame, so
-        // the two always add up to exactly what the column was given, and
-        // they return to that split the moment the timeline size changes.
-        let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
+        // `SidePanel` and `TopBottomPanel` can only claim their space from
+        // the edges, so they cannot express "the timeline spans 60% and the
+        // two sidebars run past it at full height", which is what S is.
+        // Getting that meant fighting the panels: a zero `default_width`
+        // clamped back to `min_width`, and a resizable panel remembered a
+        // dragged height that `default_height` could not override. So the
+        // frame is computed as rectangles and each region is drawn into the
+        // rectangle it was given, with no stored sizes anywhere.
+        let area = ctx.available_rect();
 
-        egui::SidePanel::left("modern_left")
-            .resizable(true)
-            .default_width(left_w)
-            .min_width(140.0)
-            .max_width(screen_w * 0.5)
-            .show(ctx, |ui| {
+        // Sidebars and the middle, as fractions of the frame's width.
+        // S keeps both sidebars and the timeline sits between them; M drops
+        // the left one and the timeline takes that side; L drops both.
+        let (left_frac, right_frac) = match self.settings.timeline_size {
+            caprust_core::TimelineSize::S => (0.20, 0.20),
+            caprust_core::TimelineSize::M => (0.0, 0.20),
+            caprust_core::TimelineSize::L => (0.0, 0.0),
+        };
+        let left_w = area.width() * left_frac;
+        let right_w = area.width() * right_frac;
+        let timeline_h = self.timeline_height(area.height());
+
+        let left_rect = egui::Rect::from_min_size(area.min, egui::vec2(left_w, area.height()));
+        let right_rect = egui::Rect::from_min_size(
+            egui::pos2(area.max.x - right_w, area.min.y),
+            egui::vec2(right_w, area.height()),
+        );
+        let middle_x0 = area.min.x + left_w;
+        let middle_x1 = area.max.x - right_w;
+
+        // Sidebars run the full height of the frame, past the timeline.
+        let split = if self.timeline_collapsed { 0.5 } else { 0.55 };
+        if left_w > 1.0 {
+            draw_region(ctx, "modern_left", left_rect, |ui| {
                 self.show_zone_column(ui, split, true);
             });
-
-        egui::SidePanel::right("modern_right")
-            .resizable(true)
-            .default_width(right_w)
-            .min_width(240.0)
-            .max_width(screen_w * 0.5)
-            .show(ctx, |ui| {
+        }
+        if right_w > 1.0 {
+            draw_region(ctx, "modern_right", right_rect, |ui| {
                 self.show_zone_column(ui, split, false);
             });
+        }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_preview_panel(ui);
-        });
+        // The middle column: preview on top, timeline band underneath for
+        // as much width as this size gives it.
+        let middle_w = (middle_x1 - middle_x0).max(0.0);
+        let preview_h = (area.height() - timeline_h).max(80.0);
+        let preview_rect = egui::Rect::from_min_size(
+            area.min + egui::vec2(left_w, 0.0),
+            egui::vec2(middle_w, preview_h),
+        );
+        if middle_w > 1.0 {
+            draw_region(ctx, "modern_preview", preview_rect, |ui| {
+                self.render_preview_panel(ui);
+            });
+
+            // The handle sits on the seam, drawn last so it is on top of
+            // both regions.
+            let seam = egui::Rect::from_min_size(
+                egui::pos2(middle_x0, preview_rect.max.y - 5.0),
+                egui::vec2(middle_w, 10.0),
+            );
+            draw_region(ctx, "modern_timeline_seam", seam, |ui| {
+                self.timeline_drag_separator(ui, 5.0, area.height() * 0.7);
+            });
+        }
+
+        let tl_rect = egui::Rect::from_min_size(
+            egui::pos2(middle_x0, area.max.y - timeline_h),
+            egui::vec2(middle_w, timeline_h),
+        );
+        if !self.timeline_collapsed && middle_w > 1.0 {
+            draw_region(ctx, "modern_timeline", tl_rect, |ui| {
+                self.show_timeline_header(ui);
+                ui.separator();
+                self.render_timeline_panel(ui);
+            });
+        } else {
+            // Collapsed: a handle along the bottom of the middle column, so
+            // the timeline can be brought back.
+            let handle = egui::Rect::from_min_size(
+                egui::pos2(middle_x0, area.max.y - TIMELINE_HANDLE_HEIGHT),
+                egui::vec2(middle_w, TIMELINE_HANDLE_HEIGHT),
+            );
+            draw_region(ctx, "modern_timeline_handle", handle, |ui| {
+                self.show_timeline_handle(ui);
+            });
+        }
     }
 
     /// One side column of the Modern editor: two zones filling the whole
@@ -8833,62 +8992,16 @@ impl CapRustApp {
             .inner_margin(egui::Margin::same(8))
             .outer_margin(egui::Margin::same(4))
             .show(ui, |ui| {
-                self.render_zone_header(ui, zone, &stack);
-                ui.separator();
+                // The title strip is one row: the picker on the left, the
+                // front card's name in the middle, and the cards behind it
+                // as narrow tabs on the right -- the shape in the sketch.
+                let header_h = 24.0;
+                let w = ui.available_width();
+                let (header, _) =
+                    ui.allocate_exact_size(egui::vec2(w, header_h), egui::Sense::hover());
+                self.render_zone_header(ui, zone, &stack, header);
 
-                // Cards behind the front one, painted first so the front
-                // card's fill covers their overlap.
-                for (i, tab) in stack.iter().enumerate().skip(1).rev() {
-                    let depth = i as f32;
-                    let dims = 1.0 - 0.22 * depth;
-                    let card_h = 22.0 + depth * 2.0;
-                    // Reserve a little less than the full width so the
-                    // rightward offset stays inside the frame.
-                    let w = (ui.available_width() - depth * 6.0).max(40.0);
-                    let (slot, _) =
-                        ui.allocate_exact_size(egui::vec2(w, card_h), egui::Sense::hover());
-                    // Each card behind is nudged right and down, so three
-                    // of them read as one stack of cards.
-                    let card = slot.translate(egui::vec2(depth * 6.0, depth * 3.0));
-                    let painter = ui.painter();
-                    painter.rect_filled(
-                        card,
-                        egui::CornerRadius::same(8),
-                        card_fill.gamma_multiply(dims * 0.9),
-                    );
-                    painter.rect_stroke(
-                        card,
-                        egui::CornerRadius::same(8),
-                        egui::Stroke::new(1.0, shade.gamma_multiply(dims)),
-                        egui::StrokeKind::Inside,
-                    );
-                    let style = ui.style();
-                    let _ = style;
-                    // Draw the label with a real child `Ui` on the card's
-                    // rect: `Painter::layout` is not worth the argument
-                    // churn for one line of text.
-                    let mut card_ui = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(card)
-                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                    );
-                    card_ui.label(
-                        egui::RichText::new(format!("{}  {}", tab.icon(), tr(tab.title_key())))
-                            .size(11.0 + depth)
-                            .color(ui.visuals().weak_text_color().gamma_multiply(dims)),
-                    );
-                    if ui
-                        .interact(
-                            card,
-                            ui.id().with(("zone_card", tab.title_key())),
-                            egui::Sense::click(),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        zone.promote(&mut self.modern, *tab);
-                    }
-                }
+                ui.separator();
 
                 if let Some(front) = stack.first().copied() {
                     self.render_tab_body(ui, front);
@@ -8919,78 +9032,161 @@ impl CapRustApp {
         );
     }
 
-    /// The zone's title strip: dropdown on the left, name in the middle,
-    /// stack depth and an add button on the right.
-    fn render_zone_header(&mut self, ui: &mut egui::Ui, zone: Zone, stack: &[crate::dock::Tab]) {
-        let current = zone.tab(&self.modern);
-        ui.horizontal(|ui| {
-            ui.menu_button(
-                egui::RichText::new(format!("{}  {}", current.icon(), tr(current.title_key())))
-                    .size(15.0),
-                |ui| {
-                    for tab in crate::dock::Tab::all() {
-                        let sel = stack.first() == Some(&tab);
-                        let behind = stack.contains(&tab);
-                        if ui
-                            .selectable_label(
-                                sel,
-                                format!(
-                                    "{}  {}{}",
-                                    tab.icon(),
-                                    tr(tab.title_key()),
-                                    if behind && !sel { "   ▾" } else { "" }
-                                ),
-                            )
-                            .clicked()
-                        {
-                            zone.set(&mut self.modern, tab);
-                            ui.close_menu();
-                        }
-                    }
-                    ui.separator();
-                    if ui
-                        .selectable_label(stack.is_empty(), tr("menu-zone-none"))
-                        .clicked()
-                    {
-                        zone.clear_zone(&mut self.modern);
-                        ui.close_menu();
-                    }
-                },
-            );
+    /// The zone's title strip.
+    ///
+    /// The strip is divided into three: the picker sits on the left, the
+    /// front card's name takes the wide middle, and each card behind it gets
+    /// an equal slice on the right, drawn as a tab standing a few pixels
+    /// proud of the card's top edge with only its index showing. That is the
+    /// stack shape from the sketch -- one card in front, one third of the
+    /// title visible per card behind -- rather than a vertical list.
+    fn render_zone_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        zone: Zone,
+        stack: &[crate::dock::Tab],
+        rect: egui::Rect,
+    ) {
+        let accent = self.theme.accent_color();
+        let front = stack.first().copied();
+        let behind: Vec<crate::dock::Tab> = stack.iter().skip(1).copied().collect();
+        let behind_n = behind.len().max(1) as f32;
 
-            // Title centred in whatever is left after the two ends.
-            let spacer = ((ui.available_width() - 110.0) * 0.5).max(0.0);
-            ui.add_space(spacer);
-            ui.label(
-                egui::RichText::new(tr(current.title_key()))
-                    .strong()
-                    .size(15.0),
-            );
+        // The slice each background tab gets: a third of what the strip has
+        // left after the picker and the name, floored so a narrow sidebar
+        // still shows something clickable.
+        let picker_w = 132.0_f32.min(rect.width() * 0.45);
+        let tab_zone_w = if behind.is_empty() {
+            0.0
+        } else {
+            (rect.width() - picker_w) * 0.55 / behind_n
+        };
 
-            if stack.len() > 1 {
-                ui.label(
-                    egui::RichText::new(format!("{}/{}", stack.len(), 3))
-                        .size(11.0)
-                        .color(ui.visuals().weak_text_color()),
-                );
-            }
-            if stack.len() < 3 {
+        // Picker, on its own child `Ui` at the left of the strip.
+        let picker_rect = egui::Rect::from_min_size(rect.min, egui::vec2(picker_w, rect.height()));
+        let mut picker_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(picker_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let label = match front {
+            Some(tab) => format!("{}  {}", tab.icon(), tr(tab.title_key())),
+            None => tr("menu-zone-none"),
+        };
+        picker_ui.menu_button(egui::RichText::new(label).size(15.0), |ui| {
+            for tab in crate::dock::Tab::all() {
+                let sel = front == Some(tab);
+                let stacked_here = stack.contains(&tab);
                 if ui
-                    .add(egui::Button::new(egui::RichText::new("+").size(14.0)))
-                    .on_hover_text(tr("menu-zone-add-stack"))
+                    .selectable_label(
+                        sel,
+                        format!(
+                            "{}  {}{}",
+                            tab.icon(),
+                            tr(tab.title_key()),
+                            if stacked_here && !sel { "  ▾" } else { "" }
+                        ),
+                    )
                     .clicked()
                 {
-                    if let Some(next) = crate::dock::Tab::all()
-                        .into_iter()
-                        .find(|t| !stack.contains(t))
-                    {
-                        zone.set(&mut self.modern, next);
-                    }
+                    zone.set(&mut self.modern, tab);
+                    ui.close_menu();
                 }
-            } else {
-                ui.add_space(18.0);
+            }
+            ui.separator();
+            if ui
+                .selectable_label(stack.is_empty(), tr("menu-zone-none"))
+                .clicked()
+            {
+                zone.clear_zone(&mut self.modern);
+                ui.close_menu();
             }
         });
+
+        // The name, centred in what the tabs do not cover.
+        if let Some(tab) = front {
+            let name_w = (rect.width() - picker_w - tab_zone_w * behind_n).max(40.0);
+            let name_rect = egui::Rect::from_min_size(
+                egui::pos2(picker_rect.max.x, rect.min.y),
+                egui::vec2(name_w, rect.height()),
+            );
+            let mut name_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(name_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            name_ui.label(egui::RichText::new(tr(tab.title_key())).strong().size(15.0));
+        }
+
+        // Background tabs, standing proud of the strip's top edge.
+        let painter = ui.painter_at(rect);
+        let tab_h = rect.height() + 6.0;
+        for (i, tab) in behind.iter().enumerate() {
+            let x0 = rect.max.x - (behind_n - i as f32) * tab_zone_w;
+            let tab_rect = egui::Rect::from_min_size(
+                egui::pos2(x0, rect.min.y - 6.0),
+                egui::vec2(tab_zone_w, tab_h),
+            );
+            let dims = 0.9 - i as f32 * 0.12;
+            let tab_rounding = egui::CornerRadius {
+                nw: 6,
+                ne: 6,
+                sw: 0,
+                se: 0,
+            };
+            painter.rect_filled(tab_rect, tab_rounding, accent.gamma_multiply(0.30 * dims));
+            painter.rect_stroke(
+                tab_rect,
+                tab_rounding,
+                egui::Stroke::new(1.0, accent.gamma_multiply(0.8 * dims)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                tab_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{}", i + 2),
+                egui::FontId::proportional(12.0),
+                ui.visuals().text_color().gamma_multiply(dims),
+            );
+            if ui
+                .interact(
+                    tab_rect,
+                    ui.id().with(("zone_tab", tab.title_key())),
+                    egui::Sense::click(),
+                )
+                .on_hover_text(tr(tab.title_key()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                zone.promote(&mut self.modern, *tab);
+            }
+        }
+
+        // `+` to deepen the stack, on the far left of the tab run.
+        if stack.len() < 3 {
+            let plus_w = 20.0;
+            let plus_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.max.x - (behind_n * tab_zone_w) - plus_w, rect.min.y),
+                egui::vec2(plus_w, rect.height()),
+            );
+            let mut plus_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(plus_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            if plus_ui
+                .add(egui::Button::new(egui::RichText::new("+").size(13.0)))
+                .on_hover_text(tr("menu-zone-add-stack"))
+                .clicked()
+            {
+                if let Some(next) = crate::dock::Tab::all()
+                    .into_iter()
+                    .find(|t| !stack.contains(t))
+                {
+                    zone.set(&mut self.modern, next);
+                }
+            }
+        }
     }
 
     /// Body of one panel, whichever zone it is sitting in.
@@ -13003,11 +13199,14 @@ impl Default for ModernState {
     /// have them.
     fn default() -> Self {
         use crate::dock::Tab;
+        // Only the two upper slots start filled. The lower ones are empty
+        // slots the user fills from the dropdown or from View -> Modern
+        // zones -> Add container, which is a choice rather than a default.
         Self {
             left_top: vec![Tab::AssetMedia],
-            left_bottom: vec![Tab::AssetEffects],
+            left_bottom: Vec::new(),
             right_top: vec![Tab::Properties],
-            right_bottom: vec![Tab::AssetPlugins],
+            right_bottom: Vec::new(),
         }
     }
 }
