@@ -2798,6 +2798,40 @@ impl CapRustApp {
                         }
                     });
 
+                    // Modern editor zone management submenu
+                    if self.settings.layout == caprust_core::LayoutMode::Modern {
+                        ui.menu_button(tr("menu-view-modern-zones"), |ui| {
+                            ui.menu_button(tr("menu-view-modern-add"), |ui| {
+                                if ui.button(tr("menu-zone-add-left-top")).clicked() {
+                                    self.modern.left_top.push(crate::dock::Tab::AssetMedia);
+                                    ui.close_menu();
+                                }
+                                if ui.button(tr("menu-zone-add-left-bottom")).clicked() {
+                                    self.modern.left_bottom.push(crate::dock::Tab::AssetEffects);
+                                    ui.close_menu();
+                                }
+                                if ui.button(tr("menu-zone-add-right-top")).clicked() {
+                                    self.modern.right_top.push(crate::dock::Tab::Properties);
+                                    ui.close_menu();
+                                }
+                                if ui.button(tr("menu-zone-add-right-bottom")).clicked() {
+                                    self.modern.right_bottom.push(crate::dock::Tab::AssetPlugins);
+                                    ui.close_menu();
+                                }
+                            });
+                            ui.separator();
+                            ui.menu_button(tr("menu-view-modern-remove"), |ui| {
+                                for zone in [Zone::LeftTop, Zone::LeftBottom, Zone::RightTop, Zone::RightBottom] {
+                                    let label = format!("{} - {}", zone.title_text(), tr("menu-zone-clear"));
+                                    if ui.button(format!("{}", label)).clicked() {
+                                        zone.clear_zone(&mut self.modern);
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        });
+                    }
+
                     // Arrangements *within* the dock. Only meaningful in
                     // Default; Modern has fixed panels, and a menu full
                     // of choices that do nothing reads as broken rather
@@ -12651,6 +12685,26 @@ impl Zone {
                     state.right_bottom.insert(0, tab);
                 }
             }
+        }
+    }
+
+    /// Clear this zone (set to empty stack) — used by the "None" picker option.
+    pub fn clear_zone(self, state: &mut ModernState) {
+        match self {
+            Self::LeftTop => state.left_top.clear(),
+            Self::LeftBottom => state.left_bottom.clear(),
+            Self::RightTop => state.right_top.clear(),
+            Self::RightBottom => state.right_bottom.clear(),
+        }
+    }
+
+    /// Label for zone header (for submenu).
+    pub fn title_text(self) -> &'static str {
+        match self {
+            Self::LeftTop => "Left Top",
+            Self::LeftBottom => "Left Bottom",
+            Self::RightTop => "Right Top",
+            Self::RightBottom => "Right Bottom",
         }
     }
 }

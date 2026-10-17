@@ -1006,3 +1006,8 @@ new-preview-header = Preview
 # --- Import plugins ---
 menu-file-import-done = Import complete.
 toast-import-failed = Import failed: { $err }
+m e n u - z o n e - n o n e   =   N o n e   ( e m p t y   s l o t )  
+ m e n u - v i e w - m o d e r n - z o n e s   =   M o d e r n   Z o n e s  
+ m e n u - v i e w - m o d e r n - a d d   =   A d d   C o n t a i n e r  
+ m e n u - v i e w - m o d e r n - r e m o v e   =   R e m o v e   C o n t a i n e r  
+ 
