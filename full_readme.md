@@ -18,7 +18,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
-[![M8ven Score](https://m8ven.ai/badge/mcp/domica-caprust-lj9jq5)](https://m8ven.ai/mcp/domica-caprust-lj9jq5?s=readme)
+[![M8ven Score](https://m8ven.ai/badge/mcp/domica-caprust-lj9jq5)](https://m8ven.ai/mcp/domica/caprust?s=readme)
 
 ---
 

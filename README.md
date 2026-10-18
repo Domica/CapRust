@@ -8,12 +8,13 @@
 
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
-[![Downloads](https://img.shields.io/badge/downloads-106%20(total)-blue)](https://github.com/Domica/CapRust/releases)
+[![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
 [![Version](https://img.shields.io/badge/version-0.9.17-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
 [![AI: local](https://img.shields.io/badge/AI-Whisper%20%2B%20Piper%20%2B%20ONNX%20(local)-purple.svg)](#what-is-caprust)
+[![M8ven Score](https://m8ven.ai/badge/mcp/domica-caprust-lj9jq5)](https://m8ven.ai/mcp/domica/caprust?s=readme)
 
 **Not another Electron wrapper.** Native binary, starts in under 500 ms. No cloud, no telemetry, MIT licensed.
 

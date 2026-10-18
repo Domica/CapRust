@@ -8917,15 +8917,42 @@ impl CapRustApp {
         // it. That is the whole difference from S: the columns keep running
         // beside the preview and only stop at the timeline's own height.
         if self.settings.timeline_size == caprust_core::TimelineSize::L {
-            // Same sidebars as S, drawn first and at full height. The
-            // timeline is then shown across the whole window and paints over
-            // whatever is underneath it, so the columns appear to stop at
-            // the timeline's top edge.
+            // The timeline comes first, then the sidebars.
             //
-            // Drawing them as `Area`s instead -- which is what this did
-            // before -- looked right for a frame but was wrong underneath:
-            // an `Area` claims no space, so widening a sidebar left the
-            // preview at its old width and the two overlapped.
+            // A panel is carved out of whatever space is left when it is
+            // shown, so the order decides the shape. Showing the sidebars
+            // first and the bottom panel after left the timeline only as
+            // wide as the gap between them -- it sat in the middle, and the
+            // columns ran all the way to the bottom of the window on either
+            // side of it. Showing the band first takes the full width of the
+            // window, and the sidebars are then given what is left above it.
+            //
+            // The columns are ordinary `SidePanel`s, so they claim space and
+            // keep egui's own resize handle. Drawing them as `Area`s to let
+            // the band cross them was the earlier attempt: an `Area` claims
+            // nothing, so widening a sidebar left the preview where it was
+            // and the two overlapped.
+            let band_h = if self.timeline_collapsed {
+                TIMELINE_HANDLE_HEIGHT
+            } else {
+                let avail = ctx.available_rect().height();
+                self.timeline_height(avail)
+                    .max(self.timeline_content_height())
+                    .min(avail * 0.8)
+            };
+            egui::TopBottomPanel::bottom("modern_timeline")
+                .resizable(false)
+                .exact_height(band_h)
+                .show(ctx, |ui| {
+                    if self.timeline_collapsed {
+                        self.show_timeline_handle(ui);
+                    } else {
+                        self.show_timeline_header(ui);
+                        ui.separator();
+                        self.render_timeline_panel(ui);
+                    }
+                });
+
             if left_on {
                 egui::SidePanel::left(egui::Id::new(("modern_left", self.settings.timeline_size)))
                     .resizable(true)
@@ -8949,27 +8976,6 @@ impl CapRustApp {
                     self.show_zone_full(ui, Zone::RightTop);
                 });
             }
-
-            let band_h = if self.timeline_collapsed {
-                TIMELINE_HANDLE_HEIGHT
-            } else {
-                let avail = ctx.available_rect().height();
-                self.timeline_height(avail)
-                    .max(self.timeline_content_height())
-                    .min(avail * 0.8)
-            };
-            egui::TopBottomPanel::bottom("modern_timeline")
-                .resizable(false)
-                .exact_height(band_h)
-                .show(ctx, |ui| {
-                    if self.timeline_collapsed {
-                        self.show_timeline_handle(ui);
-                    } else {
-                        self.show_timeline_header(ui);
-                        ui.separator();
-                        self.render_timeline_panel(ui);
-                    }
-                });
 
             egui::CentralPanel::default().show(ctx, |ui| {
                 self.render_preview_panel(ui);
