@@ -84,16 +84,17 @@ transports interchangeable is worth more than a tidier envelope.
 
 ## Tools
 
-26, verified against `tools/list` on the built binary:
+27, verified against `tools/list` on the built binary:
 
-Read-only — `get_project_summary`, `list_tracks`, `list_clips`,
+Read-only (11) — `get_project_summary`, `list_tracks`, `list_clips`,
 `list_media`, `list_assets`, `list_recent_projects`, `preview_status`,
 `export_status`, `export_settings`, `preview_frame`, `preview_transport`.
 
-Mutating, each call one undoable step — `move_clip`, `split_clip`,
-`set_transition`, `set_clip_volume`, `set_clip_speed`, `set_clip_fade`,
-`add_clip_to_timeline`, `apply_preset`, `add_media`, `undo`, `redo`,
-`save_project`, `open_project`, `set_export_setting`, `start_export`.
+Mutating (16), each call one undoable step — `move_clip`, `split_clip`,
+`remove_effect`, `set_transition`, `set_clip_volume`, `set_clip_speed`,
+`set_clip_fade`, `add_clip_to_timeline`, `apply_preset`, `add_media`,
+`undo`, `redo`, `save_project`, `open_project`, `set_export_setting`,
+`start_export`.
 
 `list_assets` returns both the ids and the accepted values for each
 kind, so a client never has to hardcode the vocabulary.

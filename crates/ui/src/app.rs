@@ -68,29 +68,6 @@ const TIMELINE_HANDLE_HEIGHT: f32 = 26.0;
 /// cut off by the bottom of the window.
 const TIMELINE_CHROME_H: f32 = 68.0;
 
-/// Draw `add` into one rectangle of the Modern frame.
-///
-/// Kept for the regions that are not panels. Anything that can be a panel
-/// should be one: `exact_width` and `exact_height` do in one call what a
-/// hand-placed rectangle has to keep getting right about clipping, focus and
-/// pointer ordering.
-#[allow(dead_code)]
-fn draw_region(
-    ctx: &egui::Context,
-    id: &'static str,
-    rect: egui::Rect,
-    add: impl FnOnce(&mut egui::Ui),
-) {
-    egui::Area::new(egui::Id::new(id))
-        .fixed_pos(rect.min)
-        .order(egui::Order::Middle)
-        .show(ctx, |ui| {
-            ui.set_max_size(rect.size());
-            ui.set_clip_rect(rect);
-            add(ui);
-        });
-}
-
 /// Severity of a toast. Error toasts get a red accent and read as
 /// failures; Info is the default for confirmations and status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,13 +349,6 @@ pub struct CapRustApp {
     /// timeline follows `settings.timeline_size`; picking a size clears this,
     /// which is what makes S/M/L win over an earlier drag.
     pub timeline_drag: Option<f32>,
-    /// Width the user dragged an L-mode sidebar to. `None` is the 20% preset.
-    ///
-    /// The L sidebars are drawn as `Area`s, not `SidePanel`s, because the
-    /// timeline has to cross them. `Area` remembers nothing and offers no
-    /// resize cursor, so the width lives here instead.
-    pub modern_left_w: Option<f32>,
-    pub modern_right_w: Option<f32>,
     /// Sidebar visibility for the Modern editor. The timeline size presets
     /// these, but they can be set by hand afterwards -- at M and L the preset
     /// turns a sidebar off, and without a way to turn it back on the left
@@ -1170,8 +1140,6 @@ impl CapRustApp {
             timeline_drag: None,
             modern_left_on: true,
             modern_right_on: true,
-            modern_left_w: None,
-            modern_right_w: None,
             mcp_server: Default::default(),
             remote_bridge: None,
             remote_last_batch: 0,
@@ -8949,12 +8917,46 @@ impl CapRustApp {
         // it. That is the whole difference from S: the columns keep running
         // beside the preview and only stop at the timeline's own height.
         if self.settings.timeline_size == caprust_core::TimelineSize::L {
+            // Same sidebars as S, drawn first and at full height. The
+            // timeline is then shown across the whole window and paints over
+            // whatever is underneath it, so the columns appear to stop at
+            // the timeline's top edge.
+            //
+            // Drawing them as `Area`s instead -- which is what this did
+            // before -- looked right for a frame but was wrong underneath:
+            // an `Area` claims no space, so widening a sidebar left the
+            // preview at its old width and the two overlapped.
+            if left_on {
+                egui::SidePanel::left(egui::Id::new(("modern_left", self.settings.timeline_size)))
+                    .resizable(true)
+                    .default_width(left_w)
+                    .min_width(200.0)
+                    .max_width(area.width() * 0.5)
+                    .show(ctx, |ui| {
+                        self.show_zone_full(ui, Zone::LeftTop);
+                    });
+            }
+            if right_on {
+                egui::SidePanel::right(egui::Id::new((
+                    "modern_right",
+                    self.settings.timeline_size,
+                )))
+                .resizable(true)
+                .default_width(right_w)
+                .min_width(220.0)
+                .max_width(area.width() * 0.5)
+                .show(ctx, |ui| {
+                    self.show_zone_full(ui, Zone::RightTop);
+                });
+            }
+
             let band_h = if self.timeline_collapsed {
                 TIMELINE_HANDLE_HEIGHT
             } else {
-                self.timeline_height(ctx.available_rect().height())
+                let avail = ctx.available_rect().height();
+                self.timeline_height(avail)
                     .max(self.timeline_content_height())
-                    .min(ctx.available_rect().height() * 0.8)
+                    .min(avail * 0.8)
             };
             egui::TopBottomPanel::bottom("modern_timeline")
                 .resizable(false)
@@ -8969,45 +8971,6 @@ impl CapRustApp {
                     }
                 });
 
-            let above = ctx.available_rect();
-            let lw = self
-                .modern_sidebar_w(true)
-                .unwrap_or(above.width() * left_frac)
-                .min(above.width() * 0.5);
-            let rw = self
-                .modern_sidebar_w(false)
-                .unwrap_or(above.width() * right_frac)
-                .min(above.width() * 0.5);
-            // One container a side, filling the height beside the preview.
-            // At L there is no reason to split the column in two: the only
-            // thing below it is the timeline, and that has the full width.
-            if left_on && lw > 1.0 {
-                let (w, h) = (lw, above.height());
-                draw_region(
-                    ctx,
-                    "modern_left_l",
-                    egui::Rect::from_min_size(above.min, egui::vec2(lw, above.height())),
-                    |ui| {
-                        self.show_zone_full(ui, Zone::LeftTop);
-                        self.modern_sidebar_seam(ui, h, w, true);
-                    },
-                );
-            }
-            if right_on && rw > 1.0 {
-                let (w, h) = (rw, above.height());
-                draw_region(
-                    ctx,
-                    "modern_right_l",
-                    egui::Rect::from_min_size(
-                        egui::pos2(above.max.x - rw, above.min.y),
-                        egui::vec2(rw, above.height()),
-                    ),
-                    |ui| {
-                        self.show_zone_full(ui, Zone::RightTop);
-                        self.modern_sidebar_seam(ui, h, w, false);
-                    },
-                );
-            }
             egui::CentralPanel::default().show(ctx, |ui| {
                 self.render_preview_panel(ui);
             });
@@ -9134,63 +9097,6 @@ impl CapRustApp {
                 self.render_zone(ui, bottom);
             },
         );
-    }
-
-    /// Drag handle on the inner seam of an L-mode sidebar.
-    ///
-    /// Those sidebars are `Area`s rather than `SidePanel`s, because at L the
-    /// timeline crosses them and a panel always runs the full height. What
-    /// that costs is that egui puts no resize cursor on them and remembers
-    /// no width, so the seam carries both.
-    fn modern_sidebar_seam(&mut self, ui: &mut egui::Ui, height: f32, width: f32, left: bool) {
-        const HANDLE: f32 = 8.0;
-        let x = if left { width - HANDLE } else { 0.0 };
-        let rect = egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(HANDLE, height));
-        let accent = self.theme.accent_color();
-        let resp = ui.interact(rect, ui.id().with("modern_seam"), egui::Sense::drag());
-        let painter = ui.painter_at(rect);
-        let dragging = resp.dragged() || resp.is_pointer_button_down_on();
-        painter.rect_filled(
-            rect,
-            egui::CornerRadius::same(4),
-            if dragging {
-                accent.gamma_multiply(0.65)
-            } else if resp.hovered() {
-                accent.gamma_multiply(0.35)
-            } else {
-                egui::Color32::TRANSPARENT
-            },
-        );
-        if resp.hovered() {
-            ui.ctx()
-                .clone()
-                .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-        if dragging {
-            let dx = ui.input(|i| i.pointer.delta().x);
-            let preset = width;
-            let current = self.modern_sidebar_w(left).unwrap_or(preset);
-            let next = if left {
-                (current + dx).clamp(140.0, preset * 2.5)
-            } else {
-                (current - dx).clamp(160.0, preset * 2.5)
-            };
-            if left {
-                self.modern_left_w = Some(next);
-            } else {
-                self.modern_right_w = Some(next);
-            }
-        }
-    }
-
-    /// Width the user has dragged an L-mode sidebar to, if any. `None` means
-    /// the 20% preset.
-    fn modern_sidebar_w(&self, left: bool) -> Option<f32> {
-        if left {
-            self.modern_left_w
-        } else {
-            self.modern_right_w
-        }
     }
 
     /// One zone filling whatever space it is given.
