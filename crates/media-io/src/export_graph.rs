@@ -55,6 +55,10 @@ pub struct VideoClip {
     pub z_order: u32,
     /// Image sources need `-loop 1` on their input.
     pub is_image: bool,
+    /// Set when the clip is an overlay rather than footage. Decides both
+    /// the fit chain (scale to a fraction of the frame instead of the
+    /// frame) and the compositing coordinates.
+    pub overlay: Option<caprust_core::clip::OverlayPlacement>,
     /// Applied effect instances (see asset_browser Effects list).
     /// Carries `amount` and `enabled` so the filtergraph can scale and
     /// skip stages without reaching back into the project state.
@@ -407,21 +411,36 @@ impl RenderPlan {
             // Fit chain: with auto-reframe, crop to the target
             // aspect (with pan) and scale exactly to (w, h). Without
             // it, letterbox/pillarbox into (w, h) as before.
-            let fit_chain = match build_auto_reframe_crop(
-                &c.auto_reframe,
-                self.width,
-                self.height,
-            ) {
+            let mut fit_chain_override: Option<String> = None;
+            // An overlay is not stretched to the frame. `scale=-2:h` keeps
+            // the source's aspect ratio and only fixes the height, which
+            // is what "a third as tall as the frame" means for a 256px
+            // sticker. The frame-wide letterbox branch below would pad the
+            // sticker out to the full canvas and composite a transparent
+            // border, so overlays never take it.
+            if let Some(place) = c.overlay.as_ref() {
+                let h = (self.height as f32 * place.scale.clamp(0.02, 4.0)).max(2.0);
+                fit_chain_override =
+                    Some(format!("scale=-2:{h:.0}:flags=bicubic,setsar=1", h = h,));
+            }
+            let fit_chain = match fit_chain_override.take() {
+                Some(f) => f,
+                None => match build_auto_reframe_crop(
+                    &c.auto_reframe,
+                    self.width,
+                    self.height,
+                ) {
                 Some(crop) => format!(
                     "{crop},scale={w}:{h}:flags=bicubic,setsar=1",
                     w = self.width,
                     h = self.height,
                 ),
-                None => format!(
-                    "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
-                    w = self.width,
-                    h = self.height,
-                ),
+                    None => format!(
+                        "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                        w = self.width,
+                        h = self.height,
+                    ),
+                },
             };
             // Optional background-removal stage. When a mask is
             // present, the video chain stops at an intermediate label
@@ -701,8 +720,7 @@ impl RenderPlan {
         }
 
         // ---- Phase 2b: render each run ----
-        let mut run_labels: Vec<(u32, f64, String, Option<String>)> =
-            Vec::with_capacity(runs.len());
+        let mut run_labels: Vec<RunLabel> = Vec::with_capacity(runs.len());
         // The model already stores follower clips at their shifted
         // positions when an xfade is attached; no per-z bookkeeping
         // is needed here.
@@ -824,7 +842,14 @@ impl RenderPlan {
                 .filter_map(blend_mode_name)
                 .next()
                 .map(str::to_string);
-            run_labels.push((run.z_order, effective_start, out_label, run_blend));
+            // Placement, like blend: first overlay in the run wins, and a
+            // run of ordinary clips keeps None so it is composited at the
+            // frame default.
+            let place = run
+                .members
+                .iter()
+                .find_map(|&idx| self.video_clips[idx].overlay.clone());
+            run_labels.push((run.z_order, effective_start, out_label, run_blend, place));
         }
 
         // ---- Phase 3: black base + overlay in z-order ----
@@ -843,8 +868,24 @@ impl RenderPlan {
         });
 
         let mut v_prev = String::from("v_base");
-        for (i, (_z, _start, label, blend)) in run_labels.iter().enumerate() {
+        for (i, (_z, _start, label, blend, place)) in run_labels.iter().enumerate() {
             let v_next = format!("v_ov{i}");
+            // Without this every run was composited at 0,0 and the overlay
+            // filter's default, which is the top-left corner. An overlay
+            // whose width and height are known is placed by its centre;
+            // W-w and H-h put the middle of the sticker on (x, y).
+            let xy = match place.as_ref() {
+                Some(p) => format!(
+                    ":x='(W-w)*{xf:.4}':y='(H-h)*{yf:.4}'",
+                    xf = p.x.clamp(-1.0, 2.0),
+                    yf = p.y.clamp(-1.0, 2.0),
+                ),
+                None => String::new(),
+            };
+            let anim = place
+                .as_ref()
+                .and_then(|p| p.animation.as_deref().map(sticker_animation_fragment))
+                .unwrap_or_default();
             match blend {
                 // Blend compositing: top = run output, bottom = base.
                 // Same EOF contract as the overlay arm (pass the base
@@ -853,7 +894,8 @@ impl RenderPlan {
                     "[{label}][{v_prev}]blend=all_mode={mode}:all_opacity=1:shortest=0:eof_action=pass:repeatlast=0[{v_next}];",
                 )),
                 None => fg.push_str(&format!(
-                    "[{v_prev}][{label}]overlay=shortest=0:eof_action=pass[{v_next}];",
+                    "[{label}]{anim}[{label}_a];\
+                     [{v_prev}][{label}_a]overlay=shortest=0:eof_action=pass{xy}[{v_next}];",
                 )),
             }
             v_prev = v_next;
@@ -1771,6 +1813,65 @@ fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
 
 /// Single-effect fragment. Kept separate from the loop so tests can
 /// assert on individual chains without constructing a whole slice.
+/// One composited run: the z-order it renders at, when it starts, the
+/// filtergraph label it produced, its blend mode, and the overlay
+/// placement when any clip in the run carries one.
+type RunLabel = (
+    u32,
+    f64,
+    String,
+    Option<String>,
+    Option<caprust_core::clip::OverlayPlacement>,
+);
+
+/// Filter fragment for a sticker animation, or empty for a static one.
+///
+/// `build_filtergraph` emits overlay chains without knowing the frame size,
+/// the same constraint the `zoom_pulse` comment describes, so these are
+/// built from `crop`, `rotate` and `fade` -- all of which can work off
+/// `iw`/`ih` and the frame timestamp.
+///
+/// Each fragment here was run through this ffmpeg on a real clip before it
+/// was written, like every arm of `build_one_effect`.
+fn sticker_animation_fragment(id: &str) -> String {
+    match id {
+        // Fade up in place. The settle that makes it read as a "pop" is the
+        // alpha ramp; a scale animation would need the frame height.
+        "pop" => ",fade=t=in:st=0:d=0.20:alpha=1".to_string(),
+
+        // Two decaying hops. `crop` re-reads x/y every frame and leaves
+        // w/h fixed, which is enough for a bounce, and the scale back up
+        // afterwards undoes the crop so the mark does not shrink.
+        // `crop` has no eval option -- x/y are expressions re-read per
+        // frame already, and passing eval=frame fails with "Option not
+        // found".
+        "bounce" => concat!(
+            ",crop=w=iw:h='ih/1.25':x='(iw-ow)/2':",
+            "y='(ih-oh)/2-18*abs(sin(2*PI*t*1.6))*exp(-3.2*t)',",
+            "scale=iw*1.25:ih*1.25:flags=bicubic"
+        )
+        .to_string(),
+
+        // Continuous rotation about the mark's own centre.
+        // ow/oh are init-only on rotate, so rotw(1.6*t) is evaluated once
+        // and every later frame is a different size than the first --
+        // which writes nothing at all. A fixed box 45% larger than the
+        // sticker gives it room to turn without clipping its corners, and
+        // `c=none` keeps them transparent.
+        "spin" => ",rotate=a='1.6*t':ow='iw*1.45':oh='ih*1.45':c=none".to_string(),
+
+        // Slow figure-of-eight drift, the way a floating sticker moves.
+        "drift" => concat!(
+            ",crop=w=iw:h='ih/1.15':x='(iw-ow)/2+26*sin(2*PI*t/6)':",
+            "y='(ih-oh)/2+16*cos(2*PI*t/9)',",
+            "scale=iw*1.15:ih*1.15:flags=bicubic"
+        )
+        .to_string(),
+
+        _ => String::new(),
+    }
+}
+
 fn build_one_effect(id: &str, amount: f32) -> Option<String> {
     let frag: String = match id {
         // ---- Static effects: amount scales magnitude ----
@@ -3290,6 +3391,7 @@ pub fn plan_from_project(
                         reversed: c.reversed,
                         z_order: z,
                         is_image: false,
+                        overlay: None,
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
@@ -3338,6 +3440,7 @@ pub fn plan_from_project(
                         reversed: c.reversed,
                         z_order: z,
                         is_image: true,
+                        overlay: c.overlay.clone(),
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
@@ -4083,6 +4186,7 @@ mod tests {
                 reversed: false,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -4608,6 +4712,7 @@ mod tests {
                 reversed: false,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -5176,6 +5281,7 @@ mod tests {
                 reversed: false,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: Some("fade".into()),
                 transition_out: None,
@@ -5235,6 +5341,7 @@ mod tests {
                 reversed: false,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -5460,6 +5567,7 @@ mod tests {
                 reversed: false,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -6182,6 +6290,7 @@ mod flip_filtergraph_tests {
                 reversed: false,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -6281,6 +6390,7 @@ mod reverse_filtergraph_tests {
                 reversed,
                 z_order: 0,
                 is_image: false,
+                overlay: None,
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,

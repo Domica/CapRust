@@ -16,6 +16,7 @@ pub mod recent;
 pub mod recovery;
 pub mod settings;
 pub mod sfx;
+pub mod stickers;
 pub mod template;
 pub mod track;
 pub mod translate;

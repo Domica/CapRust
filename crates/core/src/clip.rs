@@ -651,6 +651,42 @@ pub struct ReframeKeypoint {
     pub cy_norm: f32,
 }
 
+/// Where a clip sits on the frame when it is an overlay rather than the
+/// frame itself.
+///
+/// Every clip used to be scaled to fill the output frame, because every
+/// clip was footage. A sticker is not footage: it is a 256px PNG that has
+/// to sit in a corner at a fraction of the frame, over the top of the
+/// video. `None` on a clip keeps the old behaviour, so this costs nothing
+/// for existing projects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OverlayPlacement {
+    /// Height as a fraction of the output frame. 0.25 = a quarter as
+    /// tall as the frame. The width follows the source's aspect ratio.
+    pub scale: f32,
+    /// Centre position, as a fraction of the frame. 0.5, 0.5 is the
+    /// middle; 0.9, 0.1 is near the top right.
+    pub x: f32,
+    pub y: f32,
+    /// Preset id from the sticker animation list. `None` = static.
+    #[serde(default)]
+    pub animation: Option<String>,
+}
+
+impl OverlayPlacement {
+    /// What the properties panel starts a freshly dropped sticker at:
+    /// a third of the frame tall, in the lower third, where a caption
+    /// or a callout usually goes.
+    pub fn default_sticker() -> Self {
+        Self {
+            scale: 0.34,
+            x: 0.5,
+            y: 0.72,
+            animation: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     pub id: Uuid,
@@ -677,6 +713,11 @@ pub struct Clip {
     /// Links back to the MediaItem this clip was created from, if any.
     #[serde(default)]
     pub media_id: Option<Uuid>,
+    /// Set when the clip is an overlay -- a sticker, a logo, a watermark
+    /// -- rather than footage filling the frame. `None` is every clip
+    /// that existed before stickers, which is the behaviour they keep.
+    #[serde(default)]
+    pub overlay: Option<OverlayPlacement>,
     #[serde(default)]
     pub effects: Vec<EffectInstance>,
     /// Color LUT applied to this clip. `None` = no LUT.
@@ -895,6 +936,7 @@ impl Clip {
             anon_mask: None,
             source_duration_ms: dur_ms,
             media_id: None,
+            overlay: None,
         }
     }
 
@@ -950,6 +992,7 @@ impl Clip {
             anon_mask: None,
             source_duration_ms: dur_ms,
             media_id: None,
+            overlay: None,
         }
     }
 
@@ -1005,6 +1048,7 @@ impl Clip {
             anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
+            overlay: None,
         }
     }
 
@@ -1064,6 +1108,7 @@ impl Clip {
             anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
+            overlay: None,
         }
     }
 
@@ -1129,6 +1174,7 @@ impl Clip {
             anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
+            overlay: None,
         }
     }
 
@@ -1192,6 +1238,7 @@ impl Clip {
             anon_mask: None,
             source_duration_ms: 0,
             media_id: None,
+            overlay: None,
         }
     }
 
