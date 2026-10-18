@@ -372,6 +372,13 @@ pub struct CapRustApp {
     /// timeline follows `settings.timeline_size`; picking a size clears this,
     /// which is what makes S/M/L win over an earlier drag.
     pub timeline_drag: Option<f32>,
+    /// Width the user dragged an L-mode sidebar to. `None` is the 20% preset.
+    ///
+    /// The L sidebars are drawn as `Area`s, not `SidePanel`s, because the
+    /// timeline has to cross them. `Area` remembers nothing and offers no
+    /// resize cursor, so the width lives here instead.
+    pub modern_left_w: Option<f32>,
+    pub modern_right_w: Option<f32>,
     /// Sidebar visibility for the Modern editor. The timeline size presets
     /// these, but they can be set by hand afterwards -- at M and L the preset
     /// turns a sidebar off, and without a way to turn it back on the left
@@ -1163,6 +1170,8 @@ impl CapRustApp {
             timeline_drag: None,
             modern_left_on: true,
             modern_right_on: true,
+            modern_left_w: None,
+            modern_right_w: None,
             mcp_server: Default::default(),
             remote_bridge: None,
             remote_last_batch: 0,
@@ -8961,20 +8970,31 @@ impl CapRustApp {
                 });
 
             let above = ctx.available_rect();
-            let lw = (above.width() * left_frac).min(above.width() * 0.5);
-            let rw = (above.width() * right_frac).min(above.width() * 0.5);
+            let lw = self
+                .modern_sidebar_w(true)
+                .unwrap_or(above.width() * left_frac)
+                .min(above.width() * 0.5);
+            let rw = self
+                .modern_sidebar_w(false)
+                .unwrap_or(above.width() * right_frac)
+                .min(above.width() * 0.5);
             // One container a side, filling the height beside the preview.
             // At L there is no reason to split the column in two: the only
             // thing below it is the timeline, and that has the full width.
             if left_on && lw > 1.0 {
+                let (w, h) = (lw, above.height());
                 draw_region(
                     ctx,
                     "modern_left_l",
                     egui::Rect::from_min_size(above.min, egui::vec2(lw, above.height())),
-                    |ui| self.show_zone_full(ui, Zone::LeftTop),
+                    |ui| {
+                        self.show_zone_full(ui, Zone::LeftTop);
+                        self.modern_sidebar_seam(ui, h, w, true);
+                    },
                 );
             }
             if right_on && rw > 1.0 {
+                let (w, h) = (rw, above.height());
                 draw_region(
                     ctx,
                     "modern_right_l",
@@ -8982,7 +9002,10 @@ impl CapRustApp {
                         egui::pos2(above.max.x - rw, above.min.y),
                         egui::vec2(rw, above.height()),
                     ),
-                    |ui| self.show_zone_full(ui, Zone::RightTop),
+                    |ui| {
+                        self.show_zone_full(ui, Zone::RightTop);
+                        self.modern_sidebar_seam(ui, h, w, false);
+                    },
                 );
             }
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -9113,6 +9136,63 @@ impl CapRustApp {
         );
     }
 
+    /// Drag handle on the inner seam of an L-mode sidebar.
+    ///
+    /// Those sidebars are `Area`s rather than `SidePanel`s, because at L the
+    /// timeline crosses them and a panel always runs the full height. What
+    /// that costs is that egui puts no resize cursor on them and remembers
+    /// no width, so the seam carries both.
+    fn modern_sidebar_seam(&mut self, ui: &mut egui::Ui, height: f32, width: f32, left: bool) {
+        const HANDLE: f32 = 8.0;
+        let x = if left { width - HANDLE } else { 0.0 };
+        let rect = egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(HANDLE, height));
+        let accent = self.theme.accent_color();
+        let resp = ui.interact(rect, ui.id().with("modern_seam"), egui::Sense::drag());
+        let painter = ui.painter_at(rect);
+        let dragging = resp.dragged() || resp.is_pointer_button_down_on();
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(4),
+            if dragging {
+                accent.gamma_multiply(0.65)
+            } else if resp.hovered() {
+                accent.gamma_multiply(0.35)
+            } else {
+                egui::Color32::TRANSPARENT
+            },
+        );
+        if resp.hovered() {
+            ui.ctx()
+                .clone()
+                .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if dragging {
+            let dx = ui.input(|i| i.pointer.delta().x);
+            let preset = width;
+            let current = self.modern_sidebar_w(left).unwrap_or(preset);
+            let next = if left {
+                (current + dx).clamp(140.0, preset * 2.5)
+            } else {
+                (current - dx).clamp(160.0, preset * 2.5)
+            };
+            if left {
+                self.modern_left_w = Some(next);
+            } else {
+                self.modern_right_w = Some(next);
+            }
+        }
+    }
+
+    /// Width the user has dragged an L-mode sidebar to, if any. `None` means
+    /// the 20% preset.
+    fn modern_sidebar_w(&self, left: bool) -> Option<f32> {
+        if left {
+            self.modern_left_w
+        } else {
+            self.modern_right_w
+        }
+    }
+
     /// One zone filling whatever space it is given.
     ///
     /// `render_zone` on its own sizes the card to its contents. In a column
@@ -9203,22 +9283,17 @@ impl CapRustApp {
                     });
             });
 
-        // The bevel and the cast shadow, drawn on the frame's own rect.
+        // The bevel, drawn on the frame's own rect.
+        //
+        // Every stroke here is `Inside`. An `Outside` stroke is clipped away
+        // wherever the card sits in a tight clip -- which is how the Modern
+        // editor's L layout draws its sidebars -- and that is why the border
+        // disappeared there and the card read as a hover highlight rather
+        // than a panel. Inside strokes cannot be clipped away, and the pair
+        // of them still gives the raised edge.
         let rect = outer.response.rect;
         let painter = ui.painter_at(rect);
-        // Cast shadow first, so the edges sit on top of it.
-        let shadow_rect = rect.translate(egui::vec2(RAISED, RAISED)).expand(RAISED);
-        for i in (1..=3).rev() {
-            let t = i as f32 / 3.0;
-            painter.rect_stroke(
-                shadow_rect.expand(i as f32),
-                rounding,
-                egui::Stroke::new(1.0, shade.gamma_multiply(0.10 * t)),
-                egui::StrokeKind::Outside,
-            );
-        }
-        // Dark edge on the shadow side, then the accent hairline just inside
-        // it, then the lit edge up and to the left.
+        painter.rect_filled(rect.expand(0.5), rounding, shade.gamma_multiply(0.45));
         painter.rect_stroke(
             rect,
             rounding,
@@ -9235,7 +9310,7 @@ impl CapRustApp {
             rect.translate(egui::vec2(RAISED, RAISED)),
             rounding,
             egui::Stroke::new(1.5, shade),
-            egui::StrokeKind::Outside,
+            egui::StrokeKind::Inside,
         );
     }
 
