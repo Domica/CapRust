@@ -660,6 +660,14 @@ asset-effect-flip3d = Ribaltamento 3D
 asset-effect-freezeframe = Fermofotogramma
 asset-effect-echo = Eco
 asset-effect-beauty = Bellezza
+asset-effect-spin = Rotazione
+asset-effect-scanlines = Scanline
+asset-effect-edge_glow = Bordi luminosi
+asset-effect-trails = Scia
+asset-effect-stutter = Scattamento
+asset-effect-ripple = Ondulazione
+asset-effect-pixel_shuffle = Mescola pixel
+
 
 # Filters
 asset-filter-none = Nessuno
@@ -678,6 +686,14 @@ asset-filter-fade = Dissolvenza
 asset-filter-pastel = Pastello
 asset-filter-neon = Neon
 asset-filter-gold = Dorato
+asset-filter-infrared = Infrarosso
+asset-filter-blueprint = Cianotipo
+asset-filter-poster = Poster
+asset-filter-bleach = Sbiadito
+asset-filter-day_night = Notte finta
+asset-filter-ink = Inchiostro
+asset-filter-faded_film = Filmata sbiadita
+
 
 # Text styles
 asset-text-default = Predefinito

@@ -660,6 +660,14 @@ asset-effect-flip3d = 3D Flip
 asset-effect-freezeframe = Freezeframe
 asset-effect-echo = Echo
 asset-effect-beauty = Beauty
+asset-effect-spin = Spin
+asset-effect-scanlines = Scanlines
+asset-effect-edge_glow = Edge Glow
+asset-effect-trails = Trails
+asset-effect-stutter = Stutter
+asset-effect-ripple = Ripple
+asset-effect-pixel_shuffle = Pixel Shuffle
+
 
 # Filters
 asset-filter-none = None
@@ -678,6 +686,14 @@ asset-filter-fade = Fade
 asset-filter-pastel = Pastel
 asset-filter-neon = Neon
 asset-filter-gold = Golden
+asset-filter-infrared = Infrared
+asset-filter-blueprint = Blueprint
+asset-filter-poster = Poster
+asset-filter-bleach = Bleach
+asset-filter-day_night = Day for Night
+asset-filter-ink = Ink
+asset-filter-faded_film = Faded Film
+
 
 # Text styles
 asset-text-default = Default

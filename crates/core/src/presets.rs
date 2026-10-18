@@ -157,6 +157,13 @@ presets!(
     "freezeframe",
     "echo",
     "beauty",
+    "spin",
+    "scanlines",
+    "edge_glow",
+    "trails",
+    "stutter",
+    "ripple",
+    "pixel_shuffle",
 );
 
 presets!(
@@ -177,6 +184,13 @@ presets!(
     "pastel",
     "neon",
     "gold",
+    "infrared",
+    "blueprint",
+    "poster",
+    "bleach",
+    "day_night",
+    "ink",
+    "faded_film",
 );
 
 /// The table a kind refers to.

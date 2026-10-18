@@ -660,6 +660,14 @@ asset-effect-flip3d = Volteo 3D
 asset-effect-freezeframe = Fotograma congelado
 asset-effect-echo = Eco
 asset-effect-beauty = Belleza
+asset-effect-spin = Giro
+asset-effect-scanlines = Lineas de escaneo
+asset-effect-edge_glow = Bordes luminosos
+asset-effect-trails = Estelas
+asset-effect-stutter = Tartamudeo
+asset-effect-ripple = Ondulacion
+asset-effect-pixel_shuffle = Mezcla de pixeles
+
 
 # Filters
 asset-filter-none = Ninguno
@@ -678,6 +686,14 @@ asset-filter-fade = Fundido
 asset-filter-pastel = Pastel
 asset-filter-neon = Neón
 asset-filter-gold = Dorado
+asset-filter-infrared = Infrarrojo
+asset-filter-blueprint = Plano
+asset-filter-poster = Poster
+asset-filter-bleach = Blanqueado
+asset-filter-day_night = De dia a noche
+asset-filter-ink = Tinta
+asset-filter-faded_film = Pelicula desvaida
+
 
 # Text styles
 asset-text-default = Predeterminado

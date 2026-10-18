@@ -2166,6 +2166,74 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             format!(",smartblur=luma_radius={r:.1}:luma_strength={s:.2}:luma_threshold=8")
         }
 
+        // ---- Added with the xfade coverage work. Every fragment below was
+        // run through this ffmpeg on a real clip at amounts 0, 0.25, 1, 2
+        // and 4 before it was written here.
+        "spin" => format!(
+            ",rotate=a='{:.3}*t':ow=iw:oh=ih:c=black@0",
+            0.6 * amount
+        ),
+        "scanlines" => {
+            ",geq=lum='if(mod(Y,4),lum(X,Y),lum(X,Y)*0.35)':\
+             cb='if(mod(Y,4),cb(X,Y),cb(X,Y)*0.35)':\
+             cr='if(mod(Y,4),cr(X,Y),cr(X,Y)*0.35)'"
+        }
+        .into(),
+        "edge_glow" => format!(
+            ",edgedetect=low=0.1:high=0.4,gblur=sigma={:.2}",
+            (1.2 * amount).clamp(0.2, 6.0)
+        ),
+        "trails" => ",tblend=all_mode=average".into(),
+        "stutter" => format!(",framestep={}", (1.0 + 3.0 * amount).round() as i64),
+        "ripple" => format!(
+            ",geq=lum_expr='lum(X+{d:.1}*sin(Y/18+T*5),Y)'\
+             :cb_expr='cb(X+{d:.1}*sin(Y/18+T*5),Y)'\
+             :cr_expr='cr(X+{d:.1}*sin(Y/18+T*5),Y)'",
+            d = (6.0 * amount).clamp(0.0, 40.0)
+        ),
+        "pixel_shuffle" => format!(
+            ",shufflepixels=w={}:h={}:m=vertical",
+            (6.0 + 10.0 * amount).clamp(2.0, 64.0) as i64,
+            (6.0 + 10.0 * amount).clamp(2.0, 64.0) as i64
+        ),
+
+        "infrared" => ",colorchannelmixer=rr=0.4:rg=0.6:rb=0.4:\
+                      gr=0.4:gg=0.6:gb=0.4:br=0.4:bg=0.6:bb=0.4"
+            .into(),
+        "blueprint" => format!(
+            ",hue=s={:.2},colorbalance=rm={:.3}:gm=-0.050:bm={:.3}",
+            (0.6 - 0.2 * amount).max(0.0),
+            -(0.15 * amount).clamp(-1.0, 1.0),
+            (0.35 * amount).clamp(-1.0, 1.0)
+        ),
+        "poster" => format!(
+            ",colorlevels=rimin={:.3}:rimax=0.65:romax=1.0",
+            (0.35 * amount).clamp(-1.0, 1.0)
+        ),
+        "bleach" => format!(
+            ",colorbalance=rs={:.3}:gs=-0.060:bs={:.3},\
+             eq=saturation={:.3}:contrast=1.25",
+            -(0.12 * amount).clamp(-1.0, 1.0),
+            (0.18 * amount).clamp(-1.0, 1.0),
+            (0.45 - 0.15 * amount).max(0.0)
+        ),
+        "day_night" => format!(
+            ",eq=saturation=0.5:brightness=-0.04,\
+             colorbalance=bm={:.3}:rm={:.3}",
+            (0.30 * amount).clamp(-1.0, 1.0),
+            -(0.12 * amount).clamp(-1.0, 1.0)
+        ),
+        "ink" => format!(
+            ",colorlevels=rimin={:.3}:rimax=0.55,gblur=sigma=0.6,negate",
+            (0.45 * amount).clamp(-1.0, 1.0)
+        ),
+        "faded_film" => format!(
+            ",curves=all='0/0.16 0.5/0.56 1/0.96',\
+             eq=saturation={:.3}:contrast={:.3}",
+            (0.80 - 0.20 * amount).max(0.0),
+            (0.92 - 0.10 * amount).max(0.0)
+        ),
+
         _ => return None,
     };
     Some(frag)

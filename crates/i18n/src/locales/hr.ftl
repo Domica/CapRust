@@ -660,6 +660,14 @@ asset-effect-flip3d = 3D preokret
 asset-effect-freezeframe = Zamrzni frame
 asset-effect-echo = Jeka
 asset-effect-beauty = Ljepota
+asset-effect-spin = Okretanje
+asset-effect-scanlines = Skenirane linije
+asset-effect-edge_glow = Svijetli rubovi
+asset-effect-trails = Tragovi
+asset-effect-stutter = Teputanje
+asset-effect-ripple = Valoviti
+asset-effect-pixel_shuffle = Pomijesanje piksela
+
 
 # Filters
 asset-filter-none = Bez
@@ -678,6 +686,14 @@ asset-filter-fade = Izblijedjelo
 asset-filter-pastel = Pastel
 asset-filter-neon = Neon
 asset-filter-gold = Zlatno
+asset-filter-infrared = Infracrvena
+asset-filter-blueprint = Shema
+asset-filter-poster = Poster
+asset-filter-bleach = Izblijedljeno
+asset-filter-day_night = Dan u noc
+asset-filter-ink = Boja
+asset-filter-faded_film = Izblijedljeni film
+
 
 # Text styles
 asset-text-default = Zadano
