@@ -112,6 +112,15 @@ presets!(
     "zoom_blur",
     "squeeze_h",
     "squeeze_v",
+    "fade_fast",
+    "fade_slow",
+    "slice_hl",
+    "slice_hr",
+    "slice_vu",
+    "slice_vd",
+    "wind_right",
+    "wind_up",
+    "wind_down",
 );
 
 presets!(

@@ -1586,8 +1586,8 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
         "wipe_u" => "wipeup",
         "wipe_d" => "wipedown",
         "fadewhite" => "fadewhite",
-        "zoom_in" => "circleopen",
-        "zoom_out" => "circleclose",
+        "zoom_in" => "zoomin",
+        "zoom_out" => "circleopen",
         "rotate" => "radial",
         "blur_t" => "fadeblack",
         "dissolve" => "dissolve",
@@ -1622,9 +1622,18 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
         "hblur" => "hblur",
         "circle_crop" => "circlecrop",
         "rect_crop" => "rectcrop",
-        "zoom_blur" => "zoomin",
+        "zoom_blur" => "hlwind",
         "squeeze_h" => "squeezeh",
         "squeeze_v" => "squeezev",
+        "fade_fast" => "fadefast",
+        "fade_slow" => "fadeslow",
+        "slice_hl" => "hlslice",
+        "slice_hr" => "hrslice",
+        "slice_vu" => "vuslice",
+        "slice_vd" => "vdslice",
+        "wind_right" => "hrwind",
+        "wind_up" => "vuwind",
+        "wind_down" => "vdwind",
         _ => return None,
     })
 }
@@ -4955,7 +4964,8 @@ mod tests {
     fn xfade_names_match_ffmpeg_keywords() {
         assert_eq!(xfade_name("fade"), Some("fade"));
         assert_eq!(xfade_name("slide_l"), Some("slideleft"));
-        assert_eq!(xfade_name("zoom_in"), Some("circleopen"));
+        assert_eq!(xfade_name("zoom_in"), Some("zoomin"));
+        assert_eq!(xfade_name("zoom_out"), Some("circleopen"));
         assert_eq!(xfade_name("blur_t"), Some("fadeblack"));
         assert_eq!(xfade_name("dissolve"), Some("dissolve"));
         assert_eq!(xfade_name("smooth_l"), Some("smoothleft"));
@@ -4975,7 +4985,10 @@ mod tests {
         assert_eq!(xfade_name("hblur"), Some("hblur"));
         assert_eq!(xfade_name("circle_crop"), Some("circlecrop"));
         assert_eq!(xfade_name("rect_crop"), Some("rectcrop"));
-        assert_eq!(xfade_name("zoom_blur"), Some("zoomin"));
+        assert_eq!(xfade_name("zoom_blur"), Some("hlwind"));
+        assert_eq!(xfade_name("fade_fast"), Some("fadefast"));
+        assert_eq!(xfade_name("slice_hr"), Some("hrslice"));
+        assert_eq!(xfade_name("wind_down"), Some("vdwind"));
         assert_eq!(xfade_name("squeeze_h"), Some("squeezeh"));
         assert_eq!(xfade_name("squeeze_v"), Some("squeezev"));
     }
@@ -5036,10 +5049,32 @@ mod tests {
             "zoom_blur",
             "squeeze_h",
             "squeeze_v",
+            "fade_fast",
+            "fade_slow",
+            "slice_hl",
+            "slice_hr",
+            "slice_vu",
+            "slice_vd",
+            "wind_right",
+            "wind_up",
+            "wind_down",
         ];
         for id in ids {
             assert!(is_xfade_transition(id), "{id} missing from core list");
             assert!(is_xfade_id(id), "{id} missing from render map");
+        }
+
+        // One ffmpeg transition, one card. Two ids aliasing the same
+        // name means two cards that render identically, which is how
+        // `zoom_out` ended up a duplicate of `circle_close`.
+        let mut seen: Vec<&str> = Vec::new();
+        for id in ids {
+            let n = xfade_name(id).expect("mapped");
+            assert!(
+                !seen.contains(&n),
+                "`{id}` and an earlier id both map to `{n}`",
+            );
+            seen.push(n);
         }
     }
 
