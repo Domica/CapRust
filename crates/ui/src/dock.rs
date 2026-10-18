@@ -27,6 +27,7 @@ pub enum Tab {
     AssetTemplates,
     AssetPlugins,
     AssetSfx,
+    AssetStickers,
     // Standalone editor panels.
     Preview,
     Properties,
@@ -42,7 +43,7 @@ impl Tab {
     /// them -- the fixed frame puts them in the centre and along the
     /// bottom, but nothing stops someone putting a second timeline in a
     /// side column, and refusing would be an arbitrary limit.
-    pub fn all() -> [Self; 13] {
+    pub fn all() -> [Self; 14] {
         [
             Self::AssetMedia,
             Self::AssetTransitions,
@@ -52,6 +53,7 @@ impl Tab {
             Self::AssetTemplates,
             Self::AssetPlugins,
             Self::AssetSfx,
+            Self::AssetStickers,
             Self::Preview,
             Self::Properties,
             Self::Timeline,
@@ -73,6 +75,7 @@ impl Tab {
             Self::AssetTemplates => crate::panels::asset_browser::AssetTab::Templates.icon(),
             Self::AssetPlugins => crate::panels::asset_browser::AssetTab::Plugins.icon(),
             Self::AssetSfx => crate::panels::asset_browser::AssetTab::Sfx.icon(),
+            Self::AssetStickers => crate::panels::asset_browser::AssetTab::Stickers.icon(),
             Self::Preview => "🎞",
             Self::Properties => "⚙",
             Self::Timeline => "⏱",
@@ -93,11 +96,39 @@ impl Tab {
             Self::AssetPlugins => "asset-tab-plugins",
             Self::AssetSfx => "asset-tab-sfx",
             Self::Preview => "dock-tab-preview",
+            Self::AssetStickers => "asset-tab-stickers",
             Self::Properties => "props-heading",
             Self::Timeline => "dock-tab-timeline",
             Self::MasterChain => "dock-tab-master",
             Self::MultiCam => "dock-tab-multicam",
         }
+    }
+}
+
+impl Tab {
+    /// The asset tab this panel renders, for the ones that are asset tabs.
+    ///
+    /// Added with the Stickers tab, which shipped unreachable: `Tab::all()`
+    /// is what the zone picker lists, and adding to `AssetTab` alone left
+    /// the feature with no way to open it.
+    pub fn asset_tab(self) -> Option<crate::panels::asset_browser::AssetTab> {
+        use crate::panels::asset_browser::AssetTab;
+        Some(match self {
+            Self::AssetMedia => AssetTab::Media,
+            Self::AssetTransitions => AssetTab::Transitions,
+            Self::AssetEffects => AssetTab::Effects,
+            Self::AssetFilters => AssetTab::Filters,
+            Self::AssetText => AssetTab::Text,
+            Self::AssetTemplates => AssetTab::Templates,
+            Self::AssetPlugins => AssetTab::Plugins,
+            Self::AssetSfx => AssetTab::Sfx,
+            Self::AssetStickers => AssetTab::Stickers,
+            Self::Preview
+            | Self::Properties
+            | Self::Timeline
+            | Self::MasterChain
+            | Self::MultiCam => return None,
+        })
     }
 }
 
@@ -136,6 +167,7 @@ pub fn default_dock_state() -> DockState<Tab> {
             Tab::AssetTemplates,
             Tab::AssetPlugins,
             Tab::AssetSfx,
+            Tab::AssetStickers,
         ],
     );
 
@@ -239,6 +271,7 @@ pub fn preset_dock_state(preset: LayoutPreset) -> DockState<Tab> {
             Tab::AssetTemplates,
             Tab::AssetPlugins,
             Tab::AssetSfx,
+            Tab::AssetStickers,
         ],
     );
 
@@ -307,6 +340,10 @@ impl<'a> TabViewer for AppTabViewer<'a> {
             Tab::AssetSfx => {
                 self.app
                     .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Sfx);
+            }
+            Tab::AssetStickers => {
+                self.app
+                    .render_assets_panel(ui, crate::panels::asset_browser::AssetTab::Stickers);
             }
         }
     }
@@ -461,5 +498,37 @@ mod layout_tests {
         let a = serde_json::to_string(&preset_dock_state(LayoutPreset::Classic)).unwrap();
         let b = serde_json::to_string(&default_dock_state()).unwrap();
         assert_eq!(a, b);
+    }
+
+    /// Every asset tab needs a panel that can host it, and the zone
+    /// picker only lists `Tab::all()`. These are two enums that mirror
+    /// each other and nothing asserted that, so Stickers shipped with a
+    /// green build, green tests, and no way to reach it from the editor.
+    #[test]
+    fn every_asset_tab_has_a_panel_that_can_host_it() {
+        use crate::panels::asset_browser::AssetTab;
+        let missing: Vec<&str> = AssetTab::all()
+            .iter()
+            .filter(|at| !Tab::all().iter().any(|t| t.asset_tab() == Some(**at)))
+            .map(|at| at.label())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "asset tabs with no dock Tab, so unreachable from the zone picker: {missing:?}"
+        );
+    }
+
+    /// And the reverse: a panel the picker offers must resolve to a real
+    /// asset tab, or clicking it renders nothing.
+    #[test]
+    fn every_asset_panel_resolves_back_to_a_tab() {
+        for t in Tab::all() {
+            if let Some(at) = t.asset_tab() {
+                assert!(
+                    crate::panels::asset_browser::AssetTab::all().contains(&at),
+                    "{t:?} maps to an AssetTab that is not in all()"
+                );
+            }
+        }
     }
 }

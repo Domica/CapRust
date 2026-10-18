@@ -9579,6 +9579,7 @@ impl CapRustApp {
             Tab::AssetTemplates => self.render_assets_panel(ui, AssetTab::Templates),
             Tab::AssetPlugins => self.render_assets_panel(ui, AssetTab::Plugins),
             Tab::AssetSfx => self.render_assets_panel(ui, AssetTab::Sfx),
+            Tab::AssetStickers => self.render_assets_panel(ui, AssetTab::Stickers),
             Tab::Preview => self.render_preview_panel(ui),
             Tab::Properties => self.render_properties_panel(ui),
             Tab::Timeline => self.render_timeline_panel(ui),
