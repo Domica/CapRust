@@ -23,7 +23,7 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ### Changed
 
-- **CapCut import moved out of CapRust** into its own plugin repository. It is loaded as a plugin rather than compiled in, and `File -> Import other` lists whatever is installed rather than advertising importers this build does not ship.
+- **Importers are plugins, and `File -> Import other` lists what is installed** rather than advertising importers this build does not ship. An importer is a separate program, added and replaced on its own.
 - **The File menu no longer shows a raw translation key.** `menu-file-import-other` was read by the code and present in no locale file.
 - **`File -> Import other` stays reachable with nothing installed.** It used to hide itself when the importers directory was empty -- which left the one user who could not get to *Import plugin* as the one with no plugins installed.
 - **The Downloads badge is live again** instead of frozen at a hand-counted number.
@@ -58,8 +58,6 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 ### Known issues
 
 - The Android companion app has not had a pass on a real device and is not covered by these release notes. Several of the fixes above to it were found by CI and reasoning rather than by use.
-- The CapC plugin repository has 18 tests but no user-facing release process of its own yet.
-- `docs/index.html` still carries a sentence describing what 0.9.17 added, in a paragraph that now reads as though it were describing the current release.
 
 ## [0.9.17] — 2026-10-14
 
