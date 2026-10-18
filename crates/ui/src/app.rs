@@ -8971,7 +8971,7 @@ impl CapRustApp {
                     ctx,
                     "modern_left_l",
                     egui::Rect::from_min_size(above.min, egui::vec2(lw, above.height())),
-                    |ui| self.render_zone(ui, Zone::LeftTop),
+                    |ui| self.show_zone_full(ui, Zone::LeftTop),
                 );
             }
             if right_on && rw > 1.0 {
@@ -8982,7 +8982,7 @@ impl CapRustApp {
                         egui::pos2(above.max.x - rw, above.min.y),
                         egui::vec2(rw, above.height()),
                     ),
-                    |ui| self.render_zone(ui, Zone::RightTop),
+                    |ui| self.show_zone_full(ui, Zone::RightTop),
                 );
             }
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -9109,6 +9109,25 @@ impl CapRustApp {
             |ui| {
                 ui.set_min_height(bot_h);
                 self.render_zone(ui, bottom);
+            },
+        );
+    }
+
+    /// One zone filling whatever space it is given.
+    ///
+    /// `render_zone` on its own sizes the card to its contents. In a column
+    /// that is wrong -- the zone is meant to be a panel that reaches the
+    /// edges of its cell -- so the cell is allocated at its full height and
+    /// set as a minimum, the same way `show_zone_column` does for two zones.
+    fn show_zone_full(&mut self, ui: &mut egui::Ui, zone: Zone) {
+        let w = ui.available_width();
+        let h = ui.available_height();
+        ui.allocate_ui_with_layout(
+            egui::vec2(w, h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(h);
+                self.render_zone(ui, zone);
             },
         );
     }
