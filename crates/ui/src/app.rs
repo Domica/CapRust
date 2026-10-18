@@ -9175,16 +9175,32 @@ impl CapRustApp {
 
                 ui.separator();
 
-                if let Some(front) = stack.first().copied() {
-                    self.render_tab_body(ui, front);
-                } else {
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(tr("menu-zone-empty"))
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    ui.add_space(4.0);
-                }
+                // The body takes everything that is left and scrolls.
+                //
+                // `auto_shrink([false, false])` is the part that matters: by
+                // default a `ScrollArea` is only as tall as its contents, so
+                // the card ended at the bottom of the panel and the rest of
+                // the zone was bare background -- the "the container does not
+                // fill the space" and "it looks like a hover highlight"
+                // reports. With it, the scroll area claims the full height
+                // the zone was given, the card reaches the edges of the cell,
+                // and a panel taller than the zone scrolls instead of
+                // spilling out of it.
+                egui::ScrollArea::vertical()
+                    .id_salt(zone.slot())
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if let Some(front) = stack.first().copied() {
+                            self.render_tab_body(ui, front);
+                        } else {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(tr("menu-zone-empty"))
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                            ui.add_space(4.0);
+                        }
+                    });
             });
 
         // The bevel and the cast shadow, drawn on the frame's own rect.
@@ -13328,6 +13344,17 @@ impl Zone {
                     state.right_bottom.insert(0, tab);
                 }
             }
+        }
+    }
+
+    /// A stable number for this zone, used to give its scroll area its own
+    /// remembered scroll offset.
+    pub fn slot(self) -> u8 {
+        match self {
+            Self::LeftTop => 0,
+            Self::LeftBottom => 1,
+            Self::RightTop => 2,
+            Self::RightBottom => 3,
         }
     }
 
