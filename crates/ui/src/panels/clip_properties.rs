@@ -72,6 +72,9 @@ pub enum PendingEdit {
     TrimStart(u64),
     TrimDuration(u64),
     TrackIndex(usize),
+    /// Overlay placement for a sticker. `None` clears it and puts the clip
+    /// back to filling the frame.
+    Overlay(Option<caprust_core::clip::OverlayPlacement>),
     /// Edit the text of caption segment `idx` on the currently-selected
     /// Captions clip. Committed once per edit (blur or Enter), never
     /// per keystroke.
@@ -1545,6 +1548,15 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
         });
     }
 
+    // --- Sticker placement ---
+    // Only for clips that actually carry one. A clip with `overlay: None`
+    // fills the frame and has no position to edit.
+    if clip.overlay.is_some() {
+        ui.label(egui::RichText::new(tr("props-sticker")).strong());
+        ui.add_space(space::XS);
+        show_sticker_placement(ui, clip, state);
+    }
+
     // --- Color grade ---
     ui.label(egui::RichText::new(tr("props-color-grade")).strong());
     ui.add_space(space::XS);
@@ -2489,4 +2501,136 @@ fn format_duration(ms: u64) -> String {
     let sec = s % 60;
     let millis = ms % 1000;
     format!("{m:02}:{sec:02}.{millis:03}")
+}
+
+/// Scale, position and animation for a clip that sits on the frame
+/// instead of filling it.
+///
+/// The values are fractions rather than pixels so a sticker keeps its
+/// proportions when the project changes resolution -- a percentage of the
+/// frame is the only number that means the same thing on a 720p phone
+/// export and a 4K master.
+fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+    let Some(place) = clip.overlay.clone() else {
+        return;
+    };
+
+    let mut scale = place.scale;
+    if ui
+        .add(
+            egui::Slider::new(&mut scale, 0.02..=2.0)
+                .suffix(" x H")
+                .text(tr("props-sticker-scale")),
+        )
+        .changed()
+    {
+        set_overlay(
+            clip,
+            state,
+            Some(caprust_core::clip::OverlayPlacement {
+                scale,
+                x: place.x,
+                y: place.y,
+                animation: place.animation.clone(),
+            }),
+        );
+    }
+
+    let (mut x, mut y) = (place.x, place.y);
+    let mut moved = false;
+    egui::Grid::new("clip_sticker_pos_grid")
+        .num_columns(2)
+        .spacing([space::S, space::S])
+        .show(ui, |ui| {
+            ui.label(tr("props-sticker-x"));
+            if ui
+                .add(egui::Slider::new(&mut x, -0.5..=1.5).text("x"))
+                .changed()
+            {
+                moved = true;
+            }
+            ui.end_row();
+            ui.label(tr("props-sticker-y"));
+            if ui
+                .add(egui::Slider::new(&mut y, -0.5..=1.5).text("y"))
+                .changed()
+            {
+                moved = true;
+            }
+            ui.end_row();
+        });
+    if moved {
+        set_overlay(
+            clip,
+            state,
+            Some(caprust_core::clip::OverlayPlacement {
+                scale,
+                x,
+                y,
+                animation: place.animation.clone(),
+            }),
+        );
+    }
+
+    // Animation. None is "static", which is what every clip that had no
+    // `animation` field means.
+    let anims = [
+        None,
+        Some("pop"),
+        Some("bounce"),
+        Some("spin"),
+        Some("drift"),
+    ];
+    egui::ComboBox::from_label(tr("props-sticker-animation"))
+        .selected_text(
+            place
+                .animation
+                .as_deref()
+                .map(sticker_anim_name)
+                .unwrap_or_else(|| tr("props-sticker-none")),
+        )
+        .show_ui(ui, |ui| {
+            for a in anims {
+                let label = a
+                    .map(sticker_anim_name)
+                    .unwrap_or_else(|| tr("props-sticker-none"));
+                let want: Option<String> = a.map(str::to_string);
+                if ui
+                    .selectable_label(place.animation == want, label)
+                    .clicked()
+                {
+                    set_overlay(
+                        clip,
+                        state,
+                        Some(caprust_core::clip::OverlayPlacement {
+                            scale,
+                            x,
+                            y,
+                            animation: want,
+                        }),
+                    );
+                }
+            }
+        });
+}
+
+/// The four animations the render path knows. Anything else is stored but
+/// emits nothing, so the list here is the contract with
+/// `sticker_animation_fragment`.
+fn sticker_anim_name(id: &str) -> String {
+    match id {
+        "pop" => tr("props-sticker-anim-pop").to_string(),
+        "bounce" => tr("props-sticker-anim-bounce").to_string(),
+        "spin" => tr("props-sticker-anim-spin").to_string(),
+        "drift" => tr("props-sticker-anim-drift").to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn set_overlay(
+    _clip: &Clip,
+    state: &mut PropertiesState,
+    v: Option<caprust_core::clip::OverlayPlacement>,
+) {
+    state.pending.push(PendingEdit::Overlay(v));
 }

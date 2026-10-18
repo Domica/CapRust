@@ -9996,6 +9996,7 @@ impl CapRustApp {
                                 PendingEdit::TrimStart(v) => cmd.start_time_ms(v),
                                 PendingEdit::TrimDuration(v) => cmd.duration_ms(v),
                                 PendingEdit::TrackIndex(v) => cmd.track_index(v),
+                                PendingEdit::Overlay(v) => cmd.overlay(v),
                                 _ => cmd,
                             });
                         }
@@ -10011,6 +10012,29 @@ impl CapRustApp {
     /// Handle a batch of asset-browser output: media jobs, imports,
     /// removals, preset clicks. Shared between the classic
     /// SidePanel::left and every docked AssetX tab.
+    /// Track index stickers land on: the overlay lane, created on first use.
+    ///
+    /// `TrackKind::Overlay` already existed for watermarks and logos and
+    /// is the only lane meant to sit above the picture rather than be it.
+    /// A sticker is exactly that, so it goes there instead of onto a
+    /// video lane where it would push the footage around.
+    fn overlay_lane_index(&mut self) -> usize {
+        if let Some(i) = self
+            .project
+            .tracks
+            .iter()
+            .position(|t| t.kind == caprust_core::TrackKind::Overlay)
+        {
+            return i;
+        }
+        let name = format!("O{}", self.project.tracks.len() + 1);
+        self.project.tracks.push(caprust_core::Track::new(
+            &name,
+            caprust_core::TrackKind::Overlay,
+        ));
+        self.project.tracks.len() - 1
+    }
+
     fn handle_asset_browser_output(
         &mut self,
         out: crate::panels::asset_browser::AssetBrowserOutput,
@@ -10206,10 +10230,50 @@ impl CapRustApp {
                             tracing::info!("inserted TextOverlay clip with style '{preset_id}'");
                         }
                     }
-                    AssetTab::Media | AssetTab::Templates | AssetTab::Plugins | AssetTab::Sfx => {}
+
+                    // Stickers carry their own click path: a sticker is not a preset
+                    // applied to the selection, it is a clip placed on the timeline.
+                    AssetTab::Media
+                    | AssetTab::Templates
+                    | AssetTab::Plugins
+                    | AssetTab::Sfx
+                    | AssetTab::Stickers => {}
                 }
             } else {
                 tracing::warn!("preset '{preset_id}' clicked but no clip selected");
+            }
+        }
+
+        // ---- Stickers ----------------------------------------------------
+        // A sticker is not a preset applied to whatever happens to be
+        // selected. It is a mark put at a place in the frame, so clicking
+        // one puts a clip on the timeline at the playhead, on the overlay
+        // lane, with a placement already set.
+        if let Some(id) = out.sticker_clicked {
+            match caprust_core::stickers::materialize(&id) {
+                Ok(path) => {
+                    let lane = self.overlay_lane_index();
+
+                    // A sticker is a still, so its "duration" is how long
+                    // it stays on screen. Three seconds is the length a
+                    // badge wants by default; the user drags the edge like
+                    // any other clip.
+                    let mut clip = caprust_core::Clip::new_image(
+                        &path.to_string_lossy(),
+                        lane,
+                        self.playhead_ms,
+                        3000,
+                    );
+                    clip.overlay = Some(caprust_core::OverlayPlacement::default_sticker());
+                    clip.source_duration_ms = 0;
+
+                    let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                    self.selected_clips.clear();
+                    tracing::info!("placed sticker '{id}' on lane {lane}");
+                    self.toast(format!("{}: {}", tr("toast-sticker-placed"), id));
+                }
+                Err(e) => self.toast_error(format!("{}: {e}", tr("toast-sticker-failed"))),
             }
         }
     }

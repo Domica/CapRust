@@ -29,6 +29,9 @@ pub struct SetClipCommand {
     /// Only meaningful on TextOverlay clips: replaces the motion
     /// transform. No-op on other clip kinds.
     pub text_motion: Option<crate::clip::TextMotion>,
+    /// Overlay placement for a sticker. `Some(None)` clears it and puts
+    /// the clip back to filling the frame.
+    pub overlay: Option<Option<crate::clip::OverlayPlacement>>,
     /// Only meaningful on TextOverlay clips: Some(Some(x)) sets the
     /// effect, Some(None) clears it, None leaves untouched.
     pub text_effect: Option<Option<crate::clip::TextEffect>>,
@@ -100,6 +103,7 @@ impl SetClipCommand {
             text_content: None,
             caption_style: None,
             text_motion: None,
+            overlay: None,
             text_effect: None,
             fade_in_ms: None,
             fade_out_ms: None,
@@ -185,6 +189,11 @@ impl SetClipCommand {
         self
     }
     /// Replace the TextOverlay OR Captions motion transform. No-op on other kinds.
+    pub fn overlay(mut self, v: Option<crate::clip::OverlayPlacement>) -> Self {
+        self.overlay = Some(v);
+        self
+    }
+
     pub fn text_motion(mut self, v: crate::clip::TextMotion) -> Self {
         self.text_motion = Some(v);
         self
@@ -374,6 +383,9 @@ impl Command for SetClipCommand {
             if let crate::clip::ClipType::TextOverlay { content, .. } = &mut c.clip_type {
                 *content = v;
             }
+        }
+        if let Some(v) = self.overlay.take() {
+            c.overlay = v;
         }
         if let Some(v) = self.text_motion {
             match &mut c.clip_type {

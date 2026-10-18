@@ -24,10 +24,11 @@ pub enum AssetTab {
     Templates,
     Plugins,
     Sfx,
+    Stickers,
 }
 
 impl AssetTab {
-    pub fn all() -> [Self; 8] {
+    pub fn all() -> [Self; 9] {
         [
             Self::Media,
             Self::Transitions,
@@ -37,6 +38,7 @@ impl AssetTab {
             Self::Templates,
             Self::Plugins,
             Self::Sfx,
+            Self::Stickers,
         ]
     }
     pub fn label(&self) -> &'static str {
@@ -49,6 +51,7 @@ impl AssetTab {
             Self::Templates => "asset-tab-templates",
             Self::Plugins => "asset-tab-plugins",
             Self::Sfx => "asset-tab-sfx",
+            Self::Stickers => "asset-tab-stickers",
         }
     }
     pub fn icon(&self) -> &'static str {
@@ -61,6 +64,7 @@ impl AssetTab {
             Self::Plugins => ph::PLUG,
             Self::Templates => "🧩",
             Self::Sfx => "🔊",
+            Self::Stickers => ph::STICKER,
         }
     }
     pub fn id(&self) -> &'static str {
@@ -73,6 +77,7 @@ impl AssetTab {
             Self::Templates => "templates",
             Self::Plugins => "plugins",
             Self::Sfx => "sfx",
+            Self::Stickers => "stickers",
         }
     }
     pub fn from_id(id: &str) -> Option<Self> {
@@ -85,6 +90,7 @@ impl AssetTab {
             "templates" => Self::Templates,
             "plugins" => Self::Plugins,
             "sfx" => Self::Sfx,
+            "stickers" => Self::Stickers,
             _ => return None,
         })
     }
@@ -118,6 +124,30 @@ impl PresetCardSize {
     }
 }
 
+/// Decoded sticker textures, by sticker id.
+///
+/// A newtype because `egui::TextureHandle` is not `Debug` and
+/// `AssetBrowserState` derives it.
+#[derive(Default)]
+pub struct StickerTextures {
+    map: std::collections::HashMap<String, egui::TextureHandle>,
+}
+
+impl StickerTextures {
+    fn get(&self, id: &str) -> Option<egui::TextureHandle> {
+        self.map.get(id).cloned()
+    }
+    fn insert(&mut self, id: String, tex: egui::TextureHandle) {
+        self.map.insert(id, tex);
+    }
+}
+
+impl std::fmt::Debug for StickerTextures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StickerTextures({} cached)", self.map.len())
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct AssetBrowserState {
     pub active: AssetTab,
@@ -135,6 +165,16 @@ pub struct AssetBrowserState {
     /// Selected tab layout mode (NoFilter/Filtered).
     pub tab_layout: TabLayout,
     pub plugin_browser: crate::panels::plugin_browser::PluginBrowserState,
+    /// Stickers tab: search text (matches name + category).
+    pub sticker_search: String,
+    /// Stickers tab: selected category ("all" = no filter).
+    pub sticker_cat: String,
+    /// Decoded sticker textures, by sticker id.
+    ///
+    /// Without this the grid runs the PNG decoder on all 108 built-ins
+    /// every frame to draw the twenty that are on screen. The grid
+    /// scrolls, so the cache grows to the whole library and then stops.
+    pub sticker_tex: StickerTextures,
     /// SFX tab: search text (matches name + category, case-insensitive).
     pub sfx_search: String,
     /// SFX tab: selected category ("all" = no filter).
@@ -156,6 +196,9 @@ impl AssetBrowserState {
             sidebar_width: 104.0,
             tab_layout: TabLayout::default(),
             plugin_browser: Default::default(),
+            sticker_search: String::new(),
+            sticker_cat: "all".to_string(),
+            sticker_tex: Default::default(),
             sfx_search: String::new(),
             sfx_cat: "all".to_string(),
             sfx_downloading: None,
@@ -1252,6 +1295,9 @@ pub struct AssetBrowserOutput {
     /// User clicked Delete on a user template (path). app.rs deletes
     /// and toasts; the list refreshes next frame.
     pub template_delete_requested: Option<std::path::PathBuf>,
+    /// Sticker the user picked. app.rs materialises the PNG and drops it
+    /// on the timeline as an overlay clip.
+    pub sticker_clicked: Option<String>,
     /// SFX entry id the user asked to download. app.rs spawns the
     /// background download; the row shows progress via
     /// `AssetBrowserState::sfx_downloading`.
@@ -1415,8 +1461,141 @@ pub fn render_tab_content(
         AssetTab::Sfx => {
             show_sfx_tab(ui, state, &mut out);
         }
+        AssetTab::Stickers => {
+            show_stickers_tab(ui, state, &mut out);
+        }
     }
     out
+}
+
+/// Stickers tab: the 108 built-ins, filterable, click to place.
+///
+/// Clicking does not download anything. The bytes are already in the
+/// binary; app.rs writes the one PNG out and drops it on the timeline as an
+/// overlay clip, which is what a sticker is for -- it is not media you
+/// drag and scrub, it is a mark you put at a place in the frame.
+fn show_stickers_tab(ui: &mut Ui, state: &mut AssetBrowserState, out: &mut AssetBrowserOutput) {
+    ui.label(RichText::new(tr("asset-tab-stickers")).strong());
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label(tr("asset-stickers-search"));
+        ui.add(
+            egui::TextEdit::singleline(&mut state.sticker_search)
+                .desired_width(140.0)
+                .hint_text(tr("asset-sfx-search-hint")),
+        );
+    });
+    ui.add_space(4.0);
+
+    ui.horizontal_wrapped(|ui| {
+        let all = state.sticker_cat == "all";
+        if ui.selectable_label(all, tr("asset-cat-all")).clicked() {
+            state.sticker_cat = "all".to_string();
+        }
+        for cat in caprust_core::stickers::categories() {
+            let selected = state.sticker_cat == cat;
+            if ui
+                .selectable_label(selected, tr(sticker_cat_key(cat)))
+                .clicked()
+            {
+                state.sticker_cat = cat.to_string();
+            }
+        }
+    });
+    ui.separator();
+
+    let q = state.sticker_search.to_lowercase();
+    let size = state.card_size.px();
+    egui::ScrollArea::vertical()
+        .id_salt("sticker_grid")
+        .show(ui, |ui| {
+            egui::Grid::new("sticker_grid_inner")
+                .spacing([6.0, 6.0])
+                .show(ui, |ui| {
+                    let mut col = 0usize;
+                    for entry in caprust_core::stickers::CATALOG {
+                        if state.sticker_cat != "all" && entry.category != state.sticker_cat {
+                            continue;
+                        }
+                        if !q.is_empty()
+                            && !entry.name.to_lowercase().contains(&q)
+                            && !entry.category.contains(&q)
+                        {
+                            continue;
+                        }
+                        // Decode the embedded PNG on demand rather than
+                        // shipping 108 decoded textures; a sticker grid is
+                        // scrollable and egui keeps the ones already made.
+                        let resp = ui.vertical(|ui| {
+                            if let Some(tex) = sticker_texture(ui, state, entry.id, entry.png) {
+                                ui.add(
+                                    egui::Image::new(&tex)
+                                        .fit_to_exact_size(egui::vec2(size, size)),
+                                );
+                            } else {
+                                ui.allocate_space(egui::vec2(size, size));
+                            }
+                            ui.small(entry.name)
+                        });
+                        if resp.response.clicked() {
+                            out.sticker_clicked = Some(entry.id.to_string());
+                        }
+                        if resp.response.hovered() {
+                            resp.response.on_hover_text(entry.name);
+                        }
+                        col += 1;
+                        if col.is_multiple_of(6) {
+                            ui.end_row();
+                        }
+                    }
+                });
+        });
+}
+
+/// Decode a sticker PNG once and hand back the cached texture.
+///
+/// The bytes are 8-bit RGBA, which is what the generator writes, so the
+/// `image` crate only has to hand back the pixels.
+fn sticker_texture(
+    ui: &Ui,
+    state: &mut AssetBrowserState,
+    id: &str,
+    png: &[u8],
+) -> Option<egui::TextureHandle> {
+    if let Some(h) = state.sticker_tex.get(id) {
+        return Some(h.clone());
+    }
+    let decoded = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
+    let rgba = decoded.to_rgba8();
+    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let img = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
+    let tex = ui
+        .ctx()
+        .load_texture(format!("sticker/{id}"), img, egui::TextureOptions::LINEAR);
+    state.sticker_tex.insert(id.to_string(), tex.clone());
+    Some(tex)
+}
+
+/// FTL key for a sticker category. The ids are generated, so they are
+/// translated by a lookup rather than concatenated: a category added to
+/// the generator without a key falls back to the id, which is readable
+/// rather than blank.
+fn sticker_cat_key(cat: &str) -> &'static str {
+    match cat {
+        "shape" => "asset-cat-sticker-shape",
+        "heart" => "asset-cat-sticker-heart",
+        "arrow" => "asset-cat-sticker-arrow",
+        "sparkle" => "asset-cat-sticker-sparkle",
+        "speech" => "asset-cat-sticker-speech",
+        "badge" => "asset-cat-sticker-badge",
+        "frame" => "asset-cat-sticker-frame",
+        "mark" => "asset-cat-sticker-mark",
+        _ => "asset-cat-all",
+    }
 }
 
 /// Templates tab: bundled starters + user templates with Apply,

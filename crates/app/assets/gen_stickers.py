@@ -40,6 +40,10 @@ def finish(img, sid, name, category):
     return out
 
 
+def render(fn, sid, name, category):
+    return finish(fn(), sid, name, category)
+
+
 def scale(pts):
     return [(x * SS, y * SS) for x, y in pts]
 
@@ -1212,14 +1216,24 @@ MARKS = [
     ('globe', 'Globe', y_globe),
 ]
 
-ALL = SHAPES + HEARTS + ARROWS + SPARKLES + SPEECH + BADGES + FRAMES + MARKS
+# The eight categories the tab filters on, in display order.
+GROUPS = [
+    ('shape', SHAPES),
+    ('heart', HEARTS),
+    ('arrow', ARROWS),
+    ('sparkle', SPARKLES),
+    ('speech', SPEECH),
+    ('badge', BADGES),
+    ('frame', FRAMES),
+    ('mark', MARKS),
+]
+ALL = [(gid, name, cat, fn) for cat, entries in GROUPS for gid, name, fn in entries]
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    for sid, name, fn in ALL:
-        fn_result = fn()
-        finish(fn_result, sid, name, sid.split('-')[0])
+    for sid, name, cat, fn in ALL:
+        render(fn, sid, name, cat)
     total = sum(os.path.getsize(os.path.join(OUT, f)) for f in os.listdir(OUT))
     print('%d stickers -> %s  (%.0f KB total, %.0f KB avg)'
           % (len(CATALOG), OUT, total / 1024, total / 1024 / len(CATALOG)))
@@ -1245,7 +1259,7 @@ def main():
         # A Rust string literal, not Python's repr.
         return json.dumps(x, ensure_ascii=False)
 
-    for sid, name, cat in sorted(CATALOG):
+    for sid, name, cat in CATALOG:
         lines.append('    Sticker {')
         lines.append('        id: %s,' % q(sid))
         lines.append('        name: %s,' % q(name))
@@ -1255,6 +1269,19 @@ def main():
     lines.append('];')
     lines.append('')
     src = os.path.join(os.path.dirname(OUT), '..', '..', 'core', 'src', 'stickers.rs')
+    # Everything above MARKER is regenerated; everything below it is
+    # hand-written and survives. Without the split, regenerating the
+    # catalog would silently delete the helper functions and tests that
+    # live in the same file.
+    marker = '// ---- end of generated section ----'
+    below = ''
+    if os.path.exists(src):
+        with open(src, encoding='utf-8') as fh:
+            existing = fh.read()
+        if marker in existing:
+            below = marker + existing.split(marker, 1)[1]
+    lines.append(below.lstrip('\n'))
+    lines.append(marker)
     src = os.path.normpath(src)
     with open(src, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write('\n'.join(lines))
