@@ -349,6 +349,17 @@ pub struct CapRustApp {
     /// timeline follows `settings.timeline_size`; picking a size clears this,
     /// which is what makes S/M/L win over an earlier drag.
     pub timeline_drag: Option<f32>,
+    /// Fraction of a side column taken by its top container, as the user
+    /// dragged it. `None` means the column keeps its preset split.
+    ///
+    /// The sidebars could be dragged left and right but not up and down:
+    /// the column was cut at a fixed fraction, so the two containers in it
+    /// never moved relative to each other while the middle column could be
+    /// dragged freely. These give the columns their own seam. They are not
+    /// cleared when the timeline size changes -- that setting says how tall
+    /// the timeline is, and has no business moving a sidebar.
+    pub left_split: Option<f32>,
+    pub right_split: Option<f32>,
     /// Sidebar visibility for the Modern editor. The timeline size presets
     /// these, but they can be set by hand afterwards -- at M and L the preset
     /// turns a sidebar off, and without a way to turn it back on the left
@@ -1138,6 +1149,8 @@ impl CapRustApp {
             pending_missing_scan: false,
             timeline_collapsed: false,
             timeline_drag: None,
+            left_split: None,
+            right_split: None,
             modern_left_on: true,
             modern_right_on: true,
             mcp_server: Default::default(),
@@ -2509,6 +2522,51 @@ impl CapRustApp {
             .join("importers")
     }
 
+    /// Ask the user for the thing this plugin reads, then run it.
+    ///
+    /// The plugin says whether that is a file or a folder. Matching on the
+    /// kind instead meant OTIO -- a single JSON document -- opened a folder
+    /// picker, and any new plugin had to be added to a hardcoded list in
+    /// the host to get the right dialog.
+    fn pick_and_run_importer(&mut self, plugin: &caprust_core::importer::ImporterPlugin) {
+        let picked = match plugin.manifest.target {
+            caprust_core::importer::ImportTarget::Folder => rfd::FileDialog::new()
+                .pick_folder()
+                .map(|p| p.to_string_lossy().to_string()),
+            caprust_core::importer::ImportTarget::File => rfd::FileDialog::new()
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string()),
+        };
+        if let Some(path) = picked {
+            self.run_importer(plugin, &path);
+        }
+    }
+
+    /// Load a plugin from wherever the user points, and import through it.
+    ///
+    /// This is the escape hatch for a plugin that is not installed in
+    /// `%APPDATA%/CapRust/importers`: one just built, one being tested, one
+    /// living somewhere else on disk. Either the manifest or the executable
+    /// can be picked -- `load` takes both, since the two name each other and
+    /// the manifest is where `target` is written down.
+    ///
+    /// Nothing is copied into the importers directory and nothing is cached.
+    /// The plugins listed in the menu are the installed ones; this one runs
+    /// once and is forgotten, which is what makes it safe to point at a
+    /// build that is mid-edit.
+    fn open_plugin_and_import(&mut self) {
+        let Some(picked) = rfd::FileDialog::new()
+            .add_filter("Importer plugin", &["json", "exe"])
+            .pick_file()
+        else {
+            return;
+        };
+        match caprust_core::importer::load(&picked) {
+            Ok(plugin) => self.pick_and_run_importer(&plugin),
+            Err(e) => self.toast_error(format!("{}: {e}", tr("toast-import-failed"))),
+        }
+    }
+
     /// Run one importer and replace the current project with what it
     /// returns. Mirrors the load path: models backfilled, undo reset,
     /// thumbnails regenerated.
@@ -2575,41 +2633,32 @@ impl CapRustApp {
                     // %APPDATA%/CapRust/importers, so what appears here
                     // depends on what the user installed -- a build of
                     // CapRust should not advertise importers it does not
-                    // ship. A missing directory is simply no entries, and
-                    // the entry hides itself.
+                    // ship.
+                    //
+                    // The submenu is shown even when nothing is installed,
+                    // because it also carries *Open plugin*. That entry used
+                    // to be missing, and with an empty importers directory
+                    // the whole thing disappeared -- the one case where a
+                    // user without any plugin installed could not get to
+                    // the feature that lets them load one.
                     let importers = self.available_importers();
-                    if !importers.is_empty() {
-                        ui.menu_button(tr("menu-file-import-other"), |ui| {
-                            for plugin in importers {
-                                let label = plugin.manifest.name.clone();
-                                if ui.button(label).clicked() {
-                                    // The plugin says whether it reads a
-                                    // file or a project folder. Matching
-                                    // on the kind instead meant OTIO -- a
-                                    // single JSON document -- opened a
-                                    // folder picker, and any new plugin
-                                    // had to be added to a hardcoded list
-                                    // in the host to get the right dialog.
-                                    let picked = match plugin.manifest.target {
-                                        caprust_core::importer::ImportTarget::Folder => {
-                                            rfd::FileDialog::new()
-                                                .pick_folder()
-                                                .map(|p| p.to_string_lossy().to_string())
-                                        }
-                                        caprust_core::importer::ImportTarget::File => {
-                                            rfd::FileDialog::new()
-                                                .pick_file()
-                                                .map(|p| p.to_string_lossy().to_string())
-                                        }
-                                    };
-                                    if let Some(path) = picked {
-                                        self.run_importer(&plugin, &path);
-                                    }
-                                    ui.close_menu();
-                                }
+                    ui.menu_button(tr("menu-file-import-other"), |ui| {
+                        let any_installed = !importers.is_empty();
+                        for plugin in importers {
+                            let label = plugin.manifest.name.clone();
+                            if ui.button(label).clicked() {
+                                self.pick_and_run_importer(&plugin);
+                                ui.close_menu();
                             }
-                        });
-                    }
+                        }
+                        if any_installed {
+                            ui.separator();
+                        }
+                        if ui.button(tr("menu-file-import-plugin")).clicked() {
+                            self.open_plugin_and_import();
+                            ui.close_menu();
+                        }
+                    });
                     let save_lbl = if self.settings.enable_shortcuts {
                         format!("{}  (Ctrl+S)", tr("menu-file-save"))
                     } else {
@@ -8932,10 +8981,12 @@ impl CapRustApp {
             // the band cross them was the earlier attempt: an `Area` claims
             // nothing, so widening a sidebar left the preview where it was
             // and the two overlapped.
+            // Captured before the panel is shown: once it exists, the
+            // available rect is already cut down to what is above the band.
+            let avail = ctx.available_rect().height();
             let band_h = if self.timeline_collapsed {
                 TIMELINE_HANDLE_HEIGHT
             } else {
-                let avail = ctx.available_rect().height();
                 self.timeline_height(avail)
                     .max(self.timeline_content_height())
                     .min(avail * 0.8)
@@ -8947,9 +8998,32 @@ impl CapRustApp {
                     if self.timeline_collapsed {
                         self.show_timeline_handle(ui);
                     } else {
-                        self.show_timeline_header(ui);
-                        ui.separator();
-                        self.render_timeline_panel(ui);
+                        // Same seam S and M put between the preview and
+                        // the timeline, for the same reason: the band is
+                        // the one piece of this layout with nothing you
+                        // can pull on. It is drawn here rather than by
+                        // `resizable(true)` because a resizable panel
+                        // keeps the dragged height in egui's own state,
+                        // where picking S, M or L can no longer reach it.
+                        let seam_h = 9.0;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), seam_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                self.timeline_drag_separator(ui, seam_h * 0.5, avail * 0.7);
+                            },
+                        );
+                        let body_h = (band_h - seam_h).max(60.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), body_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_min_height(body_h);
+                                self.show_timeline_header(ui);
+                                ui.separator();
+                                self.render_timeline_panel(ui);
+                            },
+                        );
                     }
                 });
 
@@ -9073,7 +9147,10 @@ impl CapRustApp {
     /// equal the height the column was handed -- no dead band, whatever the
     /// timeline is doing.
     fn show_zone_column(&mut self, ui: &mut egui::Ui, split: f32, left: bool) {
-        const GAP: f32 = 6.0;
+        // The seam, not the old 6px gap. It has to be wide enough to grab,
+        // and it takes its pixels out of the two zones rather than adding a
+        // band of dead space between them.
+        const SEAM: f32 = 9.0;
         let (top, bottom) = if left {
             (Zone::LeftTop, Zone::LeftBottom)
         } else {
@@ -9081,10 +9158,21 @@ impl CapRustApp {
         };
 
         let avail_h = ui.available_height();
-        let usable = (avail_h - GAP).max(0.0);
+        let usable = (avail_h - SEAM).max(0.0);
+        let width = ui.available_width();
+
+        // The drag wins over the preset while it is set, the same rule the
+        // timeline follows. The clamps stop either container collapsing to
+        // nothing, which is the only way this can be gotten wrong.
+        let split = if left {
+            self.left_split
+        } else {
+            self.right_split
+        }
+        .unwrap_or(split)
+        .clamp(0.15, 0.85);
         let top_h = usable * split;
         let bot_h = usable - top_h;
-        let width = ui.available_width();
 
         ui.allocate_ui_with_layout(
             egui::vec2(width, top_h),
@@ -9094,7 +9182,13 @@ impl CapRustApp {
                 self.render_zone(ui, top);
             },
         );
-        ui.add_space(GAP);
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, SEAM),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                self.column_drag_separator(ui, SEAM * 0.5, avail_h, split, left);
+            },
+        );
         ui.allocate_ui_with_layout(
             egui::vec2(width, bot_h),
             egui::Layout::top_down(egui::Align::Min),
@@ -9103,6 +9197,62 @@ impl CapRustApp {
                 self.render_zone(ui, bottom);
             },
         );
+    }
+
+    /// Drag handle across the seam of a side column.
+    ///
+    /// Drawn as a hairline with a small grip in the middle rather than the
+    /// solid bar the timeline's seam uses: a sidebar is a fraction of the
+    /// window wide, and a full-width block at that size reads as a panel
+    /// divider, not as a handle.
+    fn column_drag_separator(
+        &mut self,
+        ui: &mut egui::Ui,
+        y: f32,
+        column_h: f32,
+        split: f32,
+        left: bool,
+    ) {
+        const HANDLE: f32 = 7.0;
+        let width = ui.available_width();
+        let rect =
+            egui::Rect::from_center_size(egui::pos2(width * 0.5, y), egui::vec2(width, HANDLE));
+        let painter = ui.painter_at(rect);
+        let resp = ui.interact(
+            rect,
+            ui.id()
+                .with(if left { "left_split" } else { "right_split" }),
+            egui::Sense::drag(),
+        );
+        let accent = self.theme.accent_color();
+        let base = ui.visuals().widgets.noninteractive.bg_stroke.color;
+        let hot = resp.hovered() || resp.dragged();
+
+        painter.line_segment(
+            [egui::pos2(0.0, y), egui::pos2(width, y)],
+            egui::Stroke::new(1.0, if hot { accent } else { base }),
+        );
+        let grip = egui::Rect::from_center_size(egui::pos2(width * 0.5, y), egui::vec2(22.0, 5.0));
+        painter.rect_filled(
+            grip,
+            egui::CornerRadius::same(2),
+            if hot {
+                accent
+            } else {
+                base.gamma_multiply(1.3)
+            },
+        );
+
+        if resp.dragged() {
+            // Pointer down moves the seam down, so the top container grows.
+            let dy = ui.input(|i| i.pointer.delta().y);
+            let next = (split + dy / column_h.max(1.0)).clamp(0.15, 0.85);
+            if left {
+                self.left_split = Some(next);
+            } else {
+                self.right_split = Some(next);
+            }
+        }
     }
 
     /// One zone filling whatever space it is given.

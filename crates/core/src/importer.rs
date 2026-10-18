@@ -205,6 +205,64 @@ pub fn discover(dir: &Path) -> Vec<ImporterPlugin> {
     found
 }
 
+/// Load one plugin the user pointed at, wherever it happens to live.
+///
+/// This is what backs *Open plugin*. The menu's other entries come from
+/// [`discover`], which only looks in one fixed directory, so testing a
+/// plugin you just built -- or one on a USB stick -- meant copying it into
+/// `%APPDATA%/CapRust/importers` first.
+///
+/// `path` may be the manifest or the executable; picking either works,
+/// because the two sit side by side and name each other. The manifest is
+/// preferred when it is there, for one concrete reason: `target` -- whether
+/// the user picks a file or a folder -- lives only in the manifest. Neither
+/// shipped plugin answers it over the wire, so asking the process alone
+/// would silently fall back to "a file" and a folder importer would open a
+/// file dialog that can never be satisfied.
+pub fn load(path: &Path) -> Result<ImporterPlugin> {
+    let stem_path = if path.extension().and_then(|e| e.to_str()) == Some("json") {
+        path.to_path_buf()
+    } else {
+        path.with_extension("json")
+    };
+
+    if stem_path.is_file() {
+        let text = std::fs::read_to_string(&stem_path)
+            .with_context(|| format!("read {}", stem_path.display()))?;
+        let manifest: ImporterManifest = serde_json::from_str(&text)
+            .with_context(|| format!("{} is not an importer manifest", stem_path.display()))?;
+        if manifest.protocol != PROTOCOL {
+            anyhow::bail!(
+                "{} speaks protocol {} and this host speaks {PROTOCOL}",
+                stem_path.display(),
+                manifest.protocol
+            );
+        }
+        let exe = path.with_extension(if cfg!(windows) { "exe" } else { "" });
+        if !exe.is_file() {
+            anyhow::bail!("{} has no executable beside it", stem_path.display());
+        }
+        return Ok(ImporterPlugin { manifest, exe });
+    }
+
+    // No manifest: ask the process. Its own answer is enough to refuse a
+    // plugin that speaks another protocol, and a manifest-less plugin that
+    // reads a folder can still be run -- it just opens a file dialog.
+    let exe = path.to_path_buf();
+    let mut proc = PluginProcess::spawn(&exe)?;
+    let described = proc.call("describe", json!({}))?;
+    let manifest: ImporterManifest = serde_json::from_value(described)
+        .with_context(|| format!("{} did not describe itself", exe.display()))?;
+    if manifest.protocol != PROTOCOL {
+        anyhow::bail!(
+            "{} speaks protocol {} and this host speaks {PROTOCOL}",
+            exe.display(),
+            manifest.protocol
+        );
+    }
+    Ok(ImporterPlugin { manifest, exe })
+}
+
 /// Overlay a plugin's project JSON onto a default `ProjectState`.
 ///
 /// A plugin only has to know the fields it actually produced — name,
@@ -307,6 +365,59 @@ mod tests {
         assert_eq!(m.protocol, PROTOCOL);
         assert_eq!(m.version, "0.0.0");
         assert!(m.kinds.is_empty());
+    }
+
+    #[test]
+    fn load_reads_a_manifest_from_either_end_of_the_pair() {
+        let dir = std::env::temp_dir().join("caprust-load-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = dir.join("thing.json");
+        let exe = dir.join(if cfg!(windows) { "thing.exe" } else { "thing" });
+        std::fs::write(
+            &json,
+            r#"{"id":"org.x","name":"Thing","protocol":1,"kinds":["x"],"target":"folder"}"#,
+        )
+        .unwrap();
+        std::fs::write(&exe, b"not a real program").unwrap();
+
+        // Both are offered to the user, so both have to work -- and the
+        // target has to survive either way, because it is the reason the
+        // manifest is preferred over asking the process.
+        for pick in [&json, &exe] {
+            let p = load(pick).unwrap();
+            assert_eq!(p.manifest.id, "org.x");
+            assert_eq!(p.manifest.target, ImportTarget::Folder);
+            assert_eq!(p.exe, exe);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_refuses_a_manifest_without_its_executable() {
+        let dir = std::env::temp_dir().join("caprust-load-bare");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = dir.join("lonely.json");
+        std::fs::write(&json, r#"{"id":"org.x","name":"X","protocol":1}"#).unwrap();
+        // Naming the pair's executable is the whole contract: a manifest on
+        // its own would import nothing and report success.
+        let err = load(&json).unwrap_err().to_string();
+        assert!(err.contains("no executable"), "got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_refuses_a_manifest_speaking_another_protocol() {
+        let dir = std::env::temp_dir().join("caprust-load-proto");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = dir.join("future.json");
+        std::fs::write(&json, r#"{"id":"org.x","name":"X","protocol":99}"#).unwrap();
+        std::fs::write(dir.join("future.exe"), b"x").unwrap();
+        let err = load(&json).unwrap_err().to_string();
+        assert!(err.contains("protocol 99"), "got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
