@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.17-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.18-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.17-win64-setup.exe`.
+1. Run `CapRust-0.9.18-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -129,6 +129,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk; CapCut import moved out to its own repo. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |
+| **0.9.16** | 2026-10-12 | Face anonymize per clip, caption segment editing, color grading panel, built-in sound-effects library. |
 | **0.9.17** | 2026-10-12 | Crash-recovery autosave, custom autosave interval, caption size proportional to frame height, one-click face anonymize; plus fixes for custom spinner persistence, preset click confirmation, Custom row visibility. |
 | **0.9.15** | 2026-10-11 | Timeline templates (bundled + save/import/apply), theme save/load files, export 32K command-line fix, preview A/V restart on seek. |
 | **0.9.14** | 2026-10-10 | Spanish, Italian, German UI; slim README + full_readme; landing screenshot carousel; LUT + CLAP folder pickers in Settings; models rescan fix. |

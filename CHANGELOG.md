@@ -4,6 +4,63 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-10-18
+
+### Added
+
+- **Two editors, chosen in Settings.** *Default* is the dock; *Modern* is a new fixed-zone layout. The choice is saved, so it survives a restart along with the other presets.
+- **Modern editor: zones are docks.** Each of the six zones is a dock holding tabs, so a panel can be dragged into it the same way it is dragged in the default editor.
+- **Modern editor: stacked containers.** Up to three cards per zone, drawn the way a hand of poker is held face-down: the front card carries the panel and the title, the ones behind show only their name on a thin strip, each offset a little further down-right and dimmer so the stack reads as depth rather than as a list. `+` sits past the last card, `−` works at every depth below the first, and *None* empties a slot.
+- **Containers have a visible 3D border** in the accent colour from Settings: a lit edge on the side facing the light, a dark edge opposite, and a cast shadow below. One uniform stroke is a flat outline, which is what the single `Frame` border was.
+- **S / M / L timeline size, chosen from the timeline itself.** The size drives both the timeline's height and the column widths. S is 20/60/20, M is 20/80 with the right column collapsed, L runs the timeline across the full window with the sidebars left and right of it above. The lanes scale with the size too, so L really is taller than S rather than just a taller box.
+- **The timeline can be dragged, and S/M/L always wins.** Dragging sets a height; picking a size drops the drag. A resizable egui panel keeps its dragged height in context state, where the picker can no longer reach it, so the drag lives in a field the selector clears.
+- **Sidebars resize left/right and up/down.** The middle column was the only part of the frame that could be dragged at all: the sidebars were cut at a fixed fraction, so the two containers in a column never moved relative to each other. Each column now has its own seam.
+- **The timeline collapses to a handle strip**, and the columns take the whole height.
+- **Process-based importer plugins.** An importer is a separate program speaking line-delimited JSON-RPC on stdin/stdout, discovered from `%APPDATA%/CapRust/importers` by its manifest. A plugin sends back partial JSON and the host overlays it on its own defaults, so a plugin only has to know the fields it actually produced and does not have to be recompiled when this side grows a new one.
+- **OTIO importer.** Shipped as a plugin rather than built in. It reads an OpenTimelineIO `Timeline` and lays it out; a gap is empty time, not a clip.
+- **File -> Import other -> Import plugin.** Loads a plugin from anywhere on disk, for one run, without installing it. Either half of the pair can be pointed at -- the `.json` or the `.exe`. This is how a plugin you have just built gets tested, which otherwise meant copying it into the importers directory first.
+- **MCP: transition length, effect removal, and richer clip state.**
+
+### Changed
+
+- **CapCut import moved out of CapRust** into its own plugin repository. It is loaded as a plugin rather than compiled in, and `File -> Import other` lists whatever is installed rather than advertising importers this build does not ship.
+- **The File menu no longer shows a raw translation key.** `menu-file-import-other` was read by the code and present in no locale file.
+- **`File -> Import other` stays reachable with nothing installed.** It used to hide itself when the importers directory was empty -- which left the one user who could not get to *Import plugin* as the one with no plugins installed.
+- **The Downloads badge is live again** instead of frozen at a hand-counted number.
+- **The README documents the M8ven score** for the MCP server.
+
+### Fixed
+
+- **The app panicked before the window opened, four times in a row.** The four new `.ftl` keys had been appended by a shell `echo`, which wrote them as UTF-16. Fluent's `expect("valid FTL")` ran at startup and took the process with it. All five locales are UTF-8 now, and a parity test enforces that every key exists in every language.
+- **The Modern layout had nine defects in a row, each hiding the next.** They are worth listing, because they all shared one cause -- the layout was drawn with `Area`s, which claim no space at all:
+  - Widening a sidebar left the preview where it was, so the two overlapped. An `Area` is not a panel and has no resize cursor.
+  - At L the sidebars drew over the preview like a hover highlight, with no border and nothing to grab.
+  - At L the timeline came out only as wide as the gap between the sidebars, because a bottom panel is carved out of whatever space is left when it is shown. Showing it *first* gives it the full width, and egui then shortens everything drawn after it.
+  - A container sized itself to its contents instead of filling its cell, so cards floated with space under them.
+  - Hidden sidebars still drew: asking a panel for a width of zero does not hide it. A sidebar that is never shown claims no space.
+  - The timeline lost its bottom tracks at M -- the preset asked for 280px and the five lanes needed more.
+  - The bevel was invisible, because `StrokeKind::Outside` is clipped away in a tight clip.
+  - Zones cached their heights, so the frame never reflowed.
+  - A zone with no tabs in it could panic.
+- **Preview hung on a decode error**, showing `Decoding...` forever instead of saying what went wrong.
+- **Images looped with the wrong ffmpeg flag.** `-stream_loop` is a frame rate adjustment; looping an image input needs `-loop 1` per demuxer. A still image as an input rendered a single 10s box rather than a repeating background.
+- **Still images had no thumbnail and reported a 00:00 duration.**
+- **Thumbnails for image files were extracted with a `t=0` seek and re-encoded** instead of being written as a single frame with `-update`.
+- **HEIC tile-grids were scaled on the way to a thumbnail**, turning a grid into a single smeared image; the preview goes through a cached JPEG instead.
+- **Long preview filtergraphs were forced into `filter_complex_script`.** They now go through `-/filter_complex`, with short ones kept inline.
+- **Transitions were cleared every time a project was opened.**
+- **Plugin projects replaced the default project instead of overlaying it**, so every field a plugin did not mention came out at zero.
+- **An OTIO gap imported as a clip** rather than as empty time.
+- **Remote replies could be delivered to the wrong connection**, and a preempted writer could take the reply meant for its replacement. A connection replaced mid-call is now ignored rather than killed, which had been closing the *new* socket and bouncing the user back to Connect.
+- **Remote clients never received a preview frame**, and a device rotation skipped the token check.
+- **Android: tapping a clip opened the action sheet over the buttons it led to.** A tap now only selects; an explicit *Actions* button opens the sheet. A JSON `null` frame was being passed to Base64 as the literal four characters `"null"`.
+
+### Known issues
+
+- The Android companion app has not had a pass on a real device and is not covered by these release notes. Several of the fixes above to it were found by CI and reasoning rather than by use.
+- The CapC plugin repository has 18 tests but no user-facing release process of its own yet.
+- `docs/index.html` still carries a sentence describing what 0.9.17 added, in a paragraph that now reads as though it were describing the current release.
+
 ## [0.9.17] — 2026-10-14
 
 ### Added

@@ -23,6 +23,13 @@ Thumbs.db
 # Env
 .env
 
+# Editor/agent tooling config, per-machine. `.config/opencode/auth.json`
+# holds an API key in the shape opencode reads at startup, and it was
+# committed once. The value in it was the placeholder, so nothing leaked,
+# but a file that a tool rewrites with a live key the moment a real user
+# clones this has no business being tracked.
+.config/
+
 # User projects (not committed)
 *.caprust
 cache/
