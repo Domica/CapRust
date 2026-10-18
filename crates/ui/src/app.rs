@@ -10269,10 +10269,20 @@ impl CapRustApp {
                     clip.source_duration_ms = 0;
 
                     let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
-                    let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
-                    self.selected_clips.clear();
-                    tracing::info!("placed sticker '{id}' on lane {lane}");
-                    self.toast(format!("{}: {}", tr("toast-sticker-placed"), id));
+                    // Not `let _ =`: swallowing this is what made a failed
+                    // insert look exactly like a click that did nothing,
+                    // which is the report this was chased from.
+                    match self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                        Ok(()) => {
+                            self.selected_clips.clear();
+                            tracing::info!("placed sticker '{id}' on lane {lane}");
+                            self.toast(format!("{}: {}", tr("toast-sticker-placed"), id));
+                        }
+                        Err(e) => {
+                            tracing::error!("sticker '{id}' insert failed: {e:#}");
+                            self.toast_error(format!("{}: {e:#}", tr("toast-sticker-failed")));
+                        }
+                    }
                 }
                 Err(e) => self.toast_error(format!("{}: {e}", tr("toast-sticker-failed"))),
             }

@@ -1527,22 +1527,39 @@ fn show_stickers_tab(ui: &mut Ui, state: &mut AssetBrowserState, out: &mut Asset
                         // Decode the embedded PNG on demand rather than
                         // shipping 108 decoded textures; a sticker grid is
                         // scrollable and egui keeps the ones already made.
-                        let resp = ui.vertical(|ui| {
+                        // The click lives on the image, not on the
+                        // container: `Ui::vertical` ends with
+                        // `interact(rect, id, Sense::hover())` and
+                        // nothing else, so a container response is never
+                        // clickable. Every click landed on a card that
+                        // could not be clicked.
+                        // The click lives on the image, not on the
+                        // container. `Ui::vertical` ends with
+                        // `interact(rect, id, Sense::hover())` and nothing
+                        // else, so a container response is never clickable
+                        // -- every click landed on a card that could not be
+                        // clicked. The image is given `Sense::click` and
+                        // its own id, so the two cards on a row cannot
+                        // share one.
+                        let mut card: Option<egui::Response> = None;
+                        ui.vertical(|ui| {
                             if let Some(tex) = sticker_texture(ui, state, entry.id, entry.png) {
-                                ui.add(
-                                    egui::Image::new(&tex)
-                                        .fit_to_exact_size(egui::vec2(size, size)),
-                                );
+                                let img = egui::Image::new(&tex)
+                                    .fit_to_exact_size(egui::vec2(size, size))
+                                    .sense(egui::Sense::click());
+                                card = Some(ui.add(img));
                             } else {
                                 ui.allocate_space(egui::vec2(size, size));
                             }
                             ui.small(entry.name)
                         });
-                        if resp.response.clicked() {
-                            out.sticker_clicked = Some(entry.id.to_string());
-                        }
-                        if resp.response.hovered() {
-                            resp.response.on_hover_text(entry.name);
+                        if let Some(r) = card {
+                            if r.clicked() {
+                                out.sticker_clicked = Some(entry.id.to_string());
+                            }
+                            if r.hovered() {
+                                r.on_hover_text(entry.name);
+                            }
                         }
                         col += 1;
                         if col.is_multiple_of(6) {
