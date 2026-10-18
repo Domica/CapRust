@@ -893,6 +893,15 @@ impl RenderPlan {
                 Some(mode) => fg.push_str(&format!(
                     "[{label}][{v_prev}]blend=all_mode={mode}:all_opacity=1:shortest=0:eof_action=pass:repeatlast=0[{v_next}];",
                 )),
+                // Without an animation the run's label can go straight
+                // into the overlay. The intermediate `[label][label_a];`
+                // is only valid when `anim` fills the gap -- an empty one
+                // is a chain with two inputs and no filter name, which
+                // ffmpeg rejects with "No such filter: ''". That took
+                // down every render in the editor, not just stickers.
+                None if anim.is_empty() => fg.push_str(&format!(
+                    "[{v_prev}][{label}]overlay=shortest=0:eof_action=pass{xy}[{v_next}];",
+                )),
                 None => fg.push_str(&format!(
                     "[{label}]{anim}[{label}_a];\
                      [{v_prev}][{label}_a]overlay=shortest=0:eof_action=pass{xy}[{v_next}];",
@@ -5249,6 +5258,156 @@ mod tests {
             );
             seen.push(n);
         }
+    }
+
+    fn sticker_placement(anim: Option<&str>) -> caprust_core::clip::OverlayPlacement {
+        caprust_core::clip::OverlayPlacement {
+            scale: 0.34,
+            x: 0.5,
+            y: 0.72,
+            animation: anim.map(str::to_string),
+        }
+    }
+
+    /// A render plan with two runs on two z-orders: ordinary footage, and
+    /// a still that may or may not carry an overlay placement.
+    ///
+    /// Built by hand rather than through `plan_from_project`, because what
+    /// is under test is the compositor and nothing else.
+    fn fixture_plan(overlay: Option<caprust_core::clip::OverlayPlacement>) -> RenderPlan {
+        fn clip(
+            input: usize,
+            z: u32,
+            is_image: bool,
+            over: Option<caprust_core::clip::OverlayPlacement>,
+        ) -> VideoClip {
+            VideoClip {
+                input_index: input,
+                timeline_start_sec: 0.0,
+                duration_sec: 4.0,
+                speed: 1.0,
+                speed_end: None,
+                speed_ease: caprust_core::clip::EaseCurve::Linear,
+                speed_range: caprust_core::clip::SpeedRampRange::WholeClip,
+                flip_h: false,
+                flip_v: false,
+                reversed: false,
+                z_order: z,
+                is_image,
+                overlay: over,
+                effects: Vec::new(),
+                transition_in: None,
+                transition_out: None,
+                transition_in_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_out_easing: caprust_core::clip::EaseCurve::Linear,
+                transition_duration_sec: 0.5,
+                auto_reframe: Vec::new(),
+                bg_removal_path: None,
+                stab_trf: None,
+                chroma_key: None,
+                lut: None,
+                blend_mode: None,
+                color_grade: None,
+                anon_mask_path: None,
+            }
+        }
+        RenderPlan {
+            inputs: vec![
+                InputSpec {
+                    ffmpeg_index: 0,
+                    path: PathBuf::from("a.mp4"),
+                    source_start_sec: 0.0,
+                    duration_sec: 4.0,
+                },
+                InputSpec {
+                    ffmpeg_index: 1,
+                    path: PathBuf::from("b.png"),
+                    source_start_sec: 0.0,
+                    duration_sec: 4.0,
+                },
+            ],
+            video_clips: vec![clip(0, 0, false, None), clip(1, 1, true, overlay)],
+            audio_clips: Vec::new(),
+            text_clips: Vec::new(),
+            total_duration_sec: 4.0,
+            width: 640,
+            height: 360,
+            fps_num: 30,
+            fps_den: 1,
+            crf: 23,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 8000,
+            preset: String::from("veryfast"),
+            has_audio: false,
+            skipped: PlanSkipped::default(),
+            encoder: caprust_core::project::VideoEncoder::H264Cpu,
+            seek_ms: 0,
+            seek_optimized: false,
+        }
+    }
+
+    /// Every chain in the graph must name a filter.
+    ///
+    /// A chain of exactly `[a][b]` is two inputs and no filter name, and
+    /// ffmpeg rejects the whole graph with "No such filter: ''". That is
+    /// not cosmetic: the compositor emitted it for every run with no
+    /// sticker animation, so every preview and every export stopped
+    /// working.
+    ///
+    /// `[a][b]overlay=...` is fine -- the label pair is the filter's input
+    /// list, not a chain of its own -- so the check is on the whole chain,
+    /// not on the presence of `][`.
+    #[test]
+    fn no_chain_in_the_graph_is_two_labels_and_nothing_else() {
+        for (label, plan) in [
+            ("plain", fixture_plan(None)),
+            (
+                "static overlay",
+                fixture_plan(Some(sticker_placement(None))),
+            ),
+            (
+                "animated overlay",
+                fixture_plan(Some(sticker_placement(Some("pop")))),
+            ),
+            (
+                "animated spin",
+                fixture_plan(Some(sticker_placement(Some("spin")))),
+            ),
+        ] {
+            let (fg, _, _) = plan.build_filtergraph().expect("filtergraph");
+            for chain in fg.split(';').map(str::trim).filter(|c| !c.is_empty()) {
+                let bare = chain.starts_with('[')
+                    && chain.ends_with(']')
+                    && !chain.contains('=')
+                    && !chain.contains(':');
+                assert!(
+                    !bare,
+                    "{label}: a chain with no filter name: {chain:?}\n{full}",
+                    full = fg
+                );
+                assert_eq!(
+                    chain.matches('[').count(),
+                    chain.matches(']').count(),
+                    "{label}: unbalanced labels in {chain:?}\n{full}",
+                    full = fg
+                );
+            }
+        }
+    }
+
+    /// A plain edit must not grow an intermediate label. This is the exact
+    /// regression: the compositor always routed a run through
+    /// `[label][label_a];`, which only means anything when an animation
+    /// sits in the gap.
+    #[test]
+    fn a_run_without_an_animation_goes_straight_into_the_overlay() {
+        let plan = fixture_plan(None);
+        let (fg, _, _) = plan.build_filtergraph().expect("fg");
+        assert!(
+            !fg.contains("_a;"),
+            "a plain edit should not emit an intermediate label:\n{fg}"
+        );
+        assert!(fg.contains("overlay=shortest=0:eof_action=pass"));
     }
 
     #[test]
