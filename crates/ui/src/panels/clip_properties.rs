@@ -2580,6 +2580,30 @@ fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState)
                 x: place.x,
                 y: place.y,
                 aspect: place.aspect,
+                rotation: place.rotation,
+                animation: place.animation.clone(),
+            }),
+        );
+    }
+
+    let mut rotation = place.rotation;
+    if ui
+        .add(
+            egui::Slider::new(&mut rotation, -180.0..=180.0)
+                .suffix("°")
+                .text(tr("props-sticker-rotation")),
+        )
+        .changed()
+    {
+        set_overlay(
+            clip,
+            state,
+            Some(caprust_core::clip::OverlayPlacement {
+                scale: place.scale,
+                x: place.x,
+                y: place.y,
+                aspect: place.aspect,
+                rotation,
                 animation: place.animation.clone(),
             }),
         );
@@ -2625,6 +2649,7 @@ fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState)
                 x,
                 y,
                 aspect: place.aspect,
+                rotation: place.rotation,
                 animation: place.animation.clone(),
             }),
         );
@@ -2665,6 +2690,7 @@ fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState)
                             x,
                             y,
                             aspect: place.aspect,
+                            rotation: place.rotation,
                             animation: want,
                         }),
                     );

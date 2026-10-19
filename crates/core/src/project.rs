@@ -300,6 +300,44 @@ impl ProjectState {
     }
 
     pub fn render_hash(&self) -> u64 {
+        self.hash_with(true)
+    }
+
+    /// Same as `render_hash`, minus each sticker's placement.
+    ///
+    /// This is what decides whether the preview needs re-running. The
+    /// preview draws stickers itself -- the editor composites the PNG
+    /// over the frame, so a drag is instant and independent of the
+    /// preview's quality setting -- which means a placement change does
+    /// not change a single pixel of the ffmpeg output. Hashing it here
+    /// would spawn an encoder on every frame of a drag to produce the
+    /// exact same picture.
+    ///
+    /// Adding or removing a sticker still changes this: the clip list is
+    /// hashed either way, and whether a clip is an overlay is part of how
+    /// the preview routes it.
+    pub fn preview_hash(&self) -> u64 {
+        self.hash_with(false)
+    }
+
+    /// A copy with every sticker clip taken out.
+    ///
+    /// The preview panel composites stickers itself -- it has the PNG, the
+    /// geometry and the rotation, and painting one costs the renderer
+    /// nothing while changing the filtergraph costs an encoder restart.
+    /// So the preview's ffmpeg graph leaves them out.
+    ///
+    /// Tracks are left alone even when they end up empty, because
+    /// `track_index` on the surviving clips refers to positions in the
+    /// original list. Renumbering would have to rewrite every clip, and
+    /// an empty track renders nothing anyway.
+    pub fn without_overlay_clips(&self) -> Self {
+        let mut p = self.clone();
+        p.clips.retain(|c| c.overlay.is_none());
+        p
+    }
+
+    fn hash_with(&self, include_placement: bool) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut h = DefaultHasher::new();
@@ -364,15 +402,21 @@ impl ProjectState {
             // big it is, so a drag that changes it has to reach the
             // preview. Without this the marker is moved in the model and
             // nothing on screen follows.
+            // Whether a clip is an overlay changes how the preview
+            // routes it, so that part is always hashed. Only the
+            // placement itself is preview-invisible.
             match &c.overlay {
                 None => 0u8.hash(&mut h),
                 Some(o) => {
                     1u8.hash(&mut h);
-                    o.scale.to_bits().hash(&mut h);
-                    o.x.to_bits().hash(&mut h);
-                    o.y.to_bits().hash(&mut h);
-                    o.aspect.to_bits().hash(&mut h);
-                    o.animation.hash(&mut h);
+                    if include_placement {
+                        o.scale.to_bits().hash(&mut h);
+                        o.x.to_bits().hash(&mut h);
+                        o.y.to_bits().hash(&mut h);
+                        o.aspect.to_bits().hash(&mut h);
+                        o.rotation.to_bits().hash(&mut h);
+                        o.animation.hash(&mut h);
+                    }
                 }
             }
             match &c.chroma_key {
@@ -1381,10 +1425,11 @@ mod relink_orphan_tests {
             x: 0.5,
             y: 0.72,
             aspect: 1.0,
+            rotation: 0.0,
             animation: None,
         };
 
-        let variants: [(&str, OverlayPlacement); 5] = [
+        let variants: [(&str, OverlayPlacement); 6] = [
             (
                 "scale",
                 OverlayPlacement {
@@ -1410,6 +1455,13 @@ mod relink_orphan_tests {
                 "aspect",
                 OverlayPlacement {
                     aspect: 2.0,
+                    ..base.clone()
+                },
+            ),
+            (
+                "rotation",
+                OverlayPlacement {
+                    rotation: 45.0,
                     ..base.clone()
                 },
             ),
@@ -1456,5 +1508,131 @@ mod relink_orphan_tests {
             p.render_hash(),
             "adding a sticker did not change the render hash"
         );
+    }
+
+    /// Moving a sticker must not restart the preview encoder: the preview
+    /// paints stickers itself and no pixel of the ffmpeg output changes.
+    /// Hashing placement here would spawn an encoder on every frame of a
+    /// drag, which is the delay this split exists to remove.
+    #[test]
+    fn preview_hash_ignores_a_sticker_being_moved() {
+        use crate::clip::{Clip, OverlayPlacement};
+
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("a.mp4", 0, 0, 4000);
+        clip.overlay = Some(OverlayPlacement::default_sticker());
+        p.clips.push(clip);
+
+        let before = p.preview_hash();
+        for change in [
+            OverlayPlacement {
+                scale: 0.9,
+                ..OverlayPlacement::default_sticker()
+            },
+            OverlayPlacement {
+                x: 0.1,
+                ..OverlayPlacement::default_sticker()
+            },
+            OverlayPlacement {
+                y: 0.9,
+                ..OverlayPlacement::default_sticker()
+            },
+            OverlayPlacement {
+                rotation: 45.0,
+                ..OverlayPlacement::default_sticker()
+            },
+            OverlayPlacement {
+                animation: Some(String::from("spin")),
+                ..OverlayPlacement::default_sticker()
+            },
+        ] {
+            p.clips[0].overlay = Some(change);
+            assert_eq!(
+                before,
+                p.preview_hash(),
+                "moving a sticker restarted the preview encoder"
+            );
+        }
+
+        // But the clip itself appearing or going is still a change: the
+        // preview routes on it, and the timeline has to redraw.
+        p.clips.clear();
+        assert_ne!(before, p.preview_hash());
+    }
+
+    /// The split is only useful if the two hashes really do differ, so
+    /// pin that too rather than trusting that the omission happened.
+    #[test]
+    fn preview_hash_and_render_hash_disagree_on_placement() {
+        use crate::clip::{Clip, OverlayPlacement};
+
+        let mut p = ProjectState::default();
+        let mut clip = Clip::new_video("a.mp4", 0, 0, 4000);
+        clip.overlay = Some(OverlayPlacement::default_sticker());
+        p.clips.push(clip);
+
+        p.clips[0].overlay = Some(OverlayPlacement {
+            x: 0.8,
+            ..OverlayPlacement::default_sticker()
+        });
+        assert_ne!(
+            p.preview_hash(),
+            p.render_hash(),
+            "the two hashes agree on a changed placement"
+        );
+    }
+
+    /// Taking stickers out for the preview graph has to leave the
+    /// survivors alone -- renumbering tracks would move every remaining
+    /// clip onto the wrong track.
+    #[test]
+    fn without_overlay_clips_keeps_the_other_clips_where_they_were() {
+        use crate::clip::{Clip, OverlayPlacement};
+        use crate::track::{Track, TrackKind};
+
+        let mut p = ProjectState::default();
+        // Relative, not absolute: a default project may already ship
+        // tracks and the assertion is about them surviving untouched.
+        let tracks_before = p.tracks.len();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks.push(Track::new("V2", TrackKind::Video));
+        p.tracks.push(Track::new("V3", TrackKind::Video));
+
+        let mut a = Clip::new_video("a.mp4", 0, 0, 4000);
+        a.id = uuid::Uuid::from_u128(1);
+        a.track_index = 0;
+        let mut b = Clip::new_video("b.mp4", 0, 4000, 4000);
+        b.id = uuid::Uuid::from_u128(2);
+        b.track_index = 2;
+        let mut s = Clip::new_video("s.png", 0, 0, 4000);
+        s.id = uuid::Uuid::from_u128(3);
+        s.track_index = 1;
+        s.overlay = Some(OverlayPlacement::default_sticker());
+        p.clips = vec![a, b, s];
+
+        let stripped = p.without_overlay_clips();
+        assert_eq!(stripped.clips.len(), 2, "the sticker survived");
+        for c in &stripped.clips {
+            assert!(c.overlay.is_none());
+            assert!(
+                c.id != uuid::Uuid::from_u128(3),
+                "a sticker is still in the preview graph"
+            );
+        }
+        // The whole point: track indices are positions in the ORIGINAL
+        // list, so they must not be rewritten.
+        let b2 = stripped
+            .clips
+            .iter()
+            .find(|c| c.id == uuid::Uuid::from_u128(2))
+            .expect("b is missing");
+        assert_eq!(b2.track_index, 2, "b moved to the wrong track");
+        assert_eq!(
+            stripped.tracks.len(),
+            tracks_before + 3,
+            "tracks were renumbered"
+        );
+        // And the original is untouched.
+        assert_eq!(p.clips.len(), 3);
     }
 }

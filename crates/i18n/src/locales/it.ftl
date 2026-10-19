@@ -317,6 +317,7 @@ props-tab-sticker = Adesivo
 props-sticker-timing = Temporale
 props-sticker-duration = A schermo per
 props-sticker-scale = Dimensione
+props-sticker-rotation = Rotazione
 props-sticker-x = Orizzontale
 props-sticker-y = Verticale
 props-sticker-position-hint = 0 è il bordo, 1 il bordo opposto, 0.5 il centro.

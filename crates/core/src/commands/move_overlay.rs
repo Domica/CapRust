@@ -57,6 +57,7 @@ mod tests {
             x: 0.5,
             y: 0.72,
             aspect: 1.0,
+            rotation: 0.0,
             animation: None,
         };
         let mut clip = Clip::new_video("a.mp4", 0, 0, 4000);
@@ -77,6 +78,7 @@ mod tests {
             scale: 0.8,
             x: 0.1,
             y: 0.2,
+            rotation: 30.0,
             ..from.clone()
         };
         state.clips[0].overlay = Some(to.clone());
@@ -90,6 +92,8 @@ mod tests {
         assert_eq!(back.scale, from.scale);
         assert_eq!(back.x, from.x);
         assert_eq!(back.y, from.y);
+        assert_eq!(back.rotation, from.rotation);
+        assert!((to.rotation - 30.0).abs() < 1e-6);
     }
 
     #[test]

@@ -134,11 +134,63 @@ pub struct StickerTextures {
 }
 
 impl StickerTextures {
-    fn get(&self, id: &str) -> Option<egui::TextureHandle> {
+    pub fn get(&self, id: &str) -> Option<egui::TextureHandle> {
         self.map.get(id).cloned()
     }
     fn insert(&mut self, id: String, tex: egui::TextureHandle) {
         self.map.insert(id, tex);
+    }
+
+    /// Decode and cache a sticker, by embedded id.
+    ///
+    /// Public because the preview draws stickers itself now -- see
+    /// `preview_sticker_draw` in app.rs -- and it needs the same pixels
+    /// the browser grid shows, from the same cache, rather than a
+    /// second copy per preview.
+    pub fn load_embedded(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
+        if let Some(h) = self.get(id) {
+            return Some(h);
+        }
+        let st = caprust_core::stickers::find(id)?;
+        let decoded = image::load_from_memory_with_format(st.png, image::ImageFormat::Png).ok()?;
+        let rgba = decoded.to_rgba8();
+        let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let img = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
+        let tex = ctx.load_texture(format!("sticker/{id}"), img, egui::TextureOptions::LINEAR);
+        self.insert(id.to_string(), tex.clone());
+        Some(tex)
+    }
+
+    /// Decode and cache a sticker from an arbitrary PNG on disk. Used
+    /// for images the user dropped in themselves rather than one of the
+    /// bundled ones.
+    pub fn load_path(
+        &mut self,
+        ctx: &egui::Context,
+        key: &str,
+        path: &std::path::Path,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(h) = self.get(key) {
+            return Some(h);
+        }
+        let bytes = std::fs::read(path).ok()?;
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?;
+        let rgba = decoded.to_rgba8();
+        let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let img = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
+        let tex = ctx.load_texture(
+            format!("sticker-path/{key}"),
+            img,
+            egui::TextureOptions::LINEAR,
+        );
+        self.insert(key.to_string(), tex.clone());
+        Some(tex)
     }
 }
 

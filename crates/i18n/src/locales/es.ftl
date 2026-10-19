@@ -317,6 +317,7 @@ props-tab-sticker = Pegatina
 props-sticker-timing = Tiempo
 props-sticker-duration = En pantalla durante
 props-sticker-scale = Tamano
+props-sticker-rotation = Rotacion
 props-sticker-x = Horizontal
 props-sticker-y = Vertical
 props-sticker-position-hint = 0 es el borde, 1 el borde opuesto, 0.5 el centro.

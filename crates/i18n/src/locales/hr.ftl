@@ -317,6 +317,7 @@ props-tab-sticker = Naljepnica
 props-sticker-timing = Vrijeme
 props-sticker-duration = Na ekranu
 props-sticker-scale = Velicina
+props-sticker-rotation = Rotacija
 props-sticker-x = Horizontalno
 props-sticker-y = Vertikalno
 props-sticker-position-hint = 0 je uz rub, 1 uz drugi rub, 0.5 je u sredini.

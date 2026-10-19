@@ -317,6 +317,7 @@ props-tab-sticker = Sticker
 props-sticker-timing = Timing
 props-sticker-duration = Sichtbar für
 props-sticker-scale = Grosse
+props-sticker-rotation = Drehung
 props-sticker-x = Horizontal
 props-sticker-y = Vertikal
 props-sticker-position-hint = 0 ist am Rand, 1 am anderen Rand, 0.5 in der Mitte.

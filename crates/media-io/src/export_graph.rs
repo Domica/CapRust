@@ -420,8 +420,23 @@ impl RenderPlan {
             // border, so overlays never take it.
             if let Some(place) = c.overlay.as_ref() {
                 let h = (self.height as f32 * place.scale.clamp(0.02, 4.0)).max(2.0);
-                fit_chain_override =
-                    Some(format!("scale=-2:{h:.0}:flags=bicubic,setsar=1", h = h,));
+                let mut chain = format!("scale=-2:{h:.0}:flags=bicubic,setsar=1", h = h,);
+
+                // A turned sticker is composited as the bounding box of
+                // the turned rectangle, so rotw/roth grow the canvas and
+                // nothing is cut off. `c=none` keeps the new corners
+                // transparent. The angle is written out in degrees: the
+                // rotate filter reads a radian expression and a bare
+                // `a*PI/180` fails to parse, since `a` is not a variable
+                // it knows there.
+                let deg = place.rotation.rem_euclid(360.0);
+                if deg.abs() > 0.01 {
+                    let rad = format!("{deg:.4}*PI/180");
+                    chain.push_str(&format!(
+                        ",rotate={rad}:c=none:ow='rotw({rad})':oh='roth({rad})'"
+                    ));
+                }
+                fit_chain_override = Some(chain);
             }
             let fit_chain = match fit_chain_override.take() {
                 Some(f) => f,
@@ -5297,6 +5312,7 @@ mod tests {
             x: 0.5,
             y: 0.72,
             aspect: 1.0,
+            rotation: 0.0,
             animation: anim.map(str::to_string),
         }
     }
@@ -6787,20 +6803,27 @@ mod reverse_filtergraph_tests {
         ]);
 
         // Positions away from the centre, which is the one place the old
-        // preview and the graph happened to agree.
+        // preview and the graph happened to agree. The last four are
+        // turned, which is a different code path in the graph as well as
+        // a different box in the geometry.
         let cases = [
-            (0.30f32, 0.25f32, 0.20f32, "top left"),
-            (0.75f32, 0.70f32, 0.40f32, "bottom right"),
-            (0.50f32, 0.50f32, 0.50f32, "centred"),
-            (0.10f32, 0.90f32, 0.15f32, "far corner"),
+            (0.30f32, 0.25f32, 0.20f32, 0.0f32, "top left"),
+            (0.75f32, 0.70f32, 0.40f32, 0.0, "bottom right"),
+            (0.50f32, 0.50f32, 0.50f32, 0.0, "centred"),
+            (0.10f32, 0.90f32, 0.15f32, 0.0, "far corner"),
+            (0.50f32, 0.50f32, 0.25f32, 45.0, "turned 45"),
+            (0.30f32, 0.35f32, 0.30f32, 90.0, "turned 90"),
+            (0.70f32, 0.60f32, 0.30f32, 30.0, "turned 30, off centre"),
+            (0.50f32, 0.50f32, 0.20f32, 180.0, "turned 180"),
         ];
 
-        for (x, y, scale, label) in cases {
+        for (x, y, scale, rotation, label) in cases {
             let place = OverlayPlacement {
                 scale,
                 x,
                 y,
                 aspect: 1.0,
+                rotation,
                 animation: None,
             };
 

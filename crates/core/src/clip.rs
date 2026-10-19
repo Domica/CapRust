@@ -470,6 +470,27 @@ fn default_motion_scale() -> f32 {
     1.0
 }
 
+/// Where a sticker has to sit to put its box's centre at `centre`, given
+/// the box is `size` wide.
+///
+/// The centre of the box the overlay filter positions is
+/// `(1 - size) * x + size / 2`, so inverting that is the whole mapping
+/// between "where the centre should be" and the stored fraction.
+///
+/// A sticker as wide as the frame has no travel left, so nothing can
+/// centre it -- the comparison is on the magnitude, because a sticker
+/// *wider* than the frame gives a negative denominator that solves
+/// perfectly well. Reading that as "no travel" would pin an oversized
+/// sticker to the middle instead of letting it be dragged.
+fn solve_position(centre: f32, size: f32) -> f32 {
+    let denom = 1.0 - size;
+    if denom.abs() > 1e-6 {
+        (centre - size / 2.0) / denom
+    } else {
+        0.5
+    }
+}
+
 /// Default duration of a video transition (fade in/out). 500 ms is
 /// what CapCut uses out of the box and reads as a real transition
 /// rather than a pop.
@@ -683,6 +704,11 @@ pub struct OverlayPlacement {
     /// which is not always square.
     #[serde(default = "default_aspect")]
     pub aspect: f32,
+    /// Degrees clockwise. Rendered by rotating the sticker about its
+    /// own centre and growing the canvas to the rotated rectangle, so no
+    /// corner is cut off.
+    #[serde(default)]
+    pub rotation: f32,
     /// Preset id from the sticker animation list. `None` = static.
     #[serde(default)]
     pub animation: Option<String>,
@@ -713,9 +739,51 @@ impl OverlayPlacement {
     /// drew a box nearly twice as wide as the sticker and put the drag
     /// handle in empty space beside it.
     pub fn frame_box(&self, frame_aspect: f32) -> (f32, f32, f32, f32) {
-        let h = self.scale;
-        let w = h * self.aspect / frame_aspect.max(1e-6);
-        ((1.0 - w) * self.x, (1.0 - h) * self.y, w, h)
+        self.frame_box_at(frame_aspect, 0.0)
+    }
+
+    /// The box with `extra_degrees` turned on top of `self.rotation`.
+    ///
+    /// The preview needs the box for the angle the pointer is currently
+    /// asking for, which is ahead of the model until the gesture ends.
+    ///
+    /// The extra angle grows the box, and since the centre is
+    /// `(1 - w) * x + w / 2`, holding `x` still would slide the sticker
+    /// out from under the pointer as it turns. So `x` and `y` are
+    /// re-solved against the centre the un-turned box had. Turning a
+    /// sticker is not supposed to move it.
+    pub fn frame_box_at(&self, frame_aspect: f32, extra_degrees: f32) -> (f32, f32, f32, f32) {
+        let (w0, h0) = self.sized(0.0, frame_aspect);
+        let cx = (1.0 - w0) * self.x + w0 / 2.0;
+        let cy = (1.0 - h0) * self.y + h0 / 2.0;
+        let (w, h) = self.sized(extra_degrees, frame_aspect);
+        let x = solve_position(cx, w);
+        let y = solve_position(cy, h);
+        ((1.0 - w) * x, (1.0 - h) * y, w, h)
+    }
+
+    /// The sticker's width and height as fractions of the frame, with
+    /// `extra_degrees` turned on top of `self.rotation`.
+    ///
+    /// Split out because the preview needs to show a rotated box while
+    /// the pointer is still on the handle: the angle in the box being
+    /// drawn is not yet the angle in the model.
+    pub fn sized(&self, extra_degrees: f32, frame_aspect: f32) -> (f32, f32) {
+        let frame_aspect = frame_aspect.max(1e-6);
+        // The sticker is measured in pixels first, because that is the
+        // space the rotation happens in. Height is fixed by `scale`;
+        // width follows the source aspect. ffmpeg's rotw/roth then make
+        // the output the bounding box of the turned rectangle, which is
+        // what the overlay filter positions -- so the box here has to be
+        // that bounding box too, not the un-turned one.
+        let h_px = self.scale;
+        let w_px = h_px * self.aspect;
+        let a = (self.rotation + extra_degrees).to_radians();
+        let sin = a.sin().abs();
+        let cos = a.cos().abs();
+        let rot_w = w_px * cos + h_px * sin;
+        let rot_h = w_px * sin + h_px * cos;
+        (rot_w / frame_aspect, rot_h)
     }
 
     /// The placement that puts the box's centre at `(cx, cy)`, in the
@@ -730,31 +798,29 @@ impl OverlayPlacement {
     ///
     /// The caller supplies the animation id separately; this only
     /// concerns geometry.
-    pub fn at_centre(cx: f32, cy: f32, scale: f32, aspect: f32, frame_aspect: f32) -> Self {
-        let w = scale * aspect / frame_aspect.max(1e-6);
-        // A sticker as wide as the frame has no travel left, so there is
-        // no fraction that can centre it. The comparison is on the
-        // magnitude because a sticker *wider* than the frame gives a
-        // negative denominator that is perfectly solvable -- treating
-        // that as "no travel" would pin an oversized sticker to the
-        // centre instead of letting it be dragged.
-        let denom_x = 1.0 - w;
-        let denom_y = 1.0 - scale;
-        let x = if denom_x.abs() > 1e-6 {
-            (cx - w / 2.0) / denom_x
-        } else {
-            0.5
+    pub fn at_centre(
+        cx: f32,
+        cy: f32,
+        scale: f32,
+        aspect: f32,
+        frame_aspect: f32,
+        rotation: f32,
+    ) -> Self {
+        let probe = Self {
+            scale,
+            aspect,
+            rotation,
+            ..Self::default_sticker()
         };
-        let y = if denom_y.abs() > 1e-6 {
-            (cy - scale / 2.0) / denom_y
-        } else {
-            0.5
-        };
+        let (w, h) = probe.sized(0.0, frame_aspect);
+        let x = solve_position(cx, w);
+        let y = solve_position(cy, h);
         Self {
             scale,
             x,
             y,
             aspect,
+            rotation,
             animation: None,
         }
     }
@@ -768,6 +834,7 @@ impl OverlayPlacement {
             x: 0.5,
             y: 0.72,
             aspect: default_aspect(),
+            rotation: 0.0,
             animation: None,
         }
     }
@@ -1573,6 +1640,7 @@ mod cue_window_tests {
             x: 0.30,
             y: 0.25,
             aspect: 1.0,
+            rotation: 0.0,
             animation: None,
         };
         let (left, top, w, h) = place.frame_box(FRAME_ASPECT);
@@ -1616,6 +1684,7 @@ mod cue_window_tests {
             x: 0.5,
             y: 0.5,
             aspect: 1.0,
+            rotation: 0.0,
             animation: None,
         };
 
@@ -1666,7 +1735,7 @@ mod cue_window_tests {
             for scale in [0.1f32, 0.34, 0.75] {
                 for aspect in [1.0f32, 1.5, 0.666] {
                     for fa in [FRAME_ASPECT, 1.0, 2.35] {
-                        let p = OverlayPlacement::at_centre(cx, cy, scale, aspect, fa);
+                        let p = OverlayPlacement::at_centre(cx, cy, scale, aspect, fa, 0.0);
                         let (l, t, w, h) = p.frame_box(fa);
                         assert!(
                             (l + w / 2.0 - cx).abs() < 1e-4,
@@ -1699,6 +1768,7 @@ mod cue_window_tests {
             x: 0.5,
             y: 0.5,
             aspect: 1.0,
+            rotation: 0.0,
             animation: None,
         };
         let (l, t, w, h) = start.frame_box(FRAME_ASPECT);
@@ -1708,6 +1778,7 @@ mod cue_window_tests {
             0.34,
             1.0,
             FRAME_ASPECT,
+            0.0,
         );
         let (l2, t2, w2, h2) = moved.frame_box(FRAME_ASPECT);
 
@@ -1732,10 +1803,96 @@ mod cue_window_tests {
     fn a_full_frame_sticker_does_not_produce_nan_placement() {
         use super::OverlayPlacement;
 
-        let p = OverlayPlacement::at_centre(0.3, 0.3, 1.0, 1.0, FRAME_ASPECT);
+        let p = OverlayPlacement::at_centre(0.3, 0.3, 1.0, 1.0, FRAME_ASPECT, 0.0);
         assert!(p.x.is_finite(), "x is {}", p.x);
         assert!(p.y.is_finite(), "y is {}", p.y);
         let (l, t, w, h) = p.frame_box(FRAME_ASPECT);
         assert!(l.is_finite() && t.is_finite() && w.is_finite() && h.is_finite());
+    }
+
+    /// Turning a sticker grows the box the overlay filter positions,
+    /// because it positions the bounding box of the turned rectangle.
+    /// The numbers are from a real ffmpeg run: a 64x64 mark scaled to 60px
+    /// tall, turned 45 degrees, came out 85x85.
+    #[test]
+    fn turning_the_sticker_grows_its_box_the_way_ffmpeg_does() {
+        use super::OverlayPlacement;
+
+        let square = |deg: f32| OverlayPlacement {
+            scale: 60.0 / 180.0, // 60px on a 180px-tall frame
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: deg,
+            animation: None,
+        };
+
+        for deg in [0.0f32, 30.0, 45.0, 90.0, 180.0] {
+            let (_, _, w, h) = square(deg).frame_box(320.0 / 180.0);
+            let want = (60.0 * (deg.to_radians().cos() + deg.to_radians().sin()).abs()).round();
+            assert!(
+                (w * 320.0 - want).abs() <= 1.0,
+                "at {deg} deg: width {} px, ffmpeg rounds to {}",
+                w * 320.0,
+                want
+            );
+            assert!(
+                (h * 180.0 - want).abs() <= 1.0,
+                "at {deg} deg: height {} px, ffmpeg rounds to {}",
+                h * 180.0,
+                want
+            );
+        }
+    }
+
+    /// A rotate handle that drifts off its own sticker is worse than no
+    /// handle, so the two things the drag leans on have to hold: a
+    /// placement solved for a centre keeps that centre at any angle, and
+    /// an extra angle drawn live does not shift the box's centre either.
+    #[test]
+    fn turning_does_not_move_the_centre() {
+        use super::OverlayPlacement;
+        let a = 16.0 / 9.0;
+        let (cx, cy) = (0.35f32, 0.62f32);
+
+        for deg in [0.0f32, 5.0, 37.0, 90.0, 123.0, 179.0] {
+            let p = OverlayPlacement::at_centre(cx, cy, 0.4, 1.0, a, deg);
+            let (l, t, w, h) = p.frame_box(a);
+            assert!(
+                (l + w / 2.0 - cx).abs() < 1e-4 && (t + h / 2.0 - cy).abs() < 1e-4,
+                "at {deg} deg the centre landed at ({}, {}) instead of ({cx}, {cy})",
+                l + w / 2.0,
+                t + h / 2.0
+            );
+
+            // And the same for an angle the pointer is only asking for.
+            let (l, t, w, h) = p.frame_box_at(a, 17.0);
+            assert!(
+                (l + w / 2.0 - cx).abs() < 1e-4 && (t + h / 2.0 - cy).abs() < 1e-4,
+                "a live +17 deg at {deg} deg moved the centre to ({}, {})",
+                l + w / 2.0,
+                t + h / 2.0
+            );
+        }
+    }
+
+    /// The angle the preview draws while the handle is down is ahead of
+    /// the model, and the box has to follow it.
+    #[test]
+    fn frame_box_at_reports_the_box_for_another_angle() {
+        use super::OverlayPlacement;
+        let p = OverlayPlacement {
+            scale: 0.3,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: 10.0,
+            animation: None,
+        };
+        let a = 16.0 / 9.0;
+        assert_eq!(p.frame_box_at(a, 0.0), p.frame_box(a));
+        let (_, _, w0, _) = p.frame_box_at(a, 0.0);
+        let (_, _, w45, _) = p.frame_box_at(a, 35.0);
+        assert!(w45 > w0, "a wider angle should widen the box");
     }
 }

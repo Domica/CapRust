@@ -398,9 +398,12 @@ pub struct CapRustApp {
     pub marquee: Option<MarqueeState>,
     /// In-progress fade handle drag, if any.
     pub fade_drag: Option<FadeDrag>,
-    /// In-progress sticker move or resize on the preview. Holds both ends
-    /// of the gesture so the whole drag is one undo step.
+    /// In-progress sticker move, scale or rotate on the preview. Holds
+    /// both ends of the gesture so the whole drag is one undo step.
     pub sticker_drag: Option<StickerDrag>,
+    /// Sticker PNGs decoded for the preview overlay. Shared with the
+    /// asset browser so a mark is not decoded twice.
+    pub sticker_tex: crate::panels::asset_browser::StickerTextures,
     pub settings: AppSettings,
     pub ffmpeg_status: caprust_core::FfmpegStatus,
     pub last_dnd_payload: Option<Vec<uuid::Uuid>>,
@@ -690,7 +693,35 @@ pub struct StickerDrag {
     /// the current centre, which moves as the sticker grows. Measuring
     /// against a moving reference feeds the sticker's own growth back
     /// into its size and the grip runs away from the pointer.
-    pub origin_centre: (f32, f32),
+    pub origin_centre: egui::Pos2,
+    /// Degrees the pointer is asking for on top of `from.rotation`.
+    /// Zero for a move or a scale.
+    pub extra_degrees: f32,
+    /// Which gesture is running, so the drawing can show the right one
+    /// and a scale that began as a rotate does not turn into a move.
+    pub mode: StickerMode,
+}
+
+/// Which gesture a sticker drag is currently doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StickerMode {
+    Move,
+    Scale,
+    Rotate,
+}
+
+/// Where a drag wants the sticker to be, all in one bundle.
+///
+/// Six scalars arrived as eight arguments across three call sites, and
+/// `aspect` sitting next to `scale` invited swapping them at a call site
+/// where the difference would be invisible.
+#[derive(Debug, Clone, Copy)]
+pub struct StickerGeom {
+    pub scale: f32,
+    pub centre: egui::Pos2,
+    pub aspect: f32,
+    pub frame_aspect: f32,
+    pub rotation: f32,
 }
 
 /// Rubber-band selection state. `start` and `current` are in screen
@@ -1191,6 +1222,7 @@ impl CapRustApp {
             marquee: None,
             fade_drag: None,
             sticker_drag: None,
+            sticker_tex: Default::default(),
             settings,
             ffmpeg_status: ffmpeg_status.clone(),
             last_dnd_payload: None,
@@ -10390,17 +10422,21 @@ impl CapRustApp {
         self.handle_asset_browser_output(out);
     }
 
-    /// Drag and resize the selected sticker, drawn over the preview frame.
+    /// Draw and manipulate the selected sticker over the preview frame.
     ///
-    /// `frame_rect` is the video rectangle in the preview. The marker's box
-    /// is `scale` of its height, `aspect` of that for its width, centred
-    /// on `(x, y)` as fractions of the frame -- the same arithmetic
-    /// `export_graph` does when it emits `overlay=x=..:y=..`.
+    /// The sticker is painted here, by egui, rather than left to ffmpeg.
+    /// That is what makes a drag feel immediate: compositing a PNG over a
+    /// frame is work the renderer does every frame anyway, while the same
+    /// change in the filtergraph means tearing down and rebuilding an
+    /// encoder process. The only way to make that cheaper was to lower
+    /// the preview quality, which costs the rest of the picture and is a
+    /// global setting for what is a one-mark problem.
     ///
-    /// The clip is mutated directly while the pointer is down so the move
-    /// is immediate, and the whole gesture collapses into one
-    /// `MoveOverlayCommand` on release. A command per frame would be
-    /// simpler and would leave one undo step per pixel of travel.
+    /// ffmpeg still composites stickers for the export, from the same
+    /// `OverlayPlacement`. The preview plan leaves sticker clips out for
+    /// exactly this reason, and `preview_hash` is the matching half: two
+    /// copies of one mark in a frame would show a stale one whenever the
+    /// encoder had not caught up yet.
     fn preview_sticker_drag(&mut self, ui: &mut egui::Ui, frame_rect: egui::Rect) {
         let Some(clip_id) = self.selected_clips.first().copied() else {
             self.sticker_drag = None;
@@ -10414,21 +10450,29 @@ impl CapRustApp {
             self.sticker_drag = None;
             return;
         };
-        // Only while the playhead is over it, same as everything else in
-        // the preview -- the marker is not on screen the rest of the time.
+        // Copied out because the texture cache is `&mut self` and the
+        // clip is borrowed from `self.project`.
+        let image_path = match &clip.clip_type {
+            caprust_core::ClipType::Image { path, .. } => Some(path.clone()),
+            _ => None,
+        };
+        // Only while the playhead is over it. The sticker is not on
+        // screen the rest of the time, and drawing it anyway would put a
+        // mark in a frame that has none.
         let ph = self.playhead_ms;
         if !(ph >= clip.start_time_ms && ph < clip.start_time_ms + clip.duration_ms) {
             self.sticker_drag = None;
             return;
         }
 
-        // `frame_box` is the arithmetic the export graph emits, in
-        // unit-frame coordinates. Scaling it by the on-screen frame gives
-        // the exact rectangle the sticker will be composited into, so the
-        // handle sits on the sticker rather than near it.
         let fa = frame_rect.width() / frame_rect.height().max(1.0);
-        let (bx, by, bw, bh) = place.frame_box(fa);
+        // The angle on screen is not always the angle in the model: while
+        // the rotation handle is down, the pointer's angle is ahead of
+        // the model until the next line runs.
+        let live = self.sticker_live_rotation(clip_id, place.rotation);
+        let (bx, by, bw, bh) = place.frame_box_at(fa, live - place.rotation);
         let unit_rect = egui::Rect::from_min_size(egui::pos2(bx, by), egui::vec2(bw, bh));
+        let centre = unit_rect.center();
         let box_rect = egui::Rect::from_min_size(
             egui::pos2(
                 frame_rect.left() + frame_rect.width() * bx,
@@ -10436,68 +10480,129 @@ impl CapRustApp {
             ),
             egui::vec2(frame_rect.width() * bw, frame_rect.height() * bh),
         );
-        let centre = (unit_rect.center().x, unit_rect.center().y);
 
-        // Drawn above the frame and only outlined: the sticker itself is in
-        // the picture, this is the editor's handle on it.
-        let stroke = egui::Stroke::new(1.0, self.theme.accent_color());
-        ui.painter()
-            .rect_stroke(box_rect, 2.0, stroke, egui::StrokeKind::Middle);
-
-        // A corner grip for the size, big enough to actually hit.
-        const GRIP: f32 = 16.0;
-        let grip = egui::Rect::from_center_size(
-            egui::pos2(box_rect.right(), box_rect.bottom()),
-            egui::vec2(GRIP, GRIP),
-        );
-        let grip_resp = ui.interact(
-            grip,
-            egui::Id::new(("sticker_resize", clip_id)),
-            egui::Sense::drag(),
-        );
-        if grip_resp.hovered() || grip_resp.dragged() {
-            // egui 0.31 ships no diagonal-resize cursor; the crosshair is
-            // the closest thing it has for "drag to size".
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-            ui.painter()
-                .rect_stroke(grip, 2.0, stroke, egui::StrokeKind::Middle);
+        if let Some(path) = image_path {
+            self.paint_sticker(ui, &path, frame_rect, unit_rect, centre, live);
         }
 
+        // --- Handles ---
+        // Drawn whenever the sticker is selected, not on hover. A handle
+        // that appears only once the pointer is already on it is a handle
+        // nobody finds.
+        let stroke = egui::Stroke::new(1.5, self.theme.accent_color());
+        let mode = self
+            .sticker_drag
+            .as_ref()
+            .filter(|d| d.clip_id == clip_id)
+            .map(|d| d.mode)
+            .unwrap_or(StickerMode::Move);
+        ui.painter()
+            .rect_stroke(box_rect, 0.0, stroke, egui::StrokeKind::Middle);
+
+        const GRIP: f32 = 11.0;
+        let corner = self.sticker_corner_grips(ui, clip_id, box_rect, GRIP, stroke);
+        let corner_down = corner.is_some();
+
+        // --- Rotation handle, above the box ---
+        let rot_pt = egui::pos2(
+            box_rect.center().x,
+            box_rect.top() - box_rect.height() * 0.45,
+        );
+        let rot_grip = egui::Rect::from_center_size(rot_pt, egui::vec2(GRIP * 1.5, GRIP * 1.5));
+        ui.painter().line_segment(
+            [egui::pos2(box_rect.center().x, box_rect.top()), rot_pt],
+            stroke,
+        );
+        let rot_resp = ui.interact(
+            rot_grip,
+            egui::Id::new(("sticker_rotate", clip_id)),
+            egui::Sense::drag(),
+        );
+        if rot_resp.hovered() || mode == StickerMode::Rotate {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            ui.painter()
+                .circle_filled(rot_grip.center(), GRIP * 0.5, self.theme.accent_color());
+        }
+
+        // The body goes in last so a pointer sitting on a corner resolves
+        // to the corner: egui gives the most recently added overlapping
+        // rect the pointer.
         let body_resp = ui.interact(
             box_rect,
             egui::Id::new(("sticker_move", clip_id)),
-            egui::Sense::drag(),
+            egui::Sense::click(),
         );
-        if body_resp.hovered() && !grip_resp.dragged() {
+        if body_resp.hovered() && !rot_resp.dragged() && !corner_down {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
         }
 
-        if grip_resp.dragged() {
-            // The size comes from how far the pointer is from where the
-            // box was centred when the drag began, and the centre is
-            // then held there. Both halves matter: measure against a
-            // live centre and the sticker grows away from the pointer,
-            // and re-derive the position each frame and it swims.
-            let origin = self.sticker_drag_origin(clip_id, centre);
-            let p = grip_resp
-                .interact_pointer_pos()
-                .unwrap_or(box_rect.center());
-            let dy = ((p.y - frame_rect.top()) / frame_rect.height().max(1.0) - origin.1).abs();
-            let scale = (dy * 2.0).clamp(0.02, 2.0);
-            self.drag_sticker(clip_id, scale, origin.0, origin.1, place.aspect, fa);
+        // --- Gestures ---
+        if rot_resp.dragged() {
+            let p = rot_resp.interact_pointer_pos().unwrap_or(box_rect.center());
+            let ang = (p.y - box_rect.center().y)
+                .atan2(p.x - box_rect.center().x)
+                .to_degrees();
+            // Handle straight up is zero, not atan2's rightward zero.
+            let mut deg = (ang + 90.0).rem_euclid(360.0);
+            // Shift snaps to 15 degrees, which is what every editor does
+            // and the only way to get anything straight.
+            if ui.input(|i| i.modifiers.shift) {
+                deg = (deg / 15.0).round() * 15.0;
+            }
+            self.drag_sticker(
+                clip_id,
+                StickerGeom {
+                    scale: place.scale,
+                    centre,
+                    aspect: place.aspect,
+                    frame_aspect: fa,
+                    rotation: deg,
+                },
+                StickerMode::Rotate,
+            );
+        } else if let Some(resp) = corner {
+            // Size is the pointer's distance from where the box was
+            // centred when the drag began, so the centre holds still and
+            // the sticker grows the way a frame-centred scale should.
+            let p = resp.interact_pointer_pos().unwrap_or(box_rect.center());
+            let d = p - box_rect.center();
+            let scale = (d.length() / frame_rect.height().max(1.0)).clamp(0.02, 2.0);
+            self.drag_sticker(
+                clip_id,
+                StickerGeom {
+                    scale,
+                    centre,
+                    aspect: place.aspect,
+                    frame_aspect: fa,
+                    rotation: live,
+                },
+                StickerMode::Scale,
+            );
         } else if body_resp.dragged() {
             let d = body_resp.drag_delta();
-            let cx = (centre.0 + d.x / frame_rect.width().max(1.0)).clamp(-1.0, 2.0);
-            let cy = (centre.1 + d.y / frame_rect.height().max(1.0)).clamp(-1.0, 2.0);
-            self.drag_sticker(clip_id, place.scale, cx, cy, place.aspect, fa);
+            let cx = (centre.x + d.x / frame_rect.width().max(1.0)).clamp(-1.0, 2.0);
+            let cy = (centre.y + d.y / frame_rect.height().max(1.0)).clamp(-1.0, 2.0);
+            self.drag_sticker(
+                clip_id,
+                StickerGeom {
+                    scale: place.scale,
+                    centre: egui::pos2(cx, cy),
+                    aspect: place.aspect,
+                    frame_aspect: fa,
+                    rotation: live,
+                },
+                StickerMode::Move,
+            );
         }
 
-        // Release: one command for the whole gesture. Tested against both
-        // `dragged()` flags rather than `drag_stopped()` because a lost
-        // widget or a panel that closed has to end it too.
-        if self.sticker_drag.is_some() && !grip_resp.dragged() && !body_resp.dragged() {
+        // Release: one command for the whole gesture.
+        let still_down = rot_resp.dragged() || corner_down || body_resp.dragged();
+        if self.sticker_drag.is_some() && !still_down {
             if let Some(d) = self.sticker_drag.take() {
-                let moved = d.from.scale != d.to.scale || d.from.x != d.to.x || d.from.y != d.to.y;
+                let moved = d.from.scale != d.to.scale
+                    || d.from.x != d.to.x
+                    || d.from.y != d.to.y
+                    || d.from.rotation != d.to.rotation;
                 if moved {
                     let cmd = caprust_core::commands::move_overlay::MoveOverlayCommand::new(
                         d.clip_id, d.from, d.to,
@@ -10510,9 +10615,120 @@ impl CapRustApp {
         }
     }
 
-    /// Where the box was centred when this drag started, in unit-frame
-    /// coordinates. Frozen for the gesture.
-    fn sticker_drag_origin(&self, clip_id: uuid::Uuid, current: (f32, f32)) -> (f32, f32) {
+    /// Four corner grips. Returns the response of whichever is down, so
+    /// the caller can read the pointer position off it.
+    fn sticker_corner_grips(
+        &mut self,
+        ui: &mut egui::Ui,
+        clip_id: uuid::Uuid,
+        box_rect: egui::Rect,
+        grip: f32,
+        stroke: egui::Stroke,
+    ) -> Option<egui::Response> {
+        let mut hit = None;
+        for (i, corner) in [
+            box_rect.left_top(),
+            box_rect.right_top(),
+            box_rect.right_bottom(),
+            box_rect.left_bottom(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let r = egui::Rect::from_center_size(corner, egui::vec2(grip, grip));
+            let resp = ui.interact(
+                r,
+                egui::Id::new(("sticker_corner", clip_id, i)),
+                egui::Sense::drag(),
+            );
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+            ui.painter()
+                .rect_stroke(r, 0.0, stroke, egui::StrokeKind::Middle);
+            if resp.dragged() {
+                hit = Some(resp);
+            }
+        }
+        hit
+    }
+
+    /// The angle to draw this frame, which during a rotation drag is the
+    /// model's plus whatever the pointer is asking for on top.
+    fn sticker_live_rotation(&self, clip_id: uuid::Uuid, model: f32) -> f32 {
+        match &self.sticker_drag {
+            Some(d) if d.clip_id == clip_id && d.mode == StickerMode::Rotate => {
+                model + d.extra_degrees
+            }
+            _ => model,
+        }
+    }
+
+    /// Paint the sticker into the preview, turned about its centre.
+    ///
+    /// A mesh rather than an image widget: egui's image helpers only do
+    /// axis-aligned rects, and the turn is the entire point.
+    fn paint_sticker(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &str,
+        frame_rect: egui::Rect,
+        unit_rect: egui::Rect,
+        centre: egui::Pos2,
+        rotation: f32,
+    ) {
+        let tex = match caprust_core::stickers::find(path) {
+            Some(_) => self.sticker_tex.load_embedded(ui.ctx(), path),
+            None => self
+                .sticker_tex
+                .load_path(ui.ctx(), path, std::path::Path::new(path)),
+        };
+        let Some(tex) = tex else { return };
+
+        let w = frame_rect.width() * unit_rect.width();
+        let h = frame_rect.height() * unit_rect.height();
+        let (sin, cos) = rotation.to_radians().sin_cos();
+        let at = |dx: f32, dy: f32| {
+            egui::pos2(
+                frame_rect.left() + frame_rect.width() * centre.x + dx * cos - dy * sin,
+                frame_rect.top() + frame_rect.height() * centre.y + dx * sin + dy * cos,
+            )
+        };
+        let (tl, tr, br, bl) = (
+            at(-w / 2.0, -h / 2.0),
+            at(w / 2.0, -h / 2.0),
+            at(w / 2.0, h / 2.0),
+            at(-w / 2.0, h / 2.0),
+        );
+
+        let white = egui::Color32::WHITE;
+        // A mesh vertex's uv is a Pos2 -- it is the texel coordinate, not
+        // an offset.
+        let v = |p: egui::Pos2, u: f32, w: f32| egui::epaint::Vertex {
+            pos: p,
+            uv: egui::epaint::Pos2::new(u, w),
+            color: white,
+        };
+        let mesh = egui::epaint::Mesh {
+            texture_id: tex.id(),
+            vertices: vec![
+                v(tl, 0.0, 0.0),
+                v(bl, 0.0, 1.0),
+                v(tr, 1.0, 0.0),
+                v(tr, 1.0, 0.0),
+                v(bl, 0.0, 1.0),
+                v(br, 1.0, 1.0),
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+        };
+        ui.painter().add(egui::Shape::mesh(mesh));
+    }
+
+    /// Where the box was centred when this gesture started, in
+    /// unit-frame coordinates. Frozen: measuring size against a live
+    /// centre feeds the sticker's own growth back into its size and the
+    /// grip runs away from the pointer.
+    fn sticker_drag_origin(&self, clip_id: uuid::Uuid, current: egui::Pos2) -> egui::Pos2 {
         match &self.sticker_drag {
             Some(d) if d.clip_id == clip_id => d.origin_centre,
             _ => current,
@@ -10522,19 +10738,19 @@ impl CapRustApp {
     /// Move the clip straight, no command. The command goes on the undo
     /// stack once, at the end.
     ///
-    /// `cx`/`cy` are where the box's centre should end up, in
-    /// unit-frame coordinates; the placement is derived from them through
-    /// `at_centre` rather than by adding the delta to `x`, because `x` is
-    /// a fraction of the sticker's travel and not of the frame.
-    fn drag_sticker(
-        &mut self,
-        clip_id: uuid::Uuid,
-        scale: f32,
-        cx: f32,
-        cy: f32,
-        aspect: f32,
-        frame_aspect: f32,
-    ) {
+    /// `centre` is where the gesture wants the box's centre now, but it
+    /// is only honoured for a move. A scale or a rotate happens about the
+    /// centre the gesture started from, which is what makes the sticker
+    /// grow in place instead of sliding away from the pointer.
+    fn drag_sticker(&mut self, clip_id: uuid::Uuid, g: StickerGeom, mode: StickerMode) {
+        let StickerGeom {
+            scale,
+            centre,
+            aspect,
+            frame_aspect,
+            rotation,
+        } = g;
+        let origin = self.sticker_drag_origin(clip_id, centre);
         let Some(clip) = self.project.clips.iter_mut().find(|c| c.id == clip_id) else {
             return;
         };
@@ -10543,15 +10759,31 @@ impl CapRustApp {
         };
         // Remember where the gesture began, not where it is now, or undo
         // would have nowhere to travel back to.
-        let (from, origin_centre) = match &self.sticker_drag {
-            Some(d) if d.clip_id == clip_id => (d.from.clone(), d.origin_centre),
-            _ => {
-                let (l, t, w, h) = current.frame_box(frame_aspect);
-                (current, (l + w / 2.0, t + h / 2.0))
-            }
+        let from = match &self.sticker_drag {
+            Some(d) if d.clip_id == clip_id => d.from.clone(),
+            _ => current,
         };
-        let mut next =
-            caprust_core::OverlayPlacement::at_centre(cx, cy, scale, aspect, frame_aspect);
+        let (cx, cy) = match mode {
+            StickerMode::Move => (centre.x, centre.y),
+            StickerMode::Scale | StickerMode::Rotate => (origin.x, origin.y),
+        };
+        // While rotating, `rotation` is the absolute angle. For a move
+        // or a scale the angle is whatever the clip already had.
+        let next_rotation = match mode {
+            StickerMode::Rotate => rotation,
+            _ => from.rotation,
+        };
+        // What the live drawing needs on top of the stored angle.
+        let extra_degrees = next_rotation - from.rotation;
+
+        let mut next = caprust_core::OverlayPlacement::at_centre(
+            cx,
+            cy,
+            scale,
+            aspect,
+            frame_aspect,
+            next_rotation,
+        );
         // Geometry only. The animation belongs to the clip and a drag
         // has no business clearing it.
         next.animation = from.animation.clone();
@@ -10560,7 +10792,9 @@ impl CapRustApp {
             clip_id,
             from,
             to: next,
-            origin_centre,
+            origin_centre: origin,
+            extra_degrees,
+            mode,
         });
     }
 
@@ -10676,7 +10910,11 @@ impl CapRustApp {
         // the value has been stable for RESPAWN_DEBOUNCE_MS.
         {
             const RESPAWN_DEBOUNCE_MS: u128 = 250;
-            let live = self.project.render_hash();
+            // Not render_hash: a sticker is composited by the preview
+            // panel and never reaches ffmpeg, so moving one changes no
+            // pixel of this output. Hashing placement here would spawn an
+            // encoder on every frame of a drag to produce the same frame.
+            let live = self.project.preview_hash();
             if live != self.pending_hash {
                 self.pending_hash = live;
                 self.pending_respawn_at = Some(std::time::Instant::now());
@@ -10748,8 +10986,13 @@ impl CapRustApp {
 
                 if let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() {
                     let models_dir = self.settings.effective_models_dir();
+                    // Stickers are drawn by the preview panel, not by
+                    // ffmpeg, so they come out of the preview graph. Left
+                    // in, every mark appears twice -- once stale from the
+                    // last ffmpeg pass, once current from egui.
+                    let previewable = self.project.without_overlay_clips();
                     match caprust_media_io::export_graph::plan_from_project(
-                        &self.project,
+                        &previewable,
                         rw,
                         rh,
                         fps_num,
@@ -11031,8 +11274,13 @@ impl CapRustApp {
                     );
                     let fps_f = fps_num as f64 / fps_den.max(1) as f64;
                     let models_dir = self.settings.effective_models_dir();
+                    // Stickers are drawn by the preview panel, not by
+                    // ffmpeg, so they come out of the preview graph. Left
+                    // in, every mark appears twice -- once stale from the
+                    // last ffmpeg pass, once current from egui.
+                    let previewable = self.project.without_overlay_clips();
                     match caprust_media_io::export_graph::plan_from_project(
-                        &self.project,
+                        &previewable,
                         rw,
                         rh,
                         fps_num,

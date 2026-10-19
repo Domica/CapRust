@@ -316,6 +316,7 @@ props-tab-sticker = Sticker
 props-sticker-timing = Timing
 props-sticker-duration = On screen for
 props-sticker-scale = Size
+props-sticker-rotation = Rotation
 props-sticker-x = Horizontal
 props-sticker-y = Vertical
 props-sticker-position-hint = 0 is flush against the edge, 1 against the other edge, 0.5 centred.
