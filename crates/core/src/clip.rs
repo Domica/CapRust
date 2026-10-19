@@ -813,8 +813,15 @@ impl OverlayPlacement {
             ..Self::default_sticker()
         };
         let (w, h) = probe.sized(0.0, frame_aspect);
-        let x = solve_position(cx, w);
-        let y = solve_position(cy, h);
+        // Solved and then held inside the range the export filter will
+        // accept. Clamping the centre instead is what let a sticker be
+        // dragged out of reach: x is a fraction of the sticker's travel,
+        // so a centre of 2.0 solves to x = 2.0 / (1 - width), which for
+        // anything but a full-frame sticker is past 2.0 -- and past the
+        // clamp the overlay filter applies. The preview then placed it
+        // off-screen while ffmpeg placed it somewhere else again.
+        let x = solve_position(cx, w).clamp(-1.0, 2.0);
+        let y = solve_position(cy, h).clamp(-1.0, 2.0);
         Self {
             scale,
             x,
@@ -1731,11 +1738,31 @@ mod cue_window_tests {
     fn at_centre_and_frame_box_are_inverses() {
         use super::OverlayPlacement;
 
+        // Restricted to stickers that fit inside the frame, and to the
+        // region the preview lets a drag reach. A sticker wider than the
+        // frame has no travel to solve against, and a centre past the
+        // edge is one `at_centre` deliberately refuses -- both are the
+        // clamp test's business, not this one's.
         for (cx, cy) in [(0.5, 0.5), (0.2, 0.8), (0.9, 0.1), (0.0, 1.0), (1.0, 0.0)] {
-            for scale in [0.1f32, 0.34, 0.75] {
+            for scale in [0.1f32, 0.34, 0.5] {
                 for aspect in [1.0f32, 1.5, 0.666] {
                     for fa in [FRAME_ASPECT, 1.0, 2.35] {
                         let p = OverlayPlacement::at_centre(cx, cy, scale, aspect, fa, 0.0);
+                        // Skip what the clamp deliberately refuses: a
+                        // sticker wider than the frame has no travel to
+                        // solve against, and a centre this far out at this
+                        // width needs a fraction past the range. Both are
+                        // covered by at_centre_never_solves_outside_the_
+                        // export_range, which is about the clamp; this is
+                        // about the two functions agreeing.
+                        if p.frame_box(fa).2 > 0.98
+                            || p.x <= -1.0
+                            || p.x >= 2.0
+                            || p.y <= -1.0
+                            || p.y >= 2.0
+                        {
+                            continue;
+                        }
                         let (l, t, w, h) = p.frame_box(fa);
                         assert!(
                             (l + w / 2.0 - cx).abs() < 1e-4,
@@ -1894,5 +1921,86 @@ mod cue_window_tests {
         let (_, _, w0, _) = p.frame_box_at(a, 0.0);
         let (_, _, w45, _) = p.frame_box_at(a, 35.0);
         assert!(w45 > w0, "a wider angle should widen the box");
+    }
+
+    /// A drag used to be able to park a sticker off-screen for good.
+    ///
+    /// The clamp was on the centre, in a range of +/-1 frame, and the
+    /// reasoning was that 2.0 was generous. It is not: `x` is a fraction
+    /// of the sticker's travel, so a centre of 2.0 solves to
+    /// `2.0 / (1 - width)`, which is past 2.0 for anything but a
+    /// full-frame sticker -- and past the clamp the overlay filter
+    /// applies. The preview then drew it off-screen and ffmpeg drew it
+    /// somewhere else, and the mark could not be dragged back because its
+    /// centre was no longer on the picture.
+    #[test]
+    fn at_centre_never_solves_outside_the_export_range() {
+        use super::OverlayPlacement;
+        let fa = 16.0 / 9.0;
+
+        for scale in [0.05f32, 0.2, 0.34, 0.6, 0.9] {
+            for aspect in [0.5f32, 1.0, 1.5, 2.0] {
+                for cx in [-5.0f32, -1.0, 0.0, 0.5, 1.0, 3.0] {
+                    for cy in [-5.0f32, -1.0, 0.0, 0.5, 1.0, 3.0] {
+                        let p = OverlayPlacement::at_centre(cx, cy, scale, aspect, fa, 0.0);
+                        assert!(
+                            (-1.0..=2.0).contains(&p.x),
+                            "x = {} at cx={cx} scale={scale} aspect={aspect}",
+                            p.x
+                        );
+                        assert!(
+                            (-1.0..=2.0).contains(&p.y),
+                            "y = {} at cy={cy} scale={scale} aspect={aspect}",
+                            p.y
+                        );
+                        assert!(p.x.is_finite() && p.y.is_finite());
+                    }
+                }
+            }
+        }
+    }
+
+    /// And what comes out is what goes back in: the export emits
+    /// `overlay=x=(W-w)*x` with the same numbers, so the box the filter
+    /// composites has to be the box the preview drew.
+    #[test]
+    fn a_clamped_placement_still_matches_its_own_box() {
+        use super::OverlayPlacement;
+        let fa = 16.0 / 9.0;
+        // Somewhere the old code would have solved past the range.
+        let p = OverlayPlacement::at_centre(1.4, -0.4, 0.34, 1.0, fa, 0.0);
+        let (l, t, w, h) = p.frame_box(fa);
+        // The filter would place the left edge at (W - w) * x. Whatever
+        // that is, the preview reports it, so the two cannot disagree.
+        assert!((l - (1.0 - w) * p.x).abs() < 1e-6);
+        assert!((t - (1.0 - h) * p.y).abs() < 1e-6);
+        // And it is at the clamp, not past it.
+        assert!((p.x - 2.0).abs() < 1e-6 || p.x < 2.0, "x = {}", p.x);
+        assert!(p.y >= -1.0);
+    }
+
+    /// Within the range the preview asks for, the centre is honoured
+    /// exactly. The clamp must not cost anything where it is not needed,
+    /// or a sticker parked at the edge would jump somewhere else.
+    #[test]
+    fn a_reachable_centre_is_honoured_exactly() {
+        use super::OverlayPlacement;
+        let fa = 16.0 / 9.0;
+        for (cx, cy) in [(0.5f32, 0.5f32), (0.08, 0.5), (0.5, 0.92), (0.0, 1.0)] {
+            for deg in [0.0f32, 45.0] {
+                let p = OverlayPlacement::at_centre(cx, cy, 0.34, 1.0, fa, deg);
+                let (l, t, w, h) = p.frame_box(fa);
+                assert!(
+                    (l + w / 2.0 - cx).abs() < 1e-4,
+                    "x drifted at ({cx}, {cy}) deg {deg}: {}",
+                    l + w / 2.0
+                );
+                assert!(
+                    (t + h / 2.0 - cy).abs() < 1e-4,
+                    "y drifted at ({cx}, {cy}) deg {deg}: {}",
+                    t + h / 2.0
+                );
+            }
+        }
     }
 }

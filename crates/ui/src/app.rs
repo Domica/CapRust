@@ -760,6 +760,26 @@ fn corners_bounds(corners: &[egui::Pos2; 4]) -> egui::Rect {
     r
 }
 
+/// How far past the edge of the frame a sticker may be dragged, as a
+/// fraction of the frame. Enough to hang a mark off the edge on purpose,
+/// not enough to lose it: anything beyond this puts the centre off the
+/// picture, and a mark whose centre is off the picture cannot be grabbed
+/// to come back.
+pub const OVERDRAG: f32 = 0.08;
+
+/// Where a drag is allowed to put a sticker's centre.
+///
+/// Its own function so it can be checked. The clamp used to be inline in
+/// the move branch, where a test could only read the constant and not
+/// what the drag did with it -- so the drag could have ignored the
+/// constant entirely and every assertion would still have held.
+pub fn clamp_centre(cx: f32, cy: f32) -> egui::Pos2 {
+    egui::pos2(
+        cx.clamp(-OVERDRAG, 1.0 + OVERDRAG),
+        cy.clamp(-OVERDRAG, 1.0 + OVERDRAG),
+    )
+}
+
 /// Which part of a sticker's overlay the pointer is over.
 ///
 /// Decided from the pointer rather than from which of several
@@ -10851,8 +10871,20 @@ impl CapRustApp {
                 }
                 StickerMode::Move => {
                     let d = resp.drag_delta();
-                    let cx = (centre.x + d.x / frame_rect.width().max(1.0)).clamp(-1.0, 2.0);
-                    let cy = (centre.y + d.y / frame_rect.height().max(1.0)).clamp(-1.0, 2.0);
+                    // Held just inside the frame, with a little overhang
+                    // so a mark can be pushed to the edge on purpose.
+                    //
+                    // It used to be allowed to go to +/-1 frame away, on
+                    // the reasoning that a clamp of 2.0 was generous. It
+                    // is not: the sticker ended up at x = 2.33, which is
+                    // past what the overlay filter accepts, so the export
+                    // and the preview disagreed and the mark was parked
+                    // off-screen with no way to drag it back.
+                    let clamped = clamp_centre(
+                        centre.x + d.x / frame_rect.width().max(1.0),
+                        centre.y + d.y / frame_rect.height().max(1.0),
+                    );
+                    let (cx, cy) = (clamped.x, clamped.y);
                     self.drag_sticker(
                         clip_id,
                         StickerGeom {
@@ -15914,6 +15946,94 @@ mod sticker_overlay_tests {
         assert!(
             panel.contains("for corner in corners"),
             "the grips are not drawn on the sticker's corners"
+        );
+    }
+    /// A sticker whose centre leaves the frame cannot be dragged back,
+    /// because there is nothing on the picture to grab. The drag keeps it
+    /// just inside.
+    #[test]
+    fn dragging_out_past_the_edge_keeps_the_sticker_grabbable() {
+        let over = super::OVERDRAG;
+        for (cx, cy) in [
+            (over, over),
+            (1.0 + over, 1.0 + over),
+            (-over, 1.0 + over),
+            (0.5, 0.5),
+        ] {
+            let p = caprust_core::OverlayPlacement::at_centre(cx, cy, 0.34, 1.0, 16.0 / 9.0, 0.0);
+            let (l, t, w, h) = p.frame_box(16.0 / 9.0);
+            // Not "the centre is inside" -- it deliberately is not, that
+            // is the overhang. The property that matters is that the mark
+            // still overlaps the frame, so it is on screen and there is
+            // something to grab to bring it back.
+            assert!(
+                l < 1.0 && l + w > 0.0 && t < 1.0 && t + h > 0.0,
+                "a centre of ({cx}, {cy}) put the mark at ({l}, {t}) {:.2}x{:.2}, \
+                 entirely off the frame",
+                w,
+                h
+            );
+            // And the centre is never more than the overhang out, so the
+            // handle stays on the picture to drag back. The tolerance is
+            // for the solve's own rounding, not for a real excursion.
+            const EPS: f32 = 1e-4;
+            let bcx = l + w / 2.0;
+            assert!(
+                bcx >= -over - EPS && bcx <= 1.0 + over + EPS,
+                "the centre of a mark dragged to ({cx}, {cy}) landed at {bcx}"
+            );
+        }
+        // And the overhang is real: the mark can be pushed off the edge
+        // on purpose.
+        assert!(over > 0.0, "no overhang at all");
+    }
+    /// The clamp the drag actually applies, not just the constant it is
+    /// built from.
+    #[test]
+    fn the_drag_holds_the_centre_within_reach() {
+        let over = super::OVERDRAG;
+        for (cx, cy) in [
+            (0.5f32, 0.5f32),
+            (-5.0, 5.0),
+            (5.0, -5.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (0.08, 1.08),
+            (-0.08, -0.08),
+        ] {
+            let p = super::clamp_centre(cx, cy);
+            assert!(
+                (-over..=1.0 + over).contains(&p.x),
+                "x={} survived from {cx}",
+                p.x
+            );
+            assert!(
+                (-over..=1.0 + over).contains(&p.y),
+                "y={} survived from {cy}",
+                p.y
+            );
+            assert!(p.x.is_finite() && p.y.is_finite());
+        }
+    }
+
+    /// ...and the move gesture goes through it rather than clamping by
+    /// hand, which is the part that is otherwise only visible by reading
+    /// the branch.
+    #[test]
+    fn the_move_gesture_uses_the_shared_clamp() {
+        let src = include_str!("app.rs");
+        let panel = src
+            .split_once("fn preview_sticker_handles")
+            .expect("no preview_sticker_handles")
+            .1;
+        let panel = &panel[..panel.find("\n    fn ").unwrap_or(panel.len())];
+        assert!(
+            panel.contains("clamp_centre("),
+            "the move branch clamps by hand instead of through clamp_centre"
+        );
+        assert!(
+            !panel.contains(".clamp(-OVERDRAG"),
+            "a second clamp crept in beside the shared one"
         );
     }
 }
