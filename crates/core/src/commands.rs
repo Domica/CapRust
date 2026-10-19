@@ -1,5 +1,6 @@
 //! Command pattern (undo/redo).
 
+pub mod add_clip;
 pub mod add_master_plugin;
 pub mod add_media;
 pub mod caption_segments;

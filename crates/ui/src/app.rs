@@ -6155,12 +6155,16 @@ impl CapRustApp {
                     ui.allocate_space(egui::vec2(header_w, ruler_h));
                     for &idx in &order {
                         let mut track = updated_tracks[idx].clone();
-                        let row_h = track.height
-            * match self.settings.timeline_size {
-                caprust_core::TimelineSize::S => 1.0,
-                caprust_core::TimelineSize::M => 1.3,
-                caprust_core::TimelineSize::L => 1.7,
-            };
+                                                // How much bigger the lane is drawn at each
+                        // timeline size. Named, because the drag handle
+                        // below has to divide by it to turn screen pixels
+                        // back into a stored height.
+                        let lane_scale = match self.settings.timeline_size {
+                            caprust_core::TimelineSize::S => 1.0,
+                            caprust_core::TimelineSize::M => 1.3,
+                            caprust_core::TimelineSize::L => 1.7,
+                        };
+                        let row_h = track.height * lane_scale;
                         let h_resp = ui.allocate_ui_with_layout(
                             egui::vec2(header_w, row_h),
                             egui::Layout::top_down(egui::Align::Min),
@@ -6238,7 +6242,28 @@ impl CapRustApp {
                         if div.dragged() {
                             let dy = div.drag_delta().y;
                             if dy != 0.0 {
-                                track.height = (row_h + dy).clamp(40.0, 160.0);
+                                // The row on screen is
+                                // `track.height * timeline_size_factor`
+                                // tall, and the drag delta is in screen
+                                // pixels. Writing the row height straight
+                                // back into `track.height` fed the factor
+                                // into its own value on every frame of the
+                                // drag: at M it grew by 1.3x per frame, at L
+                                // by 1.7x. It ran away upward, the clamp
+                                // pinned it at the maximum, and from there
+                                // dragging up could not lower it -- because
+                                // the row it was comparing against was the
+                                // clamped value times the factor again. The
+                                // reported symptom was "I can make it
+                                // bigger but never smaller".
+                                //
+                                // The drag moves the divider by `dy` pixels,
+                                // so the stored height moves by `dy`
+                                // divided by the factor. Bounds are in
+                                // stored units, as they always were.
+                                let stored_dy = dy / lane_scale;
+                                track.height =
+                                    (track.height + stored_dy).clamp(40.0, 160.0);
                                 header_changed = true;
                             }
                         }
@@ -6392,11 +6417,11 @@ impl CapRustApp {
                     for &idx in &order {
                         let track = &updated_tracks[idx];
                         let row_h = track.height
-            * match self.settings.timeline_size {
-                caprust_core::TimelineSize::S => 1.0,
-                caprust_core::TimelineSize::M => 1.3,
-                caprust_core::TimelineSize::L => 1.7,
-            };
+                            * match self.settings.timeline_size {
+                                caprust_core::TimelineSize::S => 1.0,
+                                caprust_core::TimelineSize::M => 1.3,
+                                caprust_core::TimelineSize::L => 1.7,
+                            };
                         let (lane_rect, lane_resp) = ui.allocate_exact_size(
                             egui::vec2(viewport_w, row_h),
                             egui::Sense::hover(),
@@ -10019,19 +10044,26 @@ impl CapRustApp {
     /// is the only lane meant to sit above the picture rather than be it.
     /// A sticker is exactly that, so it goes there instead of onto a
     /// video lane where it would push the footage around.
-    fn overlay_lane_index(&mut self) -> usize {
+    fn sticker_track_index(&mut self) -> usize {
+        // It used to be the pinned Overlay lane, on the theory that a
+        // sticker belongs above the picture. Two things came out of that:
+        // the singleton Overlay lane is not where anyone looks for a clip
+        // they just added, and RippleInsertCommand treats Overlay as a
+        // video lane, so inserting there moved the whole edit sideways. A
+        // video lane is where clips live, and `Clip.overlay` is what keeps
+        // a sticker small and positioned whatever lane it sits on.
         if let Some(i) = self
             .project
             .tracks
             .iter()
-            .position(|t| t.kind == caprust_core::TrackKind::Overlay)
+            .rposition(|t| t.kind == caprust_core::TrackKind::Video)
         {
             return i;
         }
-        let name = format!("O{}", self.project.tracks.len() + 1);
+        let name = format!("V{}", self.project.tracks.len() + 1);
         self.project.tracks.push(caprust_core::Track::new(
             &name,
-            caprust_core::TrackKind::Overlay,
+            caprust_core::TrackKind::Video,
         ));
         self.project.tracks.len() - 1
     }
@@ -10253,7 +10285,7 @@ impl CapRustApp {
         if let Some(id) = out.sticker_clicked {
             match caprust_core::stickers::materialize(&id) {
                 Ok(path) => {
-                    let lane = self.overlay_lane_index();
+                    let lane = self.sticker_track_index();
 
                     // A sticker is a still, so its "duration" is how long
                     // it stays on screen. Three seconds is the length a
@@ -10268,7 +10300,10 @@ impl CapRustApp {
                     clip.overlay = Some(caprust_core::OverlayPlacement::default_sticker());
                     clip.source_duration_ms = 0;
 
-                    let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(clip);
+                    // Not RippleInsertCommand: it shifts every audio,
+                    // caption and text clip that overlapped, so adding a
+                    // sticker moved the whole edit sideways.
+                    let cmd = caprust_core::commands::add_clip::AddClipCommand::new(clip);
                     // Not `let _ =`: swallowing this is what made a failed
                     // insert look exactly like a click that did nothing,
                     // which is the report this was chased from.
@@ -13926,6 +13961,98 @@ mod preview_encoding_tests {
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
         let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
         assert_eq!((img.width(), img.height()), (160, 90));
+    }
+}
+
+#[cfg(test)]
+mod track_height_drag_tests {
+    /// Track-height drag must move the divider by the pointer, at every
+    /// timeline size.
+    ///
+    /// The row is drawn at `track.height * factor` pixels but the drag
+    /// delta is in pixels, so one has to be converted into the other or
+    /// the factor is fed back into its own value on every frame of the
+    /// drag. That grew the stored height without bound, the clamp pinned
+    /// it at the maximum, and from there the drag could not lower it
+    /// again -- the reported "I can make it bigger but never smaller".
+    fn apply(stored: f32, dy: f32, factor: f32) -> f32 {
+        (stored + dy / factor).clamp(40.0, 160.0)
+    }
+
+    #[test]
+    fn the_divider_follows_the_pointer() {
+        for (name, factor) in [("S", 1.0f32), ("M", 1.3), ("L", 1.7)] {
+            let mut stored = 46.0f32;
+            let start_row = stored * factor;
+            let dy = 10.0f32;
+
+            stored = apply(stored, dy, factor);
+            assert!(
+                (stored * factor - start_row - dy).abs() < 0.01,
+                "{name}: dragged down 10px, the row moved {}",
+                stored * factor - start_row
+            );
+
+            let after_down = stored * factor;
+            stored = apply(stored, -dy, factor);
+            assert!(
+                (after_down - stored * factor - dy).abs() < 0.01,
+                "{name}: dragged back up 10px, the row moved {}",
+                stored * factor - after_down
+            );
+        }
+    }
+
+    #[test]
+    fn sixty_frames_of_dragging_does_not_run_the_height_away() {
+        for (name, factor) in [("S", 1.0f32), ("M", 1.3), ("L", 1.7)] {
+            // Shrinking from the maximum has to actually reach the
+            // minimum. The runaway pinned it at the maximum forever.
+            let mut stored = 160.0f32;
+            let mut before = stored * factor;
+            for _ in 0..60 {
+                stored = apply(stored, -6.0, factor);
+                assert!(
+                    stored * factor <= before + 0.01,
+                    "{name}: dragging up made the row taller"
+                );
+                before = stored * factor;
+            }
+            assert!(
+                stored < 41.0,
+                "{name}: could not shrink below the minimum, stuck at {stored}"
+            );
+
+            // And growing from the minimum has to reach the maximum
+            // without overshooting past the clamp.
+            let mut stored = 40.0f32;
+            for _ in 0..60 {
+                stored = apply(stored, 6.0, factor);
+            }
+            assert!(stored <= 160.0 + f32::EPSILON, "{name}: ran to {stored}");
+        }
+    }
+
+    /// The bug itself, stated as a fact: the old line fed the scaled
+    /// height back into the stored value, so it grew by the factor on
+    /// every frame and could not be reversed.
+    #[test]
+    fn the_old_line_grew_by_the_factor_per_frame() {
+        for (name, factor) in [("M", 1.3f32), ("L", 1.7)] {
+            let mut stored = 46.0f32;
+            let mut grew_past_max = false;
+            for _ in 0..60 {
+                let row = stored * factor;
+                stored = (row + 6.0).clamp(40.0, 160.0);
+                if stored >= 160.0 {
+                    grew_past_max = true;
+                }
+            }
+            assert!(grew_past_max, "{name}: the old line did not diverge");
+            // And from the pinned maximum, up-dragging cannot help.
+            let stuck = (160.0f32 * factor - 6.0).clamp(40.0, 160.0);
+            assert_eq!(stuck, 160.0, "{name}: the old line could not shrink");
+        }
     }
 }
 

@@ -3227,6 +3227,29 @@ fn preview_input_for_image(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Z-order headroom reserved for clips that carry an `OverlayPlacement`.
+///
+/// Lane indices are small and dense, so the offset has to clear every lane
+/// a sticker could sit on and stay far from anything a real lane could
+/// reach. Four video lanes is more than this editor has ever needed.
+const OVERLAY_Z: u32 = 1000;
+
+/// Z-order for one clip.
+///
+/// A clip carrying a placement is a mark on top of the frame, so it
+/// composites above every lane -- otherwise a sticker dropped on V1 is
+/// painted over by whatever is on V2, which is the opposite of what it is
+/// for. Lifting the whole lane instead keeps the lanes in their own order
+/// and so achieves nothing.
+fn clip_z(lane_z: u32, overlay: bool) -> u32 {
+    if overlay {
+        lane_z + OVERLAY_Z
+    } else {
+        lane_z
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn plan_from_project(
     project: &caprust_core::ProjectState,
     width: u32,
@@ -3331,7 +3354,15 @@ pub fn plan_from_project(
         if !project.tracks[t_idx].visible {
             continue;
         }
-        let z = z as u32;
+        // A clip with a placement is a mark on top of the frame, so it
+        // composites above every lane whether it lives on V1 or V2. Without
+        // this a sticker dropped on V1 is painted over by whatever is on
+        // V2, which is the opposite of what it is for.
+        let z = if project.clips.iter().any(|c| c.overlay.is_some()) {
+            z as u32 + OVERLAY_Z
+        } else {
+            z as u32
+        };
         let track_kind = project.tracks[t_idx].kind;
         let mut clips: Vec<&caprust_core::Clip> = project
             .clips
@@ -3398,7 +3429,7 @@ pub fn plan_from_project(
                         flip_h: c.flip_h,
                         flip_v: c.flip_v,
                         reversed: c.reversed,
-                        z_order: z,
+                        z_order: clip_z(z, c.overlay.is_some()),
                         is_image: false,
                         overlay: None,
                         effects: c.effects.clone(),
@@ -3447,7 +3478,7 @@ pub fn plan_from_project(
                         flip_h: c.flip_h,
                         flip_v: c.flip_v,
                         reversed: c.reversed,
-                        z_order: z,
+                        z_order: clip_z(z, c.overlay.is_some()),
                         is_image: true,
                         overlay: c.overlay.clone(),
                         effects: c.effects.clone(),
