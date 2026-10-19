@@ -14,11 +14,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # ubuntu-24.04, not ubuntu-latest: the label floats, and a
+        # newer image's glibc has a smaller _IO_FILE than whisper.cpp
+        # expects. whisper-rs-sys's generated bindings assert the
+        # layout at compile time, so the difference is a hard error
+        # ("attempt to compute 1_usize - 216_usize") and the Linux
+        # build stops. Pinned until whisper-rs-sys is on a version
+        # whose bindings do not assert it.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -27,7 +34,10 @@ jobs:
             libavfilter-dev libavdevice-dev libswscale-dev libswresample-dev \
             libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev \
             libasound2-dev
-      - uses: dtolnay/rust-toolchain@stable
+      # The same version rust-toolchain.toml pins, so CI compiles
+      # with the compiler the rest of the project uses. The action
+      # overrides the file, so without this CI drifted.
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2

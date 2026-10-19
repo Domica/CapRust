@@ -32,7 +32,10 @@ jobs:
 
   build-linux:
     name: Linux nightly
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the label floats, and a newer image's
+    # glibc has a smaller _IO_FILE than whisper.cpp expects, which
+    # is a hard error in whisper-rs-sys's generated bindings.
+    runs-on: ubuntu-24.04
     env:
       # Same reasoning as the Windows job.
       CMAKE_ARGS: -DGGML_NATIVE=OFF
@@ -56,7 +59,10 @@ jobs:
 
   build-android-apk:
     name: Android remote APK
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the label floats, and a newer image's
+    # glibc has a smaller _IO_FILE than whisper.cpp expects, which
+    # is a hard error in whisper-rs-sys's generated bindings.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

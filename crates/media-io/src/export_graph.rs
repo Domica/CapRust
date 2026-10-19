@@ -1154,7 +1154,7 @@ impl RenderPlan {
                     _ => String::new(),
                 };
                 fg.push_str(&format!(
-                "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x={x_expr}:y={y}{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'{fx_suffix}[v_txt{t_i}];",
+                "[{v_prev}]drawtext=text='{escaped}':fontcolor=white:fontsize={fs}:x='{x_expr}':y='{y}'{style_opts}{effect_opts}:enable='between(t,{start:.6},{end:.6})'{fx_suffix}[v_txt{t_i}];",
                 v_prev = v_prev,
                 escaped = escaped,
                 fs = fs,
@@ -7328,5 +7328,153 @@ mod reverse_filtergraph_tests {
             expect_left(0.75)
         );
         assert!(l1 > l0 + 20, "the sticker did not move: {l0} then {l1}");
+    }
+
+    /// A trajectory on a text, through the real export path.
+    ///
+    /// The sticker's trajectory is checked by measuring the rendered
+    /// pixels. The text's was wired but never measured, which is not the
+    /// same as working: drawtext's `x` is the text's *left edge*, the
+    /// trajectory says where its *centre* is, and the two are not the
+    /// same thing.
+    ///
+    /// So: a text clip with two keyframes, rendered through the real
+    /// graph, and the ink's bounding box measured in the first and the
+    /// last frame.
+    #[test]
+    #[ignore = "runs ffmpeg; --ignored"]
+    fn real_ffmpeg_follows_a_text_trajectory() {
+        use caprust_core::clip::{Clip, ClipType, MotionKeyframe, TextMotion};
+        use caprust_core::project::{ProjectState, VideoEncoder};
+        use caprust_core::track::{Track, TrackKind};
+        use std::process::Command;
+
+        const W: u32 = 320;
+        const H: u32 = 180;
+        const FPS: i64 = 10;
+
+        let dir = std::env::temp_dir().join("caprust_text_traj");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("base.mp4");
+        let o = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=320x180:r=10:d=4",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(base.to_str().unwrap())
+            .output()
+            .expect("ffmpeg runs");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+
+        let mut p = ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks.push(Track::new("OV", TrackKind::Overlay));
+
+        let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 4000);
+        b.id = uuid::Uuid::from_u128(1);
+        b.track_index = 0;
+        p.clips.push(b);
+
+        let mut t = Clip::new_video("x", 1, 0, 4000);
+        t.id = uuid::Uuid::from_u128(2);
+        t.track_index = 1;
+        t.clip_type = ClipType::TextOverlay {
+            content: "MOVE ME".to_string(),
+            font_size: 28.0,
+            above: false,
+            motion: TextMotion {
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                scale: 1.0,
+            },
+            style: String::from("plain"),
+            effect: None,
+        };
+        t.trajectory = vec![
+            MotionKeyframe::new(0, 0.2, 0.5),
+            MotionKeyframe::new(2000, 0.8, 0.5),
+        ];
+        p.clips.push(t);
+
+        let plan = plan_from_project(
+            &p,
+            W,
+            H,
+            FPS,
+            1,
+            18,
+            RateMode::Cbr,
+            4000,
+            "veryfast",
+            &dir,
+            0,
+            VideoEncoder::H264Cpu,
+        )
+        .expect("plan builds");
+        let (fg, v_label) = plan.build_video_only_filtergraph().expect("graph");
+        assert!(fg.contains("drawtext"), "the text is not drawn at all");
+        // The trajectory's expression has to be in the drawtext's x.
+        assert!(
+            fg.contains("max(t,") || fg.contains("if(lt(t,"),
+            "the trajectory's expression is not in the graph:\n{fg}"
+        );
+
+        let full = plan.build_command(
+            std::path::Path::new("ffmpeg"),
+            std::path::Path::new("o.mp4"),
+        );
+        let cut = full
+            .iter()
+            .position(|a| a == "-filter_complex")
+            .expect("args");
+        let mut cmd = Command::new("ffmpeg");
+        for a in &full[..cut] {
+            cmd.arg(a);
+        }
+        cmd.arg("-filter_complex")
+            .arg(&fg)
+            .arg("-map")
+            .arg(format!("[{v_label}]"))
+            .args(["-f", "rawvideo", "-pix_fmt", "rgb24"])
+            .arg("pipe:1");
+        let out = cmd.output().expect("ffmpeg runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let fs = W as usize * H as usize * 3;
+        let frames = out.stdout.len() / fs;
+        assert!(frames >= 30, "only {frames} frames");
+
+        // The ink's left edge, per frame.
+        let left_of = |f: usize| -> Option<u32> {
+            let off = f * fs;
+            for x in 0..W as usize {
+                for y in 0..H as usize {
+                    if out.stdout[off + (y * W as usize + x) * 3] > 100 {
+                        return Some(x as u32);
+                    }
+                }
+            }
+            None
+        };
+
+        let l0 = left_of(0).expect("no text in the first frame");
+        let l1 = left_of(20).expect("no text two seconds later");
+        assert!(l1 > l0 + 20, "the text did not move: {l0} then {l1}");
     }
 }
