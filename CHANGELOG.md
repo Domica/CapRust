@@ -4,6 +4,74 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.19] - 2026-10-19
+
+### Added
+
+- **Stickers, and they are not just a filter.** 108 generated PNGs in 8
+  categories, bundled with the app. A sticker is a clip that sits on the
+  frame instead of filling it, with its own place, size and turn.
+- **The preview draws the sticker itself.** Compositing a PNG over a
+  frame is work the renderer does every frame anyway, while the same
+  change in the filtergraph means tearing down and rebuilding an encoder
+  process. So the sticker is painted in the editor and the filtergraph
+  leaves it alone -- which is why dragging one is instant, and why it no
+  longer depends on the preview quality setting.
+- **Stickers move, resize and turn on the preview.** Drag the body to
+  move it, a corner to size it, the handle above it to turn it. Shift
+  snaps the turn to 15 degrees.
+- **A Trajectory tab, for text and for stickers.** Keyframed movement:
+  where the thing is at which moment. The keyframes are the centre of
+  the thing as a fraction of the frame, so the same keyframes mean the
+  same thing on a text and on a sticker, and moving the thing moves the
+  keyframe under the playhead.
+- **Four sticker animations, and they animate in the preview.** Pop,
+  bounce, spin and drift. They were in the export all along and only in
+  the export.
+- **Fourteen more effects and filters**, each run against this ffmpeg
+  before it shipped.
+- **Every ffmpeg transition is reachable, and the cards tell the
+  truth.** Seven of them were named for something they did not do.
+
+### Fixed
+
+- **The preview died on every render.** The filter chain was emitted
+  with an empty filter in it, and ffmpeg refused the whole graph.
+- **Adding a sticker rippled the whole edit**, and a track's height could
+  only ever grow.
+- **Stickers were invisible in the preview** -- four separate causes,
+  each hiding the next: they were only drawn while selected, the call
+  was never made, the drawing landed under the video frame, and the PNG
+  could fail to decode without anything saying so.
+- **Moving, resizing and turning a sticker did nothing.** Three causes:
+  the body was not draggable at all, overlapping handles were decided by
+  registration order, and a frozen centre in screen pixels was handed to
+  a function that wanted fractions of the frame.
+- **A sticker could be dragged off the frame and never come back.**
+- **The corner grips stopped responding after a rotation**, because the
+  handles were drawn on the box around the sticker rather than on the
+  sticker.
+- **The Effects tab was not clickable.** The tab was put back to
+  Sticker on the next frame, so the click was undone before it showed.
+- **A track's height could not be dragged.** The handle was on the
+  bottom of the header's content -- two rows of icons -- rather than on
+  the bottom of the track, so in L it sat in the middle of the header
+  with nothing to grab.
+- **The timeline lost its bottom tracks at L.** The rows are scaled
+  together to fit the space there is, so every track stays on screen and
+  the proportions between them survive.
+- **A text trajectory was cut short in the filtergraph.** The position
+  expression has commas in it, and the graph parser reads a comma as the
+  end of a filter.
+
+### Changed
+
+- **The Linux build is pinned to a known runner image.** A newer glibc
+  makes a struct opaque, and whisper-rs-sys's generated bindings assert
+  its size, which is a hard error on the newer image. The CI toolchain
+  is pinned to the same version the repository pins, so CI compiles with
+  the compiler the rest of the project uses.
+
 ## [0.9.18] - 2026-10-18
 
 ### Added
