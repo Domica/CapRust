@@ -40,14 +40,34 @@ fn chip(ui: &mut Ui, icon: &str, tooltip: &str, warning: bool) -> egui::Response
 }
 
 pub struct HeaderEvents {
+    /// How far the height divider was dragged this frame, in screen
+    /// pixels. Positive is down.
+    pub height_drag_px: f32,
     pub changed: bool,
     pub delete_requested: bool,
     pub duplicate_requested: bool,
     pub rename_requested: bool,
 }
 
+/// The height divider's hit rectangle: on the row's own bottom edge.
+///
+/// Not on the bottom of the header's content. The content is two rows of
+/// icons, about 36px, whatever the row height is -- so a divider placed
+/// after the content ended up in the middle of an L-sized row, 32px
+/// below its top, nowhere near the boundary it is on. It looked like a
+/// line in the header and there was no handle on the edge of the track
+/// to grab, which is what "not resizable at all" was.
+pub fn height_divider_rect(row: egui::Rect) -> egui::Rect {
+    const DIVIDER_HIT: f32 = 8.0;
+    egui::Rect::from_min_size(
+        egui::pos2(row.left(), row.bottom() - DIVIDER_HIT),
+        egui::vec2(row.width(), DIVIDER_HIT),
+    )
+}
+
 pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f32) -> HeaderEvents {
     let mut ev = HeaderEvents {
+        height_drag_px: 0.0,
         changed: false,
         delete_requested: false,
         duplicate_requested: false,
@@ -200,6 +220,86 @@ pub fn show(ui: &mut Ui, track: &mut Track, idx: usize, theme: &Theme, row_h: f3
         });
     });
 
-    let _ = idx;
+    // --- The height divider ---
+    //
+    // On the row's own bottom edge, not on the bottom of the content.
+    // The content is two rows of icons, about 36px, whatever the row
+    // height is -- so a divider placed after the content ended up in the
+    // middle of an L-sized row, 32px below its top, nowhere near the
+    // boundary it is supposed to be on. It looked like a line in the
+    // header and dragged nothing that looked like a resize.
+    //
+    // Here the row's own rectangle is known, so the divider is put on
+    // its edge, and a taller hit zone than the 2px line it draws.
+    let div_rect = height_divider_rect(bg_rect);
+    let div = ui.interact(
+        div_rect,
+        egui::Id::new(("track_height_div", idx)),
+        egui::Sense::drag(),
+    );
+    if div.hovered() || div.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    // The line itself, thin, on the very bottom.
+    ui.painter().line_segment(
+        [
+            egui::pos2(bg_rect.left(), bg_rect.bottom() - 0.5),
+            egui::pos2(bg_rect.right(), bg_rect.bottom() - 0.5),
+        ],
+        egui::Stroke::new(
+            1.0,
+            if div.hovered() || div.dragged() {
+                egui::Color32::from_gray(140)
+            } else {
+                egui::Color32::from_gray(70)
+            },
+        ),
+    );
+    if div.dragged() {
+        ev.height_drag_px = div.drag_delta().y;
+    }
+
     ev
+}
+
+#[cfg(test)]
+mod tests {
+    /// The divider is on the row's bottom edge, whatever the row is
+    /// tall. This is the whole fix: it used to be placed after the
+    /// header's content, which is two rows of icons, so in L it sat in
+    /// the middle of the row instead of on the boundary, and there was
+    /// nothing on the edge of the track to grab.
+    #[test]
+    fn the_divider_is_on_the_rows_bottom_edge() {
+        for row_h in [40.0f32, 46.0, 78.0, 160.0, 272.0] {
+            let row = egui::Rect::from_min_size(egui::pos2(10.0, 100.0), egui::vec2(120.0, row_h));
+            let d = super::height_divider_rect(row);
+            assert!(
+                (d.bottom() - row.bottom()).abs() < 0.01,
+                "a row {row_h} tall: the divider ends at {}, the row at {}",
+                d.bottom(),
+                row.bottom()
+            );
+            // And it is a real target, not a hairline.
+            assert!(d.height() >= 6.0, "the hit zone is {} tall", d.height());
+            assert!(d.width() >= 100.0, "the hit zone is {} wide", d.width());
+        }
+    }
+
+    /// And it does not depend on where the content ended, which is the
+    /// thing that put it in the wrong place.
+    #[test]
+    fn the_divider_ignores_where_the_content_ended() {
+        // The content is the same whatever the row height is: two rows of
+        // icons, about 36px. The divider must not follow it.
+        let content_bottom = 100.0 + 36.0;
+        for row_h in [46.0f32, 78.0, 160.0] {
+            let row = egui::Rect::from_min_size(egui::pos2(0.0, 100.0), egui::vec2(120.0, row_h));
+            let d = super::height_divider_rect(row);
+            assert!(
+                (d.bottom() - content_bottom).abs() > 1.0,
+                "a row {row_h} tall: the divider is at the content's bottom"
+            );
+        }
+    }
 }

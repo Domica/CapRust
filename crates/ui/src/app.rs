@@ -6602,9 +6602,8 @@ impl CapRustApp {
                         // a stored height.
                         let lane_scale = lane_factor;
                         let row_h = track.height * lane_scale;
-                        let h_resp = ui.allocate_ui_with_layout(
-                            egui::vec2(header_w, row_h),
-                            egui::Layout::top_down(egui::Align::Min),
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(header_w, row_h),                            egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 ui.set_width(header_w);
                                 // Force the child UI to occupy the
@@ -6638,73 +6637,36 @@ impl CapRustApp {
                                 if hev.rename_requested {
                                     pending_rename_track = Some(idx);
                                 }
-                            },
-                        );
-                        // Row-height drag divider: bottom 4px of the header
-                        // row. Lanes read the same row_h, so both columns
-                        // stay in sync without layout changes. Direct write
-                        // like the header chips (not undoable).
-                        let div_rect = egui::Rect::from_min_size(
-                            egui::pos2(
-                                h_resp.response.rect.left(),
-                                h_resp.response.rect.bottom() - 4.0,
-                            ),
-                            egui::vec2(header_w, 4.0),
-                        );
-                        let div = ui.interact(
-                            div_rect,
-                            egui::Id::new(("track_height_div", idx)),
-                            egui::Sense::drag(),
-                        );
-                        if div.hovered() || div.dragged() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                        } else if pan_mode {
-                            let _ = h_resp.response
-                                .on_hover_cursor(egui::CursorIcon::Grab);
-                        }
-                        ui.painter().line_segment(
-                            [
-                                egui::pos2(div_rect.left(), div_rect.bottom() - 0.5),
-                                egui::pos2(div_rect.right(), div_rect.bottom() - 0.5),
-                            ],
-                            egui::Stroke::new(
-                                1.0,
-                                if div.hovered() || div.dragged() {
-                                    egui::Color32::from_gray(120)
-                                } else {
-                                    egui::Color32::from_gray(45)
-                                },
-                            ),
-                        );
-                        if div.dragged() {
-                            let dy = div.drag_delta().y;
-                            if dy != 0.0 {
+                            // The height divider is drawn and hit-tested by
+                            // the header itself, on the row's own bottom
+                            // edge. It used to live here, positioned after
+                            // the header's content -- two rows of icons, so
+                            // about 36px down whatever the row height was.
+                            // In L the row is 78px and the divider sat in
+                            // the middle of it, so there was no handle on
+                            // the edge of the track to grab, and nothing
+                            // looked resizeable.
+                            if hev.height_drag_px != 0.0 {
+                                let dy = hev.height_drag_px;
                                 // The row on screen is
-                                // `track.height * timeline_size_factor`
-                                // tall, and the drag delta is in screen
-                                // pixels. Writing the row height straight
-                                // back into `track.height` fed the factor
-                                // into its own value on every frame of the
-                                // drag: at M it grew by 1.3x per frame, at L
-                                // by 1.7x. It ran away upward, the clamp
-                                // pinned it at the maximum, and from there
-                                // dragging up could not lower it -- because
-                                // the row it was comparing against was the
-                                // clamped value times the factor again. The
-                                // reported symptom was "I can make it
-                                // bigger but never smaller".
+                                // `track.height * factor` tall, and the drag
+                                // delta is in screen pixels, so one has to be
+                                // converted into the other. Writing the row
+                                // height straight back into `track.height`
+                                // fed the factor into its own value on every
+                                // frame of the drag: at M it grew by 1.3x per
+                                // frame, at L by 1.7x. It ran away upward,
+                                // the clamp pinned it at the maximum, and
+                                // from there dragging up could not lower it
+                                // -- the reported "I can make it bigger but
+                                // never smaller".
                                 //
-                                // The drag moves the divider by `dy` pixels,
-                                // so the stored height moves by `dy`
-                                // divided by the factor. Bounds are in
-                                // stored units, as they always were.
-                                // The divider has to stay under the
-                                // pointer. When the rows are scaled to
-                                // fit, the marginal rate of the row
-                                // height is not the factor but the
-                                // factor times the dragged track's
-                                // share of the rest, so dividing by the
-                                // plain factor left the divider
+                                // The divider has to stay under the pointer.
+                                // When the rows are scaled to fit, the
+                                // marginal rate of the row height is not the
+                                // factor but the factor times the dragged
+                                // track's share of the rest, so dividing by
+                                // the plain factor left the divider
                                 // trailing behind.
                                 track.height = stored_height_after_drag(
                                     track.height,
@@ -6713,7 +6675,8 @@ impl CapRustApp {
                                 );
                                 header_changed = true;
                             }
-                        }
+                            },
+                        );
                         updated_tracks[idx] = track;
                     }
                 },

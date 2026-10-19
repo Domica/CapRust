@@ -470,6 +470,80 @@ fn default_motion_scale() -> f32 {
     1.0
 }
 
+/// A point on a clip's trajectory: where the thing is at a given time.
+///
+/// The position is the **centre** of the thing, as a fraction of the
+/// frame: 0.5, 0.5 is the middle, 0.0, 0.5 is the left edge. Not a
+/// fraction of the thing's travel, which is what `OverlayPlacement` and
+/// `TextMotion` use -- those depend on how big the thing is, so a
+/// trajectory written in them would move when the sticker was resized.
+///
+/// One space for text and for stickers, so the same keyframes mean the
+/// same thing on both and one editor can serve them.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MotionKeyframe {
+    /// When, in milliseconds from the start of the clip.
+    pub t_ms: u64,
+    /// Centre x, as a fraction of the frame width. 0.5 is the middle.
+    pub centre_x: f32,
+    /// Centre y, as a fraction of the frame height.
+    pub centre_y: f32,
+}
+
+impl MotionKeyframe {
+    pub fn new(t_ms: u64, centre_x: f32, centre_y: f32) -> Self {
+        Self {
+            t_ms,
+            centre_x,
+            centre_y,
+        }
+    }
+}
+
+/// Where a trajectory puts a thing at `t_ms`, and whether there is a
+/// trajectory at all.
+///
+/// A clip with no keyframes has no trajectory, and the clip's own
+/// placement is used unchanged. One keyframe is not a trajectory -- it is
+/// a position at a moment with nothing to interpolate from -- so it is
+/// treated as none as well.
+///
+/// Between two keyframes the value is linear. The easing the model
+/// already has is not applied: the export's expression is linear too, and
+/// a curve would have to be spelled out in ffmpeg's expression language.
+pub fn trajectory_at(keys: &[MotionKeyframe], t_ms: u64) -> Option<(f32, f32)> {
+    if keys.len() < 2 {
+        return None;
+    }
+    let mut sorted: Vec<&MotionKeyframe> = keys.iter().collect();
+    sorted.sort_by_key(|k| k.t_ms);
+    let t = t_ms as f32;
+    if t <= sorted[0].t_ms as f32 {
+        return Some((sorted[0].centre_x, sorted[0].centre_y));
+    }
+    let last = sorted[sorted.len() - 1];
+    if t >= last.t_ms as f32 {
+        return Some((last.centre_x, last.centre_y));
+    }
+    for pair in sorted.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let (ta, tb) = (a.t_ms as f32, b.t_ms as f32);
+        if t >= ta && t <= tb {
+            // Two keyframes at the same time: nothing to interpolate
+            // from, so take the later one.
+            if (tb - ta).abs() < 1e-6 {
+                return Some((b.centre_x, b.centre_y));
+            }
+            let f = (t - ta) / (tb - ta);
+            return Some((
+                a.centre_x + (b.centre_x - a.centre_x) * f,
+                a.centre_y + (b.centre_y - a.centre_y) * f,
+            ));
+        }
+    }
+    Some((last.centre_x, last.centre_y))
+}
+
 /// Where a sticker has to sit to put its box's centre at `centre`, given
 /// the box is `size` wide.
 ///
@@ -927,6 +1001,14 @@ pub struct Clip {
     /// that existed before stickers, which is the behaviour they keep.
     #[serde(default)]
     pub overlay: Option<OverlayPlacement>,
+    /// Keyframed movement over the clip's own time. Empty is the normal
+    /// case and means the clip's own placement, unchanged.
+    ///
+    /// On a text or a sticker clip this says where the thing is at
+    /// which moment. Both use the same keyframes, so the same trajectory
+    /// works on either.
+    #[serde(default)]
+    pub trajectory: Vec<MotionKeyframe>,
     #[serde(default)]
     pub effects: Vec<EffectInstance>,
     /// Color LUT applied to this clip. `None` = no LUT.
@@ -1146,6 +1228,7 @@ impl Clip {
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
+            trajectory: Vec::new(),
         }
     }
 
@@ -1202,6 +1285,7 @@ impl Clip {
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
+            trajectory: Vec::new(),
         }
     }
 
@@ -1258,6 +1342,7 @@ impl Clip {
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
+            trajectory: Vec::new(),
         }
     }
 
@@ -1318,6 +1403,7 @@ impl Clip {
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
+            trajectory: Vec::new(),
         }
     }
 
@@ -1384,6 +1470,7 @@ impl Clip {
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
+            trajectory: Vec::new(),
         }
     }
 
@@ -1448,6 +1535,7 @@ impl Clip {
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
+            trajectory: Vec::new(),
         }
     }
 
