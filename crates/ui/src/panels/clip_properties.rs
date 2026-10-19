@@ -26,6 +26,10 @@ pub enum PropertiesTab {
 #[derive(Debug, Default)]
 pub struct PropertiesState {
     pub tab: PropertiesTab,
+    /// The clip whose tab state was last normalised. Keeps that
+    /// normalisation from running every frame, which would undo a click
+    /// before the frame after it.
+    pub tab_normalised_for: Option<uuid::Uuid>,
     /// Pending edits to be committed via SetClipCommand.
     pub pending: Vec<PendingEdit>,
     /// Live text buffers for the caption-segment editors, keyed by
@@ -1070,10 +1074,17 @@ pub fn show(
     // audio. The video tab's controls are meaningless on it and the sound
     // tab has nothing to show, so it gets its own.
     let clip_is_sticker = clip.overlay.is_some();
-    if clip_is_sticker && state.tab != PropertiesTab::Sticker {
-        state.tab = PropertiesTab::Sticker;
-    } else if !clip_is_sticker && state.tab == PropertiesTab::Sticker {
-        state.tab = PropertiesTab::Video;
+    // Once per clip, not every frame. As a per-frame rule it undid the
+    // user's click on the very next frame: `state.tab` was set to Sticker
+    // on selection, the click on Efekti set it to Effects, and the next
+    // frame put it back -- which reads as a tab that is not clickable.
+    if state.tab_normalised_for != Some(clip.id) {
+        state.tab_normalised_for = Some(clip.id);
+        if clip_is_sticker && state.tab != PropertiesTab::Sticker {
+            state.tab = PropertiesTab::Sticker;
+        } else if !clip_is_sticker && state.tab == PropertiesTab::Sticker {
+            state.tab = PropertiesTab::Video;
+        }
     }
 
     // --- Tabs ---

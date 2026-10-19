@@ -771,6 +771,85 @@ fn corners_bounds(corners: &[egui::Pos2; 4]) -> egui::Rect {
 /// to come back.
 pub const OVERDRAG: f32 = 0.08;
 
+/// Where an animation has put the sticker, relative to its resting
+/// placement.
+///
+/// The export applies these as ffmpeg filters over the same `t`; the
+/// preview has to apply something equivalent or the two disagree about
+/// what a name means. The magnitudes are the ones in
+/// `sticker_animation_fragment`, in the sticker's own pixels, scaled to
+/// the on-screen size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StickerMotion {
+    /// Extra rotation in radians, about the sticker's own centre.
+    pub angle: f32,
+    /// Offset in screen pixels.
+    pub dx: f32,
+    pub dy: f32,
+    /// Multiplier on the drawn size.
+    pub scale: f32,
+    /// Multiplier on the drawn opacity.
+    pub alpha: f32,
+}
+
+impl Default for StickerMotion {
+    /// "No motion", which is not the same as all-zeros: a size of zero
+    /// would erase the sticker and an alpha of zero would hide it.
+    fn default() -> Self {
+        Self {
+            angle: 0.0,
+            dx: 0.0,
+            dy: 0.0,
+            scale: 1.0,
+            alpha: 1.0,
+        }
+    }
+}
+
+/// The motion for an animation id at `t` seconds, as the export computes
+/// it. Unknown ids are static, which is also what the render does.
+pub fn sticker_motion(id: Option<&str>, t: f32, source_px: f32, screen_px: f32) -> StickerMotion {
+    let mut m = StickerMotion {
+        scale: 1.0,
+        alpha: 1.0,
+        ..StickerMotion::default()
+    };
+    let Some(id) = id else {
+        return m;
+    };
+    // Everything in the filtergraph is in the sticker's own pixels
+    // (256x256 for the bundled ones), so the offsets are scaled to how
+    // big the mark actually is on screen.
+    let k = screen_px / source_px.max(1.0);
+    match id {
+        // Fade up in place over 0.2 s.
+        "pop" => {
+            m.alpha = (t / 0.20).clamp(0.0, 1.0);
+        }
+        // Two decaying hops, then a settle. The filtergraph crops to
+        // iw/1.25 and scales back by 1.25, which is a net 1.25 with a
+        // vertical offset.
+        "bounce" => {
+            m.scale = 1.25;
+            let hop = (2.0 * std::f32::consts::PI * 1.6 * t).sin().abs() * (-3.2 * t).exp();
+            m.dy = -18.0 * hop * k;
+        }
+        // Continuous rotation about its own centre.
+        "spin" => {
+            m.angle = 1.6 * t;
+        }
+        // Slow figure of eight, with the same 1.15 crop-and-scale the
+        // filtergraph uses around it.
+        "drift" => {
+            m.scale = 1.15;
+            m.dx = 26.0 * (2.0 * std::f32::consts::PI * t / 6.0).sin() * k;
+            m.dy = 16.0 * (2.0 * std::f32::consts::PI * t / 9.0).cos() * k;
+        }
+        _ => {}
+    }
+    m
+}
+
 /// A point in screen pixels, as a fraction of the frame.
 ///
 /// Two coordinate systems run through the overlay and they are not
@@ -843,6 +922,13 @@ pub struct StickerQuad {
     /// Corners in frame order: top-left, top-right, bottom-right,
     /// bottom-left. Already turned.
     pub corners: [egui::Pos2; 4],
+    /// The animation id, if the clip has one. The same four the export
+    /// graph knows -- `pop`, `bounce`, `spin`, `drift` -- so a name means
+    /// the same thing in both.
+    pub animation: Option<String>,
+    /// Seconds since the sticker came on screen. Every animation is a
+    /// function of this, as it is in the filtergraph.
+    pub t_sec: f32,
 }
 
 /// Every sticker that belongs on screen over `frame_rect`, in timeline
@@ -860,7 +946,6 @@ pub fn sticker_quads(
     playhead_ms: u64,
     frame_rect: egui::Rect,
 ) -> Vec<StickerQuad> {
-    let fa = frame_rect.width() / frame_rect.height().max(1.0);
     let mut out = Vec::new();
     for c in project.stickers_under_playhead(playhead_ms) {
         let Some(place) = c.overlay.as_ref() else {
@@ -870,25 +955,14 @@ pub fn sticker_quads(
             caprust_core::ClipType::Image { path, .. } => path.clone(),
             _ => continue,
         };
-        let (bx, by, bw, bh) = place.frame_box_at(fa, 0.0);
-        let (cx, cy) = (bx + bw / 2.0, by + bh / 2.0);
-        let (sin, cos) = place.rotation.to_radians().sin_cos();
-        let w = frame_rect.width() * bw;
-        let h = frame_rect.height() * bh;
-        let at = |dx: f32, dy: f32| {
-            egui::pos2(
-                frame_rect.left() + frame_rect.width() * cx + dx * cos - dy * sin,
-                frame_rect.top() + frame_rect.height() * cy + dx * sin + dy * cos,
-            )
-        };
+        // Seconds since the sticker came up. Every animation is a
+        // function of this, as it is in the filtergraph.
+        let t_sec = playhead_ms.saturating_sub(c.start_time_ms) as f32 / 1000.0;
         out.push(StickerQuad {
             path,
-            corners: [
-                at(-w / 2.0, -h / 2.0),
-                at(w / 2.0, -h / 2.0),
-                at(w / 2.0, h / 2.0),
-                at(-w / 2.0, h / 2.0),
-            ],
+            corners: sticker_corners(place, frame_rect, 0.0),
+            animation: place.animation.clone(),
+            t_sec,
         });
     }
     out
@@ -10965,6 +11039,12 @@ impl CapRustApp {
     /// All the geometry is already done by `sticker_quads`; this is just
     /// pixels into a texture and two triangles.
     fn paint_sticker_quad(&mut self, ui: &mut egui::Ui, q: &StickerQuad) -> String {
+        // An animated sticker has to keep repainting for as long as it is
+        // on screen, or the motion happens once and then stops.
+        if q.animation.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
         let name = q
             .path
             .rsplit(['\\', '/'])
@@ -10977,6 +11057,16 @@ impl CapRustApp {
                 .sticker_tex
                 .load_path(ui.ctx(), &q.path, std::path::Path::new(&q.path)),
         };
+        // The source size, for scaling the animation's offsets, which the
+        // filtergraph expresses in the sticker's own pixels.
+        let src_px = caprust_core::stickers::find(&q.path)
+            .and_then(|s| caprust_core::stickers::size(s.id).map(|(w, _)| w as f32))
+            .unwrap_or(256.0);
+        let screen_px = (q.corners[2].x - q.corners[0].x)
+            .abs()
+            .max((q.corners[2].y - q.corners[0].y).abs());
+        let motion = sticker_motion(q.animation.as_deref(), q.t_sec, src_px, screen_px);
+
         let Some(tex) = tex else {
             let embedded = caprust_core::stickers::find(&q.path).is_some();
             return format!(
@@ -10988,9 +11078,23 @@ impl CapRustApp {
                 }
             );
         };
+        // The resting corners, then the motion on top: the same
+        // translate, scale and turn the filtergraph applies, in the same
+        // order.
         let (tl, tr, br, bl) = (q.corners[0], q.corners[1], q.corners[2], q.corners[3]);
+        let centre = egui::Rect::from_min_max(tl, br).center();
+        let (sin, cos) = motion.angle.sin_cos();
+        let place = |p: egui::Pos2| {
+            let v = p - centre;
+            egui::pos2(
+                centre.x + motion.dx + v.x * cos * motion.scale - v.y * sin * motion.scale,
+                centre.y + motion.dy + v.x * sin * motion.scale + v.y * cos * motion.scale,
+            )
+        };
+        let (tl, tr, br, bl) = (place(tl), place(tr), place(br), place(bl));
 
-        let white = egui::Color32::WHITE;
+        let white =
+            egui::Color32::from_white_alpha((motion.alpha.clamp(0.0, 1.0) * 255.0).round() as u8);
         // A mesh vertex's uv is a Pos2 -- it is the texel coordinate, not
         // an offset. egui's image widgets only do axis-aligned rects, and
         // the turn is the entire point.
@@ -11013,11 +11117,12 @@ impl CapRustApp {
         };
         ui.painter().add(egui::Shape::mesh(mesh));
         format!(
-            "{name}: painted at {:.0},{:.0} {:.0}x{:.0}",
+            "{name}: painted at {:.0},{:.0} {:.0}x{:.0} anim={:?}",
             q.corners[0].x,
             q.corners[0].y,
             (q.corners[2].x - q.corners[0].x).abs(),
             (q.corners[2].y - q.corners[0].y).abs(),
+            q.animation,
         )
     }
 
@@ -16185,6 +16290,256 @@ mod sticker_overlay_tests {
         assert!(
             !code.contains("bounds.center(),") || !code.contains("centre: bounds.center()"),
             "a pixel centre is still being handed over as a fraction"
+        );
+    }
+    /// The four animation names mean the same thing in the preview as in
+    /// the filtergraph, and they do not exist there by accident.
+    #[test]
+    fn every_animation_name_is_one_the_render_knows() {
+        let src = include_str!("app.rs");
+        // The preview's own list.
+        let preview: Vec<&str> = {
+            let seg = src
+                .split_once("pub fn sticker_motion")
+                .expect("no sticker_motion")
+                .1;
+            let seg = &seg[..seg.find("\n}\n").unwrap_or(seg.len())];
+            ["pop", "bounce", "spin", "drift"]
+                .into_iter()
+                .filter(|n| seg.contains(&format!("\"{n}\"")))
+                .collect()
+        };
+        // The render's list, from the same source of truth.
+        let render_src = include_str!("../../media-io/src/export_graph.rs");
+        let frag = render_src
+            .split_once("fn sticker_animation_fragment")
+            .expect("no sticker_animation_fragment")
+            .1;
+        let frag = &frag[..frag.find("\n}\n").unwrap_or(frag.len())];
+
+        for name in ["pop", "bounce", "spin", "drift"] {
+            assert!(
+                preview.contains(&name),
+                "`{name}` is animated in the preview but not in the render, or the source check missed it"
+            );
+            assert!(
+                frag.contains(&format!("\"{name}\" =>")),
+                "`{name}` is not one of the render's animations"
+            );
+        }
+    }
+
+    /// A static sticker does not repaint on its own, and an animated one
+    /// does. The second is the whole mechanism -- without the request the
+    /// motion plays once and stops.
+    #[test]
+    fn the_quad_carries_its_animation_and_clock() {
+        let src = include_str!("app.rs");
+        let seg = src
+            .split_once("pub struct StickerQuad")
+            .expect("no StickerQuad")
+            .1;
+        let seg = &seg[..seg.find("\n}\n").unwrap_or(seg.len())];
+        assert!(seg.contains("pub animation: Option<String>"));
+        assert!(seg.contains("pub t_sec: f32"));
+    }
+
+    /// `sticker_motion` has to move the sticker where the filtergraph
+    /// puts it, and a name it does not know has to mean "still".
+    #[test]
+    fn sticker_motion_matches_the_filtergraph() {
+        // 256 source px, 128 px on screen, so offsets halve.
+        let k = 0.5;
+
+        // Static and unknown names are still.
+        assert_eq!(
+            super::sticker_motion(None, 3.0, 256.0, 128.0),
+            super::StickerMotion::default()
+        );
+        assert_eq!(
+            super::sticker_motion(Some("nonsense"), 3.0, 256.0, 128.0),
+            super::StickerMotion::default()
+        );
+
+        // Pop is a fade over 0.2 s, nothing else.
+        let at0 = super::sticker_motion(Some("pop"), 0.0, 256.0, 128.0);
+        assert!(
+            (at0.alpha - 0.0).abs() < 1e-6,
+            "alpha at t=0 is {}",
+            at0.alpha
+        );
+        assert_eq!(at0.angle, 0.0);
+        let at02 = super::sticker_motion(Some("pop"), 0.2, 256.0, 128.0);
+        assert!((at02.alpha - 1.0).abs() < 1e-6);
+        let at1 = super::sticker_motion(Some("pop"), 1.0, 256.0, 128.0);
+        assert!((at1.alpha - 1.0).abs() < 1e-6, "the fade must not reverse");
+
+        // Spin turns at 1.6 rad/s and moves nothing.
+        let s = super::sticker_motion(Some("spin"), 1.0, 256.0, 128.0);
+        assert!((s.angle - 1.6).abs() < 1e-6, "angle is {}", s.angle);
+        assert_eq!(s.dx, 0.0);
+        assert_eq!(s.dy, 0.0);
+        assert_eq!(s.alpha, 1.0);
+
+        // Bounce is the decaying hop: 18 source px up at the peak, at
+        // 1.6 Hz, scaled to screen.
+        let b = super::sticker_motion(Some("bounce"), 0.0, 256.0, 128.0);
+        assert_eq!(b.dy, 0.0, "no hop at t=0");
+        assert!((b.scale - 1.25).abs() < 1e-6);
+        let peak_t = std::f32::consts::FRAC_PI_2 / (2.0 * std::f32::consts::PI * 1.6);
+        let b2 = super::sticker_motion(Some("bounce"), peak_t, 256.0, 128.0);
+        let expected = -18.0 * 1.0 * (-3.2 * peak_t).exp() * k;
+        assert!(
+            (b2.dy - expected).abs() < 0.05,
+            "the hop is {} at the peak, the filtergraph says {}",
+            b2.dy,
+            expected
+        );
+        // And it decays.
+        let late = super::sticker_motion(Some("bounce"), 3.0, 256.0, 128.0);
+        assert!(
+            late.dy.abs() < 1.0,
+            "the hop should have decayed, it is {}",
+            late.dy
+        );
+
+        // Drift is the figure of eight: 26 across over 6 s, 16 down over
+        // 9 s, with the 1.15 the filtergraph uses.
+        let d = super::sticker_motion(Some("drift"), 0.0, 256.0, 128.0);
+        assert!((d.scale - 1.15).abs() < 1e-6);
+        assert!((d.dx - 0.0).abs() < 1e-6, "sin(0) is 0");
+        assert!((d.dy - 16.0 * k).abs() < 1e-6, "cos(0) is 1: dy={}", d.dy);
+        let d2 = super::sticker_motion(Some("drift"), 3.0, 256.0, 128.0);
+        let want = 26.0 * (2.0 * std::f32::consts::PI * 3.0 / 6.0).sin() * k;
+        assert!((d2.dx - want).abs() < 1e-6, "{} != {}", d2.dx, want);
+    }
+
+    /// The tab state must be normalised once per clip, not every frame.
+    /// As a per-frame rule it undid a click on the next frame, which is
+    /// what "Efekti is not clickable" was.
+    #[test]
+    fn the_tab_is_not_forced_back_every_frame() {
+        let src = include_str!("app.rs");
+        // The normalisation lives in the properties panel.
+        let panel = include_str!("../src/panels/clip_properties.rs");
+        let seg = panel
+            .split_once("let clip_is_audio = matches!")
+            .expect("no clip_is_audio")
+            .1;
+        let seg = &seg[..seg.find("egui::ScrollArea").unwrap_or(seg.len())];
+
+        assert!(
+            seg.contains("tab_normalised_for"),
+            "the tab normalisation is not scoped to the selection"
+        );
+        assert!(
+            !seg.contains("if clip_is_sticker && state.tab != PropertiesTab::Sticker {\n        state.tab = PropertiesTab::Sticker;\n    }"),
+            "the per-frame forced reset is still there"
+        );
+        let _ = src;
+    }
+
+    /// `sticker_quads` has to carry the clip's animation and its clock.
+    ///
+    /// Checking the struct has the fields is not the same as checking it
+    /// fills them: setting either back to a default still compiled and
+    /// still passed a field-presence test, so three mutations went
+    /// through. This builds a sticker that is on screen and looks.
+    #[test]
+    fn sticker_quads_carries_the_animation_and_the_clock() {
+        use caprust_core::clip::{Clip, ClipType, OverlayPlacement};
+        use caprust_core::track::{Track, TrackKind};
+
+        let mut p = caprust_core::ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+
+        for (id, anim) in [(1u128, Some("pop")), (2, Some("spin")), (3, None)] {
+            let mut c = Clip::new_video("s.png", 0, 0, 4000);
+            c.id = uuid::Uuid::from_u128(id);
+            c.clip_type = ClipType::Image {
+                path: format!("s{id}.png"),
+                duration_ms: 4000,
+            };
+            c.overlay = Some(OverlayPlacement {
+                scale: 0.3,
+                x: 0.5,
+                y: 0.5,
+                aspect: 1.0,
+                rotation: 0.0,
+                animation: anim.map(str::to_string),
+            });
+            p.clips.push(c);
+        }
+
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        let quads = super::sticker_quads(&p, 2500, frame);
+        assert_eq!(quads.len(), 3);
+
+        let anims: Vec<Option<String>> = quads.iter().map(|q| q.animation.clone()).collect();
+        assert_eq!(anims[0].as_deref(), Some("pop"));
+        assert_eq!(anims[1].as_deref(), Some("spin"));
+        assert_eq!(anims[2], None);
+
+        // 2.5 s in, so the clock has moved and an animation would have
+        // visible progress.
+        for q in &quads {
+            assert!(
+                (q.t_sec - 2.5).abs() < 1e-3,
+                "the clock is {} instead of 2.5 s",
+                q.t_sec
+            );
+        }
+
+        // And off the playhead there is nothing to animate.
+        assert!(super::sticker_quads(&p, 9000, frame).is_empty());
+    }
+
+    /// One implementation of the geometry. A second copy inline in
+    /// `sticker_quads` had already appeared once, and two copies of the
+    /// same arithmetic are how the handle and the artwork drift apart.
+    #[test]
+    fn sticker_quads_has_no_geometry_of_its_own() {
+        let src = include_str!("app.rs");
+        let seg = src
+            .split_once("pub fn sticker_quads")
+            .expect("no sticker_quads")
+            .1;
+        let seg = &seg[..seg.find("\n}\n").unwrap_or(seg.len())];
+        assert!(
+            seg.contains("sticker_corners(place, frame_rect, 0.0)"),
+            "sticker_quads is not built from sticker_corners"
+        );
+        assert!(
+            !seg.contains("frame_box_at(fa"),
+            "sticker_quads has its own copy of the geometry"
+        );
+    }
+
+    /// An animated sticker asks to be repainted.
+    ///
+    /// Without it the motion is computed correctly for exactly one frame
+    /// and then the sticker sits still, because nothing makes egui draw
+    /// again. No unit test can observe a repaint being scheduled, so this
+    /// reads the source -- which is a weaker check, and is here because
+    /// the alternative was to leave the mechanism untested and assume it
+    /// worked.
+    #[test]
+    fn an_animated_sticker_keeps_asking_to_be_repainted() {
+        let src = include_str!("app.rs");
+        let seg = src
+            .split_once("fn paint_sticker_quad")
+            .expect("no paint_sticker_quad")
+            .1;
+        let seg = &seg[..seg.find("\n    fn ").unwrap_or(seg.len())];
+
+        assert!(
+            seg.contains("request_repaint_after"),
+            "the painter does not ask to be repainted, so an animation plays once"
+        );
+        assert!(
+            seg.contains("q.animation.is_some()"),
+            "the repaint is not gated on the sticker being animated"
         );
     }
 }
