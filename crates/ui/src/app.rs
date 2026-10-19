@@ -10911,15 +10911,6 @@ impl CapRustApp {
                 _ => None,
             });
 
-        // ---- Sticker on the frame: select, drag, resize -------------
-        // A sticker is the one thing on the frame the user positions
-        // rather than trims, so it gets direct manipulation instead of
-        // sliders only. The box is derived from the same numbers the
-        // filtergraph uses -- height is `scale` of the frame, width
-        // follows the source aspect -- so what is dragged here is what
-        // renders.
-        self.preview_sticker_drag(ui, rect);
-
         // ---- Rate-limited state log ----
         {
             use std::sync::atomic::{AtomicU64, Ordering};
@@ -11502,6 +11493,22 @@ impl CapRustApp {
                 egui::Color32::from_gray(120),
             );
         }
+
+        // ---- Stickers, drawn over the picture ----
+        // After the frame, never before: the frame is painted into the
+        // same clip region and covers anything already there. Drawing
+        // the sticker at this point in the panel made it invisible on
+        // every project, because it landed first and the video painted
+        // straight over it.
+        //
+        // Positioned against `draw_rect` rather than `rect`: the video is
+        // letterboxed inside the container, and a sticker's x/y are
+        // fractions of the frame -- the picture -- not of the padding
+        // around it. Against `rect` it drifted by the letterbox offset,
+        // which is the same class of mistake as treating `scale` as a
+        // fraction of both axes.
+        let sticker_rect = overlay_ctx.map(|(r, _)| r).unwrap_or(rect);
+        self.preview_sticker_drag(ui, sticker_rect);
 
         // ---- TextOverlay bounding box + drag ----
         // Approximate where the drawtext sits inside the frame using
@@ -15233,6 +15240,63 @@ mod sticker_overlay_tests {
         assert!(
             (centre.x - 160.0).abs() < 0.01 && (centre.y - 90.0).abs() < 0.01,
             "centre moved to {centre:?}"
+        );
+    }
+    /// Stickers are painted by this panel, into the same clip region as
+    /// the video frame. Painting the sticker first works exactly as well
+    /// as not painting it at all, because the frame then covers it -- and
+    /// that is what happened: the call sat near the top of the panel,
+    /// ninety lines above the frame, so every sticker in every project
+    /// was invisible while the drag handles worked fine.
+    ///
+    /// Nothing about the geometry catches this. A sticker can have the
+    /// right box, the right corners, the right texture and still be
+    /// underneath the picture. So the only check available is that the
+    /// call comes after the frame is painted.
+    ///
+    /// Deliberately source-order rather than behavioural: driving egui
+    /// and reading back the shape list is not something this crate can
+    /// do, and this is the third UI-only defect in a row that a real
+    /// unit test could not have seen.
+    #[test]
+    fn the_sticker_overlay_is_painted_after_the_frame() {
+        let src = include_str!("app.rs");
+        let panel = src
+            .split_once("fn render_preview_panel")
+            .expect("no render_preview_panel")
+            .1;
+        // Stop at the next `fn` so this cannot accidentally match a call
+        // in some later method.
+        let panel = &panel[..panel.find("\n    fn ").unwrap_or(panel.len())];
+
+        let frame = panel.find("ui.painter().image(").expect("no frame paint");
+        let sticker = panel
+            .find("self.preview_sticker_drag(")
+            .expect("no sticker overlay in the preview panel");
+
+        assert!(
+            sticker > frame,
+            "the sticker overlay is painted at {sticker}, the frame at {frame}: \
+             the picture covers it"
+        );
+    }
+
+    /// And it has to be positioned against the drawn picture, not the
+    /// container around it. The video is letterboxed inside `rect`, so a
+    /// sticker's x/y -- fractions of the frame -- land in the wrong place
+    /// by however much padding there is.
+    #[test]
+    fn the_sticker_overlay_is_anchored_to_the_drawn_picture() {
+        let src = include_str!("app.rs");
+        let panel = src
+            .split_once("fn render_preview_panel")
+            .expect("no render_preview_panel")
+            .1;
+        let panel = &panel[..panel.find("\n    fn ").unwrap_or(panel.len())];
+
+        assert!(
+            panel.contains("let sticker_rect = overlay_ctx.map(|(r, _)| r).unwrap_or(rect);"),
+            "the sticker overlay is not anchored to draw_rect"
         );
     }
 }
