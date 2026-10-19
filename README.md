@@ -133,9 +133,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
-| **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame;
-  keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg
-  transition reachable. |
+| **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame; keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg transition reachable. |
 | **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |
 | **0.9.16** | 2026-10-12 | Face anonymize per clip, caption segment editing, color grading panel, built-in sound-effects library. |
 | **0.9.17** | 2026-10-12 | Crash-recovery autosave, custom autosave interval, caption size proportional to frame height, one-click face anonymize; plus fixes for custom spinner persistence, preset click confirmation, Custom row visibility. |
