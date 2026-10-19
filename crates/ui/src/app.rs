@@ -715,6 +715,51 @@ pub fn rotation_grip_rect(box_rect: egui::Rect) -> egui::Rect {
     )
 }
 
+/// A sticker's four corners on screen: top-left, top-right,
+/// bottom-right, bottom-left, already turned.
+///
+/// The turns of the rectangle rather than the box around it. The export
+/// composites the turned rectangle, and that is also what the preview
+/// paints, so the handles have to sit on these: on the corners of the
+/// bounding box they end up in empty space once the sticker is turned,
+/// which is where the corner grips stopped responding.
+pub fn sticker_corners(
+    place: &caprust_core::OverlayPlacement,
+    frame_rect: egui::Rect,
+    extra_degrees: f32,
+) -> [egui::Pos2; 4] {
+    let fa = frame_rect.width() / frame_rect.height().max(1.0);
+    // `frame_box_at` rather than `frame_box`: the caller passes a live
+    // angle for a sticker whose rotation handle is down, and the box has
+    // to describe the angle on screen.
+    let (bx, by, bw, bh) = place.frame_box_at(fa, extra_degrees);
+    let (cx, cy) = (bx + bw / 2.0, by + bh / 2.0);
+    let (sin, cos) = (place.rotation + extra_degrees).to_radians().sin_cos();
+    let w = frame_rect.width() * bw;
+    let h = frame_rect.height() * bh;
+    let at = |dx: f32, dy: f32| {
+        egui::pos2(
+            frame_rect.left() + frame_rect.width() * cx + dx * cos - dy * sin,
+            frame_rect.top() + frame_rect.height() * cy + dx * sin + dy * cos,
+        )
+    };
+    [
+        at(-w / 2.0, -h / 2.0),
+        at(w / 2.0, -h / 2.0),
+        at(w / 2.0, h / 2.0),
+        at(-w / 2.0, h / 2.0),
+    ]
+}
+
+/// The bounding box of four corners, for the rotation handle to sit above.
+fn corners_bounds(corners: &[egui::Pos2; 4]) -> egui::Rect {
+    let mut r = egui::Rect::from_min_max(corners[0], corners[0]);
+    for c in corners {
+        r = r.union(egui::Rect::from_min_max(*c, *c));
+    }
+    r
+}
+
 /// Which part of a sticker's overlay the pointer is over.
 ///
 /// Decided from the pointer rather than from which of several
@@ -729,21 +774,20 @@ pub fn rotation_grip_rect(box_rect: egui::Rect) -> egui::Rect {
 /// test is a radius around each corner and the handle sits above them.
 pub fn sticker_handle_at(
     pointer: egui::Pos2,
-    box_rect: egui::Rect,
+    corners: [egui::Pos2; 4],
     grip: f32,
     rot_rect: egui::Rect,
 ) -> StickerMode {
     if rot_rect.contains(pointer) {
         return StickerMode::Rotate;
     }
-    let half = grip / 2.0;
-    for corner in [
-        box_rect.left_top(),
-        box_rect.right_top(),
-        box_rect.right_bottom(),
-        box_rect.left_bottom(),
-    ] {
-        if pointer.distance(corner) <= half {
+    // A square a little larger than the mark that is drawn, rather than
+    // a circle inscribed in it. The circle is what made the corners of
+    // the mark unreachable -- you could see a handle and miss it by
+    // aiming at its corner.
+    for c in corners {
+        let r = egui::Rect::from_center_size(c, egui::vec2(grip, grip) * 1.5);
+        if r.contains(pointer) {
             return StickerMode::Scale;
         }
     }
@@ -10600,16 +10644,13 @@ impl CapRustApp {
         // the rotation handle is down, the pointer's angle is ahead of
         // the model until the next line runs.
         let live = self.sticker_live_rotation(clip_id, place.rotation);
-        let (bx, by, bw, bh) = place.frame_box_at(fa, live - place.rotation);
-        let unit_rect = egui::Rect::from_min_size(egui::pos2(bx, by), egui::vec2(bw, bh));
-        let centre = unit_rect.center();
-        let box_rect = egui::Rect::from_min_size(
-            egui::pos2(
-                frame_rect.left() + frame_rect.width() * bx,
-                frame_rect.top() + frame_rect.height() * by,
-            ),
-            egui::vec2(frame_rect.width() * bw, frame_rect.height() * bh),
-        );
+        // The corners of the sticker itself, not of the box around it.
+        // On a turned sticker the box's corners are empty space, up to
+        // half a sticker-width away from the mark, which is why the
+        // grips stopped responding after a rotation.
+        let corners = sticker_corners(&place, frame_rect, live - place.rotation);
+        let bounds = corners_bounds(&corners);
+        let centre = bounds.center();
 
         // --- Handles ---
         // Drawn whenever the sticker is selected, not on hover. A handle
@@ -10618,7 +10659,7 @@ impl CapRustApp {
         const GRIP: f32 = 12.0;
         let accent = self.theme.accent_color();
         let stroke = egui::Stroke::new(1.5, accent);
-        let rot_rect = rotation_grip_rect(box_rect);
+        let rot_rect = rotation_grip_rect(bounds);
 
         // ONE interact rect for the whole overlay, and the zone worked
         // out from the pointer.
@@ -10633,19 +10674,19 @@ impl CapRustApp {
         // rotate had a 16px target the body sat next to. Deciding the
         // zone ourselves removes the question.
         let resp = ui.interact(
-            box_rect.union(rot_rect),
+            bounds.union(rot_rect),
             egui::Id::new(("sticker_overlay", clip_id)),
             egui::Sense::click_and_drag(),
         );
 
-        ui.painter()
-            .rect_stroke(box_rect, 0.0, stroke, egui::StrokeKind::Middle);
-        for corner in [
-            box_rect.left_top(),
-            box_rect.right_top(),
-            box_rect.right_bottom(),
-            box_rect.left_bottom(),
-        ] {
+        // The outline is the sticker's own turned rectangle, closed, and
+        // the grips sit on its corners -- so they are on the thing the
+        // user is looking at at any angle.
+        let outline = [corners[0], corners[1], corners[2], corners[3], corners[0]];
+        for pair in outline.windows(2) {
+            ui.painter().line_segment([pair[0], pair[1]], stroke);
+        }
+        for corner in corners {
             ui.painter().rect_stroke(
                 egui::Rect::from_center_size(corner, egui::vec2(GRIP, GRIP)),
                 0.0,
@@ -10653,18 +10694,18 @@ impl CapRustApp {
                 egui::StrokeKind::Middle,
             );
         }
-        ui.painter().line_segment(
-            [
-                egui::pos2(box_rect.center().x, box_rect.top()),
-                rot_rect.center(),
-            ],
-            stroke,
-        );
+        // The stem reaches the topmost corner, which after a rotation is
+        // no longer directly above the middle.
+        let top = corners
+            .iter()
+            .copied()
+            .fold(corners[0], |a, b| if b.y < a.y { b } else { a });
+        ui.painter().line_segment([top, rot_rect.center()], stroke);
         ui.painter()
             .circle_filled(rot_rect.center(), GRIP * 0.42, accent);
 
         let pointer = resp.interact_pointer_pos();
-        let under = pointer.map(|p| sticker_handle_at(p, box_rect, GRIP, rot_rect));
+        let under = pointer.map(|p| sticker_handle_at(p, corners, GRIP, rot_rect));
 
         // Latched at the start of a drag, so a gesture does not change
         // meaning halfway through because the pointer crossed a corner.
@@ -10692,9 +10733,9 @@ impl CapRustApp {
         if resp.dragged() {
             match mode {
                 StickerMode::Rotate => {
-                    let p = pointer.unwrap_or(box_rect.center());
-                    let ang = (p.y - box_rect.center().y)
-                        .atan2(p.x - box_rect.center().x)
+                    let p = pointer.unwrap_or(bounds.center());
+                    let ang = (p.y - bounds.center().y)
+                        .atan2(p.x - bounds.center().x)
                         .to_degrees();
                     // The handle is drawn straight up, so straight up is
                     // zero rather than atan2's rightward zero. Egui's y
@@ -10722,8 +10763,8 @@ impl CapRustApp {
                     // Size is the pointer's distance from where the box
                     // was centred when the gesture began, so the centre
                     // holds still and the sticker grows in place.
-                    let p = pointer.unwrap_or(box_rect.center());
-                    let d = p - box_rect.center();
+                    let p = pointer.unwrap_or(bounds.center());
+                    let d = p - bounds.center();
                     let scale = (d.length() / frame_rect.height().max(1.0)).clamp(0.02, 2.0);
                     self.drag_sticker(
                         clip_id,
@@ -15351,11 +15392,20 @@ mod sticker_overlay_tests {
     #[test]
     fn each_part_of_the_overlay_is_reachable() {
         const GRIP: f32 = 12.0;
-        let box_rect =
-            egui::Rect::from_min_size(egui::pos2(200.0, 100.0), egui::vec2(160.0, 120.0));
+        let place = caprust_core::OverlayPlacement {
+            scale: 0.33,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: 0.0,
+            animation: None,
+        };
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        let corners = super::sticker_corners(&place, frame, 0.0);
+        let box_rect = super::corners_bounds(&corners);
         let rot_rect = super::rotation_grip_rect(box_rect);
 
-        let at = |p: egui::Pos2| super::sticker_handle_at(p, box_rect, GRIP, rot_rect);
+        let at = |p: egui::Pos2| super::sticker_handle_at(p, corners, GRIP, rot_rect);
 
         // Middle, and the edges away from the corners, are all a move.
         for p in [
@@ -15454,6 +15504,322 @@ mod sticker_overlay_tests {
         assert!(
             !code.contains("Sense::click()"),
             "Sense::click() on its own cannot start a drag"
+        );
+    }
+    /// The grips have to be on the sticker, not on the box around it.
+    ///
+    /// After a rotation the bounding box's corners sit in empty space, up
+    /// to half a sticker-width away from the mark, so aiming at the thing
+    /// you can see reached nothing. The handles follow `sticker_corners`,
+    /// which is the same turned rectangle the preview paints and the
+    /// export composites.
+    #[test]
+    fn the_grips_sit_on_the_sticker_at_any_angle() {
+        const GRIP: f32 = 12.0;
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+
+        for deg in [0.0f32, 7.0, 30.0, 45.0, 90.0, 137.0, 210.0, 300.0] {
+            let place = caprust_core::OverlayPlacement {
+                scale: 0.3,
+                x: 0.5,
+                y: 0.5,
+                aspect: 1.0,
+                rotation: deg,
+                animation: None,
+            };
+            let corners = super::sticker_corners(&place, frame, 0.0);
+            let bounds = super::corners_bounds(&corners);
+            let rot_rect = super::rotation_grip_rect(bounds);
+            let at = |p: egui::Pos2| super::sticker_handle_at(p, corners, GRIP, rot_rect);
+
+            for c in corners {
+                assert_eq!(
+                    at(c),
+                    super::StickerMode::Scale,
+                    "at {deg} deg the corner {c:?} is not a size handle"
+                );
+            }
+
+            // Where the turn is wide enough that the bounding box's
+            // corners are somewhere else entirely, those corners are not
+            // handles. They are what the grips used to be drawn on, which
+            // is why aiming at the sticker after rotating reached nothing.
+            //
+            // At 0, 90 and 180 degrees the two sets coincide and there is
+            // nothing to say, so they are skipped rather than asserted.
+            let stray = [
+                bounds.left_top(),
+                bounds.right_top(),
+                bounds.right_bottom(),
+                bounds.left_bottom(),
+            ];
+            for p in stray {
+                let nearest = corners
+                    .iter()
+                    .map(|c| p.distance(*c))
+                    .fold(f32::MAX, f32::min);
+                if nearest < 20.0 {
+                    continue; // the turn is square: same corner
+                }
+                assert_ne!(
+                    at(p),
+                    super::StickerMode::Scale,
+                    "at {deg} deg the bounding-box corner {p:?} is {nearest}px from \
+                     the sticker and still catches the pointer"
+                );
+            }
+        }
+    }
+
+    /// The drawn mark is a GRIP square; the target has to cover all of
+    /// it. It used to be a circle inscribed in the square, so the corners
+    /// of every visible handle were dead.
+    #[test]
+    fn the_target_covers_the_whole_drawn_mark() {
+        const GRIP: f32 = 12.0;
+        let place = caprust_core::OverlayPlacement {
+            scale: 0.3,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: 23.0,
+            animation: None,
+        };
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        let corners = super::sticker_corners(&place, frame, 0.0);
+        let rot_rect = super::rotation_grip_rect(super::corners_bounds(&corners));
+
+        for c in corners {
+            // Every corner of the drawn square, and a nudge beyond it.
+            for (dx, dy) in [
+                (GRIP / 2.0, GRIP / 2.0),
+                (-GRIP / 2.0, GRIP / 2.0),
+                (GRIP / 2.0, -GRIP / 2.0),
+                (-GRIP / 2.0, -GRIP / 2.0),
+            ] {
+                let p = c + egui::vec2(dx, dy);
+                assert_eq!(
+                    super::sticker_handle_at(p, corners, GRIP, rot_rect),
+                    super::StickerMode::Scale,
+                    "the corner of the drawn handle at {p:?} is dead"
+                );
+            }
+        }
+    }
+
+    /// The rotation handle must not sit inside the sticker's own turns,
+    /// or dragging near the top edge turns instead of moving. Above the
+    /// bounding box is the only place that is always free.
+    #[test]
+    fn the_rotation_handle_never_overlaps_the_sticker() {
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        for deg in [0.0f32, 15.0, 45.0, 90.0, 135.0, 180.0, 225.0, 315.0] {
+            let place = caprust_core::OverlayPlacement {
+                scale: 0.4,
+                x: 0.5,
+                y: 0.5,
+                aspect: 1.0,
+                rotation: deg,
+                animation: None,
+            };
+            let corners = super::sticker_corners(&place, frame, 0.0);
+            let bounds = super::corners_bounds(&corners);
+            let rot_rect = super::rotation_grip_rect(bounds);
+            assert!(
+                rot_rect.max.y < bounds.min.y,
+                "at {deg} deg the handle overlaps the sticker: {rot_rect:?} vs {bounds:?}"
+            );
+        }
+    }
+
+    /// The rotation stem has to reach the sticker's topmost corner, or it
+    /// appears to come off nothing after a turn.
+    #[test]
+    fn the_stem_reaches_the_topmost_corner() {
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        for deg in [0.0f32, 20.0, 45.0, 90.0, 160.0] {
+            let place = caprust_core::OverlayPlacement {
+                scale: 0.3,
+                x: 0.5,
+                y: 0.5,
+                aspect: 1.0,
+                rotation: deg,
+                animation: None,
+            };
+            let corners = super::sticker_corners(&place, frame, 0.0);
+            let bounds = super::corners_bounds(&corners);
+            let rot_rect = super::rotation_grip_rect(bounds);
+            let top = corners
+                .iter()
+                .copied()
+                .fold(corners[0], |a, b| if b.y < a.y { b } else { a });
+            // The handle sits above the topmost corner on the vertical
+            // line through the centre, so the stem is never zero-length
+            // and never starts from empty space.
+            assert!(
+                rot_rect.max.y < top.y,
+                "at {deg} deg the handle is below the sticker"
+            );
+            assert!(
+                (rot_rect.center().x - bounds.center().x).abs() < 0.01,
+                "the handle drifted off the centre line at {deg} deg"
+            );
+        }
+    }
+
+    /// `sticker_corners` has to be turned, checked against the geometry
+    /// rather than through the hit test.
+    ///
+    /// The reachability test cannot see this on its own: it feeds
+    /// `sticker_corners`' output to `sticker_handle_at`, so if the corners
+    /// stopped being turned both sides would move together and the test
+    /// would still pass. Two functions agreeing on the same wrong answer
+    /// is not a check.
+    #[test]
+    fn sticker_corners_are_turned_when_the_sticker_is() {
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        let base = caprust_core::OverlayPlacement {
+            scale: 0.3,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.5, // deliberately not square
+            rotation: 0.0,
+            animation: None,
+        };
+
+        let flat = super::sticker_corners(&base, frame, 0.0);
+        let (_, _, bw, bh) = base.frame_box(640.0 / 360.0);
+        assert!(
+            (flat[2].x - flat[0].x - frame.width() * bw).abs() < 0.01,
+            "the top edge is {} wide, the frame says {}",
+            flat[2].x - flat[0].x,
+            frame.width() * bw
+        );
+        assert!(
+            (flat[3].y - flat[0].y - frame.height() * bh).abs() < 0.01,
+            "the side edge is {} tall, the frame says {}",
+            flat[3].y - flat[0].y,
+            frame.height() * bh
+        );
+
+        // Turn it. Both edges must leave the axes, and the top edge must
+        // be the one that grows on a wide sticker.
+        let turned = super::sticker_corners(
+            &caprust_core::OverlayPlacement {
+                rotation: 30.0,
+                ..base.clone()
+            },
+            frame,
+            0.0,
+        );
+        let top = turned[1] - turned[0];
+        assert!(top.y.abs() > 1.0, "the top edge is still flat: {top:?}");
+        let side = turned[3] - turned[0];
+        assert!(side.x.abs() > 1.0, "the side edge is still flat: {side:?}");
+
+        // A rectangle: the turn is rigid, so the edges stay perpendicular
+        // and the same length.
+        assert!(
+            top.dot(side).abs() < 1.0,
+            "the turned corners are not a rectangle"
+        );
+        let turned_place = caprust_core::OverlayPlacement {
+            rotation: 30.0,
+            ..base.clone()
+        };
+        let (_, _, bw2, bh2) = turned_place.frame_box(640.0 / 360.0);
+        assert!(
+            (top.length() - frame.width() * bw2).abs() < 0.5,
+            "turning changed the width: {} vs {}",
+            top.length(),
+            frame.width() * bw2
+        );
+        assert!(
+            (side.length() - frame.height() * bh2).abs() < 0.5,
+            "turning changed the height: {} vs {}",
+            side.length(),
+            frame.height() * bh2
+        );
+
+        // And the centre did not move.
+        let centre = flat[0].to_vec2() + (flat[2] - flat[0]) / 2.0;
+        let centre2 = turned[0].to_vec2() + (turned[2] - turned[0]) / 2.0;
+        assert!(
+            (centre - centre2).length() < 0.01,
+            "turning moved the centre: {centre:?} -> {centre2:?}"
+        );
+    }
+
+    /// The four corners are ordered around the sticker, not scrambled.
+    /// A grip drawn on the wrong pair is a grip that scales the wrong way.
+    #[test]
+    fn the_corners_are_in_order_around_the_sticker() {
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        for deg in [0.0f32, 25.0, 90.0, 180.0, 270.0] {
+            let c = super::sticker_corners(
+                &caprust_core::OverlayPlacement {
+                    scale: 0.3,
+                    x: 0.5,
+                    y: 0.5,
+                    aspect: 1.0,
+                    rotation: deg,
+                    animation: None,
+                },
+                frame,
+                0.0,
+            );
+            for i in 0..4 {
+                let a = c[i];
+                let b = c[(i + 1) % 4];
+                assert!(
+                    a.distance(b) > 1.0,
+                    "at {deg} deg two corners collapsed: {a:?} {b:?}"
+                );
+            }
+            // Opposite corners are diagonal to each other, so their
+            // midpoint is the centre and they are not adjacent.
+            for i in 0..2 {
+                let o1 = c[i];
+                let o2 = c[(i + 2) % 4];
+                assert!(
+                    o1.distance(o2) > 10.0,
+                    "at {deg} deg corners {i} and {} are adjacent",
+                    (i + 2) % 4
+                );
+            }
+        }
+    }
+
+    /// The handles have to come from `sticker_corners`.
+    ///
+    /// This one cannot be caught geometrically. The reachability test
+    /// above compares the bounding box's corners against whatever the
+    /// hit test says, so if the grips were moved back onto the bounding
+    /// box both sides move together and every assertion still holds --
+    /// two pieces of code agreeing on the same wrong answer. It takes a
+    /// look at the source to catch, which is not a great test and is here
+    /// because this is the fourth UI-only defect in a row that no
+    /// geometric one would have seen.
+    #[test]
+    fn the_handles_are_built_from_the_sticker_corners() {
+        let src = include_str!("app.rs");
+        let panel = src
+            .split_once("fn preview_sticker_handles")
+            .expect("no preview_sticker_handles")
+            .1;
+        let panel = &panel[..panel.find("\n    fn ").unwrap_or(panel.len())];
+
+        assert!(
+            panel.contains("sticker_corners(&place, frame_rect"),
+            "the handles no longer use the sticker's own corners"
+        );
+        assert!(
+            !panel.contains("left_top()") && !panel.contains("right_bottom()"),
+            "the handles reconstruct corners from the bounding box instead"
+        );
+        assert!(
+            panel.contains("for corner in corners"),
+            "the grips are not drawn on the sticker's corners"
         );
     }
 }
