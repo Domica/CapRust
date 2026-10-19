@@ -10856,7 +10856,13 @@ impl CapRustApp {
                     // holds still and the sticker grows in place.
                     let p = pointer.unwrap_or(bounds.center());
                     let d = p - bounds.center();
-                    let scale = (d.length() / frame_rect.height().max(1.0)).clamp(0.02, 2.0);
+                    // The placement's own limit, not a constant. A sticker
+                    // is not allowed to grow past what fits in the frame,
+                    // because past that its position has no solution and
+                    // the next thing to touch it moves it somewhere
+                    // unrelated -- which is what a resize used to do.
+                    let max = place.max_scale(fa);
+                    let scale = (d.length() / frame_rect.height().max(1.0)).clamp(0.02, max);
                     self.drag_sticker(
                         clip_id,
                         StickerGeom {
@@ -16034,6 +16040,34 @@ mod sticker_overlay_tests {
         assert!(
             !panel.contains(".clamp(-OVERDRAG"),
             "a second clamp crept in beside the shared one"
+        );
+    }
+    /// The size slider's top of range is what fits, not a constant.
+    ///
+    /// `at_centre` clamps the stored value whatever the panel offers, so a
+    /// slider that went past the limit would not corrupt anything -- it
+    /// would just show a number the render cannot use, and snap back. No
+    /// core test can see a panel's slider, so this looks.
+    #[test]
+    fn the_size_slider_stops_where_the_limit_is() {
+        let src = include_str!("../src/panels/clip_properties.rs");
+        let seg = src
+            .split_once("fn show_sticker_placement")
+            .expect("no show_sticker_placement")
+            .1;
+        let seg = &seg[..seg.find("\nfn ").unwrap_or(seg.len())];
+
+        assert!(
+            seg.contains("0.02..=max_scale"),
+            "the size slider is not bounded by max_scale"
+        );
+        assert!(
+            seg.contains("let max_scale = place.max_scale(fa);"),
+            "the slider's limit is not the placement's own"
+        );
+        assert!(
+            !seg.contains("0.02..=2.0"),
+            "the old hard-coded slider range is still here"
         );
     }
 }

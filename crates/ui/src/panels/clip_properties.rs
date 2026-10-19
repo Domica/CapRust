@@ -1062,6 +1062,10 @@ pub fn show(
         ClipType::Audio { .. } | ClipType::Narration { .. }
     );
 
+    // A sticker's maximum size depends on the frame it is composited
+    // into, so its controls need to know what that frame is.
+    let dims = project.project_dimensions();
+
     // A sticker is a still on the frame: no speed, no transitions, no
     // audio. The video tab's controls are meaningless on it and the sound
     // tab has nothing to show, so it gets its own.
@@ -1120,7 +1124,7 @@ pub fn show(
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
             PropertiesTab::Effects => show_effects(ui, clip, state),
-            PropertiesTab::Sticker => show_sticker(ui, clip, state),
+            PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
         });
 }
 
@@ -2526,10 +2530,15 @@ fn format_duration(ms: u64) -> String {
 
 /// The Sticker tab: everything about where the mark sits and how it
 /// behaves, and nothing that belongs to footage.
-fn show_sticker(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+fn show_sticker(
+    ui: &mut Ui,
+    clip: &Clip,
+    state: &mut PropertiesState,
+    project_dimensions: (u32, u32),
+) {
     ui.label(egui::RichText::new(tr("props-sticker")).strong());
     ui.add_space(space::XS);
-    show_sticker_placement(ui, clip, state);
+    show_sticker_placement(ui, clip, state, project_dimensions);
 
     // Duration is how long the mark stays up, which for a still is the
     // only timing there is.
@@ -2558,15 +2567,26 @@ fn show_sticker(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 /// proportions when the project changes resolution -- a percentage of the
 /// frame is the only number that means the same thing on a 720p phone
 /// export and a 4K master.
-fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+fn show_sticker_placement(
+    ui: &mut Ui,
+    clip: &Clip,
+    state: &mut PropertiesState,
+    project_dimensions: (u32, u32),
+) {
     let Some(place) = clip.overlay.clone() else {
         return;
     };
 
+    // The top of the range is what fits in this project's frame at this
+    // sticker's angle, not a constant. A slider that lets you go past it
+    // shows you a number the render cannot use.
+    let (fw, fh) = project_dimensions;
+    let fa = fw as f32 / fh.max(1) as f32;
+    let max_scale = place.max_scale(fa);
     let mut scale = place.scale;
     if ui
         .add(
-            egui::Slider::new(&mut scale, 0.02..=2.0)
+            egui::Slider::new(&mut scale, 0.02..=max_scale)
                 .suffix(" x H")
                 .text(tr("props-sticker-scale")),
         )

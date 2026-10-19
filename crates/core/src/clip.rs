@@ -491,6 +491,18 @@ fn solve_position(centre: f32, size: f32) -> f32 {
     }
 }
 
+/// The largest scale whose box fits, from the same arithmetic
+/// `max_scale` uses, without needing a placement to call it on.
+fn probe_limit(aspect: f32, rotation: f32, frame_aspect: f32) -> f32 {
+    const FIT: f32 = 0.60;
+    let fa = frame_aspect.max(1e-6);
+    let a = rotation.to_radians();
+    let (sin, cos) = (a.sin().abs(), a.cos().abs());
+    let by_width = (aspect * cos + sin).max(1e-6);
+    let by_height = (aspect * sin + cos).max(1e-6);
+    (FIT * fa / by_width).min(FIT / by_height).clamp(0.02, 2.0)
+}
+
 /// Default duration of a video transition (fade in/out). 500 ms is
 /// what CapCut uses out of the box and reads as a real transition
 /// rather than a pop.
@@ -786,6 +798,39 @@ impl OverlayPlacement {
         (rot_w / frame_aspect, rot_h)
     }
 
+    /// The biggest `scale` whose box still fits inside the frame.
+    ///
+    /// Not a matter of taste. The position is stored as a fraction of the
+    /// sticker's travel, and the travel is the frame minus the sticker.
+    /// Once the sticker is as large as the frame there is no travel, the
+    /// centre has no solution, and everything downstream -- the drag
+    /// handle, the overlay filter, the preview -- places the mark
+    /// somewhere unrelated and it stays there.
+    ///
+    /// At scale 2.0 and 11.5 degrees on a 21:9 frame the box comes out
+    /// 1.01 frame-widths wide, so `1 - w` is -0.01: moving the centre a
+    /// hundredth of the frame moved the stored position by nine tenths.
+    ///
+    /// The limit comes from the other end rather than from taste. The
+    /// position is clamped to [-1, 2] so it stays something the overlay
+    /// filter accepts, and solving `x = (c - t/2) / t` for a centre at
+    /// the far edge of the frame gives `x = 1/t - 1/2`. For that to land
+    /// inside the clamp the travel `t` has to be at least 0.4. So the box
+    /// may occupy at most 60% of the frame on each axis -- which is also
+    /// about as large as a sticker wants to be.
+    pub fn max_scale(&self, frame_aspect: f32) -> f32 {
+        const FIT: f32 = 0.60;
+        let fa = frame_aspect.max(1e-6);
+        let a = self.rotation.to_radians();
+        let (sin, cos) = (a.sin().abs(), a.cos().abs());
+        // w_px = scale*aspect, h_px = scale; the turn bounds each by the
+        // sum of its projections.
+        let by_width = (self.aspect * cos + sin).max(1e-6);
+        let by_height = (self.aspect * sin + cos).max(1e-6);
+        let limit = (FIT * fa / by_width).min(FIT / by_height);
+        limit.clamp(0.02, 2.0)
+    }
+
     /// The placement that puts the box's centre at `(cx, cy)`, in the
     /// same unit-frame coordinates `frame_box` reports.
     ///
@@ -807,7 +852,11 @@ impl OverlayPlacement {
         rotation: f32,
     ) -> Self {
         let probe = Self {
-            scale,
+            // Held to what fits. Every path into a placement goes through
+            // here -- the preview drag, the properties sliders, a project
+            // loaded from disk -- so this is the one place that has to be
+            // right.
+            scale: scale.min(probe_limit(aspect, rotation, frame_aspect)),
             aspect,
             rotation,
             ..Self::default_sticker()
@@ -823,7 +872,7 @@ impl OverlayPlacement {
         let x = solve_position(cx, w).clamp(-1.0, 2.0);
         let y = solve_position(cy, h).clamp(-1.0, 2.0);
         Self {
-            scale,
+            scale: probe.scale,
             x,
             y,
             aspect,
@@ -2002,5 +2051,138 @@ mod cue_window_tests {
                 );
             }
         }
+    }
+
+    /// A sticker is not allowed to grow past what fits.
+    ///
+    /// This is the arithmetic failing rather than a rule. At scale 2.0
+    /// and 11.5 degrees the box came out 1.01 frame-widths wide, so
+    /// `1 - w` is -0.01: a hundredth of a frame of centre movement moved
+    /// the stored position by nine tenths, and the clamp threw away what
+    /// relationship was left. The mark then sat off-screen while the
+    /// clip sat in the track, and nothing moved it back except the
+    /// sliders -- which is why changing it through the properties panel
+    /// was the only thing that worked.
+    #[test]
+    fn a_sticker_never_grows_past_what_fits() {
+        use super::OverlayPlacement;
+
+        for fa in [1.0f32, 4.0 / 3.0, 16.0 / 9.0, 21.0 / 9.0, 2.35] {
+            for aspect in [0.5f32, 1.0, 1.5, 2.0] {
+                for deg in [0.0f32, 11.48, 30.0, 45.0, 90.0, 135.0] {
+                    let place = OverlayPlacement {
+                        scale: 2.0,
+                        x: 0.5,
+                        y: 0.5,
+                        aspect,
+                        rotation: deg,
+                        animation: None,
+                    };
+                    let max = place.max_scale(fa);
+                    // At the limit the box has to fit, with a little
+                    // travel left over to solve a position against.
+                    let at_limit = OverlayPlacement {
+                        scale: max,
+                        ..place.clone()
+                    };
+                    let (_, _, w, h) = at_limit.frame_box(fa);
+                    // The rule, not a constant: enough travel left that a
+                    // centre anywhere in the frame solves inside the
+                    // range the export accepts.
+                    assert!(
+                        (1.0 - w).abs() >= 0.4 - 1e-3,
+                        "fa={fa} aspect={aspect} deg={deg}: max scale {max} leaves \
+                         only {} of travel",
+                        1.0 - w
+                    );
+                    assert!(
+                        (1.0 - h).abs() >= 0.4 - 1e-3,
+                        "fa={fa} aspect={aspect} deg={deg}: max scale {max} leaves \
+                         only {} of vertical travel",
+                        1.0 - h
+                    );
+                    assert!(w > 0.05 && h > 0.05, "max scale is degenerate");
+
+                    // And it is monotonic: more scale is never allowed
+                    // once the limit is passed.
+                    assert!(max <= 2.0, "the limit is above the old hard cap: {max}");
+                }
+            }
+        }
+    }
+
+    /// Whatever is asked for, what comes out fits and what comes out is
+    /// what was asked for within the limit. Every path into a placement
+    /// goes through `at_centre`, so this is the choke point.
+    #[test]
+    fn at_centre_holds_the_size_and_keeps_the_centre() {
+        use super::OverlayPlacement;
+
+        for fa in [16.0 / 9.0, 21.0 / 9.0] {
+            for deg in [0.0f32, 11.48, 45.0] {
+                let want = OverlayPlacement {
+                    scale: 0.34,
+                    x: 0.5,
+                    y: 0.5,
+                    aspect: 1.0,
+                    rotation: deg,
+                    animation: None,
+                };
+                let max = want.max_scale(fa);
+
+                // Over the limit: brought down, and the centre honoured.
+                let p = OverlayPlacement::at_centre(0.4, 0.6, 5.0, 1.0, fa, deg);
+                assert!(p.scale <= max + 1e-4, "{} > {max}", p.scale);
+                let (l, t, w, h) = p.frame_box(fa);
+                assert!(w < 1.0 && h < 1.0, "the box does not fit: {w} x {h}");
+                assert!(
+                    (l + w / 2.0 - 0.4).abs() < 1e-3 && (t + h / 2.0 - 0.6).abs() < 1e-3,
+                    "the centre moved to ({}, {})",
+                    l + w / 2.0,
+                    t + h / 2.0
+                );
+
+                // Under the limit: untouched.
+                let q = OverlayPlacement::at_centre(0.4, 0.6, 0.34, 1.0, fa, deg);
+                assert!((q.scale - 0.34).abs() < 1e-6, "{} != 0.34", q.scale);
+            }
+        }
+    }
+
+    /// A square at 45 degrees is the worst case for fitting, and it is
+    /// the number the comment quotes. If this drifts the comment is a
+    /// lie, so it is checked rather than trusted.
+    #[test]
+    fn the_documented_limit_is_the_real_one() {
+        use super::OverlayPlacement;
+        let p = OverlayPlacement {
+            scale: 1.0,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: 11.48,
+            animation: None,
+        };
+        let fa = 21.0 / 9.0;
+        let max = p.max_scale(fa);
+        let (_, _, w, h) = OverlayPlacement {
+            scale: max,
+            ..p.clone()
+        }
+        .frame_box(fa);
+        assert!(
+            (1.0 - w).abs() >= 0.4 - 1e-3 && (1.0 - h).abs() >= 0.4 - 1e-3,
+            "the limit leaves {w} x {h} of travel"
+        );
+        // And 2.0 really does not fit, which is the whole point.
+        let (_, _, w2, h2) = OverlayPlacement {
+            scale: 2.0,
+            ..p.clone()
+        }
+        .frame_box(fa);
+        assert!(
+            1.0 - w2 < 0.4 || 1.0 - h2 < 0.4,
+            "2.0 fits now ({w2} x {h2}), so the reason for this is gone"
+        );
     }
 }
