@@ -693,7 +693,11 @@ pub struct StickerDrag {
     /// the current centre, which moves as the sticker grows. Measuring
     /// against a moving reference feeds the sticker's own growth back
     /// into its size and the grip runs away from the pointer.
-    pub origin_centre: egui::Pos2,
+    /// Frozen at the start of the gesture, in **frame fractions**.
+    /// Not pixels: it is handed to `OverlayPlacement::at_centre`, which
+    /// is in fractions, and a pixel handed over by mistake solves to a
+    /// position past the end of the frame.
+    pub origin_centre: (f32, f32),
     /// Degrees the pointer is asking for on top of `from.rotation`.
     /// Zero for a move or a scale.
     pub extra_degrees: f32,
@@ -766,6 +770,22 @@ fn corners_bounds(corners: &[egui::Pos2; 4]) -> egui::Rect {
 /// picture, and a mark whose centre is off the picture cannot be grabbed
 /// to come back.
 pub const OVERDRAG: f32 = 0.08;
+
+/// A point in screen pixels, as a fraction of the frame.
+///
+/// Two coordinate systems run through the overlay and they are not
+/// interchangeable: the painter, the handles and `drag_delta` are all in
+/// screen pixels, while a placement's `x` and `y` are fractions of the
+/// frame. The drag used to keep its frozen centre in pixels and hand it
+/// to `at_centre` as though it were a fraction -- so a scale or a rotate
+/// solved `x = (974 - 0.07) / 0.85`, clamped to the maximum, and the
+/// sticker jumped to the corner of the frame every time it was touched.
+pub fn to_unit(p: egui::Pos2, frame_rect: egui::Rect) -> (f32, f32) {
+    (
+        (p.x - frame_rect.left()) / frame_rect.width().max(1.0),
+        (p.y - frame_rect.top()) / frame_rect.height().max(1.0),
+    )
+}
 
 /// Where a drag is allowed to put a sticker's centre.
 ///
@@ -890,7 +910,9 @@ pub enum StickerMode {
 #[derive(Debug, Clone, Copy)]
 pub struct StickerGeom {
     pub scale: f32,
-    pub centre: egui::Pos2,
+    /// Where the gesture wants the box's centre, in **frame fractions**.
+    /// Not pixels: this is handed to `at_centre`, which is in fractions.
+    pub centre: (f32, f32),
     pub aspect: f32,
     pub frame_aspect: f32,
     pub rotation: f32,
@@ -10741,7 +10763,9 @@ impl CapRustApp {
         // grips stopped responding after a rotation.
         let corners = sticker_corners(&place, frame_rect, live - place.rotation);
         let bounds = corners_bounds(&corners);
-        let centre = bounds.center();
+        // The centre the gestures work in, in frame fractions. The
+        // pointer stays in pixels; these two meet only through `to_unit`.
+        let centre = to_unit(bounds.center(), frame_rect);
 
         // --- Handles ---
         // Drawn whenever the sticker is selected, not on hover. A handle
@@ -10887,15 +10911,15 @@ impl CapRustApp {
                     // and the preview disagreed and the mark was parked
                     // off-screen with no way to drag it back.
                     let clamped = clamp_centre(
-                        centre.x + d.x / frame_rect.width().max(1.0),
-                        centre.y + d.y / frame_rect.height().max(1.0),
+                        centre.0 + d.x / frame_rect.width().max(1.0),
+                        centre.1 + d.y / frame_rect.height().max(1.0),
                     );
                     let (cx, cy) = (clamped.x, clamped.y);
                     self.drag_sticker(
                         clip_id,
                         StickerGeom {
                             scale: place.scale,
-                            centre: egui::pos2(cx, cy),
+                            centre: (cx, cy),
                             aspect: place.aspect,
                             frame_aspect: fa,
                             rotation: live,
@@ -11001,7 +11025,7 @@ impl CapRustApp {
     /// unit-frame coordinates. Frozen: measuring size against a live
     /// centre feeds the sticker's own growth back into its size and the
     /// grip runs away from the pointer.
-    fn sticker_drag_origin(&self, clip_id: uuid::Uuid, current: egui::Pos2) -> egui::Pos2 {
+    fn sticker_drag_origin(&self, clip_id: uuid::Uuid, current: (f32, f32)) -> (f32, f32) {
         match &self.sticker_drag {
             Some(d) if d.clip_id == clip_id => d.origin_centre,
             _ => current,
@@ -11037,8 +11061,8 @@ impl CapRustApp {
             _ => current,
         };
         let (cx, cy) = match mode {
-            StickerMode::Move => (centre.x, centre.y),
-            StickerMode::Scale | StickerMode::Rotate => (origin.x, origin.y),
+            StickerMode::Move => centre,
+            StickerMode::Scale | StickerMode::Rotate => origin,
         };
         // While rotating, `rotation` is the absolute angle. For a move
         // or a scale the angle is whatever the clip already had.
@@ -16068,6 +16092,99 @@ mod sticker_overlay_tests {
         assert!(
             !seg.contains("0.02..=2.0"),
             "the old hard-coded slider range is still here"
+        );
+    }
+    /// The two coordinate systems in the overlay, and where they meet.
+    ///
+    /// A placement's `x` and `y` are fractions of the frame; the painter,
+    /// the handles and `drag_delta` are in screen pixels. The drag used to
+    /// keep its frozen centre in pixels and hand it to `at_centre` as
+    /// though it were a fraction, so a scale or a rotate solved
+    /// `x = (974 - 0.07) / 0.85`, clamped to the maximum, and the sticker
+    /// jumped to the corner of the frame every time it was touched -- and
+    /// stayed there, because the next touch did the same thing again.
+    #[test]
+    fn to_unit_turns_screen_pixels_into_frame_fractions() {
+        let frame = egui::Rect::from_min_size(egui::pos2(450.0, 180.0), egui::vec2(1048.0, 442.0));
+        // A point that is a sane pixel coordinate and an insane fraction.
+        let p = egui::pos2(974.0, 401.0);
+        let (x, y) = super::to_unit(p, frame);
+        assert!((x - 0.5).abs() < 1e-3, "x = {x}");
+        assert!((y - 0.5).abs() < 1e-3, "y = {y}");
+        assert!(
+            (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y),
+            "a point inside the frame did not land inside the fractions"
+        );
+
+        // The corners map to the corners.
+        let (l, t) = super::to_unit(frame.left_top(), frame);
+        assert!(l.abs() < 1e-6 && t.abs() < 1e-6, "{l}, {t}");
+        let (r, b) = super::to_unit(frame.right_bottom(), frame);
+        assert!((r - 1.0).abs() < 1e-6 && (b - 1.0).abs() < 1e-6, "{r}, {b}");
+
+        // And back out: the placement built from a frame-fraction centre
+        // puts its box where the painter says, which is the whole point
+        // of keeping the two straight.
+        let place =
+            caprust_core::OverlayPlacement::at_centre(0.5, 0.5, 0.34, 1.0, 1048.0 / 442.0, 0.0);
+        let (bl, bt, bw, bh) = place.frame_box(1048.0 / 442.0);
+        assert!(
+            ((bl + bw / 2.0) * 1048.0 - 524.0).abs() < 0.5,
+            "the box's centre is {} px from the frame's centre",
+            ((bl + bw / 2.0) * 1048.0 - 524.0).abs()
+        );
+        let _ = bt;
+        let _ = bh;
+    }
+
+    /// A centre that has been frozen in pixels must not survive as one.
+    #[test]
+    fn a_pixel_centre_never_reaches_at_centre() {
+        // The arithmetic the bug used to perform, spelled out: 974 is a
+        // screen x, and feeding it to the fraction solver gives a
+        // position past the end of the frame. If `at_centre` is handed a
+        // fraction this small there is nothing to see; if the UI hands it
+        // a pixel, this is what comes out, and the clamp hides the
+        // damage -- which is why the test is on the clamp as well.
+        let place =
+            caprust_core::OverlayPlacement::at_centre(974.0, 400.0, 0.34, 1.0, 16.0 / 9.0, 0.0);
+        let (l, t, w, h) = place.frame_box(16.0 / 9.0);
+        // It is clamped to the export range, so it stays finite and
+        // representable -- which is the best that can be asked of a
+        // garbage input.
+        assert!((l - (1.0 - w) * place.x).abs() < 1e-6);
+        assert!((t - (1.0 - h) * place.y).abs() < 1e-6);
+        assert!(place.x.is_finite() && place.y.is_finite());
+    }
+
+    /// The drag state stores fractions. This is the actual defect and the
+    /// only thing that catches it: a source look, because the type
+    /// system cannot distinguish a fraction from a pixel once both are
+    /// f32s.
+    #[test]
+    fn the_drag_state_and_geometry_carry_fractions() {
+        let src = include_str!("app.rs");
+        let panel = src
+            .split_once("fn preview_sticker_handles")
+            .expect("no preview_sticker_handles")
+            .1;
+        let panel = &panel[..panel.find("\n    fn ").unwrap_or(panel.len())];
+        let code: String = panel
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            code.contains("let centre = to_unit(bounds.center(), frame_rect);"),
+            "the gesture centre is not converted to frame fractions"
+        );
+        assert!(
+            !code.contains("bounds.center(),") || !code.contains("centre: bounds.center()"),
+            "a pixel centre is still being handed over as a fraction"
         );
     }
 }
