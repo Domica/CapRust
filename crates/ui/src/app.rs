@@ -704,6 +704,17 @@ pub struct StickerDrag {
     /// Which gesture is running, so the drawing can show the right one
     /// and a scale that began as a rotate does not turn into a move.
     pub mode: StickerMode,
+    /// The trajectory being edited, when the drag is moving a keyframe
+    /// rather than the placement.
+    ///
+    /// With a trajectory the placement is not what decides where the
+    /// sticker is -- the trajectory is, at every moment. So a drag that
+    /// moved the placement would move nothing on screen, and the only
+    /// way to shape a trajectory would be the sliders in the tab, one
+    /// number at a time.
+    pub trajectory: Option<Vec<caprust_core::clip::MotionKeyframe>>,
+    /// The trajectory as it was when the gesture began, for undo.
+    pub from_trajectory: Vec<caprust_core::clip::MotionKeyframe>,
 }
 
 /// Where the rotation handle sits: above the box, on the vertical centre
@@ -10929,6 +10940,10 @@ impl CapRustApp {
         // the rotation handle is down, the pointer's angle is ahead of
         // the model until the next line runs.
         let live = self.sticker_live_rotation(clip_id, place.rotation);
+        // A trajectory with two keyframes or more decides where the
+        // sticker is at every moment, and the placement is only what it
+        // was before the trajectory existed.
+        let traj_keys: Vec<caprust_core::clip::MotionKeyframe> = clip.trajectory.clone();
         // The corners of the sticker itself, not of the box around it.
         // On a turned sticker the box's corners are empty space, up to
         // half a sticker-width away from the mark, which is why the
@@ -11087,17 +11102,33 @@ impl CapRustApp {
                         centre.1 + d.y / frame_rect.height().max(1.0),
                     );
                     let (cx, cy) = (clamped.x, clamped.y);
-                    self.drag_sticker(
-                        clip_id,
-                        StickerGeom {
-                            scale: place.scale,
-                            centre: (cx, cy),
-                            aspect: place.aspect,
-                            frame_aspect: fa,
-                            rotation: live,
-                        },
-                        StickerMode::Move,
-                    );
+                    // A trajectory decides where the sticker is at every
+                    // moment, so moving the placement would move nothing
+                    // on screen. The drag moves the keyframe nearest the
+                    // playhead instead, which is what makes a trajectory
+                    // shapeable: move it, and the keyframe under the
+                    // playhead follows.
+                    if traj_keys.len() >= 2 {
+                        self.drag_trajectory_keyframe(
+                            clip_id,
+                            cx,
+                            cy,
+                            &traj_keys,
+                            ph - clip.start_time_ms,
+                        );
+                    } else {
+                        self.drag_sticker(
+                            clip_id,
+                            StickerGeom {
+                                scale: place.scale,
+                                centre: (cx, cy),
+                                aspect: place.aspect,
+                                frame_aspect: fa,
+                                rotation: live,
+                            },
+                            StickerMode::Move,
+                        );
+                    }
                 }
             }
         }
@@ -11235,6 +11266,60 @@ impl CapRustApp {
         }
     }
 
+    /// Move the keyframe nearest the playhead, live.
+    ///
+    /// The clip's trajectory is written straight into, so the preview
+    /// follows the pointer. The undo command goes on the stack at the
+    /// end of the gesture, like every other drag.
+    fn drag_trajectory_keyframe(
+        &mut self,
+        clip_id: uuid::Uuid,
+        cx: f32,
+        cy: f32,
+        keys: &[caprust_core::clip::MotionKeyframe],
+        t_ms: u64,
+    ) {
+        if keys.len() < 2 {
+            return;
+        }
+        // The keyframe nearest the playhead, by time.
+        let Some(idx) = keys
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, k)| k.t_ms.abs_diff(t_ms))
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
+        let mut next = keys.to_vec();
+        next[idx].centre_x = cx;
+        next[idx].centre_y = cy;
+        next.sort_by_key(|k| k.t_ms);
+
+        let Some(clip) = self.project.clips.iter_mut().find(|c| c.id == clip_id) else {
+            return;
+        };
+        clip.trajectory = next.clone();
+
+        // The gesture state, so the release knows to commit the
+        // trajectory rather than the placement.
+        let from = self
+            .sticker_drag
+            .as_ref()
+            .filter(|d| d.clip_id == clip_id)
+            .map(|d| d.from_trajectory.clone())
+            .unwrap_or_else(|| keys.to_vec());
+        self.sticker_drag = Some(StickerDrag {
+            clip_id,
+            from: caprust_core::OverlayPlacement::default_sticker(),
+            to: caprust_core::OverlayPlacement::default_sticker(),
+            origin_centre: (cx, cy),
+            extra_degrees: 0.0,
+            mode: StickerMode::Move,
+            trajectory: Some(next),
+            from_trajectory: from,
+        });
+    }
     /// Move the clip straight, no command. The command goes on the undo
     /// stack once, at the end.
     ///
@@ -11257,11 +11342,16 @@ impl CapRustApp {
         let Some(current) = clip.overlay.clone() else {
             return;
         };
+        let clip_trajectory = clip.trajectory.clone();
         // Remember where the gesture began, not where it is now, or undo
         // would have nowhere to travel back to.
         let from = match &self.sticker_drag {
             Some(d) if d.clip_id == clip_id => d.from.clone(),
             _ => current,
+        };
+        let current_trajectory = match &self.sticker_drag {
+            Some(d) if d.clip_id == clip_id => d.from_trajectory.clone(),
+            _ => clip_trajectory,
         };
         let (cx, cy) = match mode {
             StickerMode::Move => centre,
@@ -11295,6 +11385,8 @@ impl CapRustApp {
             origin_centre: origin,
             extra_degrees,
             mode,
+            trajectory: None,
+            from_trajectory: current_trajectory,
         });
     }
 
@@ -15745,7 +15837,7 @@ mod sticker_overlay_tests {
     /// unit test could not have seen.
     #[test]
     fn the_sticker_overlay_is_painted_after_the_frame() {
-        let src = include_str!("app.rs");
+        let src = source();
         let panel = src
             .split_once("fn render_preview_panel")
             .expect("no render_preview_panel")
@@ -15772,7 +15864,7 @@ mod sticker_overlay_tests {
     /// by however much padding there is.
     #[test]
     fn the_sticker_overlay_is_anchored_to_the_drawn_picture() {
-        let src = include_str!("app.rs");
+        let src = source();
         let panel = src
             .split_once("fn render_preview_panel")
             .expect("no render_preview_panel")
@@ -15875,7 +15967,7 @@ mod sticker_overlay_tests {
     /// and that is what went wrong before.
     #[test]
     fn the_overlay_registers_exactly_one_interact_rect() {
-        let src = include_str!("app.rs");
+        let src = source();
         let panel = src
             .split_once("fn preview_sticker_handles")
             .expect("no preview_sticker_handles")
@@ -16202,7 +16294,7 @@ mod sticker_overlay_tests {
     /// geometric one would have seen.
     #[test]
     fn the_handles_are_built_from_the_sticker_corners() {
-        let src = include_str!("app.rs");
+        let src = source();
         let panel = src
             .split_once("fn preview_sticker_handles")
             .expect("no preview_sticker_handles")
@@ -16295,7 +16387,7 @@ mod sticker_overlay_tests {
     /// the branch.
     #[test]
     fn the_move_gesture_uses_the_shared_clamp() {
-        let src = include_str!("app.rs");
+        let src = source();
         let panel = src
             .split_once("fn preview_sticker_handles")
             .expect("no preview_sticker_handles")
@@ -16318,7 +16410,7 @@ mod sticker_overlay_tests {
     /// core test can see a panel's slider, so this looks.
     #[test]
     fn the_size_slider_stops_where_the_limit_is() {
-        let src = include_str!("../src/panels/clip_properties.rs");
+        let src = include_str!("../src/panels/clip_properties.rs").replace('\r', "");
         let seg = src
             .split_once("fn show_sticker_placement")
             .expect("no show_sticker_placement")
@@ -16407,7 +16499,7 @@ mod sticker_overlay_tests {
     /// f32s.
     #[test]
     fn the_drag_state_and_geometry_carry_fractions() {
-        let src = include_str!("app.rs");
+        let src = source();
         let panel = src
             .split_once("fn preview_sticker_handles")
             .expect("no preview_sticker_handles")
@@ -16435,7 +16527,7 @@ mod sticker_overlay_tests {
     /// the filtergraph, and they do not exist there by accident.
     #[test]
     fn every_animation_name_is_one_the_render_knows() {
-        let src = include_str!("app.rs");
+        let src = source();
         // The preview's own list.
         let preview: Vec<&str> = {
             let seg = src
@@ -16449,7 +16541,7 @@ mod sticker_overlay_tests {
                 .collect()
         };
         // The render's list, from the same source of truth.
-        let render_src = include_str!("../../media-io/src/export_graph.rs");
+        let render_src = include_str!("../../media-io/src/export_graph.rs").replace('\r', "");
         let frag = render_src
             .split_once("fn sticker_animation_fragment")
             .expect("no sticker_animation_fragment")
@@ -16473,7 +16565,7 @@ mod sticker_overlay_tests {
     /// motion plays once and stops.
     #[test]
     fn the_quad_carries_its_animation_and_clock() {
-        let src = include_str!("app.rs");
+        let src = source();
         let seg = src
             .split_once("pub struct StickerQuad")
             .expect("no StickerQuad")
@@ -16558,9 +16650,9 @@ mod sticker_overlay_tests {
     /// what "Efekti is not clickable" was.
     #[test]
     fn the_tab_is_not_forced_back_every_frame() {
-        let src = include_str!("app.rs");
+        let src = source();
         // The normalisation lives in the properties panel.
-        let panel = include_str!("../src/panels/clip_properties.rs");
+        let panel = include_str!("../src/panels/clip_properties.rs").replace('\r', "");
         let seg = panel
             .split_once("let clip_is_audio = matches!")
             .expect("no clip_is_audio")
@@ -16634,25 +16726,57 @@ mod sticker_overlay_tests {
         assert!(super::sticker_quads(&p, 9000, frame).is_empty());
     }
 
-    /// One implementation of the geometry. A second copy inline in
-    /// `sticker_quads` had already appeared once, and two copies of the
-    /// same arithmetic are how the handle and the artwork drift apart.
+    /// One implementation of the geometry.
+    ///
+    /// A second copy inline in `sticker_quads` had already appeared
+    /// once, and two copies of the same arithmetic are how the handle
+    /// and the artwork drift apart.
+    ///
+    /// This is a behavioural check, not a look at the source. The source
+    /// version searched for a line ending, and the Windows CI runner
+    /// checks out with CRLF while a local checkout has LF -- so it found
+    /// the end of the function in one and the end of the file in the
+    /// other, and passed locally and failed on CI. Comparing the points
+    /// the painter gets with the points the shared function gives says
+    /// the same thing and does not care about line endings.
     #[test]
-    fn sticker_quads_has_no_geometry_of_its_own() {
-        let src = include_str!("app.rs");
-        let seg = src
-            .split_once("pub fn sticker_quads")
-            .expect("no sticker_quads")
-            .1;
-        let seg = &seg[..seg.find("\n}\n").unwrap_or(seg.len())];
-        assert!(
-            seg.contains("sticker_corners("),
-            "sticker_quads is not built from sticker_corners"
-        );
-        assert!(
-            !seg.contains("frame_box_at(fa"),
-            "sticker_quads has its own copy of the geometry"
-        );
+    fn the_quad_the_painter_gets_is_the_one_the_shared_function_gives() {
+        use caprust_core::clip::{Clip, ClipType, OverlayPlacement};
+        use caprust_core::track::{Track, TrackKind};
+
+        let mut p = caprust_core::ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+
+        let place = OverlayPlacement {
+            scale: 0.3,
+            x: 0.4,
+            y: 0.6,
+            aspect: 1.0,
+            rotation: 20.0,
+            animation: None,
+        };
+        let mut c = Clip::new_video("s.png", 0, 0, 4000);
+        c.id = uuid::Uuid::from_u128(1);
+        c.clip_type = ClipType::Image {
+            path: String::from("s.png"),
+            duration_ms: 4000,
+        };
+        c.overlay = Some(place.clone());
+        p.clips.push(c);
+
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        let quads = super::sticker_quads(&p, 0, frame);
+        assert_eq!(quads.len(), 1);
+
+        // What the shared function says, for the same placement.
+        let expect = super::sticker_corners(&place, frame, 0.0);
+        for (i, (got, want)) in quads[0].corners.iter().zip(expect.iter()).enumerate() {
+            assert!(
+                (got.x - want.x).abs() < 0.01 && (got.y - want.y).abs() < 0.01,
+                "corner {i} is {got:?}, the shared function says {want:?}"
+            );
+        }
     }
 
     /// An animated sticker asks to be repainted.
@@ -16665,7 +16789,7 @@ mod sticker_overlay_tests {
     /// worked.
     #[test]
     fn an_animated_sticker_keeps_asking_to_be_repainted() {
-        let src = include_str!("app.rs");
+        let src = source();
         let seg = src
             .split_once("fn paint_sticker_quad")
             .expect("no paint_sticker_quad")
@@ -16828,5 +16952,15 @@ mod sticker_overlay_tests {
             "the tall track moves {tall} per unit, the short one {short}"
         );
         assert!(tall < layout.factor, "the tall one is not discounted");
+    }
+    /// This file, with the line endings normalised.
+    ///
+    /// The Windows CI runner checks out with CRLF and a local Linux
+    /// checkout has LF, so a test that searches for a line ending
+    /// finds the end of a function in one and the end of the file in the
+    /// other. That is how `sticker_quads_has_no_geometry_of_its_own`
+    /// passed locally and failed on CI.
+    fn source() -> String {
+        include_str!("app.rs").replace('\r', "")
     }
 }
