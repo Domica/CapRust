@@ -10613,10 +10613,15 @@ impl CapRustApp {
     /// there is nowhere for a "but only if it is selected" to hide.
     fn preview_stickers_paint(&mut self, ui: &mut egui::Ui, frame_rect: egui::Rect) {
         let quads = sticker_quads(&self.project, self.playhead_ms, frame_rect);
-        self.log_sticker_overlay(quads.len(), frame_rect);
-        for q in quads {
-            self.paint_sticker_quad(ui, &q);
-        }
+        // What happened to each one, not how many were queued: a quad
+        // whose PNG would not decode is not a sticker on screen and
+        // counting it as one is exactly the blind spot that let a
+        // failing texture read as a correctly placed one.
+        let outcomes: Vec<String> = quads
+            .iter()
+            .map(|q| self.paint_sticker_quad(ui, q))
+            .collect();
+        self.log_sticker_overlay(quads.len(), frame_rect, &outcomes);
     }
 
     /// Why the overlay drew what it drew, once every few seconds.
@@ -10625,7 +10630,7 @@ impl CapRustApp {
     /// missed it, its track went invisible, the PNG would not decode or
     /// the drawing happened behind the picture, and guessing between them
     /// from the outside has been wrong every time.
-    fn log_sticker_overlay(&mut self, drawn: usize, frame_rect: egui::Rect) {
+    fn log_sticker_overlay(&mut self, queued: usize, frame_rect: egui::Rect, outcomes: &[String]) {
         use std::sync::atomic::{AtomicU64, Ordering};
         static LAST: AtomicU64 = AtomicU64::new(0);
         let now = std::time::SystemTime::now()
@@ -10668,13 +10673,18 @@ impl CapRustApp {
             ));
         }
         tracing::info!(
-            "sticker overlay: drawn={drawn} of {} at playhead={}ms frame={:.0}x{:.0} texture={} | {}",
+            "sticker overlay: queued={queued} of {} at playhead={}ms frame={:.0}x{:.0} texture={} | {} | {}",
             why.len(),
             ph,
             frame_rect.width(),
             frame_rect.height(),
             self.preview_player.texture.is_some(),
             why.join(" ; "),
+            if outcomes.is_empty() {
+                String::from("nothing queued")
+            } else {
+                outcomes.join(" ; ")
+            },
         );
     }
 
@@ -10892,14 +10902,30 @@ impl CapRustApp {
     ///
     /// All the geometry is already done by `sticker_quads`; this is just
     /// pixels into a texture and two triangles.
-    fn paint_sticker_quad(&mut self, ui: &mut egui::Ui, q: &StickerQuad) {
+    fn paint_sticker_quad(&mut self, ui: &mut egui::Ui, q: &StickerQuad) -> String {
+        let name = q
+            .path
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(&q.path)
+            .to_string();
         let tex = match caprust_core::stickers::find(&q.path) {
             Some(_) => self.sticker_tex.load_embedded(ui.ctx(), &q.path),
             None => self
                 .sticker_tex
                 .load_path(ui.ctx(), &q.path, std::path::Path::new(&q.path)),
         };
-        let Some(tex) = tex else { return };
+        let Some(tex) = tex else {
+            let embedded = caprust_core::stickers::find(&q.path).is_some();
+            return format!(
+                "{name}: NOT PAINTED, {}",
+                if embedded {
+                    "no bundled sticker with that id"
+                } else {
+                    "PNG would not decode or is missing"
+                }
+            );
+        };
         let (tl, tr, br, bl) = (q.corners[0], q.corners[1], q.corners[2], q.corners[3]);
 
         let white = egui::Color32::WHITE;
@@ -10924,6 +10950,13 @@ impl CapRustApp {
             indices: vec![0, 1, 2, 3, 4, 5],
         };
         ui.painter().add(egui::Shape::mesh(mesh));
+        format!(
+            "{name}: painted at {:.0},{:.0} {:.0}x{:.0}",
+            q.corners[0].x,
+            q.corners[0].y,
+            (q.corners[2].x - q.corners[0].x).abs(),
+            (q.corners[2].y - q.corners[0].y).abs(),
+        )
     }
 
     /// Where the box was centred when this gesture started, in
