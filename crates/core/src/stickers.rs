@@ -714,6 +714,32 @@ pub fn materialize(id: &str) -> std::io::Result<std::path::PathBuf> {
     Ok(path)
 }
 
+/// Pixel size of a sticker's PNG, read from its IHDR.
+///
+/// The host needs this to draw the marker's box and handle on screen and
+/// to set `OverlayPlacement::aspect`. Every built-in is 256x256, but
+/// hardcoding that would be wrong the moment one is not.
+pub fn size(id: &str) -> Option<(u32, u32)> {
+    let png = find(id)?.png;
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+    let h = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some((w, h))
+}
+
+/// Width / height, for `OverlayPlacement::aspect`.
+pub fn aspect(id: &str) -> f32 {
+    match size(id) {
+        Some((w, h)) => w as f32 / h as f32,
+        None => 1.0,
+    }
+}
+
 /// Categories in the order the tab shows them.
 pub fn categories() -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();

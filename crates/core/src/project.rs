@@ -360,6 +360,21 @@ impl ProjectState {
             }
             c.bg_removal.hash(&mut h);
             c.stab_trf.hash(&mut h);
+            // The placement is what decides where a sticker lands and how
+            // big it is, so a drag that changes it has to reach the
+            // preview. Without this the marker is moved in the model and
+            // nothing on screen follows.
+            match &c.overlay {
+                None => 0u8.hash(&mut h),
+                Some(o) => {
+                    1u8.hash(&mut h);
+                    o.scale.to_bits().hash(&mut h);
+                    o.x.to_bits().hash(&mut h);
+                    o.y.to_bits().hash(&mut h);
+                    o.aspect.to_bits().hash(&mut h);
+                    o.animation.hash(&mut h);
+                }
+            }
             match &c.chroma_key {
                 None => 0u8.hash(&mut h),
                 Some(ck) => {
@@ -1351,5 +1366,95 @@ mod relink_orphan_tests {
         let (fixed2, created2) = p.relink_orphan_media_refs();
         assert_eq!(fixed2, 0);
         assert_eq!(created2, 0);
+    }
+
+    /// Every field of a placement has to reach `render_hash`. The preview
+    /// respawns off this hash, so a field left out is a drag that moves
+    /// the model and nothing on screen -- which is exactly how the sticker
+    /// handles read before this was noticed.
+    #[test]
+    fn render_hash_notices_a_sticker_being_moved() {
+        use crate::clip::OverlayPlacement;
+
+        let base = OverlayPlacement {
+            scale: 0.34,
+            x: 0.5,
+            y: 0.72,
+            aspect: 1.0,
+            animation: None,
+        };
+
+        let variants: [(&str, OverlayPlacement); 5] = [
+            (
+                "scale",
+                OverlayPlacement {
+                    scale: 0.5,
+                    ..base.clone()
+                },
+            ),
+            (
+                "x",
+                OverlayPlacement {
+                    x: 0.8,
+                    ..base.clone()
+                },
+            ),
+            (
+                "y",
+                OverlayPlacement {
+                    y: 0.1,
+                    ..base.clone()
+                },
+            ),
+            (
+                "aspect",
+                OverlayPlacement {
+                    aspect: 2.0,
+                    ..base.clone()
+                },
+            ),
+            (
+                "animation",
+                OverlayPlacement {
+                    animation: Some(String::from("spin")),
+                    ..base.clone()
+                },
+            ),
+        ];
+
+        for (field, changed) in variants {
+            let mut p = ProjectState::default();
+            let mut clip = Clip::new_video("a.mp4", 0, 0, 4000);
+            clip.overlay = Some(base.clone());
+            p.clips.push(clip);
+
+            let before = p.render_hash();
+            p.clips[0].overlay = Some(changed);
+            assert_ne!(
+                before,
+                p.render_hash(),
+                "changing {field} did not change the render hash"
+            );
+        }
+    }
+
+    /// And no placement at all has to hash differently from a placement,
+    /// so dropping a sticker into a project is seen as a render change
+    /// rather than an invisible edit.
+    #[test]
+    fn render_hash_distinguishes_a_placement_from_none() {
+        use crate::clip::OverlayPlacement;
+
+        let mut p = ProjectState::default();
+        let clip = Clip::new_video("a.mp4", 0, 0, 4000);
+        p.clips.push(clip);
+        let plain = p.render_hash();
+
+        p.clips[0].overlay = Some(OverlayPlacement::default_sticker());
+        assert_ne!(
+            plain,
+            p.render_hash(),
+            "adding a sticker did not change the render hash"
+        );
     }
 }

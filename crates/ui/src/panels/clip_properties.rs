@@ -16,6 +16,11 @@ pub enum PropertiesTab {
     Video,
     Sound,
     Effects,
+    /// Only offered for a clip that carries an `OverlayPlacement`. A
+    /// sticker is a still with no speed, no transitions and no audio, so
+    /// the video tab's controls are either meaningless or actively wrong
+    /// on it.
+    Sticker,
 }
 
 #[derive(Debug, Default)]
@@ -1057,14 +1062,38 @@ pub fn show(
         ClipType::Audio { .. } | ClipType::Narration { .. }
     );
 
+    // A sticker is a still on the frame: no speed, no transitions, no
+    // audio. The video tab's controls are meaningless on it and the sound
+    // tab has nothing to show, so it gets its own.
+    let clip_is_sticker = clip.overlay.is_some();
+    if clip_is_sticker && state.tab != PropertiesTab::Sticker {
+        state.tab = PropertiesTab::Sticker;
+    } else if !clip_is_sticker && state.tab == PropertiesTab::Sticker {
+        state.tab = PropertiesTab::Video;
+    }
+
     // --- Tabs ---
     ui.horizontal(|ui| {
-        if !clip_is_audio
+        if clip_is_sticker {
+            // Sticker and Effects only: a still PNG has no sound, and the
+            // video tab's geometry and speed controls do not apply to it.
+            if chip::chip(
+                ui,
+                tr("props-tab-sticker"),
+                state.tab == PropertiesTab::Sticker,
+            )
+            .clicked()
+            {
+                state.tab = PropertiesTab::Sticker;
+            }
+        } else if !clip_is_audio
             && chip::chip(ui, tr("props-tab-video"), state.tab == PropertiesTab::Video).clicked()
         {
             state.tab = PropertiesTab::Video;
         }
-        if chip::chip(ui, tr("props-tab-sound"), state.tab == PropertiesTab::Sound).clicked() {
+        if !clip_is_sticker
+            && chip::chip(ui, tr("props-tab-sound"), state.tab == PropertiesTab::Sound).clicked()
+        {
             state.tab = PropertiesTab::Sound;
         }
         if chip::chip(
@@ -1091,6 +1120,7 @@ pub fn show(
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
             PropertiesTab::Effects => show_effects(ui, clip, state),
+            PropertiesTab::Sticker => show_sticker(ui, clip, state),
         });
 }
 
@@ -1546,15 +1576,6 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                 }
             });
         });
-    }
-
-    // --- Sticker placement ---
-    // Only for clips that actually carry one. A clip with `overlay: None`
-    // fills the frame and has no position to edit.
-    if clip.overlay.is_some() {
-        ui.label(egui::RichText::new(tr("props-sticker")).strong());
-        ui.add_space(space::XS);
-        show_sticker_placement(ui, clip, state);
     }
 
     // --- Color grade ---
@@ -2503,6 +2524,33 @@ fn format_duration(ms: u64) -> String {
     format!("{m:02}:{sec:02}.{millis:03}")
 }
 
+/// The Sticker tab: everything about where the mark sits and how it
+/// behaves, and nothing that belongs to footage.
+fn show_sticker(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+    ui.label(egui::RichText::new(tr("props-sticker")).strong());
+    ui.add_space(space::XS);
+    show_sticker_placement(ui, clip, state);
+
+    // Duration is how long the mark stays up, which for a still is the
+    // only timing there is.
+    ui.separator();
+    ui.label(egui::RichText::new(tr("props-sticker-timing")).strong());
+    ui.add_space(space::XS);
+    let mut secs = clip.duration_ms as f32 / 1000.0;
+    if ui
+        .add(
+            egui::Slider::new(&mut secs, 0.2..=15.0)
+                .suffix(" s")
+                .text(tr("props-sticker-duration")),
+        )
+        .changed()
+    {
+        state
+            .pending
+            .push(PendingEdit::TrimDuration((secs * 1000.0).round() as u64));
+    }
+}
+
 /// Scale, position and animation for a clip that sits on the frame
 /// instead of filling it.
 ///
@@ -2531,12 +2579,21 @@ fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState)
                 scale,
                 x: place.x,
                 y: place.y,
+                aspect: place.aspect,
                 animation: place.animation.clone(),
             }),
         );
     }
 
     let (mut x, mut y) = (place.x, place.y);
+    // `x`/`y` are fractions of the sticker's own travel, not of the
+    // frame, which is not obvious from the numbers. Say so once rather
+    // than leaving a slider that reads as "72% down" and lands elsewhere.
+    ui.label(
+        egui::RichText::new(tr("props-sticker-position-hint"))
+            .small()
+            .weak(),
+    );
     let mut moved = false;
     egui::Grid::new("clip_sticker_pos_grid")
         .num_columns(2)
@@ -2567,6 +2624,7 @@ fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState)
                 scale,
                 x,
                 y,
+                aspect: place.aspect,
                 animation: place.animation.clone(),
             }),
         );
@@ -2606,6 +2664,7 @@ fn show_sticker_placement(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState)
                             scale,
                             x,
                             y,
+                            aspect: place.aspect,
                             animation: want,
                         }),
                     );

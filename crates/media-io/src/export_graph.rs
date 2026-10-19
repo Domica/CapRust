@@ -5296,6 +5296,7 @@ mod tests {
             scale: 0.34,
             x: 0.5,
             y: 0.72,
+            aspect: 1.0,
             animation: anim.map(str::to_string),
         }
     }
@@ -6723,5 +6724,194 @@ mod reverse_filtergraph_tests {
     fn no_reverse_audio_means_no_areverse() {
         let (fg, _, _) = base_plan_audio(false).build_filtergraph().unwrap();
         assert!(!fg.contains("areverse"), "no reverse -> no areverse: {fg}");
+    }
+
+    /// Real ffmpeg, the real export path, real pixel measurement: does
+    /// the sticker land where `frame_box` says it will?
+    ///
+    /// The unit tests below pin the arithmetic. This pins the arithmetic
+    /// to ffmpeg, which is the part that has been wrong before: the
+    /// preview used to anchor on the sticker's centre while the graph
+    /// anchored on its left edge, so a dragged sticker and the box drawn
+    /// around it only coincided at x == 0.5.
+    #[test]
+    #[ignore = "runs ffmpeg; --ignored"]
+    fn real_ffmpeg_lands_the_sticker_where_frame_box_says() {
+        use caprust_core::clip::{Clip, ClipType, OverlayPlacement};
+        use caprust_core::project::{ProjectState, VideoEncoder};
+        use caprust_core::track::{Track, TrackKind};
+        use std::process::Command;
+
+        const W: u32 = 320;
+        const H: u32 = 180;
+
+        let dir = std::env::temp_dir().join("caprust_sticker_where");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("base.mp4");
+        let mark = dir.join("mark.png");
+
+        // A black clip and a solid white square. Black base means every
+        // lit pixel in the output is the sticker, so its box is found by
+        // thresholding alone.
+        let mk = |args: &[&str]| {
+            let o = Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-y"])
+                .args(args)
+                .output()
+                .expect("ffmpeg runs");
+            assert!(
+                o.status.success(),
+                "setup ffmpeg failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        };
+        mk(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x180:r=10:d=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            base.to_str().unwrap(),
+        ]);
+        mk(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=white:s=64x64:d=1",
+            "-frames:v",
+            "1",
+            mark.to_str().unwrap(),
+        ]);
+
+        // Positions away from the centre, which is the one place the old
+        // preview and the graph happened to agree.
+        let cases = [
+            (0.30f32, 0.25f32, 0.20f32, "top left"),
+            (0.75f32, 0.70f32, 0.40f32, "bottom right"),
+            (0.50f32, 0.50f32, 0.50f32, "centred"),
+            (0.10f32, 0.90f32, 0.15f32, "far corner"),
+        ];
+
+        for (x, y, scale, label) in cases {
+            let place = OverlayPlacement {
+                scale,
+                x,
+                y,
+                aspect: 1.0,
+                animation: None,
+            };
+
+            let mut p = ProjectState::default();
+            p.tracks.push(Track::new("V1", TrackKind::Video));
+            p.tracks.push(Track::new("V2", TrackKind::Video));
+
+            let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 1000);
+            b.id = uuid::Uuid::from_u128(1);
+            b.track_index = 0;
+            p.clips.push(b);
+
+            let mut m = Clip::new_video(mark.to_str().unwrap(), 0, 0, 1000);
+            m.id = uuid::Uuid::from_u128(2);
+            m.track_index = 1;
+            m.overlay = Some(place.clone());
+            m.clip_type = ClipType::Image {
+                path: mark.to_string_lossy().into_owned(),
+                duration_ms: 1000,
+            };
+            p.clips.push(m);
+
+            let plan = plan_from_project(
+                &p,
+                W,
+                H,
+                10,
+                1,
+                18,
+                RateMode::Cbr,
+                4000,
+                "veryfast",
+                &dir,
+                0,
+                VideoEncoder::H264Cpu,
+            )
+            .expect("plan builds");
+
+            // The production argument builder decides the input flags,
+            // including the `-loop 1` that image sources need -- without
+            // it a one-frame PNG never survives the overlay at all. Only
+            // the input half is taken: the builder's tail is an encoder
+            // for a file, and this wants raw pixels on stdout.
+            let full = plan.build_command(
+                std::path::Path::new("ffmpeg"),
+                std::path::Path::new("o.mp4"),
+            );
+            let cut = full
+                .iter()
+                .position(|a| a == "-filter_complex")
+                .expect("builder emits a filtergraph");
+            let (fg, v_label) = plan
+                .build_video_only_filtergraph()
+                .expect("video graph builds");
+
+            let mut cmd = Command::new("ffmpeg");
+            for a in &full[..cut] {
+                cmd.arg(a);
+            }
+            cmd.arg("-filter_complex")
+                .arg(&fg)
+                .arg("-map")
+                .arg(format!("[{v_label}]"))
+                .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24"])
+                .arg("pipe:1");
+            let out = cmd.output().expect("ffmpeg runs");
+            if !out.status.success() {
+                panic!(
+                    "{label}: ffmpeg failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+
+            let px = &out.stdout;
+            assert!(
+                px.len() >= (W as usize * H as usize * 3),
+                "{label}: only {} bytes of raw frame",
+                px.len()
+            );
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+            let mut lit = 0u32;
+            for yy in 0..H {
+                for xx in 0..W {
+                    let o = ((yy as usize * W as usize) + xx as usize) * 3;
+                    if px[o] > 100 || px[o + 1] > 100 || px[o + 2] > 100 {
+                        x0 = x0.min(xx);
+                        x1 = x1.max(xx);
+                        y0 = y0.min(yy);
+                        y1 = y1.max(yy);
+                        lit += 1;
+                    }
+                }
+            }
+            assert!(lit > 0, "{label}: nothing composited at all");
+
+            let (bl, bt, bw, bh) = place.frame_box(16.0 / 9.0);
+            let want_l = (bl * W as f32).round() as u32;
+            let want_t = (bt * H as f32).round() as u32;
+            let want_r = ((bl + bw) * W as f32).round() as u32;
+            let want_b = ((bt + bh) * H as f32).round() as u32;
+
+            // ffmpeg rounds the scaled sticker to whole, even dimensions,
+            // so a couple of pixels is the honest tolerance.
+            let tol = 3i64;
+            let near = |a: u32, b: u32| (a as i64 - b as i64).abs() <= tol;
+            assert!(
+                near(x0, want_l) && near(x1, want_r) && near(y0, want_t) && near(y1, want_b),
+                "{label}: ffmpeg put the sticker at ({x0},{y0})-({x1},{y1}), \
+                 frame_box said ({want_l},{want_t})-({want_r},{want_b})"
+            );
+            eprintln!("{label}: ok, sticker at ({x0},{y0})-({x1},{y1})");
+        }
     }
 }

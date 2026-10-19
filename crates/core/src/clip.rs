@@ -651,6 +651,12 @@ pub struct ReframeKeypoint {
     pub cy_norm: f32,
 }
 
+/// Square, the shape every built-in sticker is. Projects written before
+/// `aspect` existed carry no value, and square is what they rendered as.
+fn default_aspect() -> f32 {
+    1.0
+}
+
 /// Where a clip sits on the frame when it is an overlay rather than the
 /// frame itself.
 ///
@@ -664,16 +670,95 @@ pub struct OverlayPlacement {
     /// Height as a fraction of the output frame. 0.25 = a quarter as
     /// tall as the frame. The width follows the source's aspect ratio.
     pub scale: f32,
-    /// Centre position, as a fraction of the frame. 0.5, 0.5 is the
-    /// middle; 0.9, 0.1 is near the top right.
+    /// Position along the sticker's range of travel, as a fraction of
+    /// the space the sticker has to move in. 0 is flush against the left
+    /// edge, 1 is flush against the right, and 0.5 is centred. The width
+    /// of the sticker is already taken out, so this is not the same as
+    /// a fraction of the frame -- see `frame_box`.
     pub x: f32,
+    /// As `x`, top to bottom.
     pub y: f32,
+    /// Source width divided by height. Needed to draw the marker's box on
+    /// screen: `scale` fixes the height, and the width follows the source,
+    /// which is not always square.
+    #[serde(default = "default_aspect")]
+    pub aspect: f32,
     /// Preset id from the sticker animation list. `None` = static.
     #[serde(default)]
     pub animation: Option<String>,
 }
 
 impl OverlayPlacement {
+    /// The rectangle the sticker covers, in unit-frame coordinates:
+    /// `(left, top, width, height)`, all fractions of the frame with the
+    /// top-left at 0,0.
+    ///
+    /// This is the single description of a sticker's geometry. The export
+    /// graph emits `overlay=x=(W-w)*x:y=(H-h)*y`, which places the box's
+    /// *left edge* at `(W-w)*x`, and this function is that same
+    /// arithmetic in unit coordinates. The preview handler multiplies the
+    /// result by the on-screen frame size, so the box the user drags is
+    /// the box that renders.
+    ///
+    /// Deriving one from the other by hand is how they drift apart: an
+    /// earlier version of the preview treated `x` as the centre and was
+    /// wrong by half the sticker's size anywhere except the middle.
+    /// `frame_aspect` is the frame's width divided by its height.
+    ///
+    /// That division is the whole reason this takes an argument.
+    /// `scale` is a fraction of the frame's *height*, which is what
+    /// `scale=-2:<height>` in the graph asks for, so on a 16:9 frame a
+    /// square sticker at 0.2 is 36 px wide on a 320 px frame -- 11% of
+    /// the width, not 20%. Reading `scale` as a fraction of both axes
+    /// drew a box nearly twice as wide as the sticker and put the drag
+    /// handle in empty space beside it.
+    pub fn frame_box(&self, frame_aspect: f32) -> (f32, f32, f32, f32) {
+        let h = self.scale;
+        let w = h * self.aspect / frame_aspect.max(1e-6);
+        ((1.0 - w) * self.x, (1.0 - h) * self.y, w, h)
+    }
+
+    /// The placement that puts the box's centre at `(cx, cy)`, in the
+    /// same unit-frame coordinates `frame_box` reports.
+    ///
+    /// The inverse of `frame_box`, and the reason the preview drag goes
+    /// through this rather than adding the pointer delta to `x`. `x` is a
+    /// fraction of the sticker's travel, not of the frame, so adding
+    /// `dx / frame_width` moves the sticker by `dx * (1 - width)` -- a
+    /// third of the pointer travel for a third-frame-wide sticker, and
+    /// the handle would trail behind the cursor.
+    ///
+    /// The caller supplies the animation id separately; this only
+    /// concerns geometry.
+    pub fn at_centre(cx: f32, cy: f32, scale: f32, aspect: f32, frame_aspect: f32) -> Self {
+        let w = scale * aspect / frame_aspect.max(1e-6);
+        // A sticker as wide as the frame has no travel left, so there is
+        // no fraction that can centre it. The comparison is on the
+        // magnitude because a sticker *wider* than the frame gives a
+        // negative denominator that is perfectly solvable -- treating
+        // that as "no travel" would pin an oversized sticker to the
+        // centre instead of letting it be dragged.
+        let denom_x = 1.0 - w;
+        let denom_y = 1.0 - scale;
+        let x = if denom_x.abs() > 1e-6 {
+            (cx - w / 2.0) / denom_x
+        } else {
+            0.5
+        };
+        let y = if denom_y.abs() > 1e-6 {
+            (cy - scale / 2.0) / denom_y
+        } else {
+            0.5
+        };
+        Self {
+            scale,
+            x,
+            y,
+            aspect,
+            animation: None,
+        }
+    }
+
     /// What the properties panel starts a freshly dropped sticker at:
     /// a third of the frame tall, in the lower third, where a caption
     /// or a callout usually goes.
@@ -682,6 +767,7 @@ impl OverlayPlacement {
             scale: 0.34,
             x: 0.5,
             y: 0.72,
+            aspect: default_aspect(),
             animation: None,
         }
     }
@@ -1468,5 +1554,188 @@ mod cue_window_tests {
     #[test]
     fn srt_empty_is_empty() {
         assert_eq!(cues_to_srt(&[]), "");
+    }
+
+    /// 16:9, the aspect almost every project is.
+    const FRAME_ASPECT: f32 = 16.0 / 9.0;
+
+    /// `frame_box` is the one description of where a sticker sits, and it
+    /// has to agree with what ffmpeg composites. These numbers are
+    /// measured, not derived: the box below is where a 64x64 white square
+    /// at scale 0.2 on a 320x180 frame actually turned up when the real
+    /// graph was run.
+    #[test]
+    fn frame_box_matches_the_filtergraph_placement() {
+        use super::OverlayPlacement;
+
+        let place = OverlayPlacement {
+            scale: 0.20,
+            x: 0.30,
+            y: 0.25,
+            aspect: 1.0,
+            animation: None,
+        };
+        let (left, top, w, h) = place.frame_box(FRAME_ASPECT);
+
+        // scale is a fraction of the frame's height: 0.2 of 180 = 36px.
+        // The width follows the source aspect, so 36px too -- which on a
+        // 320px-wide frame is 11% of the width, not 20%.
+        assert!(
+            (h * 180.0 - 36.0).abs() < 1e-4,
+            "height in px is {}",
+            h * 180.0
+        );
+        assert!(
+            (w * 320.0 - 36.0).abs() < 1e-4,
+            "width in px is {}",
+            w * 320.0
+        );
+
+        // The graph emits overlay=x=(W-w)*x with W and w in pixels.
+        assert!(
+            ((left * 320.0) - 85.2).abs() < 0.2,
+            "left px is {}",
+            left * 320.0
+        );
+        assert!(
+            ((top * 180.0) - 36.0).abs() < 0.2,
+            "top px is {}",
+            top * 180.0
+        );
+    }
+
+    /// The two ends of the travel are flush against the frame, and the
+    /// middle is the middle. These are readings a user can check by eye,
+    /// so a change that breaks one is a change nobody wants.
+    #[test]
+    fn frame_box_edges_are_flush_and_the_middle_is_centred() {
+        use super::OverlayPlacement;
+
+        let base = OverlayPlacement {
+            scale: 0.4,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            animation: None,
+        };
+
+        let (l, t, w, h) = base.frame_box(FRAME_ASPECT);
+        assert!((l + w / 2.0 - 0.5).abs() < 1e-6, "not centred at 0.5");
+        assert!(
+            (t + h / 2.0 - 0.5).abs() < 1e-6,
+            "not centred at 0.5 vertically"
+        );
+
+        let (l, _, _, _) = OverlayPlacement {
+            x: 0.0,
+            ..base.clone()
+        }
+        .frame_box(FRAME_ASPECT);
+        assert!(l.abs() < 1e-6, "not flush left at 0");
+
+        let (l, _, w, _) = OverlayPlacement {
+            x: 1.0,
+            ..base.clone()
+        }
+        .frame_box(FRAME_ASPECT);
+        assert!((l + w - 1.0).abs() < 1e-6, "not flush right at 1");
+
+        let (_, t, _, _) = OverlayPlacement {
+            y: 0.0,
+            ..base.clone()
+        }
+        .frame_box(FRAME_ASPECT);
+        assert!(t.abs() < 1e-6, "not flush top at 0");
+
+        let (_, t, _, h) = OverlayPlacement {
+            y: 1.0,
+            ..base.clone()
+        }
+        .frame_box(FRAME_ASPECT);
+        assert!((t + h - 1.0).abs() < 1e-6, "not flush bottom at 1");
+    }
+
+    /// A drag works by choosing a centre and asking for the placement
+    /// that puts it there. If the two are not inverses the handle drifts
+    /// away from the sticker as it moves.
+    #[test]
+    fn at_centre_and_frame_box_are_inverses() {
+        use super::OverlayPlacement;
+
+        for (cx, cy) in [(0.5, 0.5), (0.2, 0.8), (0.9, 0.1), (0.0, 1.0), (1.0, 0.0)] {
+            for scale in [0.1f32, 0.34, 0.75] {
+                for aspect in [1.0f32, 1.5, 0.666] {
+                    for fa in [FRAME_ASPECT, 1.0, 2.35] {
+                        let p = OverlayPlacement::at_centre(cx, cy, scale, aspect, fa);
+                        let (l, t, w, h) = p.frame_box(fa);
+                        assert!(
+                            (l + w / 2.0 - cx).abs() < 1e-4,
+                            "centre x drifted: want {cx}, got {}",
+                            l + w / 2.0
+                        );
+                        assert!(
+                            (t + h / 2.0 - cy).abs() < 1e-4,
+                            "centre y drifted: want {cy}, got {}",
+                            t + h / 2.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A drag moves the sticker's centre by the pointer delta, so the whole
+    /// box has to end up exactly that far along -- all four edges, since
+    /// a sticker slides rigidly along its travel. This is what makes the
+    /// handle track the cursor. The drag goes through `at_centre` to get
+    /// it: adding the delta straight onto `x` would have to divide by
+    /// the sticker's own width to come out right, and did not.
+    #[test]
+    fn moving_by_a_known_offset_lands_where_it_was_asked_to() {
+        use super::OverlayPlacement;
+
+        let start = OverlayPlacement {
+            scale: 0.34,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            animation: None,
+        };
+        let (l, t, w, h) = start.frame_box(FRAME_ASPECT);
+        let moved = OverlayPlacement::at_centre(
+            l + w / 2.0 + 0.1,
+            t + h / 2.0 + 0.1,
+            0.34,
+            1.0,
+            FRAME_ASPECT,
+        );
+        let (l2, t2, w2, h2) = moved.frame_box(FRAME_ASPECT);
+
+        for (name, was, now) in [
+            ("left", l, l2),
+            ("right", l + w, l2 + w2),
+            ("top", t, t2),
+            ("bottom", t + h, t2 + h2),
+        ] {
+            assert!(
+                (now - was - 0.1).abs() < 1e-4,
+                "{name} moved {} instead of 0.1",
+                now - was
+            );
+        }
+    }
+
+    /// A sticker filling the frame has no travel, so the inverse has to
+    /// stay finite. A NaN here would land in a saved project and then in
+    /// the filtergraph.
+    #[test]
+    fn a_full_frame_sticker_does_not_produce_nan_placement() {
+        use super::OverlayPlacement;
+
+        let p = OverlayPlacement::at_centre(0.3, 0.3, 1.0, 1.0, FRAME_ASPECT);
+        assert!(p.x.is_finite(), "x is {}", p.x);
+        assert!(p.y.is_finite(), "y is {}", p.y);
+        let (l, t, w, h) = p.frame_box(FRAME_ASPECT);
+        assert!(l.is_finite() && t.is_finite() && w.is_finite() && h.is_finite());
     }
 }
