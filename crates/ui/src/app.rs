@@ -10612,9 +10612,70 @@ impl CapRustApp {
     /// nothing else. All that is left here is loading the pixels, so
     /// there is nowhere for a "but only if it is selected" to hide.
     fn preview_stickers_paint(&mut self, ui: &mut egui::Ui, frame_rect: egui::Rect) {
-        for q in sticker_quads(&self.project, self.playhead_ms, frame_rect) {
+        let quads = sticker_quads(&self.project, self.playhead_ms, frame_rect);
+        self.log_sticker_overlay(quads.len(), frame_rect);
+        for q in quads {
             self.paint_sticker_quad(ui, &q);
         }
+    }
+
+    /// Why the overlay drew what it drew, once every few seconds.
+    ///
+    /// A sticker that is not on screen looks identical whether the playhead
+    /// missed it, its track went invisible, the PNG would not decode or
+    /// the drawing happened behind the picture, and guessing between them
+    /// from the outside has been wrong every time.
+    fn log_sticker_overlay(&mut self, drawn: usize, frame_rect: egui::Rect) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static LAST: AtomicU64 = AtomicU64::new(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if now < LAST.load(Ordering::Relaxed) + 5 {
+            return;
+        }
+        LAST.store(now, Ordering::Relaxed);
+
+        let ph = self.playhead_ms;
+        let mut why: Vec<String> = Vec::new();
+        for c in self.project.clips.iter().filter(|c| c.overlay.is_some()) {
+            let on = ph >= c.start_time_ms && ph < c.start_time_ms + c.duration_ms;
+            let vis = self
+                .project
+                .tracks
+                .get(c.track_index)
+                .map(|t| t.visible)
+                .unwrap_or(true);
+            let path = match &c.clip_type {
+                caprust_core::ClipType::Image { path, .. } => path.clone(),
+                _ => String::from("<not an image>"),
+            };
+            why.push(format!(
+                "{} @{}ms..{}ms track{} vis={} -> {}",
+                &path.rsplit(['\\', '/']).next().unwrap_or(&path),
+                c.start_time_ms,
+                c.start_time_ms + c.duration_ms,
+                c.track_index,
+                vis,
+                if on && vis {
+                    "DRAWN"
+                } else if !on {
+                    "off playhead"
+                } else {
+                    "track hidden"
+                },
+            ));
+        }
+        tracing::info!(
+            "sticker overlay: drawn={drawn} of {} at playhead={}ms frame={:.0}x{:.0} texture={} | {}",
+            why.len(),
+            ph,
+            frame_rect.width(),
+            frame_rect.height(),
+            self.preview_player.texture.is_some(),
+            why.join(" ; "),
+        );
     }
 
     /// Handles and manipulation, for the selected sticker only.
