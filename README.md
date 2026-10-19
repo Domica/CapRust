@@ -135,8 +135,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 |---|---|---|
 | **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame; keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg transition reachable. |
 | **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |
-| **0.9.16** | 2026-10-12 | Face anonymize per clip, caption segment editing, color grading panel, built-in sound-effects library. |
 | **0.9.17** | 2026-10-12 | Crash-recovery autosave, custom autosave interval, caption size proportional to frame height, one-click face anonymize; plus fixes for custom spinner persistence, preset click confirmation, Custom row visibility. |
+| **0.9.16** | 2026-10-12 | Face anonymize per clip, caption segment editing, color grading panel, built-in sound-effects library. |
 | **0.9.15** | 2026-10-11 | Timeline templates (bundled + save/import/apply), theme save/load files, export 32K command-line fix, preview A/V restart on seek. |
 | **0.9.14** | 2026-10-10 | Spanish, Italian, German UI; slim README + full_readme; landing screenshot carousel; LUT + CLAP folder pickers in Settings; models rescan fix. |
 | **0.9.13** | 2026-10-09 | Text effects, blend modes, clip rename, refresh imports, split display, border options. |
