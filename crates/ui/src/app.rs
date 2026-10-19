@@ -702,6 +702,54 @@ pub struct StickerDrag {
     pub mode: StickerMode,
 }
 
+/// Where the rotation handle sits: above the box, on the vertical centre
+/// line, far enough out that it does not land on the picture itself.
+pub fn rotation_grip_rect(box_rect: egui::Rect) -> egui::Rect {
+    const SIZE: f32 = 22.0;
+    // A minimum stand-off, so a sticker scaled almost to nothing still
+    // has a handle that is not under the pointer by default.
+    let out = (box_rect.height() * 0.45).max(18.0);
+    egui::Rect::from_center_size(
+        egui::pos2(box_rect.center().x, box_rect.top() - out),
+        egui::vec2(SIZE, SIZE),
+    )
+}
+
+/// Which part of a sticker's overlay the pointer is over.
+///
+/// Decided from the pointer rather than from which of several
+/// overlapping egui interact rects fired. Four corners, a rotation
+/// handle and a body all overlap, and egui hands the pointer to whichever
+/// was registered last, so half of each corner is unreachable and a
+/// gesture fails silently on whichever piece lost. That produced a
+/// control where resize worked, move did not and rotate was a 16px
+/// target you had to hit exactly.
+///
+/// The order matters: rotation wins over the corners, because the corner
+/// test is a radius around each corner and the handle sits above them.
+pub fn sticker_handle_at(
+    pointer: egui::Pos2,
+    box_rect: egui::Rect,
+    grip: f32,
+    rot_rect: egui::Rect,
+) -> StickerMode {
+    if rot_rect.contains(pointer) {
+        return StickerMode::Rotate;
+    }
+    let half = grip / 2.0;
+    for corner in [
+        box_rect.left_top(),
+        box_rect.right_top(),
+        box_rect.right_bottom(),
+        box_rect.left_bottom(),
+    ] {
+        if pointer.distance(corner) <= half {
+            return StickerMode::Scale;
+        }
+    }
+    StickerMode::Move
+}
+
 /// One sticker resolved to screen space, ready to paint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StickerQuad {
@@ -10567,115 +10615,149 @@ impl CapRustApp {
         // Drawn whenever the sticker is selected, not on hover. A handle
         // that appears only once the pointer is already on it is a handle
         // nobody finds.
-        let stroke = egui::Stroke::new(1.5, self.theme.accent_color());
-        let mode = self
+        const GRIP: f32 = 12.0;
+        let accent = self.theme.accent_color();
+        let stroke = egui::Stroke::new(1.5, accent);
+        let rot_rect = rotation_grip_rect(box_rect);
+
+        // ONE interact rect for the whole overlay, and the zone worked
+        // out from the pointer.
+        //
+        // Four corner rects, a rotation rect and a body rect all overlap
+        // here, and egui settles that by registration order: the piece
+        // added last takes the pointer. Whichever way that falls, half of
+        // each corner is unreachable and a gesture silently fails on the
+        // other pieces. That is how this read -- resize worked because
+        // its grips stuck out past the body, move never started because
+        // the body was `Sense::click()`, which is not draggable, and
+        // rotate had a 16px target the body sat next to. Deciding the
+        // zone ourselves removes the question.
+        let resp = ui.interact(
+            box_rect.union(rot_rect),
+            egui::Id::new(("sticker_overlay", clip_id)),
+            egui::Sense::click_and_drag(),
+        );
+
+        ui.painter()
+            .rect_stroke(box_rect, 0.0, stroke, egui::StrokeKind::Middle);
+        for corner in [
+            box_rect.left_top(),
+            box_rect.right_top(),
+            box_rect.right_bottom(),
+            box_rect.left_bottom(),
+        ] {
+            ui.painter().rect_stroke(
+                egui::Rect::from_center_size(corner, egui::vec2(GRIP, GRIP)),
+                0.0,
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+        }
+        ui.painter().line_segment(
+            [
+                egui::pos2(box_rect.center().x, box_rect.top()),
+                rot_rect.center(),
+            ],
+            stroke,
+        );
+        ui.painter()
+            .circle_filled(rot_rect.center(), GRIP * 0.42, accent);
+
+        let pointer = resp.interact_pointer_pos();
+        let under = pointer.map(|p| sticker_handle_at(p, box_rect, GRIP, rot_rect));
+
+        // Latched at the start of a drag, so a gesture does not change
+        // meaning halfway through because the pointer crossed a corner.
+        let active = self
             .sticker_drag
             .as_ref()
             .filter(|d| d.clip_id == clip_id)
-            .map(|d| d.mode)
-            .unwrap_or(StickerMode::Move);
-        ui.painter()
-            .rect_stroke(box_rect, 0.0, stroke, egui::StrokeKind::Middle);
+            .map(|d| d.mode);
+        let mode = match (resp.dragged(), active) {
+            (true, Some(m)) => m,
+            (true, None) => under.unwrap_or(StickerMode::Move),
+            (false, _) => StickerMode::Move,
+        };
 
-        const GRIP: f32 = 11.0;
-        let corner = self.sticker_corner_grips(ui, clip_id, box_rect, GRIP, stroke);
-        let corner_down = corner.is_some();
-
-        // --- Rotation handle, above the box ---
-        let rot_pt = egui::pos2(
-            box_rect.center().x,
-            box_rect.top() - box_rect.height() * 0.45,
-        );
-        let rot_grip = egui::Rect::from_center_size(rot_pt, egui::vec2(GRIP * 1.5, GRIP * 1.5));
-        ui.painter().line_segment(
-            [egui::pos2(box_rect.center().x, box_rect.top()), rot_pt],
-            stroke,
-        );
-        let rot_resp = ui.interact(
-            rot_grip,
-            egui::Id::new(("sticker_rotate", clip_id)),
-            egui::Sense::drag(),
-        );
-        if rot_resp.hovered() || mode == StickerMode::Rotate {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            ui.painter()
-                .circle_filled(rot_grip.center(), GRIP * 0.5, self.theme.accent_color());
-        }
-
-        // The body goes in last so a pointer sitting on a corner resolves
-        // to the corner: egui gives the most recently added overlapping
-        // rect the pointer.
-        let body_resp = ui.interact(
-            box_rect,
-            egui::Id::new(("sticker_move", clip_id)),
-            egui::Sense::click(),
-        );
-        if body_resp.hovered() && !rot_resp.dragged() && !corner_down {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+        if resp.hovered() || mode != StickerMode::Move {
+            let icon = match mode {
+                StickerMode::Rotate => egui::CursorIcon::Grab,
+                StickerMode::Scale => egui::CursorIcon::Crosshair,
+                StickerMode::Move => egui::CursorIcon::Move,
+            };
+            ui.ctx().set_cursor_icon(icon);
         }
 
         // --- Gestures ---
-        if rot_resp.dragged() {
-            let p = rot_resp.interact_pointer_pos().unwrap_or(box_rect.center());
-            let ang = (p.y - box_rect.center().y)
-                .atan2(p.x - box_rect.center().x)
-                .to_degrees();
-            // Handle straight up is zero, not atan2's rightward zero.
-            let mut deg = (ang + 90.0).rem_euclid(360.0);
-            // Shift snaps to 15 degrees, which is what every editor does
-            // and the only way to get anything straight.
-            if ui.input(|i| i.modifiers.shift) {
-                deg = (deg / 15.0).round() * 15.0;
+        if resp.dragged() {
+            match mode {
+                StickerMode::Rotate => {
+                    let p = pointer.unwrap_or(box_rect.center());
+                    let ang = (p.y - box_rect.center().y)
+                        .atan2(p.x - box_rect.center().x)
+                        .to_degrees();
+                    // The handle is drawn straight up, so straight up is
+                    // zero rather than atan2's rightward zero. Egui's y
+                    // points down, so this is clockwise on screen.
+                    let mut deg = (ang + 90.0).rem_euclid(360.0);
+                    // Shift snaps to 15 degrees, which is what every
+                    // editor does and the only way to get anything
+                    // straight.
+                    if ui.input(|i| i.modifiers.shift) {
+                        deg = (deg / 15.0).round() * 15.0;
+                    }
+                    self.drag_sticker(
+                        clip_id,
+                        StickerGeom {
+                            scale: place.scale,
+                            centre,
+                            aspect: place.aspect,
+                            frame_aspect: fa,
+                            rotation: deg,
+                        },
+                        StickerMode::Rotate,
+                    );
+                }
+                StickerMode::Scale => {
+                    // Size is the pointer's distance from where the box
+                    // was centred when the gesture began, so the centre
+                    // holds still and the sticker grows in place.
+                    let p = pointer.unwrap_or(box_rect.center());
+                    let d = p - box_rect.center();
+                    let scale = (d.length() / frame_rect.height().max(1.0)).clamp(0.02, 2.0);
+                    self.drag_sticker(
+                        clip_id,
+                        StickerGeom {
+                            scale,
+                            centre,
+                            aspect: place.aspect,
+                            frame_aspect: fa,
+                            rotation: live,
+                        },
+                        StickerMode::Scale,
+                    );
+                }
+                StickerMode::Move => {
+                    let d = resp.drag_delta();
+                    let cx = (centre.x + d.x / frame_rect.width().max(1.0)).clamp(-1.0, 2.0);
+                    let cy = (centre.y + d.y / frame_rect.height().max(1.0)).clamp(-1.0, 2.0);
+                    self.drag_sticker(
+                        clip_id,
+                        StickerGeom {
+                            scale: place.scale,
+                            centre: egui::pos2(cx, cy),
+                            aspect: place.aspect,
+                            frame_aspect: fa,
+                            rotation: live,
+                        },
+                        StickerMode::Move,
+                    );
+                }
             }
-            self.drag_sticker(
-                clip_id,
-                StickerGeom {
-                    scale: place.scale,
-                    centre,
-                    aspect: place.aspect,
-                    frame_aspect: fa,
-                    rotation: deg,
-                },
-                StickerMode::Rotate,
-            );
-        } else if let Some(resp) = corner {
-            // Size is the pointer's distance from where the box was
-            // centred when the drag began, so the centre holds still and
-            // the sticker grows the way a frame-centred scale should.
-            let p = resp.interact_pointer_pos().unwrap_or(box_rect.center());
-            let d = p - box_rect.center();
-            let scale = (d.length() / frame_rect.height().max(1.0)).clamp(0.02, 2.0);
-            self.drag_sticker(
-                clip_id,
-                StickerGeom {
-                    scale,
-                    centre,
-                    aspect: place.aspect,
-                    frame_aspect: fa,
-                    rotation: live,
-                },
-                StickerMode::Scale,
-            );
-        } else if body_resp.dragged() {
-            let d = body_resp.drag_delta();
-            let cx = (centre.x + d.x / frame_rect.width().max(1.0)).clamp(-1.0, 2.0);
-            let cy = (centre.y + d.y / frame_rect.height().max(1.0)).clamp(-1.0, 2.0);
-            self.drag_sticker(
-                clip_id,
-                StickerGeom {
-                    scale: place.scale,
-                    centre: egui::pos2(cx, cy),
-                    aspect: place.aspect,
-                    frame_aspect: fa,
-                    rotation: live,
-                },
-                StickerMode::Move,
-            );
         }
 
         // Release: one command for the whole gesture.
-        let still_down = rot_resp.dragged() || corner_down || body_resp.dragged();
-        if self.sticker_drag.is_some() && !still_down {
+        if self.sticker_drag.is_some() && !resp.dragged() {
             if let Some(d) = self.sticker_drag.take() {
                 let moved = d.from.scale != d.to.scale
                     || d.from.x != d.to.x
@@ -10691,44 +10773,6 @@ impl CapRustApp {
                 }
             }
         }
-    }
-
-    /// Four corner grips. Returns the response of whichever is down, so
-    /// the caller can read the pointer position off it.
-    fn sticker_corner_grips(
-        &mut self,
-        ui: &mut egui::Ui,
-        clip_id: uuid::Uuid,
-        box_rect: egui::Rect,
-        grip: f32,
-        stroke: egui::Stroke,
-    ) -> Option<egui::Response> {
-        let mut hit = None;
-        for (i, corner) in [
-            box_rect.left_top(),
-            box_rect.right_top(),
-            box_rect.right_bottom(),
-            box_rect.left_bottom(),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let r = egui::Rect::from_center_size(corner, egui::vec2(grip, grip));
-            let resp = ui.interact(
-                r,
-                egui::Id::new(("sticker_corner", clip_id, i)),
-                egui::Sense::drag(),
-            );
-            if resp.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-            }
-            ui.painter()
-                .rect_stroke(r, 0.0, stroke, egui::StrokeKind::Middle);
-            if resp.dragged() {
-                hit = Some(resp);
-            }
-        }
-        hit
     }
 
     /// The angle to draw this frame, which during a rotation drag is the
@@ -15297,6 +15341,119 @@ mod sticker_overlay_tests {
         assert!(
             panel.contains("let sticker_rect = overlay_ctx.map(|(r, _)| r).unwrap_or(rect);"),
             "the sticker overlay is not anchored to draw_rect"
+        );
+    }
+    /// The middle of a sticker moves it, a corner sizes it and the
+    /// handle above turns it. All three have to be reachable: the
+    /// previous version let egui's overlapping-rect priority decide, and
+    /// the outcome was a control where resize worked, move did not start
+    /// and rotate needed a 16px hit.
+    #[test]
+    fn each_part_of_the_overlay_is_reachable() {
+        const GRIP: f32 = 12.0;
+        let box_rect =
+            egui::Rect::from_min_size(egui::pos2(200.0, 100.0), egui::vec2(160.0, 120.0));
+        let rot_rect = super::rotation_grip_rect(box_rect);
+
+        let at = |p: egui::Pos2| super::sticker_handle_at(p, box_rect, GRIP, rot_rect);
+
+        // Middle, and the edges away from the corners, are all a move.
+        for p in [
+            box_rect.center(),
+            box_rect.left_top() + egui::vec2(30.0, 30.0),
+            box_rect.center_top() + egui::vec2(-20.0, 0.0),
+            box_rect.right_bottom() + egui::vec2(-30.0, -30.0),
+        ] {
+            assert_eq!(at(p), super::StickerMode::Move, "at {p:?}");
+        }
+
+        // Every corner is a size, including the ones where the grip only
+        // overlaps the body.
+        for c in [
+            box_rect.left_top(),
+            box_rect.right_top(),
+            box_rect.right_bottom(),
+            box_rect.left_bottom(),
+        ] {
+            assert_eq!(at(c), super::StickerMode::Scale, "at {c:?}");
+            // And just off the exact corner, still a size.
+            assert_eq!(
+                at(c + egui::vec2(4.0, 0.0)),
+                super::StickerMode::Scale,
+                "just off {c:?}"
+            );
+        }
+
+        // The rotation handle.
+        assert_eq!(at(rot_rect.center()), super::StickerMode::Rotate);
+    }
+
+    /// The handle has to be somewhere reachable rather than tucked under
+    /// the pointer or off the top of the picture, and it must not sit on
+    /// the sticker itself -- a rotation target inside the box is one the
+    /// body wins.
+    #[test]
+    fn the_rotation_handle_sits_above_the_box_and_off_it() {
+        let tall = egui::Rect::from_min_size(egui::pos2(100.0, 200.0), egui::vec2(200.0, 300.0));
+        let flat = egui::Rect::from_min_size(egui::pos2(100.0, 200.0), egui::vec2(200.0, 6.0));
+        for box_rect in [tall, flat] {
+            let r = super::rotation_grip_rect(box_rect);
+            assert!(
+                r.max.y < box_rect.min.y,
+                "the handle overlaps the box: {r:?} vs {box_rect:?}"
+            );
+            assert!(
+                (r.center().x - box_rect.center().x).abs() < 0.01,
+                "the handle is off the centre line"
+            );
+            assert!(r.width() >= 20.0, "the handle is a {}px target", r.width());
+        }
+    }
+
+    /// A sticker scaled almost to nothing still needs a handle that is
+    /// not sitting on the picture, or every drag is a rotate by accident.
+    #[test]
+    fn a_tiny_sticker_still_has_a_hand_stand_off() {
+        let tiny = egui::Rect::from_min_size(egui::pos2(300.0, 300.0), egui::vec2(4.0, 4.0));
+        let r = super::rotation_grip_rect(tiny);
+        assert!(r.max.y < tiny.min.y, "{r:?} vs {tiny:?}");
+        assert!(tiny.min.y - r.center().y >= 18.0);
+    }
+
+    /// The overlay registers one interact rect covering both the box and
+    /// the handle. More than one means egui decides who gets the pointer,
+    /// and that is what went wrong before.
+    #[test]
+    fn the_overlay_registers_exactly_one_interact_rect() {
+        let src = include_str!("app.rs");
+        let panel = src
+            .split_once("fn preview_sticker_handles")
+            .expect("no preview_sticker_handles")
+            .1;
+        let panel = &panel[..panel.find("\n    fn ").unwrap_or(panel.len())];
+
+        let n = panel.matches("ui.interact(").count();
+        assert_eq!(n, 1, "the sticker overlay registers {n} interact rects");
+        assert!(
+            panel.contains("egui::Sense::click_and_drag()"),
+            "the overlay is not draggable; Sense::click() alone never sets dragged()"
+        );
+        // Checked with the draggable variant masked out, since
+        // `click_and_drag` contains `click` as a substring -- and with
+        // comments stripped, since this function explains the mistake in
+        // prose that quotes it.
+        let code: String = panel
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let code = code.replace("Sense::click_and_drag()", "");
+        assert!(
+            !code.contains("Sense::click()"),
+            "Sense::click() on its own cannot start a drag"
         );
     }
 }
