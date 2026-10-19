@@ -331,6 +331,30 @@ impl ProjectState {
     /// `track_index` on the surviving clips refers to positions in the
     /// original list. Renumbering would have to rewrite every clip, and
     /// an empty track renders nothing anyway.
+    /// Sticker clips on a visible track that the playhead is over.
+    ///
+    /// The preview draws these itself rather than leaving them to ffmpeg,
+    /// so this is the list it draws. It takes no selection and offers no
+    /// way to filter on one: the handles follow the selection, the
+    /// picture does not, and an earlier version that gated the drawing on
+    /// `selected_clips` left every sticker in the edit invisible the
+    /// moment it stopped being selected.
+    pub fn stickers_under_playhead(&self, playhead_ms: u64) -> Vec<&Clip> {
+        self.clips
+            .iter()
+            .filter(|c| c.overlay.is_some())
+            .filter(|c| {
+                playhead_ms >= c.start_time_ms && playhead_ms < c.start_time_ms + c.duration_ms
+            })
+            .filter(|c| {
+                self.tracks
+                    .get(c.track_index)
+                    .map(|t| t.visible)
+                    .unwrap_or(true)
+            })
+            .collect()
+    }
+
     pub fn without_overlay_clips(&self) -> Self {
         let mut p = self.clone();
         p.clips.retain(|c| c.overlay.is_none());
@@ -1634,5 +1658,87 @@ mod relink_orphan_tests {
         );
         // And the original is untouched.
         assert_eq!(p.clips.len(), 3);
+    }
+
+    /// The preview draws these, so the list has to be right about the
+    /// playhead, the track's visibility, and above all about not caring
+    /// what is selected -- which is the thing that broke.
+    #[test]
+    fn stickers_under_playhead_lists_every_visible_one() {
+        use crate::clip::{Clip, ClipType, OverlayPlacement};
+        use crate::track::{Track, TrackKind};
+
+        let mut p = ProjectState::default();
+        // Cleared so track indices in the fixtures below are the indices
+        // they look like. A default project already ships tracks, and
+        // index 0 would silently be one of those.
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks.push(Track::new("hidden", TrackKind::Video));
+        p.tracks.last_mut().unwrap().visible = false;
+
+        let at = |id: u128, track: usize, start: u64, dur: u64, sticker: bool| {
+            let mut c = Clip::new_video("a.mp4", track, start, dur);
+            c.id = uuid::Uuid::from_u128(id);
+            if sticker {
+                c.clip_type = ClipType::Image {
+                    path: String::from("s.png"),
+                    duration_ms: dur,
+                };
+                c.overlay = Some(OverlayPlacement::default_sticker());
+            }
+            c
+        };
+
+        // On screen at t=1000: a sticker on a visible track, a sticker on
+        // a hidden one, plain footage, and a sticker that starts later.
+        p.clips.push(at(1, 0, 0, 4000, true));
+        p.clips.push(at(2, 1, 0, 4000, true));
+        p.clips.push(at(3, 0, 0, 4000, false));
+        p.clips.push(at(4, 0, 2000, 4000, true));
+        // A second one that also qualifies. Without it the list would
+        // still come out right if the function quietly returned only the
+        // first match, which is the sort of truncation nobody notices
+        // until there are three stickers in the edit.
+        p.clips.push(at(5, 0, 500, 4000, true));
+
+        let got: Vec<uuid::Uuid> = p
+            .stickers_under_playhead(1000)
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+
+        assert_eq!(
+            got,
+            vec![uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(5)],
+            "expected both visible stickers covering t=1000"
+        );
+
+        // Nothing selected anywhere, and they are still listed. There is
+        // no selection argument to this function on purpose.
+        assert_eq!(p.stickers_under_playhead(1000).len(), 2);
+
+        // And it empties when the playhead moves past it.
+        assert!(p.stickers_under_playhead(9000).is_empty());
+    }
+
+    /// A sticker on a track index that does not exist is still drawn
+    /// rather than silently dropped: the clip is there, and a track that
+    /// has not been created yet is not a reason to hide its content.
+    #[test]
+    fn a_sticker_on_a_missing_track_is_still_listed() {
+        use crate::clip::{Clip, ClipType, OverlayPlacement};
+
+        let mut p = ProjectState::default();
+        let mut c = Clip::new_video("a.mp4", 7, 0, 4000);
+        c.id = uuid::Uuid::from_u128(9);
+        c.clip_type = ClipType::Image {
+            path: String::from("s.png"),
+            duration_ms: 4000,
+        };
+        c.overlay = Some(OverlayPlacement::default_sticker());
+        p.clips.push(c);
+
+        assert_eq!(p.stickers_under_playhead(0).len(), 1);
     }
 }

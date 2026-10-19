@@ -702,6 +702,66 @@ pub struct StickerDrag {
     pub mode: StickerMode,
 }
 
+/// One sticker resolved to screen space, ready to paint.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StickerQuad {
+    /// The PNG to draw. Bundled stickers are addressed by id, anything
+    /// else by path; `paint_sticker_quad` works out which.
+    pub path: String,
+    /// Corners in frame order: top-left, top-right, bottom-right,
+    /// bottom-left. Already turned.
+    pub corners: [egui::Pos2; 4],
+}
+
+/// Every sticker that belongs on screen over `frame_rect`, in timeline
+/// order.
+///
+/// Free-standing, taking the project and the playhead and nothing else,
+/// so what gets drawn cannot quietly grow a condition. The version of
+/// this that lived in `App` gated the painting on the selection --
+/// correct while ffmpeg was compositing stickers as well, and the reason
+/// every sticker in an edit went invisible the moment it stopped being
+/// selected, which is nearly always: ffmpeg was not drawing it either by
+/// then.
+pub fn sticker_quads(
+    project: &caprust_core::ProjectState,
+    playhead_ms: u64,
+    frame_rect: egui::Rect,
+) -> Vec<StickerQuad> {
+    let fa = frame_rect.width() / frame_rect.height().max(1.0);
+    let mut out = Vec::new();
+    for c in project.stickers_under_playhead(playhead_ms) {
+        let Some(place) = c.overlay.as_ref() else {
+            continue;
+        };
+        let path = match &c.clip_type {
+            caprust_core::ClipType::Image { path, .. } => path.clone(),
+            _ => continue,
+        };
+        let (bx, by, bw, bh) = place.frame_box_at(fa, 0.0);
+        let (cx, cy) = (bx + bw / 2.0, by + bh / 2.0);
+        let (sin, cos) = place.rotation.to_radians().sin_cos();
+        let w = frame_rect.width() * bw;
+        let h = frame_rect.height() * bh;
+        let at = |dx: f32, dy: f32| {
+            egui::pos2(
+                frame_rect.left() + frame_rect.width() * cx + dx * cos - dy * sin,
+                frame_rect.top() + frame_rect.height() * cy + dx * sin + dy * cos,
+            )
+        };
+        out.push(StickerQuad {
+            path,
+            corners: [
+                at(-w / 2.0, -h / 2.0),
+                at(w / 2.0, -h / 2.0),
+                at(w / 2.0, h / 2.0),
+                at(-w / 2.0, h / 2.0),
+            ],
+        });
+    }
+    out
+}
+
 /// Which gesture a sticker drag is currently doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StickerMode {
@@ -10424,7 +10484,10 @@ impl CapRustApp {
 
     /// Draw and manipulate the selected sticker over the preview frame.
     ///
-    /// The sticker is painted here, by egui, rather than left to ffmpeg.
+    /// Paint every sticker the playhead is over, then put handles on the
+    /// selected one.
+    ///
+    /// Stickers are painted here, by egui, rather than left to ffmpeg.
     /// That is what makes a drag feel immediate: compositing a PNG over a
     /// frame is work the renderer does every frame anyway, while the same
     /// change in the filtergraph means tearing down and rebuilding an
@@ -10437,7 +10500,33 @@ impl CapRustApp {
     /// exactly this reason, and `preview_hash` is the matching half: two
     /// copies of one mark in a frame would show a stale one whenever the
     /// encoder had not caught up yet.
+    ///
+    /// Which is why the painting may not be conditional on a selection.
+    /// Painting only the selected sticker, on top of dropping it from
+    /// ffmpeg, made every sticker in the edit invisible: the preview went
+    /// blank as soon as a sticker stopped being selected, which is most of
+    /// the time. The handles follow the selection. The picture does not.
     fn preview_sticker_drag(&mut self, ui: &mut egui::Ui, frame_rect: egui::Rect) {
+        let fa = frame_rect.width() / frame_rect.height().max(1.0);
+        self.preview_stickers_paint(ui, frame_rect);
+        self.preview_sticker_handles(ui, frame_rect, fa);
+    }
+
+    /// Draw every sticker on a visible track that the playhead is over.
+    /// Draw every sticker that belongs on screen over the frame.
+    ///
+    /// Which stickers those are, and where each one goes, comes from
+    /// `sticker_quads`, which takes the project and the playhead and
+    /// nothing else. All that is left here is loading the pixels, so
+    /// there is nowhere for a "but only if it is selected" to hide.
+    fn preview_stickers_paint(&mut self, ui: &mut egui::Ui, frame_rect: egui::Rect) {
+        for q in sticker_quads(&self.project, self.playhead_ms, frame_rect) {
+            self.paint_sticker_quad(ui, &q);
+        }
+    }
+
+    /// Handles and manipulation, for the selected sticker only.
+    fn preview_sticker_handles(&mut self, ui: &mut egui::Ui, frame_rect: egui::Rect, fa: f32) {
         let Some(clip_id) = self.selected_clips.first().copied() else {
             self.sticker_drag = None;
             return;
@@ -10450,12 +10539,6 @@ impl CapRustApp {
             self.sticker_drag = None;
             return;
         };
-        // Copied out because the texture cache is `&mut self` and the
-        // clip is borrowed from `self.project`.
-        let image_path = match &clip.clip_type {
-            caprust_core::ClipType::Image { path, .. } => Some(path.clone()),
-            _ => None,
-        };
         // Only while the playhead is over it. The sticker is not on
         // screen the rest of the time, and drawing it anyway would put a
         // mark in a frame that has none.
@@ -10465,7 +10548,6 @@ impl CapRustApp {
             return;
         }
 
-        let fa = frame_rect.width() / frame_rect.height().max(1.0);
         // The angle on screen is not always the angle in the model: while
         // the rotation handle is down, the pointer's angle is ahead of
         // the model until the next line runs.
@@ -10480,10 +10562,6 @@ impl CapRustApp {
             ),
             egui::vec2(frame_rect.width() * bw, frame_rect.height() * bh),
         );
-
-        if let Some(path) = image_path {
-            self.paint_sticker(ui, &path, frame_rect, unit_rect, centre, live);
-        }
 
         // --- Handles ---
         // Drawn whenever the sticker is selected, not on hover. A handle
@@ -10664,46 +10742,24 @@ impl CapRustApp {
         }
     }
 
-    /// Paint the sticker into the preview, turned about its centre.
+    /// Paint one resolved sticker quad.
     ///
-    /// A mesh rather than an image widget: egui's image helpers only do
-    /// axis-aligned rects, and the turn is the entire point.
-    fn paint_sticker(
-        &mut self,
-        ui: &mut egui::Ui,
-        path: &str,
-        frame_rect: egui::Rect,
-        unit_rect: egui::Rect,
-        centre: egui::Pos2,
-        rotation: f32,
-    ) {
-        let tex = match caprust_core::stickers::find(path) {
-            Some(_) => self.sticker_tex.load_embedded(ui.ctx(), path),
+    /// All the geometry is already done by `sticker_quads`; this is just
+    /// pixels into a texture and two triangles.
+    fn paint_sticker_quad(&mut self, ui: &mut egui::Ui, q: &StickerQuad) {
+        let tex = match caprust_core::stickers::find(&q.path) {
+            Some(_) => self.sticker_tex.load_embedded(ui.ctx(), &q.path),
             None => self
                 .sticker_tex
-                .load_path(ui.ctx(), path, std::path::Path::new(path)),
+                .load_path(ui.ctx(), &q.path, std::path::Path::new(&q.path)),
         };
         let Some(tex) = tex else { return };
-
-        let w = frame_rect.width() * unit_rect.width();
-        let h = frame_rect.height() * unit_rect.height();
-        let (sin, cos) = rotation.to_radians().sin_cos();
-        let at = |dx: f32, dy: f32| {
-            egui::pos2(
-                frame_rect.left() + frame_rect.width() * centre.x + dx * cos - dy * sin,
-                frame_rect.top() + frame_rect.height() * centre.y + dx * sin + dy * cos,
-            )
-        };
-        let (tl, tr, br, bl) = (
-            at(-w / 2.0, -h / 2.0),
-            at(w / 2.0, -h / 2.0),
-            at(w / 2.0, h / 2.0),
-            at(-w / 2.0, h / 2.0),
-        );
+        let (tl, tr, br, bl) = (q.corners[0], q.corners[1], q.corners[2], q.corners[3]);
 
         let white = egui::Color32::WHITE;
         // A mesh vertex's uv is a Pos2 -- it is the texel coordinate, not
-        // an offset.
+        // an offset. egui's image widgets only do axis-aligned rects, and
+        // the turn is the entire point.
         let v = |p: egui::Pos2, u: f32, w: f32| egui::epaint::Vertex {
             pos: p,
             uv: egui::epaint::Pos2::new(u, w),
@@ -15024,4 +15080,159 @@ fn new_project_preview(ui: &mut egui::Ui, draft: &NewProjectDraft) {
             .small()
             .color(ui.visuals().weak_text_color()),
     );
+}
+
+#[cfg(test)]
+mod sticker_overlay_tests {
+    /// The bug this file's comment keeps referring to: the preview drew
+    /// stickers only when one was selected, while ffmpeg had already
+    /// stopped drawing them, so the preview went blank.
+    ///
+    /// `sticker_quads` takes the project and the playhead. There is no
+    /// selection argument and no way to reach one from inside it, which
+    /// is the point: a sticker with nothing selected still has to come
+    /// out of it, because in the editor nothing is selected most of the
+    /// time.
+    #[test]
+    fn stickers_are_drawn_with_nothing_selected() {
+        use caprust_core::clip::{Clip, ClipType, OverlayPlacement};
+        use caprust_core::track::{Track, TrackKind};
+
+        let mut p = caprust_core::ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks.push(Track::new("V2", TrackKind::Video));
+        p.tracks.last_mut().unwrap().visible = false;
+
+        let sticker = |id: u128, track: usize, start: u64| {
+            let mut c = Clip::new_video("s.png", track, start, 4000);
+            c.id = uuid::Uuid::from_u128(id);
+            c.clip_type = ClipType::Image {
+                path: format!("s{id}.png"),
+                duration_ms: 4000,
+            };
+            c.overlay = Some(OverlayPlacement::default_sticker());
+            c
+        };
+        p.clips.push(sticker(1, 0, 0)); // on screen, visible
+        p.clips.push(sticker(2, 1, 0)); // on screen, hidden track
+        p.clips.push(sticker(3, 0, 8000)); // off screen for now
+        let mut footage = Clip::new_video("a.mp4", 0, 0, 4000);
+        footage.id = uuid::Uuid::from_u128(4);
+        p.clips.push(footage);
+
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
+        let quads = super::sticker_quads(&p, 1000, frame);
+
+        assert_eq!(
+            quads.len(),
+            1,
+            "expected the one visible sticker under the playhead, got {}",
+            quads.len()
+        );
+        assert_eq!(quads[0].path, "s1.png");
+    }
+
+    /// The quad has to describe the sticker the export will composite,
+    /// so it is derived from `frame_box` and checked against the numbers
+    /// real ffmpeg produced for a 320x180 frame earlier.
+    #[test]
+    fn a_sticker_quad_lands_where_frame_box_says() {
+        use caprust_core::clip::{Clip, ClipType, OverlayPlacement};
+        use caprust_core::track::{Track, TrackKind};
+
+        let mut p = caprust_core::ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+
+        let mut c = Clip::new_video("s.png", 0, 0, 4000);
+        c.clip_type = ClipType::Image {
+            path: String::from("s.png"),
+            duration_ms: 4000,
+        };
+        c.overlay = Some(OverlayPlacement {
+            scale: 0.25,
+            x: 0.3,
+            y: 0.25,
+            aspect: 1.0,
+            rotation: 0.0,
+            animation: None,
+        });
+        p.clips.push(c);
+
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 180.0));
+        let quads = super::sticker_quads(&p, 0, frame);
+        assert_eq!(quads.len(), 1);
+        let q = &quads[0];
+
+        let (l, t, w, h) = OverlayPlacement {
+            scale: 0.25,
+            x: 0.3,
+            y: 0.25,
+            aspect: 1.0,
+            rotation: 0.0,
+            animation: None,
+        }
+        .frame_box(320.0 / 180.0);
+
+        let near = |got: egui::Pos2, want: f32| (got.x - want).abs() < 0.01;
+        assert!(near(q.corners[0], l * 320.0), "tl.x is {}", q.corners[0].x);
+        assert!(
+            near(q.corners[2], (l + w) * 320.0),
+            "br.x is {}",
+            q.corners[2].x
+        );
+        assert!((q.corners[0].y - t * 180.0).abs() < 0.01);
+        assert!((q.corners[2].y - (t + h) * 180.0).abs() < 0.01);
+    }
+
+    /// A turned sticker's quad is a turned rectangle, not a bounding box:
+    /// the four corners are off the axes, and opposite corners stay
+    /// opposite.
+    #[test]
+    fn a_turned_sticker_quad_is_turned_not_axis_aligned() {
+        use caprust_core::clip::{Clip, ClipType, OverlayPlacement};
+        use caprust_core::track::{Track, TrackKind};
+
+        let mut p = caprust_core::ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+
+        let mut c = Clip::new_video("s.png", 0, 0, 4000);
+        c.clip_type = ClipType::Image {
+            path: String::from("s.png"),
+            duration_ms: 4000,
+        };
+        c.overlay = Some(OverlayPlacement {
+            scale: 0.3,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: 30.0,
+            animation: None,
+        });
+        p.clips.push(c);
+
+        let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 180.0));
+        let q = &super::sticker_quads(&p, 0, frame)[0];
+        let [tl, tr, br, bl] = q.corners;
+
+        // A rectangle: every edge is perpendicular to the next.
+        let e1 = tr - tl;
+        let e2 = bl - tl;
+        assert!(
+            (e1.dot(e2)).abs() < 0.5,
+            "the quad is not a rectangle: edges dot to {}",
+            e1.dot(e2)
+        );
+        // And turned: the top edge is not horizontal.
+        assert!(e1.y.abs() > 1.0, "the top edge is still flat ({:?})", e1);
+        // Same height and width as the un-turned one times sqrt(2)-ish,
+        // and the centre is where it was.
+        let centre = tl.to_vec2() + (br - tl) / 2.0;
+        assert!(
+            (centre.x - 160.0).abs() < 0.01 && (centre.y - 90.0).abs() < 0.01,
+            "centre moved to {centre:?}"
+        );
+    }
 }
