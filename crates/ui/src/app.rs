@@ -850,6 +850,107 @@ pub fn sticker_motion(id: Option<&str>, t: f32, source_px: f32, screen_px: f32) 
     m
 }
 
+/// The factor a track's stored height is multiplied by to get the row
+/// height it is drawn at.
+///
+/// Two things decide it. The timeline size gives a nominal factor -- 1.0,
+/// 1.3, 1.7 for S, M and L -- and the tracks' own heights give the
+/// proportions between them.
+///
+/// When the nominal size does not fit, everything is scaled down
+/// together so that all the tracks stay on screen. In L the rows are
+/// 1.7 times taller, five of them do not fit, and the last one was cut
+/// off with no way to scroll to it. The proportions survive: a track
+/// resized to twice another's is still twice as tall, and the whole set
+/// is scaled to fit the space there is.
+///
+/// The result is that the sum of the row heights is at most
+/// `available_h`, and exactly that when they do not fit.
+pub fn lane_factor(size: caprust_core::TimelineSize, heights: &[f32], available_h: f32) -> f32 {
+    lane_layout(size, heights, available_h).factor
+}
+
+/// How the rows are laid out: the factor the stored heights are
+/// multiplied by, and what it takes to move a divider.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaneLayout {
+    /// The factor the stored heights are multiplied by.
+    pub factor: f32,
+    /// The sum of the stored heights.
+    pub total: f32,
+    /// Whether the set was scaled down to fit the space.
+    pub fitted: bool,
+}
+
+impl LaneLayout {
+    /// How much the dragged track's row height changes per unit of its
+    /// stored height, at this layout.
+    ///
+    /// When the set is scaled to fit, the rows are
+    /// `height * available / total`, and the total moves as the dragged
+    /// height moves. So the marginal rate is not the factor but the
+    /// factor times the share of the other tracks. Dividing the drag
+    /// delta by the plain factor left the divider trailing the pointer
+    /// by the dragged track's share of the height.
+    pub fn row_height_per_stored(&self, dragged_height: f32) -> f32 {
+        if !self.fitted || self.total <= 0.0 {
+            return self.factor;
+        }
+        self.factor * (self.total - dragged_height).max(0.0) / self.total
+    }
+}
+
+/// One frame of the track-height drag.
+///
+/// `dy` is the pointer's movement in screen pixels. The stored height
+/// moves by that divided by how much a unit of stored height changes the
+/// row -- which is not the factor when the rows are scaled to fit, and
+/// dividing by the plain factor left the divider trailing the pointer.
+///
+/// A function so the drag and its test are the same code, rather than
+/// the test driving a copy of it.
+pub fn stored_height_after_drag(stored: f32, dy: f32, layout: &LaneLayout) -> f32 {
+    let per_stored = layout.row_height_per_stored(stored);
+    (stored + dy / per_stored.max(1e-3)).clamp(40.0, 160.0)
+}
+
+/// The layout of the track rows.
+pub fn lane_layout(
+    size: caprust_core::TimelineSize,
+    heights: &[f32],
+    available_h: f32,
+) -> LaneLayout {
+    use caprust_core::TimelineSize;
+    let nominal = match size {
+        TimelineSize::S => 1.0,
+        TimelineSize::M => 1.3,
+        TimelineSize::L => 1.7,
+    };
+    let total: f32 = heights.iter().sum();
+    if total <= 0.0 || available_h <= 0.0 {
+        return LaneLayout {
+            factor: nominal,
+            total,
+            fitted: false,
+        };
+    }
+    // Fits: the nominal size, untouched.
+    if total * nominal <= available_h {
+        return LaneLayout {
+            factor: nominal,
+            total,
+            fitted: false,
+        };
+    }
+    // Does not: scale the whole set so the sum lands exactly on the
+    // space available.
+    LaneLayout {
+        factor: (available_h / total).min(nominal),
+        total,
+        fitted: true,
+    }
+}
+
 /// A point in screen pixels, as a fraction of the frame.
 ///
 /// Two coordinate systems run through the overlay and they are not
@@ -6467,6 +6568,21 @@ impl CapRustApp {
             }
         }
 
+        // The rows have to be the same height in both columns or the
+        // headers drift away from the lanes, and the factor is what
+        // decides that. Computed once, here, and used by both.
+        let lane_layout = lane_layout(
+            self.settings.timeline_size,
+            &self
+                .project
+                .tracks
+                .iter()
+                .map(|t| t.height)
+                .collect::<Vec<_>>(),
+            full_h - crate::timeline::ruler::RULER_HEIGHT,
+        );
+        let lane_factor = lane_layout.factor;
+
         let theme_snapshot = self.theme.clone();
         let tl_resp = ui.horizontal_top(|ui| {
             // LEFT: headers
@@ -6479,15 +6595,12 @@ impl CapRustApp {
                     ui.allocate_space(egui::vec2(header_w, ruler_h));
                     for &idx in &order {
                         let mut track = updated_tracks[idx].clone();
-                                                // How much bigger the lane is drawn at each
-                        // timeline size. Named, because the drag handle
-                        // below has to divide by it to turn screen pixels
-                        // back into a stored height.
-                        let lane_scale = match self.settings.timeline_size {
-                            caprust_core::TimelineSize::S => 1.0,
-                            caprust_core::TimelineSize::M => 1.3,
-                            caprust_core::TimelineSize::L => 1.7,
-                        };
+                        // How much bigger the lane is drawn at each
+                        // timeline size, scaled down if the set does not
+                        // fit. Named, because the drag handle below has
+                        // to divide by it to turn screen pixels back into
+                        // a stored height.
+                        let lane_scale = lane_factor;
                         let row_h = track.height * lane_scale;
                         let h_resp = ui.allocate_ui_with_layout(
                             egui::vec2(header_w, row_h),
@@ -6585,9 +6698,19 @@ impl CapRustApp {
                                 // so the stored height moves by `dy`
                                 // divided by the factor. Bounds are in
                                 // stored units, as they always were.
-                                let stored_dy = dy / lane_scale;
-                                track.height =
-                                    (track.height + stored_dy).clamp(40.0, 160.0);
+                                // The divider has to stay under the
+                                // pointer. When the rows are scaled to
+                                // fit, the marginal rate of the row
+                                // height is not the factor but the
+                                // factor times the dragged track's
+                                // share of the rest, so dividing by the
+                                // plain factor left the divider
+                                // trailing behind.
+                                track.height = stored_height_after_drag(
+                                    track.height,
+                                    dy,
+                                    &lane_layout,
+                                );
                                 header_changed = true;
                             }
                         }
@@ -6740,12 +6863,7 @@ impl CapRustApp {
                     let mut lane_stack_bottom: Option<f32> = None;
                     for &idx in &order {
                         let track = &updated_tracks[idx];
-                        let row_h = track.height
-                            * match self.settings.timeline_size {
-                                caprust_core::TimelineSize::S => 1.0,
-                                caprust_core::TimelineSize::M => 1.3,
-                                caprust_core::TimelineSize::L => 1.7,
-                            };
+                        let row_h = track.height * lane_factor;
                         let (lane_rect, lane_resp) = ui.allocate_exact_size(
                             egui::vec2(viewport_w, row_h),
                             egui::Sense::hover(),
@@ -14841,29 +14959,54 @@ mod track_height_drag_tests {
     /// drag. That grew the stored height without bound, the clamp pinned
     /// it at the maximum, and from there the drag could not lower it
     /// again -- the reported "I can make it bigger but never smaller".
-    fn apply(stored: f32, dy: f32, factor: f32) -> f32 {
-        (stored + dy / factor).clamp(40.0, 160.0)
+    ///
+    /// These went through a local copy of the arithmetic for a while,
+    /// which is the same mistake as testing a hand-written graph: the
+    /// copy and the real code could agree while the real code was
+    /// wrong. They call the production functions now.
+    use super::lane_layout;
+    use caprust_core::TimelineSize;
+
+    const SIZES: [(TimelineSize, f32); 3] = [
+        (TimelineSize::S, 1.0),
+        (TimelineSize::M, 1.3),
+        (TimelineSize::L, 1.7),
+    ];
+
+    /// One frame of the drag, the way the panel does it.
+    fn drag_frame(
+        stored: f32,
+        dy: f32,
+        size: TimelineSize,
+        heights: &[f32],
+        available: f32,
+    ) -> f32 {
+        let layout = lane_layout(size, heights, available);
+        let per_stored = layout.row_height_per_stored(stored);
+        (stored + dy / per_stored.max(1e-3)).clamp(40.0, 160.0)
     }
 
     #[test]
     fn the_divider_follows_the_pointer() {
-        for (name, factor) in [("S", 1.0f32), ("M", 1.3), ("L", 1.7)] {
+        for (size, factor) in SIZES {
+            // One track, so the layout is the nominal one.
+            let heights = [46.0f32];
             let mut stored = 46.0f32;
             let start_row = stored * factor;
             let dy = 10.0f32;
 
-            stored = apply(stored, dy, factor);
+            stored = drag_frame(stored, dy, size, &heights, 900.0);
             assert!(
                 (stored * factor - start_row - dy).abs() < 0.01,
-                "{name}: dragged down 10px, the row moved {}",
+                "{size:?}: dragged down 10px, the row moved {}",
                 stored * factor - start_row
             );
 
             let after_down = stored * factor;
-            stored = apply(stored, -dy, factor);
+            stored = drag_frame(stored, -dy, size, &heights, 900.0);
             assert!(
                 (after_down - stored * factor - dy).abs() < 0.01,
-                "{name}: dragged back up 10px, the row moved {}",
+                "{size:?}: dragged back up 10px, the row moved {}",
                 stored * factor - after_down
             );
         }
@@ -14871,31 +15014,32 @@ mod track_height_drag_tests {
 
     #[test]
     fn sixty_frames_of_dragging_does_not_run_the_height_away() {
-        for (name, factor) in [("S", 1.0f32), ("M", 1.3), ("L", 1.7)] {
+        for (size, factor) in SIZES {
+            let heights = [160.0f32];
             // Shrinking from the maximum has to actually reach the
             // minimum. The runaway pinned it at the maximum forever.
             let mut stored = 160.0f32;
             let mut before = stored * factor;
             for _ in 0..60 {
-                stored = apply(stored, -6.0, factor);
+                stored = drag_frame(stored, -6.0, size, &heights, 900.0);
                 assert!(
                     stored * factor <= before + 0.01,
-                    "{name}: dragging up made the row taller"
+                    "{size:?}: dragging up made the row taller"
                 );
                 before = stored * factor;
             }
             assert!(
                 stored < 41.0,
-                "{name}: could not shrink below the minimum, stuck at {stored}"
+                "{size:?}: could not shrink below the minimum, stuck at {stored}"
             );
 
             // And growing from the minimum has to reach the maximum
             // without overshooting past the clamp.
             let mut stored = 40.0f32;
             for _ in 0..60 {
-                stored = apply(stored, 6.0, factor);
+                stored = drag_frame(stored, 6.0, size, &heights, 900.0);
             }
-            assert!(stored <= 160.0 + f32::EPSILON, "{name}: ran to {stored}");
+            assert!(stored <= 160.0 + f32::EPSILON, "{size:?}: ran to {stored}");
         }
     }
 
@@ -16541,5 +16685,153 @@ mod sticker_overlay_tests {
             seg.contains("q.animation.is_some()"),
             "the repaint is not gated on the sticker being animated"
         );
+    }
+    /// Every track has to be on screen at every timeline size.
+    ///
+    /// In L the rows are 1.7 times taller, five of them did not fit, and
+    /// the last one was cut off with no way to scroll to it. The set is
+    /// now scaled down together to fit, which keeps the proportions
+    /// between the tracks -- a track twice as tall stays twice as tall.
+    #[test]
+    fn every_track_fits_at_every_timeline_size() {
+        use caprust_core::TimelineSize;
+
+        let heights = [46.0f32, 46.0, 46.0, 46.0, 46.0];
+        for available in [150.0f32, 300.0, 442.0, 900.0] {
+            for size in [TimelineSize::S, TimelineSize::M, TimelineSize::L] {
+                let layout = super::lane_layout(size, &heights, available);
+                let drawn: f32 = heights.iter().map(|h| h * layout.factor).sum();
+                assert!(
+                    drawn <= available + 0.01,
+                    "{size:?} at {available}px: the rows add up to {drawn}"
+                );
+                // And when they do not fit, they fill it exactly --
+                // there is no wasted space at the bottom.
+                if layout.fitted {
+                    assert!(
+                        (drawn - available).abs() < 0.01,
+                        "{size:?} at {available}px: the rows add up to {drawn}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A size that fits is left alone. Squeezing the rows when there is
+    /// room would make the size setting mean nothing.
+    #[test]
+    fn a_size_that_fits_is_left_alone() {
+        use caprust_core::TimelineSize;
+        let heights = [46.0f32, 46.0];
+        assert_eq!(
+            super::lane_layout(TimelineSize::S, &heights, 900.0).factor,
+            1.0
+        );
+        assert_eq!(
+            super::lane_layout(TimelineSize::M, &heights, 900.0).factor,
+            1.3
+        );
+        assert_eq!(
+            super::lane_layout(TimelineSize::L, &heights, 900.0).factor,
+            1.7
+        );
+        // And it says so, so the drag can use the plain rate.
+        assert!(!super::lane_layout(TimelineSize::L, &heights, 900.0).fitted);
+    }
+
+    /// The proportions between the tracks survive the scaling. A track
+    /// twice as tall as another is still twice as tall on screen.
+    #[test]
+    fn the_proportions_between_tracks_survive() {
+        use caprust_core::TimelineSize;
+        let heights = [92.0f32, 46.0, 46.0];
+        let layout = super::lane_layout(TimelineSize::L, &heights, 200.0);
+        assert!(layout.fitted, "this should not have fitted");
+        let drawn: Vec<f32> = heights.iter().map(|h| h * layout.factor).collect();
+        assert!(
+            (drawn[0] / drawn[1] - 2.0).abs() < 1e-4,
+            "the tall track is {} times the short one",
+            drawn[0] / drawn[1]
+        );
+    }
+
+    /// The divider has to stay under the pointer, which is what the
+    /// manual resize is for.
+    ///
+    /// When the rows are scaled to fit, the row height is
+    /// `height * available / total` and the total moves as the dragged
+    /// height moves, so the marginal rate is not the factor. Dividing by
+    /// the plain factor left the divider trailing the pointer by the
+    /// dragged track's share of the height -- on a five-track timeline
+    /// that is a fifth of the movement lost on every frame.
+    #[test]
+    fn the_divider_follows_the_pointer_whether_or_not_the_rows_are_scaled() {
+        use caprust_core::TimelineSize;
+
+        for (heights, available) in [
+            (vec![46.0f32, 46.0, 46.0], 900.0),             // fits
+            (vec![80.0f32, 80.0, 80.0, 80.0, 80.0], 200.0), // scaled
+        ] {
+            let layout = super::lane_layout(TimelineSize::L, &heights, available);
+            for (i, h) in heights.iter().enumerate() {
+                // Small enough that the 40..160 clamp on the stored
+                // height is not what is being measured. The clamp has
+                // its own test.
+                for dy in [3.0f32, -3.0, 6.0, -6.0] {
+                    // Through the production function, not a copy of
+                    // it: the drag has to be tested where it happens.
+                    let after = super::stored_height_after_drag(*h, dy, &layout);
+                    let per_stored = layout.row_height_per_stored(*h);
+                    let moved = per_stored * (after - *h);
+                    assert!(
+                        (moved - dy).abs() < 0.01,
+                        "track {i}: a {dy}px drag moved the divider {moved}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The stored height is bounded, so a drag that would take it past
+    /// the bound stops there. The divider then does not move the full
+    /// distance, which is correct: the row cannot be shorter than the
+    /// minimum.
+    #[test]
+    fn the_drag_stops_at_the_bounds() {
+        use caprust_core::TimelineSize;
+        let heights = [46.0f32, 46.0, 46.0];
+        let layout = super::lane_layout(TimelineSize::L, &heights, 900.0);
+
+        // Down, hard, from just above the minimum.
+        let after = super::stored_height_after_drag(41.0, -100.0, &layout);
+        assert!(
+            (after - 40.0).abs() < 1e-3,
+            "the height went to {after}, not the 40 floor"
+        );
+        // And up, from just below the maximum.
+        let after = super::stored_height_after_drag(159.0, 100.0, &layout);
+        assert!(
+            (after - 160.0).abs() < 1e-3,
+            "the height went to {after}, not the 160 ceiling"
+        );
+    }
+
+    /// The marginal rate has to be what the layout says it is, and not
+    /// the plain factor when the rows are scaled.
+    #[test]
+    fn the_marginal_rate_is_not_the_plain_factor_when_scaled() {
+        use caprust_core::TimelineSize;
+        let heights = [92.0f32, 46.0, 46.0, 46.0, 46.0];
+        let layout = super::lane_layout(TimelineSize::L, &heights, 200.0);
+        assert!(layout.fitted);
+        // The tall track's share is bigger, so its rows move less per
+        // unit of stored height.
+        let tall = layout.row_height_per_stored(92.0);
+        let short = layout.row_height_per_stored(46.0);
+        assert!(
+            tall < short,
+            "the tall track moves {tall} per unit, the short one {short}"
+        );
+        assert!(tall < layout.factor, "the tall one is not discounted");
     }
 }
