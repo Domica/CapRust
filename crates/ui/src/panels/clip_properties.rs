@@ -21,6 +21,9 @@ pub enum PropertiesTab {
     /// the video tab's controls are either meaningless or actively wrong
     /// on it.
     Sticker,
+    /// Keyframed movement, for text and for stickers. The same tab and
+    /// the same keyframes for both.
+    Trajectory,
 }
 
 #[derive(Debug, Default)]
@@ -84,6 +87,8 @@ pub enum PendingEdit {
     /// Overlay placement for a sticker. `None` clears it and puts the clip
     /// back to filling the frame.
     Overlay(Option<caprust_core::clip::OverlayPlacement>),
+    /// The clip's keyframed movement. An empty vector clears it.
+    Trajectory(Vec<caprust_core::clip::MotionKeyframe>),
     /// Edit the text of caption segment `idx` on the currently-selected
     /// Captions clip. Committed once per edit (blur or Enter), never
     /// per keystroke.
@@ -1074,6 +1079,13 @@ pub fn show(
     // audio. The video tab's controls are meaningless on it and the sound
     // tab has nothing to show, so it gets its own.
     let clip_is_sticker = clip.overlay.is_some();
+    // Text and stickers are the two things that move on their own. A
+    // piece of footage does not get a trajectory.
+    let clip_is_text = matches!(
+        clip.clip_type,
+        ClipType::TextOverlay { .. } | ClipType::Captions { .. }
+    );
+    let clip_can_trajectory = clip_is_sticker || clip_is_text;
     // Once per clip, not every frame. As a per-frame rule it undid the
     // user's click on the very next frame: `state.tab` was set to Sticker
     // on selection, the click on Efekti set it to Effects, and the next
@@ -1111,6 +1123,16 @@ pub fn show(
         {
             state.tab = PropertiesTab::Sound;
         }
+        if clip_can_trajectory
+            && chip::chip(
+                ui,
+                tr("props-tab-trajectory"),
+                state.tab == PropertiesTab::Trajectory,
+            )
+            .clicked()
+        {
+            state.tab = PropertiesTab::Trajectory;
+        }
         if chip::chip(
             ui,
             tr("props-tab-effects"),
@@ -1136,6 +1158,7 @@ pub fn show(
             PropertiesTab::Sound => show_sound(ui, clip, state),
             PropertiesTab::Effects => show_effects(ui, clip, state),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
+            PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
         });
 }
 
@@ -2541,6 +2564,117 @@ fn format_duration(ms: u64) -> String {
 
 /// The Sticker tab: everything about where the mark sits and how it
 /// behaves, and nothing that belongs to footage.
+/// The Trajectory tab: keyframed movement over the clip's own time.
+///
+/// The same tab for text and for stickers, and the same keyframes mean
+/// the same thing on both -- a point in frame fractions, where 0.5, 0.5 is
+/// the middle of the frame. The static placement is in a different space
+/// (a fraction of the thing's travel, which depends on how big it is),
+/// which is why the tab converts rather than sharing the numbers.
+fn show_trajectory(
+    ui: &mut Ui,
+    clip: &Clip,
+    state: &mut PropertiesState,
+    playhead_ms: u64,
+    project_dimensions: (u32, u32),
+) {
+    let (fw, fh) = project_dimensions;
+    let fa = fw as f32 / fh.max(1) as f32;
+
+    // Where the thing is right now, in the trajectory's space.
+    let current_centre = match &clip.clip_type {
+        ClipType::Image { .. } => clip
+            .overlay
+            .as_ref()
+            .map(|p| p.centre(fa))
+            .unwrap_or((0.5, 0.5)),
+        ClipType::TextOverlay { motion, .. } | ClipType::Captions { motion, .. } => {
+            (0.5 + motion.x, 0.5 + motion.y)
+        }
+        _ => (0.5, 0.5),
+    };
+
+    ui.label(egui::RichText::new(tr("props-trajectory")).strong());
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("props-trajectory-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::S);
+
+    let mut keys = clip.trajectory.clone();
+    let mut dirty = false;
+
+    if keys.is_empty() {
+        ui.label(
+            egui::RichText::new(tr("props-trajectory-empty"))
+                .small()
+                .color(egui::Color32::from_gray(130)),
+        );
+    }
+
+    // One row per keyframe: when, where, and a way to remove it.
+    let mut remove: Option<usize> = None;
+    for (i, k) in keys.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let mut t = k.t_ms as f32 / 1000.0;
+            if ui
+                .add(
+                    egui::Slider::new(&mut t, 0.0..=60.0)
+                        .suffix(" s")
+                        .text(tr("props-trajectory-time")),
+                )
+                .changed()
+            {
+                k.t_ms = (t * 1000.0).round() as u64;
+                dirty = true;
+            }
+            if ui.button("x").clicked() {
+                remove = Some(i);
+            }
+        });
+        ui.horizontal(|ui| {
+            let mut x = k.centre_x;
+            if ui
+                .add(egui::Slider::new(&mut x, 0.0..=1.0).text("x"))
+                .changed()
+            {
+                k.centre_x = x;
+                dirty = true;
+            }
+            let mut y = k.centre_y;
+            if ui
+                .add(egui::Slider::new(&mut y, 0.0..=1.0).text("y"))
+                .changed()
+            {
+                k.centre_y = y;
+                dirty = true;
+            }
+        });
+    }
+    if let Some(i) = remove {
+        keys.remove(i);
+        dirty = true;
+    }
+
+    // Add a keyframe where the thing is now, at the playhead.
+    if ui.button(tr("props-trajectory-add")).clicked() {
+        let t = playhead_ms.saturating_sub(clip.start_time_ms);
+        keys.push(caprust_core::clip::MotionKeyframe::new(
+            t,
+            current_centre.0,
+            current_centre.1,
+        ));
+        keys.sort_by_key(|k| k.t_ms);
+        dirty = true;
+    }
+
+    if dirty {
+        state.pending.push(PendingEdit::Trajectory(keys.clone()));
+    }
+}
+
 fn show_sticker(
     ui: &mut Ui,
     clip: &Clip,

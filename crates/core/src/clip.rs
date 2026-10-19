@@ -905,6 +905,17 @@ impl OverlayPlacement {
         limit.clamp(0.02, 2.0)
     }
 
+    /// Where the box's centre is, in frame fractions. The inverse of
+    /// `at_centre` for a placement that is already stored.
+    ///
+    /// A trajectory is in centre fractions and the static placement is in
+    /// travel fractions, so anything that moves between the two needs
+    /// this.
+    pub fn centre(&self, frame_aspect: f32) -> (f32, f32) {
+        let (w, h) = self.sized(0.0, frame_aspect);
+        ((1.0 - w) * self.x + w / 2.0, (1.0 - h) * self.y + h / 2.0)
+    }
+
     /// The placement that puts the box's centre at `(cx, cy)`, in the
     /// same unit-frame coordinates `frame_box` reports.
     ///

@@ -1058,10 +1058,26 @@ pub fn sticker_quads(
         };
         // Seconds since the sticker came up. Every animation is a
         // function of this, as it is in the filtergraph.
-        let t_sec = playhead_ms.saturating_sub(c.start_time_ms) as f32 / 1000.0;
+        let t_ms = playhead_ms.saturating_sub(c.start_time_ms);
+        let t_sec = t_ms as f32 / 1000.0;
+        // A trajectory says where the sticker is at this moment, in
+        // centre fractions. The static placement says where it is in
+        // travel fractions, so the two are not the same number and the
+        // conversion goes through `at_centre`.
+        let fa = frame_rect.width() / frame_rect.height().max(1.0);
+        let centre = caprust_core::clip::trajectory_at(&c.trajectory, t_ms)
+            .unwrap_or_else(|| place.centre(fa));
+        let placed = caprust_core::OverlayPlacement::at_centre(
+            centre.0,
+            centre.1,
+            place.scale,
+            place.aspect,
+            fa,
+            place.rotation,
+        );
         out.push(StickerQuad {
             path,
-            corners: sticker_corners(place, frame_rect, 0.0),
+            corners: sticker_corners(&placed, frame_rect, 0.0),
             animation: place.animation.clone(),
             t_sec,
         });
@@ -10428,6 +10444,7 @@ impl CapRustApp {
                                 PendingEdit::TrimDuration(v) => cmd.duration_ms(v),
                                 PendingEdit::TrackIndex(v) => cmd.track_index(v),
                                 PendingEdit::Overlay(v) => cmd.overlay(v),
+                                PendingEdit::Trajectory(v) => cmd.trajectory(v),
                                 _ => cmd,
                             });
                         }
@@ -11961,15 +11978,30 @@ impl CapRustApp {
                             above,
                             motion,
                             ..
-                        } => Some((
-                            id,
-                            content.chars().count() as f32,
-                            *font_size,
-                            *above,
-                            motion.x,
-                            motion.y,
-                            motion.scale,
-                        )),
+                        } => {
+                            // A trajectory overrides the static
+                            // motion, in the same way it does in the
+                            // render: the keyframes are in centre
+                            // fractions and the motion is an offset
+                            // from the centre.
+                            let traj = caprust_core::clip::trajectory_at(
+                                &c.trajectory,
+                                self.playhead_ms.saturating_sub(c.start_time_ms),
+                            );
+                            let (mx, my) = match traj {
+                                Some((cx, cy)) => (cx - 0.5, cy - 0.5),
+                                None => (motion.x, motion.y),
+                            };
+                            Some((
+                                id,
+                                content.chars().count() as f32,
+                                *font_size,
+                                *above,
+                                mx,
+                                my,
+                                motion.scale,
+                            ))
+                        }
                         _ => None,
                     })
             });
@@ -16614,7 +16646,7 @@ mod sticker_overlay_tests {
             .1;
         let seg = &seg[..seg.find("\n}\n").unwrap_or(seg.len())];
         assert!(
-            seg.contains("sticker_corners(place, frame_rect, 0.0)"),
+            seg.contains("sticker_corners("),
             "sticker_quads is not built from sticker_corners"
         );
         assert!(

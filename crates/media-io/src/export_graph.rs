@@ -59,6 +59,10 @@ pub struct VideoClip {
     /// the fit chain (scale to a fraction of the frame instead of the
     /// frame) and the compositing coordinates.
     pub overlay: Option<caprust_core::clip::OverlayPlacement>,
+    /// Keyframed movement over the clip's own time. Empty is the normal
+    /// case. The times are relative to the clip's start; the compositor
+    /// shifts them onto the timeline.
+    pub trajectory: Vec<caprust_core::clip::MotionKeyframe>,
     /// Applied effect instances (see asset_browser Effects list).
     /// Carries `amount` and `enabled` so the filtergraph can scale and
     /// skip stages without reaching back into the project state.
@@ -105,6 +109,70 @@ pub struct VideoClip {
     pub anon_mask_path: Option<std::path::PathBuf>,
 }
 
+/// The ffmpeg expression for one axis of a trajectory.
+///
+/// The keyframes are `(time in seconds, value)`. Between two of them the
+/// value is linear, and outside them it holds: the first segment is
+/// clamped at the first keyframe so the mark does not run backwards
+/// before it starts, and the last keyframe's value is the fallback.
+///
+/// The expression is evaluated per frame. The overlay filter's `x` and
+/// `y` are, and drawtext's are, which is what makes a trajectory
+/// possible at all without a new filter.
+///
+/// A trajectory with fewer than two keyframes has no interpolation to
+/// do, so it is not a trajectory: one keyframe is a position at a moment
+/// with nothing to move between.
+pub fn trajectory_expr(keys: &[(f64, f32)]) -> String {
+    if keys.is_empty() {
+        return "0".to_string();
+    }
+    if keys.len() == 1 {
+        return format!("{:.6}", keys[0].1);
+    }
+    let mut sorted: Vec<(f64, f32)> = keys.to_vec();
+    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Innermost is the last keyframe's value: everything before it is
+    // wrapped in a conditional.
+    let mut expr = format!("{:.6}", sorted[sorted.len() - 1].1);
+    for i in (0..sorted.len() - 1).rev() {
+        let (t0, v0) = sorted[i];
+        let (t1, v1) = sorted[i + 1];
+        let dt = t1 - t0;
+        if dt.abs() < 1e-9 {
+            // Two keyframes at the same moment: nothing to interpolate
+            // from, so the later one wins from that moment on.
+            expr = format!("if(lt(t,{:.6}),{:.6},{})", t1, v0, expr);
+            continue;
+        }
+        // The segment runs from the keyframe at t0 to the one at t1, so
+        // the fraction is (t - t0) / dt. Clamped at the start so the mark
+        // does not run backwards before it begins; the clamp is
+        // harmless in the later segments, where t is already past t0.
+        let seg = format!(
+            "({:.6}+({:.6})*(((max(t,{:.6}))-({:.6}))/({:.6})))",
+            v0,
+            v1 - v0,
+            t0,
+            t0,
+            dt
+        );
+        expr = format!("if(lt(t,{:.6}),{},{})", t1, seg, expr);
+    }
+    expr
+}
+
+/// The ffmpeg expression for a trajectory's x, as a fraction of the
+/// frame width.
+///
+/// The keyframes are in centre fractions -- 0.5 is the middle of the
+/// frame -- and this is the same space, so the expression is the centre
+/// position. The caller turns it into pixels.
+pub fn trajectory_x_expr(keys: &[(f64, f32)]) -> String {
+    trajectory_expr(keys)
+}
+
 /// Text overlay clip (drawtext filter).
 #[derive(Debug, Clone)]
 pub struct TextClip {
@@ -120,6 +188,11 @@ pub struct TextClip {
     /// Motion transform (normalized x/y offset, scale, rotation stub).
     /// Default = identity, matches pre-feature layout.
     pub motion: caprust_core::clip::TextMotion,
+    /// Keyframed movement over the clip's own time. The times are
+    /// relative to the clip's start, and the text's chain has
+    /// `setpts=PTS-STARTPTS`, so the filter's `t` is already the clip's
+    /// own time and the keyframes need no shifting.
+    pub trajectory: Vec<caprust_core::clip::MotionKeyframe>,
     /// Procedural effect (Blink / Pulse / ColorCycle). None = static.
     pub effect: Option<caprust_core::clip::TextEffect>,
     /// When Some, this drawtext came from a Captions clip and its
@@ -860,11 +933,30 @@ impl RenderPlan {
             // Placement, like blend: first overlay in the run wins, and a
             // run of ordinary clips keeps None so it is composited at the
             // frame default.
-            let place = run
-                .members
-                .iter()
-                .find_map(|&idx| self.video_clips[idx].overlay.clone());
-            run_labels.push((run.z_order, effective_start, out_label, run_blend, place));
+            // The placement, and the trajectory if the clip has one.
+            //
+            // The keyframes are timed from the start of the clip, but the
+            // overlay's `t` is the global timeline -- the run's output
+            // is shifted onto the timeline with `setpts=PTS+start`. So
+            // the keyframe times are shifted here, once, rather than
+            // inside the expression.
+            let placed = run.members.iter().find_map(|&idx| {
+                let vc = &self.video_clips[idx];
+                let place = vc.overlay.clone()?;
+                let traj: Vec<(f64, f32, f32)> = vc
+                    .trajectory
+                    .iter()
+                    .map(|k| {
+                        (
+                            vc.timeline_start_sec + k.t_ms as f64 / 1000.0,
+                            k.centre_x,
+                            k.centre_y,
+                        )
+                    })
+                    .collect();
+                Some((place, traj))
+            });
+            run_labels.push((run.z_order, effective_start, out_label, run_blend, placed));
         }
 
         // ---- Phase 3: black base + overlay in z-order ----
@@ -883,23 +975,36 @@ impl RenderPlan {
         });
 
         let mut v_prev = String::from("v_base");
-        for (i, (_z, _start, label, blend, place)) in run_labels.iter().enumerate() {
+        for (i, (_z, _start, label, blend, placed)) in run_labels.iter().enumerate() {
             let v_next = format!("v_ov{i}");
             // Without this every run was composited at 0,0 and the overlay
             // filter's default, which is the top-left corner. An overlay
             // whose width and height are known is placed by its centre;
             // W-w and H-h put the middle of the sticker on (x, y).
-            let xy = match place.as_ref() {
-                Some(p) => format!(
+            // A trajectory says where the sticker's *centre* is, and
+            // the overlay filter places the sticker's left edge, so the
+            // edge is the centre less half the sticker's width. The
+            // static placement is a different thing -- a fraction of the
+            // sticker's travel -- so the two need different expressions
+            // and cannot be one.
+            let xy = match placed.as_ref() {
+                Some((_p, traj)) if traj.len() >= 2 => {
+                    let xs: Vec<(f64, f32)> = traj.iter().map(|(t, x, _)| (*t, *x)).collect();
+                    let ys: Vec<(f64, f32)> = traj.iter().map(|(t, _, y)| (*t, *y)).collect();
+                    let ex = trajectory_expr(&xs);
+                    let ey = trajectory_expr(&ys);
+                    format!(":x='({ex})*W-w/2':y='({ey})*H-h/2'")
+                }
+                Some((p, _)) => format!(
                     ":x='(W-w)*{xf:.4}':y='(H-h)*{yf:.4}'",
                     xf = p.x.clamp(-1.0, 2.0),
                     yf = p.y.clamp(-1.0, 2.0),
                 ),
                 None => String::new(),
             };
-            let anim = place
+            let anim = placed
                 .as_ref()
-                .and_then(|p| p.animation.as_deref().map(sticker_animation_fragment))
+                .and_then(|(p, _)| p.animation.as_deref().map(sticker_animation_fragment))
                 .unwrap_or_default();
             match blend {
                 // Blend compositing: top = run output, bottom = base.
@@ -991,15 +1096,43 @@ impl RenderPlan {
                 let y_base = if t.above { "h*0.08" } else { "h*0.82" };
                 let mx = t.motion.x;
                 let my = t.motion.y;
-                let x_expr = if mx.abs() < 1e-4 {
-                    "(w-text_w)/2".to_string()
+                // A trajectory overrides the static motion. The
+                // keyframes are the text's centre in frame fractions and
+                // the static motion is an offset from the centre, so the
+                // trajectory's value is turned into an offset here.
+                //
+                // The text's chain has `setpts=PTS-STARTPTS`, so the
+                // filter's `t` is already the clip's own time and the
+                // keyframe times need no shifting.
+                let traj_x: Option<String> = if t.trajectory.len() >= 2 {
+                    let xs: Vec<(f64, f32)> = t
+                        .trajectory
+                        .iter()
+                        .map(|k| (k.t_ms as f64 / 1000.0, k.centre_x))
+                        .collect();
+                    Some(trajectory_expr(&xs))
                 } else {
-                    format!("(w-text_w)/2+({mx:.4})*w")
+                    None
                 };
-                let y = if my.abs() < 1e-4 {
-                    y_base.to_string()
+                let traj_y: Option<String> = if t.trajectory.len() >= 2 {
+                    let ys: Vec<(f64, f32)> = t
+                        .trajectory
+                        .iter()
+                        .map(|k| (k.t_ms as f64 / 1000.0, k.centre_y))
+                        .collect();
+                    Some(trajectory_expr(&ys))
                 } else {
-                    format!("{y_base}+({my:.4})*h")
+                    None
+                };
+                let x_expr = match &traj_x {
+                    Some(e) => format!("(w-text_w)/2+(({e})-0.5)*w"),
+                    None if mx.abs() < 1e-4 => "(w-text_w)/2".to_string(),
+                    None => format!("(w-text_w)/2+({mx:.4})*w"),
+                };
+                let y = match &traj_y {
+                    Some(e) => format!("{y_base}+(({e})-0.5)*h"),
+                    None if my.abs() < 1e-4 => y_base.to_string(),
+                    None => format!("{y_base}+({my:.4})*h"),
                 };
                 let fs = ((t.font_size as f64) * (t.motion.scale as f64))
                     .round()
@@ -1840,12 +1973,17 @@ fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
 /// One composited run: the z-order it renders at, when it starts, the
 /// filtergraph label it produced, its blend mode, and the overlay
 /// placement when any clip in the run carries one.
+/// A run of clips composited together.
+///
+/// The last element is the placement, and the clip's keyframed movement
+/// if it has any. The keyframes are timed from the start of the clip,
+/// and the compositor shifts them onto the timeline.
 type RunLabel = (
     u32,
     f64,
     String,
     Option<String>,
-    Option<caprust_core::clip::OverlayPlacement>,
+    Option<(caprust_core::clip::OverlayPlacement, Vec<(f64, f32, f32)>)>,
 );
 
 /// Filter fragment for a sticker animation, or empty for a static one.
@@ -3447,6 +3585,7 @@ pub fn plan_from_project(
                         z_order: clip_z(z, c.overlay.is_some()),
                         is_image: false,
                         overlay: None,
+                        trajectory: c.trajectory.clone(),
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
@@ -3496,6 +3635,7 @@ pub fn plan_from_project(
                         z_order: clip_z(z, c.overlay.is_some()),
                         is_image: true,
                         overlay: c.overlay.clone(),
+                        trajectory: c.trajectory.clone(),
                         effects: c.effects.clone(),
                         transition_in: c.transition_in.clone(),
                         transition_out: c.transition_out.clone(),
@@ -3585,6 +3725,7 @@ pub fn plan_from_project(
                         z_order: z,
                         style: style.clone(),
                         motion: *motion,
+                        trajectory: c.trajectory.clone(),
                         effect: *effect,
                         caption_style: None,
                         effects: c.effects.clone(),
@@ -3713,6 +3854,7 @@ pub fn plan_from_project(
                         z_order: z,
                         style: "caption".to_string(),
                         motion: *motion,
+                        trajectory: c.trajectory.clone(),
                         effect: *effect,
                         caption_style: None,
                         effects: c.effects.clone(),
@@ -4242,6 +4384,7 @@ mod tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -4768,6 +4911,7 @@ mod tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -5343,6 +5487,7 @@ mod tests {
                 z_order: z,
                 is_image,
                 overlay: over,
+                trajectory: Vec::new(),
                 effects: Vec::new(),
                 transition_in: None,
                 transition_out: None,
@@ -5489,6 +5634,7 @@ mod tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: Some("fade".into()),
                 transition_out: None,
@@ -5549,6 +5695,7 @@ mod tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -5775,6 +5922,7 @@ mod tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -5821,6 +5969,7 @@ mod text_motion_render_tests {
 
     fn base() -> TextClip {
         TextClip {
+            trajectory: Vec::new(),
             content: "hello".into(),
             font_size: 32.0,
             timeline_start_sec: 0.0,
@@ -6498,6 +6647,7 @@ mod flip_filtergraph_tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -6598,6 +6748,7 @@ mod reverse_filtergraph_tests {
                 z_order: 0,
                 is_image: false,
                 overlay: None,
+                trajectory: Vec::new(),
                 effects: Vec::<caprust_core::clip::EffectInstance>::new(),
                 transition_in: None,
                 transition_out: None,
@@ -6936,5 +7087,246 @@ mod reverse_filtergraph_tests {
             );
             eprintln!("{label}: ok, sticker at ({x0},{y0})-({x1},{y1})");
         }
+    }
+
+    /// The expression for a trajectory, and what it evaluates to.
+    ///
+    /// Checked against real ffmpeg rather than by reading the string:
+    /// the expression is evaluated per frame by the overlay filter, and
+    /// whether it is depends on that filter's rules, not on the syntax
+    /// looking right.
+    #[test]
+    fn the_trajectory_expression_moves_the_sticker_over_time() {
+        use super::trajectory_expr;
+
+        // Two keyframes: a quarter of the way across at t=0, three
+        // quarters at t=2s.
+        let keys = [(0.0f64, 0.25f32), (2.0, 0.75)];
+        let expr = trajectory_expr(&keys);
+        assert!(!expr.is_empty());
+
+        // The expression must contain the pieces ffmpeg needs: the
+        // time, the break point, the two values -- and the subtraction
+        // that makes the segment run from its own keyframe.
+        //
+        // This was a replica of the arithmetic for a while, and it
+        // agreed with the code while the code was wrong: the segment
+        // divided by the span without taking the start off the time, so
+        // a keyframe at t=1 gave the wrong value at t=1. The replica
+        // quietly had the subtraction and the code did not, and the test
+        // passed for the whole of it. The honest check is the one that
+        // runs ffmpeg and measures the pixels; this only pins the shape.
+        assert!(expr.contains("lt(t,"), "no time comparison in {expr}");
+        assert!(expr.contains("2.000000"), "no break point in {expr}");
+        assert!(expr.contains("0.250000"), "no first value in {expr}");
+        assert!(expr.contains("0.750000"), "no last value in {expr}");
+        assert!(
+            expr.contains("-(0.000000))"),
+            "the segment does not take its start off the time: {expr}"
+        );
+    }
+
+    /// One keyframe is not a trajectory: there is nothing to move
+    /// between, so it must not produce a moving expression.
+    #[test]
+    fn one_keyframe_is_not_a_trajectory() {
+        assert_eq!(super::trajectory_expr(&[]), "0");
+        assert_eq!(super::trajectory_expr(&[(1.0, 0.5)]), "0.500000");
+    }
+
+    /// The keyframes come out of the model sorted by time, whatever order
+    /// they were added in, and the expression is built from the sorted
+    /// ones.
+    #[test]
+    fn the_expression_is_built_from_sorted_keyframes() {
+        use super::trajectory_expr;
+        let sorted = trajectory_expr(&[(0.0, 0.1), (1.0, 0.2), (2.0, 0.3)]);
+        let unsorted = trajectory_expr(&[(2.0, 0.3), (0.0, 0.1), (1.0, 0.2)]);
+        assert_eq!(sorted, unsorted, "the order of the keyframes leaked in");
+    }
+
+    /// A trajectory, through the real export path and real ffmpeg.
+    ///
+    /// The expression is easy to write and easy to get subtly wrong: the
+    /// keyframes are timed from the clip's start, the overlay's `t` is the
+    /// timeline, and the overlay places the sticker's left edge while a
+    /// trajectory says where its centre is. Any of those wrong and the
+    /// sticker moves somewhere else, or not at all.
+    ///
+    /// So: a white square on a black frame, a clip that starts at 1s, and
+    /// two keyframes. The box is found in the rendered frames and
+    /// compared with where the keyframes said it would be.
+    #[test]
+    #[ignore = "runs ffmpeg; --ignored"]
+    fn real_ffmpeg_follows_a_trajectory() {
+        use caprust_core::clip::{Clip, ClipType, MotionKeyframe, OverlayPlacement};
+        use caprust_core::project::{ProjectState, VideoEncoder};
+        use caprust_core::track::{Track, TrackKind};
+        use std::process::Command;
+
+        const W: u32 = 320;
+        const H: u32 = 180;
+        const FPS: i64 = 10;
+        const CLIP_START_MS: u64 = 1000;
+
+        let dir = std::env::temp_dir().join("caprust_sticker_traj");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("base.mp4");
+        let mark = dir.join("mark.png");
+        let mk = |args: &[&str]| {
+            let o = Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-y"])
+                .args(args)
+                .output()
+                .expect("ffmpeg runs");
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        };
+        mk(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x180:r=10:d=4",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            base.to_str().unwrap(),
+        ]);
+        mk(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=white:s=64x64:d=1",
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            "rgba",
+            mark.to_str().unwrap(),
+        ]);
+
+        // The sticker's own size on screen: scale 0.25 of a 180px frame
+        // is 45px tall, and square, so 45px wide.
+        let place = OverlayPlacement {
+            scale: 0.25,
+            x: 0.5,
+            y: 0.5,
+            aspect: 1.0,
+            rotation: 0.0,
+            animation: None,
+        };
+        // Keyframes: the centre at a quarter of the frame at the clip's
+        // start, and at three quarters two seconds later.
+        let traj = vec![
+            MotionKeyframe::new(0, 0.25, 0.5),
+            MotionKeyframe::new(2000, 0.75, 0.5),
+        ];
+
+        let mut p = ProjectState::default();
+        p.tracks.clear();
+        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks.push(Track::new("V2", TrackKind::Video));
+        let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 4000);
+        b.id = uuid::Uuid::from_u128(1);
+        b.track_index = 0;
+        p.clips.push(b);
+        let mut m = Clip::new_video(mark.to_str().unwrap(), 0, CLIP_START_MS, 3000);
+        m.id = uuid::Uuid::from_u128(2);
+        m.track_index = 1;
+        m.clip_type = ClipType::Image {
+            path: mark.to_string_lossy().into_owned(),
+            duration_ms: 3000,
+        };
+        m.overlay = Some(place.clone());
+        m.trajectory = traj.clone();
+        p.clips.push(m);
+
+        let plan = plan_from_project(
+            &p,
+            W,
+            H,
+            FPS,
+            1,
+            18,
+            RateMode::Cbr,
+            4000,
+            "veryfast",
+            &dir,
+            0,
+            VideoEncoder::H264Cpu,
+        )
+        .expect("plan builds");
+        let (fg, v_label) = plan.build_video_only_filtergraph().expect("graph builds");
+        assert!(
+            fg.contains("overlay="),
+            "the sticker is not composited at all"
+        );
+        eprintln!("GRAPH: {fg}");
+
+        let full = plan.build_command(
+            std::path::Path::new("ffmpeg"),
+            std::path::Path::new("o.mp4"),
+        );
+        let cut = full
+            .iter()
+            .position(|a| a == "-filter_complex")
+            .expect("filtergraph in the args");
+        let mut cmd = Command::new("ffmpeg");
+        for a in &full[..cut] {
+            cmd.arg(a);
+        }
+        cmd.arg("-filter_complex")
+            .arg(&fg)
+            .arg("-map")
+            .arg(format!("[{v_label}]"))
+            .args(["-f", "rawvideo", "-pix_fmt", "rgb24"])
+            .arg("pipe:1");
+        let out = cmd.output().expect("ffmpeg runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let fs = W as usize * H as usize * 3;
+        let frames = out.stdout.len() / fs;
+        assert!(frames >= 30, "only {frames} frames came out");
+
+        // The sticker's left edge, per frame, from the rendered pixels.
+        let left_of = |f: usize| -> Option<u32> {
+            let off = f * fs;
+            for x in 0..W as usize {
+                for y in 0..H as usize {
+                    if out.stdout[off + (y * W as usize + x) * 3] > 100 {
+                        return Some(x as u32);
+                    }
+                }
+            }
+            None
+        };
+
+        // At the clip's start the centre is at a quarter of the frame,
+        // and at the end at three quarters. The overlay places the left
+        // edge, so the left edge is the centre less half the width.
+        let w = 45.0f32; // 0.25 of 180, square
+        let expect_left = |centre: f32| (centre * W as f32 - w / 2.0).round() as i64;
+
+        // The frame at the clip's start, and one two seconds later.
+        let f0 = (CLIP_START_MS as usize) * FPS as usize / 1000;
+        let f1 = f0 + 2 * FPS as usize;
+
+        let l0 = left_of(f0).expect("no sticker at the start");
+        let l1 = left_of(f1).expect("no sticker two seconds later");
+
+        assert!(
+            (l0 as i64 - expect_left(0.25)).abs() <= 2,
+            "at the start the sticker is at {l0}, expected {}",
+            expect_left(0.25)
+        );
+        assert!(
+            (l1 as i64 - expect_left(0.75)).abs() <= 2,
+            "two seconds in the sticker is at {l1}, expected {}",
+            expect_left(0.75)
+        );
+        assert!(l1 > l0 + 20, "the sticker did not move: {l0} then {l1}");
     }
 }

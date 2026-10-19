@@ -32,6 +32,9 @@ pub struct SetClipCommand {
     /// Overlay placement for a sticker. `Some(None)` clears it and puts
     /// the clip back to filling the frame.
     pub overlay: Option<Option<crate::clip::OverlayPlacement>>,
+    /// Keyframed movement over the clip's own time. `Some(vec)` replaces
+    /// the trajectory, an empty vector meaning "no trajectory".
+    pub trajectory: Option<Vec<crate::clip::MotionKeyframe>>,
     /// Only meaningful on TextOverlay clips: Some(Some(x)) sets the
     /// effect, Some(None) clears it, None leaves untouched.
     pub text_effect: Option<Option<crate::clip::TextEffect>>,
@@ -104,6 +107,7 @@ impl SetClipCommand {
             caption_style: None,
             text_motion: None,
             overlay: None,
+            trajectory: None,
             text_effect: None,
             fade_in_ms: None,
             fade_out_ms: None,
@@ -191,6 +195,12 @@ impl SetClipCommand {
     /// Replace the TextOverlay OR Captions motion transform. No-op on other kinds.
     pub fn overlay(mut self, v: Option<crate::clip::OverlayPlacement>) -> Self {
         self.overlay = Some(v);
+        self
+    }
+    /// Replace the clip's keyframed movement. An empty vector means "no
+    /// trajectory".
+    pub fn trajectory(mut self, v: Vec<crate::clip::MotionKeyframe>) -> Self {
+        self.trajectory = Some(v);
         self
     }
 
@@ -386,6 +396,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.overlay.take() {
             c.overlay = v;
+        }
+        if let Some(v) = self.trajectory.take() {
+            c.trajectory = v;
         }
         if let Some(v) = self.text_motion {
             match &mut c.clip_type {
