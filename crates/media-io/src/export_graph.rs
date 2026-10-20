@@ -7477,4 +7477,190 @@ mod reverse_filtergraph_tests {
         let l1 = left_of(20).expect("no text two seconds later");
         assert!(l1 > l0 + 20, "the text did not move: {l0} then {l1}");
     }
+
+    /// Does the track header's mute chip and volume fader reach the
+    /// render?
+    ///
+    /// The wiring is there -- a muted track's clips are skipped when the
+    /// mix is harvested, and the track's dB goes into the clip's chain as
+    /// `volume=` -- but "it is wired" is not "it works", and the only way
+    /// to know is to render and measure.
+    ///
+    /// A tone on an audio track, rendered twice: once with the track at
+    /// unity, once at -6 dB. Half the amplitude is half the energy, and
+    /// the RMS of the output should follow.
+    #[test]
+    #[ignore = "runs ffmpeg; --ignored"]
+    fn the_track_fader_and_mute_reach_the_render() {
+        use caprust_core::clip::{Clip, ClipType};
+        use caprust_core::project::{ProjectState, VideoEncoder};
+        use caprust_core::track::{Track, TrackKind};
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join("caprust_track_gain");
+        std::fs::create_dir_all(&dir).unwrap();
+        let tone = dir.join("tone.wav");
+        // A video track too: the plan refuses to build without one.
+        let black = dir.join("black.mp4");
+        // The video needs a silent audio track: the plan harvests the
+        // audio of a video clip into the mix, and a file with no audio
+        // stream at all makes the graph reference a stream that is not
+        // there.
+        let o = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=320x180:r=10:d=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-shortest",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+            ])
+            .arg(black.to_str().unwrap())
+            .output()
+            .expect("ffmpeg runs");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        // A steady tone, so the level is easy to measure.
+        let o = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=2",
+                "-c:a",
+                "pcm_s16le",
+            ])
+            .arg(tone.to_str().unwrap())
+            .output()
+            .expect("ffmpeg runs");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+
+        // Render with the given track settings and return the RMS of the
+        // output samples.
+        let render_rms = |muted: bool, volume_db: f32| -> f64 {
+            let mut p = ProjectState::default();
+            p.tracks.clear();
+            p.tracks.push(Track::new("V1", TrackKind::Video));
+            let mut t = Track::new("A1", TrackKind::Audio);
+            t.muted = muted;
+            t.volume_db = volume_db;
+            p.tracks.push(t);
+
+            let mut v = Clip::new_video(black.to_str().unwrap(), 0, 0, 2000);
+            v.id = uuid::Uuid::from_u128(9);
+            v.track_index = 0;
+            p.clips.push(v);
+
+            let mut c = Clip::new_video(tone.to_str().unwrap(), 1, 0, 2000);
+            c.id = uuid::Uuid::from_u128(1);
+            c.track_index = 1;
+            c.clip_type = ClipType::Audio {
+                path: tone.to_string_lossy().into_owned(),
+                duration_ms: 2000,
+            };
+            p.clips.push(c);
+
+            let plan = plan_from_project(
+                &p,
+                320,
+                180,
+                10,
+                1,
+                18,
+                RateMode::Cbr,
+                4000,
+                "veryfast",
+                &dir,
+                0,
+                VideoEncoder::H264Cpu,
+            )
+            .expect("plan builds");
+            let (fg, v_label, a_label) = plan.build_filtergraph().expect("graph");
+            assert!(a_label.is_some(), "no audio in the graph");
+
+            let full = plan.build_command(
+                std::path::Path::new("ffmpeg"),
+                std::path::Path::new("o.wav"),
+            );
+            let cut = full
+                .iter()
+                .position(|a| a == "-filter_complex")
+                .expect("args");
+            let mut cmd = Command::new("ffmpeg");
+            for a in &full[..cut] {
+                cmd.arg(a);
+            }
+            // Every output of the graph has to be mapped, or ffmpeg
+            // refuses to bind it. The audio goes to the pipe; the video
+            // goes nowhere.
+            cmd.arg("-filter_complex")
+                .arg(&fg)
+                .arg("-map")
+                .arg(format!("[{}]", a_label.clone().unwrap()))
+                .args(["-f", "s16le", "-ac", "1", "-ar", "48000"])
+                .arg("pipe:1")
+                .arg("-map")
+                .arg(format!("[{v_label}]"))
+                .args(["-f", "null"])
+                .arg(if cfg!(windows) { "NUL" } else { "/dev/null" });
+            let out = cmd.output().expect("ffmpeg runs");
+            let err = String::from_utf8_lossy(&out.stderr).to_string();
+            let tail: String = err
+                .chars()
+                .rev()
+                .take(600)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            assert!(out.status.success(), "ffmpeg failed:\n{tail}");
+
+            // RMS of 16-bit samples.
+            let bytes = &out.stdout;
+            let mut sum = 0f64;
+            let mut n = 0f64;
+            for chunk in bytes.chunks_exact(2) {
+                let v = i16::from_le_bytes([chunk[0], chunk[1]]) as f64 / 32768.0;
+                sum += v * v;
+                n += 1.0;
+            }
+            assert!(n > 1000.0, "only {n} samples came out");
+            (sum / n).sqrt()
+        };
+
+        let unity = render_rms(false, 0.0);
+        let quieter = render_rms(false, -6.0);
+        let muted = render_rms(true, 0.0);
+
+        assert!(unity > 0.01, "the tone is not in the mix at all ({unity})");
+        // -6 dB is half the amplitude, so a quarter of the energy and
+        // half the RMS. Generous, because resampling and the mix are not
+        // bit-exact.
+        let ratio = quieter / unity;
+        assert!(
+            (0.35..0.65).contains(&ratio),
+            "a -6 dB track fader gave an RMS ratio of {ratio}, expected about 0.5"
+        );
+        // And a muted track contributes nothing.
+        assert!(
+            muted < unity * 0.01,
+            "a muted track still made sound: {muted} against {unity}"
+        );
+    }
 }
