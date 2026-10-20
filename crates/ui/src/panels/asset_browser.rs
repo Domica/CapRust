@@ -838,6 +838,13 @@ const EFFECTS: &[Preset] = &[
         coming_soon: false,
     },
     Preset {
+        id: "enhance",
+        label_key: "asset-effect-enhance",
+        icon: ph::MAGNET,
+        color: [120, 200, 180],
+        coming_soon: false,
+    },
+    Preset {
         id: "grain",
         label_key: "asset-effect-grain",
         icon: ph::DOTS_THREE,

@@ -145,6 +145,7 @@ presets!(
     "pixelate",
     "sketch",
     "sharpen",
+    "enhance",
     "grain",
     "glow",
     "cinematic_bars",

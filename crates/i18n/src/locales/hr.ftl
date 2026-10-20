@@ -669,6 +669,7 @@ asset-effect-negative = Negativ
 asset-effect-pixelate = Pikselizacija
 asset-effect-sketch = Skica
 asset-effect-sharpen = Izoštravanje
+asset-effect-enhance = Poboljšaj
 asset-effect-grain = Zrnatost
 asset-effect-glow = Meki sjaj
 asset-effect-cinematic_bars = Filmski trakovi

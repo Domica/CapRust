@@ -669,6 +669,7 @@ asset-effect-negative = Negativo
 asset-effect-pixelate = Pixelizza
 asset-effect-sketch = Schizzo
 asset-effect-sharpen = Nitidezza
+asset-effect-enhance = Migliora
 asset-effect-grain = Grana pellicola
 asset-effect-glow = Bagliore morbido
 asset-effect-cinematic_bars = Barre cinematografiche

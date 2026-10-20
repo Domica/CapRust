@@ -669,6 +669,7 @@ asset-effect-negative = Negativ
 asset-effect-pixelate = Verpixeln
 asset-effect-sketch = Skizze
 asset-effect-sharpen = Schärfen
+asset-effect-enhance = Verbessern
 asset-effect-grain = Filmkorn
 asset-effect-glow = Weiches Glühen
 asset-effect-cinematic_bars = Kinobalken

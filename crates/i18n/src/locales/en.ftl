@@ -669,6 +669,7 @@ asset-effect-negative = Negative
 asset-effect-pixelate = Pixelate
 asset-effect-sketch = Sketch
 asset-effect-sharpen = Sharpen
+asset-effect-enhance = Enhance
 asset-effect-grain = Film Grain
 asset-effect-glow = Soft Glow
 asset-effect-cinematic_bars = Cinematic Bars
