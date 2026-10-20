@@ -514,3 +514,34 @@ footer .links a { color: var(--text-muted); }
   .download h2 { font-size: 26px; }
   .download .btn-lg { padding: 14px 24px; font-size: 15px; }
 }
+
+/* The two editor layouts, side by side with a switch over them. The
+   README cannot do this: GitHub strips <input> and <style> from
+   markdown, so a radio switch there is not a switch at all. */
+.layout-switch { margin: 0 0 40px; }
+.layout-switch-tabs {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.layout-switch-tabs button {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9aa4b2;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  padding: 7px 18px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.layout-switch-tabs button:hover { color: #d7dee8; border-color: rgba(255, 255, 255, 0.22); }
+.layout-switch-tabs button.is-active {
+  color: #0b0f14;
+  background: #7ef0b0;
+  border-color: #7ef0b0;
+}
+.layout-shot { display: none; margin: 0; }
+.layout-shot.is-active { display: block; }

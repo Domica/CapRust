@@ -54,6 +54,21 @@
 
 <section class="screenshot">
   <div class="container">
+    <div class="layout-switch" id="layout-switch">
+      <div class="layout-switch-tabs" role="tablist" aria-label="Editor layout">
+        <button type="button" role="tab" class="is-active" data-layout="modern" aria-selected="true">Modern</button>
+        <button type="button" role="tab" data-layout="default" aria-selected="false">Default</button>
+      </div>
+      <figure class="layout-shot is-active" data-shot="modern">
+        <img src="screenshots/editor-modern.png" alt="CapRust editor, Modern layout" loading="lazy">
+        <figcaption>Modern — fixed zones: media bin, live preview, asset browser, magnetic timeline.</figcaption>
+      </figure>
+      <figure class="layout-shot" data-shot="default">
+        <img src="screenshots/editor.png" alt="CapRust editor, Default layout" loading="lazy">
+        <figcaption>Default — a rearrangeable dock. Media bin, live preview, magnetic timeline, clip properties.</figcaption>
+      </figure>
+    </div>
+
     <div class="carousel" id="shots" aria-roledescription="carousel" aria-label="CapRust screenshots">
       <div class="carousel-track">
         <figure class="slide is-active"><img src="screenshots/editor.png" alt="CapRust editor" loading="lazy"><figcaption>The editor — media bin, live preview, magnetic timeline, clip properties.</figcaption></figure>
@@ -112,6 +127,29 @@
     if (e.key === 'ArrowRight') { go(idx + 1); restart(); }
   });
   restart();
+})();
+
+(function () {
+  // The two editor layouts. The README cannot do this -- GitHub strips
+  // <input> and <style> from markdown -- so here it is a real switch.
+  var root = document.getElementById('layout-switch');
+  if (!root) return;
+  var tabs = Array.prototype.slice.call(root.querySelectorAll('.layout-switch-tabs button'));
+  var shots = Array.prototype.slice.call(root.querySelectorAll('.layout-shot'));
+
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var want = tab.getAttribute('data-layout');
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.classList.toggle('is-active', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      shots.forEach(function (s) {
+        s.classList.toggle('is-active', s.getAttribute('data-shot') === want);
+      });
+    });
+  });
 })();
 </script>
 

@@ -69,36 +69,20 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 ## Screenshots
 
 <p align="center">
-  <input type="radio" name="caprust-layout" id="caprust-layout-modern" checked>
-  <label for="caprust-layout-modern">Modern</label>
-  <input type="radio" name="caprust-layout" id="caprust-layout-default">
-  <label for="caprust-layout-default">Default</label>
+  <img src="docs/screenshots/editor-modern.png" alt="CapRust editor, Modern layout" width="900">
+  <br>
+  <em>Modern: fixed zones for the media bin, the preview, the asset browser and the timeline.</em>
 </p>
 
-<p align="center" class="caprust-shots">
-  <span class="caprust-shot caprust-shot-modern">
-    <img src="docs/screenshots/editor-modern.png" alt="CapRust editor, Modern layout" width="900">
-    <br>
-    <em>Modern: fixed zones for the media bin, the preview, the asset browser and the timeline.</em>
-  </span>
-  <span class="caprust-shot caprust-shot-default">
-    <img src="docs/screenshots/editor.png" alt="CapRust editor, Default layout" width="900">
-    <br>
-    <em>Default: a rearrangeable dock. Media bin, preview, magnetic timeline, clip properties.</em>
-  </span>
+<details>
+<summary><strong>Default layout</strong> — the rearrangeable dock</summary>
+<br>
+<p align="center">
+  <img src="docs/screenshots/editor.png" alt="CapRust editor, Default layout" width="900">
+  <br>
+  <em>Default: a rearrangeable dock. Media bin, preview, magnetic timeline, clip properties.</em>
 </p>
-
-<style>
-/* The layout switch. The Default shot is in the flow and the Modern one
-   is revealed by the radio, so if a renderer strips the inputs and the
-   style -- which some do -- the README still shows a picture. */
-.caprust-shots .caprust-shot { display: block; }
-.caprust-shots .caprust-shot-modern { display: none; }
-#caprust-layout-modern:checked ~ .caprust-shots .caprust-shot-modern { display: block; }
-#caprust-layout-modern:checked ~ .caprust-shots .caprust-shot-default { display: none; }
-p input[name="caprust-layout"] { margin: 0 4px 0 0; }
-p label { cursor: pointer; font-weight: 600; margin-right: 14px; }
-</style>
+</details>
 
 <details>
 <summary><strong>More screenshots</strong> (start screen, captions, properties, effects, transitions, filters, master chain, settings)</summary>
