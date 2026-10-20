@@ -52,7 +52,7 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 - 🗨️ **Auto-captions.** Local Whisper (tiny→medium), styled + progressive-reveal captions, SRT export.
 - 🎙️ **Text-to-speech.** Free local Piper voices, straight onto the timeline.
 - 🪄 **Background removal.** One click per clip, cached masks, preview = export.
-- 🎬 **59 transitions, 46 effects, blend modes, film LUTs.** Live preview, same graph renders export.
+- 🎬 **59 transitions, 39 effects, blend modes, film LUTs.** Live preview, same graph renders export.
 - ⚡ **Cut fast.** Split, trim, ripple, freeze frame, 0.1x–10x speed ramps, magnetic timeline, auto-cut to beats.
 - 🎛️ **Multi-track audio.** Volume keyframes, auto-ducking, beat detection, one-switch cleanup (denoise/boost/normalize) + voice FX.
 - 🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors, plus dark/light/custom themes.
@@ -69,10 +69,36 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/editor.png" alt="CapRust editor" width="900">
-  <br>
-  <em>Editor: media bin, preview, magnetic timeline, clip properties.</em>
+  <input type="radio" name="caprust-layout" id="caprust-layout-modern" checked>
+  <label for="caprust-layout-modern">Modern</label>
+  <input type="radio" name="caprust-layout" id="caprust-layout-default">
+  <label for="caprust-layout-default">Default</label>
 </p>
+
+<p align="center" class="caprust-shots">
+  <span class="caprust-shot caprust-shot-modern">
+    <img src="docs/screenshots/editor-modern.png" alt="CapRust editor, Modern layout" width="900">
+    <br>
+    <em>Modern: fixed zones for the media bin, the preview, the asset browser and the timeline.</em>
+  </span>
+  <span class="caprust-shot caprust-shot-default">
+    <img src="docs/screenshots/editor.png" alt="CapRust editor, Default layout" width="900">
+    <br>
+    <em>Default: a rearrangeable dock. Media bin, preview, magnetic timeline, clip properties.</em>
+  </span>
+</p>
+
+<style>
+/* The layout switch. The Default shot is in the flow and the Modern one
+   is revealed by the radio, so if a renderer strips the inputs and the
+   style -- which some do -- the README still shows a picture. */
+.caprust-shots .caprust-shot { display: block; }
+.caprust-shots .caprust-shot-modern { display: none; }
+#caprust-layout-modern:checked ~ .caprust-shots .caprust-shot-modern { display: block; }
+#caprust-layout-modern:checked ~ .caprust-shots .caprust-shot-default { display: none; }
+p input[name="caprust-layout"] { margin: 0 4px 0 0; }
+p label { cursor: pointer; font-weight: 600; margin-right: 14px; }
+</style>
 
 <details>
 <summary><strong>More screenshots</strong> (start screen, captions, properties, effects, transitions, filters, master chain, settings)</summary>
@@ -101,7 +127,7 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 - **Magnetic multi-track timeline:** V1/V2, audio, text, overlay, captions; snap, ripple, trim, split, auto-cut to beats
 - **Stickers and keyframed movement:** 108 bundled PNGs placed and turned on the frame, and a
   Trajectory tab that moves text or a sticker over time
-- **59 transitions, 46 effects, 16 filters, 15 text styles**, plus blend modes and per-clip color LUTs (`.cube` upload)
+- **59 transitions, 39 effects, 23 filters, 15 text styles**, plus blend modes and per-clip color LUTs (`.cube` upload)
 - **Local AI:** Whisper captions + SRT, Piper narration, auto-reframe, background removal
 - **Pro audio:** volume automation, auto-ducking, beat detection, fade handles, CLAP plugins
 - **Chroma key, multicam with audio sync, screen recording**, hardware encode (NVENC/AMF)

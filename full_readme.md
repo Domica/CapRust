@@ -52,7 +52,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - 🗨️ **Auto-captions.** Local Whisper (tiny→medium), styled + progressive-reveal captions, SRT export.
 - 🎙️ **Text-to-speech.** Free local Piper voices, straight onto the timeline.
 - 🪄 **Background removal.** One click per clip, cached masks, preview = export.
-- 🎬 **49 transitions, 32 effects, blend modes, film LUTs.** Live preview, same graph renders export.
+- 🎬 **59 transitions, 39 effects, blend modes, film LUTs.** Live preview, same graph renders export.
 - ⚡ **Cut fast.** Split, trim, ripple, freeze frame, 0.1x–10x speed ramps, magnetic timeline, auto-cut to beats.
 - 🎛️ **Multi-track audio.** Volume keyframes, auto-ducking, beat detection, one-switch cleanup (denoise/boost/normalize) + voice FX.
 - 🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors, plus dark/light/custom themes.
@@ -107,7 +107,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 | Speed ramps with easing | Yes - 0.1x-10x, ease + range |
 | Auto-ducking | Yes - sidechaincompress |
 | CLAP plugin hosting | Yes - master chain, undoable, local |
-| MCP server for AI clients | Yes - 15 tools, JSON-RPC over stdio |
+| MCP server for AI clients | Yes - 27 tools, JSON-RPC over stdio |
 | Settings sync (cloud folder) | Yes - Drive, OneDrive, Dropbox, Box, iCloud, Syncthing |
 | Update checker | Yes - GitHub Releases, opt-out |
 | Hardware encoding | Yes (NVENC + AMF, probed at runtime) |
@@ -149,9 +149,9 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Audio sync** - `Sync angles` correlates the RMS envelopes of every angle and writes per-angle offsets through `SetMultiCamSyncCommand`. Auto-aligns multi-cam recordings from any source.
 
 ### Effects, Filters and Transitions
-- **32 effect presets** - blur, vignette, glitch, RGB split, shake, zoom pulse, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, negative, pixelate, sketch, sharpen, grain, glow, cinematic bars, teal & orange, cross process, bleach bypass, moonlight, dreamy haze, 3D flip, freezeframe, echo, beauty (skin smoothing)
+- **39 effect presets** - blur, vignette, glitch, RGB split, shake, zoom pulse, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, negative, pixelate, sketch, sharpen, grain, glow, cinematic bars, teal & orange, cross process, bleach bypass, moonlight, dreamy haze, 3D flip, freezeframe, echo, beauty (skin smoothing)
 - **16 color filters** - warm, cool, B&W, sepia, cinematic, vintage, vivid, matte, noir, sunset, ocean, fade, pastel, neon, gold (+ none)
-- **49 transitions** - fade, slide, wipe, zoom, rotate, blur, cover, reveal, diagonal, smooth, dissolve, pixelize, blinds, squeeze, crop reveals
+- **59 transitions** - fade, slide, wipe, zoom, rotate, blur, cover, reveal, diagonal, smooth, dissolve, pixelize, blinds, squeeze, crop reveals
 - **15 text styles** - default, bold, subtitle, lower, quote, caption, glow, handwrite, outline, shadow, typewriter, neon, 3D, gradient, stamp
 - **Amount-aware** - every preset scales with the per-clip amount; disabled stages are skipped
 - **Per-clip effects chain** with undo/redo, incl. effects on text overlays
@@ -199,7 +199,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 
 ### MCP server
 - **Standalone binary** - `caprust-mcp.exe`, line-delimited JSON-RPC 2.0 on stdio
-- **15 tools** - read-only inspection plus mutating operations, all going through `UndoStack`
+- **27 tools** - read-only inspection plus mutating operations, all going through `UndoStack`
 - **Read-only:** `get_project_summary`, `list_tracks`, `list_clips`, `list_media`
 - **Mutating:** `add_media`, `add_clip_to_timeline`, `move_clip`, `split_clip`, `set_transition`, `set_clip_volume`, `set_clip_speed`, `set_clip_fade`, `undo`, `redo`, `save_project`
 - **No tokio, no rmcp** - 200-line hand-rolled dispatch
