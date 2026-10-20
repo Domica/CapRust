@@ -1,0 +1,162 @@
+name: Release
+# The release build lives in a workflow rather than on a laptop
+# because SignPath only signs artifacts that a GitHub workflow produced.
+# It verifies the origin of the build, so a binary assembled elsewhere
+# and handed over with the API token is refused.
+on:
+  push: { tags: ["v*"] }
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.9.19"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Windows release
+    runs-on: windows-latest
+    env:
+      # whisper-rs-sys builds whisper.cpp from source, and the runners
+      # have AVX-512, which the default GGML_NATIVE=ON bakes in. Older
+      # CPUs then die during whisper decode.
+      CMAKE_ARGS: -DGGML_NATIVE=OFF
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          $toml = Get-Content Cargo.toml -Raw
+          if ($toml -notmatch 'version\s*=\s*"([^"]+)"') { throw "no version in Cargo.toml" }
+          $fromToml = $Matches[1]
+          # A tag push carries the version; a manual run says it.
+          $wanted = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ inputs.version }}"
+          } else {
+            "${{ github.ref_name }}" -replace '^v', ''
+          }
+          if ($wanted -ne $fromToml) {
+            throw "the tag says $wanted but Cargo.toml says $fromToml. Bump the version first."
+          }
+          "version=$wanted" >> $env:GITHUB_OUTPUT
+
+      - name: Build the release binary
+        run: cargo build --release -p caprust-app --no-default-features
+
+      - name: Install Inno Setup
+        # The installer is part of the release, so it has to be built
+        # inside the workflow for the signature to be trusted.
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer and collect the release files
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path installer\staging | Out-Null
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item target\release\caprust-app.exe installer\staging\caprust-app.exe -Force
+          $iscc = @(
+            "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "ISCC.exe not found after installing Inno Setup" }
+          & $iscc "/DMyAppVersion=$v" installer\caprust.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Copy-Item "installer\dist\CapRust-$v-win64-setup.exe" release\ -Force
+          Copy-Item installer\staging\caprust-app.exe release\ -Force
+          Get-ChildItem release | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length) }
+
+      - name: Upload the unsigned release files
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: caprust-release-unsigned
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Request the signature
+        # Only once SignPath has approved the project and the secrets
+        # exist. Before that the release is published unsigned, which is
+        # where the beta has been anyway.
+        id: sign
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ secrets.SIGNPATH_PROJECT_SLUG }}'
+          signing-policy-slug: '${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}'
+          artifact-configuration-slug: '${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}'
+          github-artifact-id: '${{ steps.upload.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+
+      - name: Collect the signed files
+        if: ${{ steps.sign.outputs.signing-request-id != '' }}
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          Copy-Item signed\CapRust-$v-win64-setup.exe release\ -Force
+          Copy-Item signed\caprust-app.exe release\ -Force
+
+      - name: Verify the signature
+        if: ${{ steps.sign.outputs.signing-request-id != '' }}
+        shell: pwsh
+        run: |
+          # A signed file that does not verify is worse than an unsigned
+          # one, because it looks done.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $v = "${{ steps.version.outputs.version }}"
+          $setup = "release\CapRust-$v-win64-setup.exe"
+          $sig = Get-AuthenticodeSignature $setup
+          Write-Host ("  setup.exe status: " + $sig.Status)
+          if ($sig.Status -ne 'Valid') {
+            throw "the setup.exe signature is $($sig.Status), not Valid"
+          }
+          $portable = "release\caprust-app.exe"
+          $sig2 = Get-AuthenticodeSignature $portable
+          Write-Host ("  caprust-app.exe status: " + $sig2.Status)
+          if ($sig2.Status -ne 'Valid') {
+            throw "the portable binary's signature is $($sig2.Status), not Valid"
+          }
+
+      - name: Pack the portable zip
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          Compress-Archive -Path release\caprust-app.exe -DestinationPath "release\caprust-$v-windows.zip" -CompressionLevel Optimal
+          Remove-Item release\caprust-app.exe
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $files = Get-ChildItem release -File | ForEach-Object { $_.FullName }
+          gh release create "v$v" @files `
+            --title "v$v" `
+            --generate-notes
+          Write-Host "published v$v"
+
+      - name: Upload the signed files to an existing release
+        # For a re-run of a tag that already has a release, the create
+        # above fails and the files are attached instead.
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $files = Get-ChildItem release -File | ForEach-Object { $_.FullName }
+          gh release upload "v$v" @files --clobber

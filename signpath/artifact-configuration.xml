@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration.
+
+  The release workflow uploads one archive holding the two things a
+  user downloads: the installer and the portable binary. SignPath signs
+  the PE files inside it and hands the signed archive back; the workflow
+  then zips the portable binary and publishes the release.
+
+  The version is a parameter rather than a literal, so the same
+  configuration works for every release: the workflow passes the
+  version it read out of Cargo.toml.
+
+  Only the outer file of the installer is signed. The app binary inside
+  an Inno Setup installer is a compressed payload that SignPath cannot
+  reach into, and it does not need to be: Windows checks the signature
+  on the file the user runs, which is the installer. The portable zip
+  gets the app binary signed directly.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+
+  <zip-file>
+    <pe-file path="CapRust-*-win64-setup.exe"
+             product-name="CapRust"
+             product-version="${version}">
+      <authenticode-sign/>
+    </pe-file>
+
+    <pe-file path="caprust-app.exe"
+             product-name="CapRust"
+             product-version="${version}">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
