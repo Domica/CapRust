@@ -4367,6 +4367,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "runs ffmpeg; --ignored"]
     fn real_ffmpeg_grades_the_same_with_the_packed_lut() {
         // The packed LUT is what the app writes out and hands to
         // ffmpeg. This runs the real filter with both files and
