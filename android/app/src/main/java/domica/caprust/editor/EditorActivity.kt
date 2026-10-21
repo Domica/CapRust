@@ -1,0 +1,367 @@
+package domica.caprust.editor
+
+import android.app.Activity
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Bundle
+import android.util.Base64
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import domica.caprust.remote.Client
+import org.json.JSONObject
+import java.io.File
+
+/**
+ * CapRust on the phone.
+ *
+ * A real editor, not a remote control: the engine runs on the phone
+ * (see [Daemon]) and this screen asks it questions. The wire format
+ * is the one the companion already speaks, so the `Client` class is
+ * the same one, unchanged.
+ *
+ * The first screen does the four things a Story needs: bring a file
+ * in, put it on the timeline, look at a frame of it, render it.
+ */
+class EditorActivity : Activity() {
+
+    companion object {
+        private const val TAG = "CapRustEditor"
+        private const val REQUEST_PICK = 41
+    }
+
+    private lateinit var client: Client
+    private lateinit var daemon: Daemon
+    private lateinit var status: TextView
+    private lateinit var preview: ImageView
+    private lateinit var timeline: LinearLayout
+    private lateinit var exportProgress: TextView
+
+    /** Where the picked file was copied to. The engine reads paths. */
+    private var imported: File? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        client = Client(this)
+        daemon = Daemon(this)
+        build()
+        startEngine()
+    }
+
+    override fun onDestroy() {
+        daemon.stop()
+        client.disconnect()
+        super.onDestroy()
+    }
+
+    // ---- the screen -------------------------------------------------
+
+    private fun build() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundColor(0xFF101014.toInt())
+        }
+
+        status = TextView(this).apply {
+            text = getString(R.string.editor_starting)
+            setTextColor(0xFF9AA0A6.toInt())
+            textSize = 13f
+        }
+        root.addView(status)
+
+        preview = ImageView(this).apply {
+            adjustViewBounds = true
+            setBackgroundColor(0xFF1A1A20.toInt())
+            contentDescription = getString(R.string.editor_preview)
+        }
+        root.addView(
+            preview,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f,
+            ),
+        )
+
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        buttons.addView(
+            button(R.string.editor_add_media) { pickMedia() },
+            LinearLayout.LayoutParams(0, dp(44), 1f),
+        )
+        buttons.addView(
+            button(R.string.editor_preview_button) { renderPreview() },
+            LinearLayout.LayoutParams(0, dp(44), 1f),
+        )
+        buttons.addView(
+            button(R.string.editor_export) { startExport() },
+            LinearLayout.LayoutParams(0, dp(44), 1f),
+        )
+        root.addView(buttons)
+
+        exportProgress = TextView(this).apply {
+            setTextColor(0xFF8AB4F8.toInt())
+            textSize = 13f
+        }
+        root.addView(exportProgress)
+
+        val scroll = ScrollView(this)
+        timeline = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        scroll.addView(timeline)
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f,
+            ),
+        )
+
+        setContentView(root)
+    }
+
+    private fun button(label: Int, onClick: () -> Unit): Button =
+        Button(this).apply {
+            text = getString(label)
+            setOnClickListener { onClick() }
+        }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    // ---- the engine -------------------------------------------------
+
+    private fun startEngine() {
+        daemon.start { ok, why, port, token ->
+            runOnUiThread {
+                if (!ok) {
+                    status.text = getString(R.string.editor_engine_failed, why)
+                    return@runOnUiThread
+                }
+                status.text = getString(R.string.editor_listening, port)
+                client.setToken(token)
+                client.connect("127.0.0.1", port) { connected, err ->
+                    runOnUiThread {
+                        if (!connected) {
+                            status.text = getString(R.string.editor_engine_failed, err)
+                            return@runOnUiThread
+                        }
+                        status.text = getString(R.string.editor_ready)
+                        refresh()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Ask the engine what is on the timeline. */
+    private fun refresh() {
+        client.call("list_clips") { ok, text ->
+            runOnUiThread {
+                timeline.removeAllViews()
+                if (!ok) {
+                    status.text = getString(R.string.editor_call_failed, text)
+                    return@runOnUiThread
+                }
+                val clips = try {
+                    org.json.JSONArray(text)
+                } catch (e: Exception) {
+                    org.json.JSONArray()
+                }
+                for (i in 0 until clips.length()) {
+                    val clip = clips.optJSONObject(i) ?: continue
+                    val label = clip.optString("name", clip.optString("path", "?"))
+                    timeline.addView(
+                        TextView(this).apply {
+                            text = label
+                            setTextColor(0xFFE8EAED.toInt())
+                            textSize = 14f
+                            setPadding(0, dp(6), 0, dp(6))
+                        },
+                    )
+                }
+                if (clips.length() == 0) {
+                    timeline.addView(
+                        TextView(this).apply {
+                            text = getString(R.string.editor_empty_timeline)
+                            setTextColor(0xFF9AA0A6.toInt())
+                            textSize = 14f
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    /** Pick a file, copy it where the engine can read it, and import it. */
+    private fun pickMedia() {
+        val i = Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
+        try {
+            startActivityForResult(i, REQUEST_PICK)
+        } catch (e: Exception) {
+            Toast.makeText(this, R.string.editor_no_picker, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Deprecated("the platform asks for it this way")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_PICK || resultCode != RESULT_OK) return
+        val uri: Uri = data?.data ?: return
+
+        // The engine reads files by path, and a content URI is not a
+        // path. The file is copied into the app's own directory, which
+        // is also where the export goes.
+        val target = File(filesDir, "media").apply { mkdirs() }
+            .let { File(it, "import-${System.currentTimeMillis()}") }
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: return
+        } catch (e: Exception) {
+            Log.e(TAG, "could not read the picked file", e)
+            Toast.makeText(this, R.string.editor_import_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+        imported = target
+
+        val args = JSONObject().put("path", target.absolutePath)
+        client.call("add_media", args) { ok, text ->
+            runOnUiThread {
+                if (!ok) {
+                    Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                Toast.makeText(this, R.string.editor_imported, Toast.LENGTH_SHORT).show()
+                refresh()
+            }
+        }
+    }
+
+    /** Render one frame and show it. */
+    private fun renderPreview() {
+        status.text = getString(R.string.editor_rendering)
+        client.call("preview_frame", JSONObject().put("width", 540)) { ok, text ->
+            runOnUiThread {
+                if (!ok || text.isNullOrEmpty()) {
+                    status.text = getString(R.string.editor_call_failed, text)
+                    return@runOnUiThread
+                }
+                try {
+                    val bytes = Base64.decode(text, Base64.DEFAULT)
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bitmap == null) {
+                        status.text = getString(R.string.editor_no_frame)
+                        return@runOnUiThread
+                    }
+                    preview.setImageBitmap(bitmap)
+                    status.text = getString(R.string.editor_ready)
+                } catch (e: Exception) {
+                    status.text = getString(R.string.editor_call_failed, e.message ?: "")
+                }
+            }
+        }
+    }
+
+    /** Render the whole thing, and say how far it has got. */
+    private fun startExport() {
+        val out = File(filesDir, "export").apply { mkdirs() }
+            .let { File(it, "story-${System.currentTimeMillis()}.mp4") }
+        client.call("start_export", JSONObject().put("destination", out.absolutePath)) { ok, text ->
+            runOnUiThread {
+                if (!ok) {
+                    exportProgress.text = getString(R.string.editor_call_failed, text)
+                    return@runOnUiThread
+                }
+                exportProgress.text = getString(R.string.editor_exporting)
+                pollExport(out)
+            }
+        }
+    }
+
+    /** Ask the engine how far the export has got, until it is done. */
+    private fun pollExport(out: File) {
+        client.call("export_status") { ok, text ->
+            runOnUiThread {
+                if (!ok) {
+                    exportProgress.text = getString(R.string.editor_call_failed, text)
+                    return@runOnUiThread
+                }
+                val progress = try {
+                    JSONObject(text).optDouble("progress", -1.0)
+                } catch (e: Exception) {
+                    -1.0
+                }
+                if (progress >= 1.0) {
+                    exportProgress.text = getString(R.string.editor_exported, out.name)
+                    share(out)
+                } else if (progress < 0.0) {
+                    exportProgress.text = getString(R.string.editor_export_failed)
+                } else {
+                    exportProgress.text = getString(R.string.editor_exporting)
+                    preview.postDelayed({ pollExport(out) }, 500)
+                }
+            }
+        }
+    }
+
+    /** Hand the video to whatever the user wants to share it with. */
+    private fun share(file: File) {
+        if (!file.exists()) return
+        try {
+            val uri = putInTheGallery(file)
+            if (uri == null) {
+                Toast.makeText(this, file.absolutePath, Toast.LENGTH_LONG).show()
+                return
+            }
+            val i = Intent(Intent.ACTION_SEND).apply {
+                type = "video/mp4"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(i, getString(R.string.editor_share)))
+        } catch (e: Exception) {
+            // No gallery, no share sheet: the file is on the device and
+            // the path is in the log.
+            Log.e(TAG, "could not share ${file.absolutePath}", e)
+            Toast.makeText(this, file.absolutePath, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Put the video in the gallery and return where it went.
+     *
+     * A `file://` URI cannot be shared since Android 7 -- it throws
+     * instead -- so the video goes into the gallery first and the
+     * share sheet gets a URI the receiving app is allowed to read. The
+     * gallery is also where a Story has to end up anyway.
+     */
+    private fun putInTheGallery(file: File): Uri? {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, file.name)
+            put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                put(
+                    android.provider.MediaStore.Video.Media.RELATIVE_PATH,
+                    "Movies/CapRust",
+                )
+            }
+        }
+        val uri = contentResolver.insert(
+            android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values,
+        ) ?: return null
+        contentResolver.openOutputStream(uri)?.use { out ->
+            file.inputStream().use { it.copyTo(out) }
+        }
+        return uri
+    }
+}

@@ -145,4 +145,25 @@
     <string name="msg_no_transition">That clip has no transition to change</string>
     <string name="msg_removed">Removed %1$s</string>
     <string name="msg_no_duration">Project length is not known yet</string>
+
+    <!-- The editor: the phone runs the engine itself. -->
+    <string name="editor_name">CapRust</string>
+    <string name="editor_starting">Starting the engine…</string>
+    <string name="editor_listening">The engine is listening on port %1$d</string>
+    <string name="editor_ready">Ready</string>
+    <string name="editor_engine_failed">The engine did not start: %1$s</string>
+    <string name="editor_call_failed">The engine said: %1$s</string>
+    <string name="editor_preview">Preview</string>
+    <string name="editor_preview_button">Frame</string>
+    <string name="editor_add_media">Add media</string>
+    <string name="editor_export">Export</string>
+    <string name="editor_exporting">Rendering…</string>
+    <string name="editor_exported">Done: %1$s</string>
+    <string name="editor_export_failed">The render did not finish</string>
+    <string name="editor_no_frame">The engine sent no picture</string>
+    <string name="editor_no_picker">This device has no file picker</string>
+    <string name="editor_import_failed">That file could not be read</string>
+    <string name="editor_imported">Imported</string>
+    <string name="editor_empty_timeline">The timeline is empty. Add a file.</string>
+    <string name="editor_share">Share the video</string>
 </resources>

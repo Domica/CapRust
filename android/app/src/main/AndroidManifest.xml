@@ -23,5 +23,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The editor. Its own icon on the home screen, so the
+             companion and the editor can live side by side: one drives
+             a CapRust on another machine, the other is CapRust. -->
+        <activity
+            android:name="domica.caprust.editor.EditorActivity"
+            android:exported="true"
+            android:screenOrientation="unspecified"
+            android:label="@string/editor_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
