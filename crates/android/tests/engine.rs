@@ -54,6 +54,20 @@ fn sample_video(dir: &Path, name: &str) -> PathBuf {
     out
 }
 
+/// Whether ffmpeg is there.
+///
+/// The engine is useless without it: the tests that need it have
+/// nothing to say on a machine without it. They stop and say so
+/// rather than failing, because a machine without ffmpeg is a normal
+/// machine -- but CI installs ffmpeg, so there the tests really run.
+fn have_ffmpeg() -> bool {
+    Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("caprust-android-{name}"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -82,6 +96,10 @@ fn a_fresh_session_is_vertical() {
 
 #[test]
 fn importing_a_file_probes_it() {
+    if !have_ffmpeg() {
+        eprintln!("no ffmpeg on this machine: the test has nothing to say");
+        return;
+    }
     let dir = scratch("import");
     let clip = sample_video(&dir, "clip.mp4");
     let mut s = session(&dir);
@@ -97,6 +115,10 @@ fn importing_a_file_probes_it() {
 
 #[test]
 fn an_imported_file_can_go_on_the_timeline() {
+    if !have_ffmpeg() {
+        eprintln!("no ffmpeg on this machine: the test has nothing to say");
+        return;
+    }
     let dir = scratch("timeline");
     let clip = sample_video(&dir, "clip.mp4");
     let mut s = session(&dir);
@@ -119,6 +141,10 @@ fn an_imported_file_can_go_on_the_timeline() {
 
 #[test]
 fn a_preview_frame_comes_out_of_the_real_ffmpeg() {
+    if !have_ffmpeg() {
+        eprintln!("no ffmpeg on this machine: the test has nothing to say");
+        return;
+    }
     let dir = scratch("preview");
     let clip = sample_video(&dir, "clip.mp4");
     let mut s = session(&dir);
@@ -138,6 +164,10 @@ fn a_preview_frame_comes_out_of_the_real_ffmpeg() {
 
 #[test]
 fn an_export_produces_a_video() {
+    if !have_ffmpeg() {
+        eprintln!("no ffmpeg on this machine: the test has nothing to say");
+        return;
+    }
     let dir = scratch("export");
     let clip = sample_video(&dir, "clip.mp4");
     let mut s = session(&dir);
@@ -167,6 +197,10 @@ fn an_export_produces_a_video() {
 
 #[test]
 fn a_project_survives_a_round_trip() {
+    if !have_ffmpeg() {
+        eprintln!("no ffmpeg on this machine: the test has nothing to say");
+        return;
+    }
     let dir = scratch("save");
     let clip = sample_video(&dir, "clip.mp4");
     let mut s = session(&dir);

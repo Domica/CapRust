@@ -693,9 +693,12 @@ version = "0.9.20"
 dependencies = [
  "anyhow",
  "caprust-core",
+ "caprust-mcp",
  "caprust-media-io",
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

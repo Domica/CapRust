@@ -1008,12 +1008,19 @@ fn add_clip_to_timeline(
     let path = media.path.clone();
     let dur = media.duration_ms;
     let kind = media.kind;
+    let media_id = media.id;
 
-    let clip = match kind {
+    let mut clip = match kind {
         MediaKind::Video => Clip::new_video(&path, track_index, start_ms, dur),
         MediaKind::Audio => Clip::new_audio(&path, track_index, start_ms, dur),
         MediaKind::Image => Clip::new_image(&path, track_index, start_ms, dur),
     };
+    // The clip has to know which media it came from. The render graph
+    // asks the media item whether the file has an audio stream, and a
+    // clip that does not say leaves it guessing: a video without
+    // sound was taken for one with sound, and the render asked ffmpeg
+    // for a stream that is not there.
+    clip.media_id = Some(media_id);
     let new_id = clip.id;
 
     undo.execute(Box::new(RippleInsertCommand::new(clip)), project)?;

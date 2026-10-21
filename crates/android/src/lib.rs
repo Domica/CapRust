@@ -28,6 +28,8 @@ use caprust_media_io::export::RateMode;
 use caprust_media_io::exporter::ExportEvent;
 use uuid::Uuid;
 
+pub mod daemon;
+
 /// Where the engine keeps its files: the preview frames it renders and
 /// the export it makes.
 #[derive(Debug, Clone)]
@@ -84,6 +86,20 @@ impl Session {
             paths,
             width: w,
             height: h,
+        }
+    }
+
+    /// A session over a project that already exists, rendered at a
+    /// given size.
+    ///
+    /// The daemon holds the project itself, because the tools borrow it
+    /// while they run, and it needs a session to render a frame with.
+    pub fn with_render_size(project: ProjectState, paths: Paths, width: u32, height: u32) -> Self {
+        Self {
+            project,
+            paths,
+            width,
+            height,
         }
     }
 
@@ -199,10 +215,14 @@ impl Session {
         let duration = item.duration_ms;
         let kind = item.kind;
 
-        let clip = match kind {
+        let mut clip = match kind {
             MediaKind::Audio => Clip::new_audio(&path, track, start_ms, duration),
             _ => Clip::new_video(&path, track, start_ms, duration),
         };
+        // The clip has to know which media it came from: the render
+        // graph asks the media item whether the file has an audio
+        // stream, and a clip that does not say leaves it guessing.
+        clip.media_id = Some(media_id);
         let id = clip.id;
         self.project.add_clip(clip);
         Ok(id)
@@ -214,22 +234,7 @@ impl Session {
     /// The phone shows the frame and does not need to know that it
     /// came out of ffmpeg.
     pub fn preview_frame(&self, at_ms: u64) -> Result<PathBuf> {
-        let plan = self.plan()?;
-        let out = self
-            .paths
-            .work_dir
-            .join("preview")
-            .join(format!("frame-{at_ms}.jpg"));
-        let fps = self.fps();
-        caprust_media_io::preview_render::render_single_frame(
-            &self.paths.ffmpeg,
-            &plan,
-            at_ms,
-            &out,
-            fps,
-        )
-        .with_context(|| format!("render the preview frame at {at_ms} ms"))?;
-        Ok(out)
+        render_preview_frame(&self.project, &self.paths, self.width, self.height, at_ms)
     }
 
     /// Render the whole thing. The events carry the progress.
@@ -282,11 +287,6 @@ impl Session {
         )
     }
 
-    fn fps(&self) -> f64 {
-        let fr = &self.project.frame_rate;
-        fr.num as f64 / fr.den as f64
-    }
-
     /// The first video lane, or a new one if the project has none.
     pub fn first_video_track(&self) -> Option<usize> {
         self.project
@@ -294,6 +294,44 @@ impl Session {
             .iter()
             .position(|t| t.kind == TrackKind::Video)
     }
+}
+
+/// Render one frame of a project, as a JPEG, and return where it
+/// landed.
+///
+/// Free-standing so the daemon can render a frame without owning a
+/// [`Session`]: it holds the project, and the project is borrowed
+/// while the tools run.
+pub fn render_preview_frame(
+    project: &ProjectState,
+    paths: &Paths,
+    width: u32,
+    height: u32,
+    at_ms: u64,
+) -> Result<PathBuf> {
+    let (fps_num, fps_den) = (project.frame_rate.num as i64, project.frame_rate.den as i64);
+    let plan = caprust_media_io::export_graph::plan_from_project(
+        project,
+        width,
+        height,
+        fps_num,
+        fps_den,
+        23,
+        RateMode::Vbr,
+        8000,
+        "veryfast",
+        &paths.models_dir,
+        0,
+        VideoEncoder::H264Cpu,
+    )?;
+    let out = paths
+        .work_dir
+        .join("preview")
+        .join(format!("frame-{at_ms}.jpg"));
+    let fps = project.frame_rate.num as f64 / project.frame_rate.den as f64;
+    caprust_media_io::preview_render::render_single_frame(&paths.ffmpeg, &plan, at_ms, &out, fps)
+        .with_context(|| format!("render the preview frame at {at_ms} ms"))?;
+    Ok(out)
 }
 
 /// The clip type of a clip, for the UI that lists them.

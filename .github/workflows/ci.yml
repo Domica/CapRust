@@ -34,6 +34,18 @@ jobs:
             libavfilter-dev libavdevice-dev libswscale-dev libswresample-dev \
             libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev \
             libasound2-dev
+      # The engine tests drive the real ffmpeg: they render a frame and
+      # they render a video. Without the binary they have nothing to
+      # say, and a phone that cannot render is not a phone.
+      - name: Install ffmpeg (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        run: sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: matrix.os == 'windows-latest'
+        run: choco install ffmpeg --no-progress -y
       # The same version rust-toolchain.toml pins, so CI compiles
       # with the compiler the rest of the project uses. The action
       # overrides the file, so without this CI drifted.
