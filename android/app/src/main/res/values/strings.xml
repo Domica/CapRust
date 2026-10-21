@@ -166,4 +166,5 @@
     <string name="editor_imported">Imported</string>
     <string name="editor_empty_timeline">The timeline is empty. Add a file.</string>
     <string name="editor_share">Share the video</string>
+    <string name="editor_rendering">Rendering a frame…</string>
 </resources>
