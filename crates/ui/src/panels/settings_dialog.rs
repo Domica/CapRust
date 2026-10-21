@@ -1473,6 +1473,23 @@ fn show_about(ui: &mut Ui, settings: &mut AppSettings) {
     // the build identity above, not with theme colors.
     ui.add_space(space::L);
     ui.separator();
+
+    // The guided tips are a one-time thing. Putting the button here
+    // means the user can ask for them again -- a beta tester who
+    // skipped them, or a new user who closed them by accident.
+    ui.label(egui::RichText::new(tr("tour-title")).strong());
+    ui.label(
+        egui::RichText::new(tr("settings-show-tips-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    if button::secondary(ui, tr("settings-show-tips")).clicked() {
+        settings.tour_completed = false;
+        settings.welcome_seen = true;
+    }
+
+    ui.add_space(space::L);
+    ui.separator();
     ui.label(egui::RichText::new(tr("set-appearance-logs")).strong());
     ui.label(
         egui::RichText::new(tr("set-appearance-logs-hint"))

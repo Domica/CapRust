@@ -13,3 +13,5 @@ pub mod relink_dialog;
 #[cfg(windows)]
 pub mod screen_record;
 pub mod settings_dialog;
+pub mod tour;
+pub mod welcome;

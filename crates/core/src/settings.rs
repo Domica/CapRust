@@ -179,6 +179,20 @@ pub struct AppSettings {
     /// prompts to restore the unsaved session.
     #[serde(default = "default_true")]
     pub autosave_recovery: bool,
+    /// Whether the first-run welcome dialog has been shown.
+    ///
+    /// A fresh install has this false, and the dialog appears once on
+    /// the start screen. It is set whatever the user clicks: the
+    /// welcome is a greeting, not a question they have to answer.
+    #[serde(default)]
+    pub welcome_seen: bool,
+    /// Whether the guided tips have been finished or skipped.
+    ///
+    /// Separate from `welcome_seen` because the welcome explains what
+    /// CapRust is and the tips walk through doing something with it.
+    /// Settings -> About can turn them back on.
+    #[serde(default)]
+    pub tour_completed: bool,
 }
 
 /// Autosave cadence in minutes. Every 5 minutes is short enough that
@@ -335,6 +349,8 @@ impl Default for AppSettings {
             remote_control_token: None,
             remote_control_lan: false,
             autosave_recovery: true,
+            welcome_seen: false,
+            tour_completed: false,
         }
     }
 }

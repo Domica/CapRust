@@ -277,6 +277,14 @@ pub struct CapRustApp {
     /// True after the auto-open check has run once this session, so
     /// the modal is only offered at most once per launch.
     pub ffmpeg_prompt_checked: bool,
+    /// The first-run welcome dialog. Open on the start screen of a
+    /// fresh install until the user closes it. See
+    /// `show_welcome_window`.
+    pub welcome_open: bool,
+    /// Which step of the guided tips is showing. The tips live in the
+    /// editor and follow what the user has already done; see
+    /// `show_tour_window`.
+    pub tour_step: crate::panels::tour::TourStep,
     /// Some((path, exported_at)) when the sync folder holds a newer
     /// snapshot than this machine has acknowledged. The prompt modal
     /// offers Load / Keep local. Set on startup and cleared when the
@@ -1582,6 +1590,8 @@ impl CapRustApp {
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
+            welcome_open: false,
+            tour_step: crate::panels::tour::TourStep::Import,
             settings_sync_prompt: None,
             settings_sync_prompt_checked: false,
             settings_status: Default::default(),
@@ -13821,6 +13831,82 @@ impl CapRustApp {
         }
     }
 
+    /// The first-run welcome dialog.
+    ///
+    /// Says what CapRust is in three lines and offers the guided tips.
+    /// It is not modal in the egui sense -- it is a window the user
+    /// can move -- but it wants an answer, so it stays until they
+    /// click one of the two buttons.
+    fn show_welcome_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.welcome_open;
+        let mut start = false;
+        let mut close = false;
+
+        egui::Window::new(tr("welcome-title"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(430.0)
+            .show(ctx, |ui| {
+                let ev = crate::panels::welcome::show(ui);
+                if ev.start {
+                    start = true;
+                    close = true;
+                }
+                if ev.skip {
+                    close = true;
+                }
+            });
+
+        // The window's own X sets `open` to false; the buttons set
+        // `close`. Either way the greeting has been seen.
+        if close || !open {
+            self.settings.welcome_seen = true;
+            if !start {
+                // Skipped means the tips are skipped too.
+                self.settings.tour_completed = true;
+            }
+        }
+        self.welcome_open = open && !close;
+    }
+
+    /// The guided tips, over the editor.
+    ///
+    /// The card says what to do next and the app decides whether the
+    /// user has already done it. It moves on when the user says so,
+    /// not by itself: a tip that advances on its own is a tip the
+    /// user cannot go back from.
+    fn show_tour_window(&mut self, ctx: &egui::Context) {
+        use crate::panels::tour::TourStep;
+
+        let done = match self.tour_step {
+            TourStep::Import => !self.project.media.items.is_empty(),
+            TourStep::Timeline => !self.project.clips.is_empty(),
+            TourStep::Export => self.export_open,
+        };
+
+        let mut close = false;
+        let ev = crate::panels::tour::show_window(ctx, self.tour_step, done);
+        if ev.next {
+            match self.tour_step.next() {
+                Some(next) => self.tour_step = next,
+                None => close = true,
+            }
+        }
+        if ev.back {
+            if let Some(prev) = self.tour_step.prev() {
+                self.tour_step = prev;
+            }
+        }
+        if ev.skip {
+            close = true;
+        }
+
+        if close {
+            self.settings.tour_completed = true;
+        }
+    }
+
     fn show_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
         // Universal settings window: sized for the tallest tab so the
@@ -14408,6 +14494,23 @@ impl eframe::App for CapRustApp {
         }
         if self.ffmpeg_prompt_open {
             self.show_ffmpeg_prompt_window(ctx);
+        }
+
+        // The first-run welcome. It waits for the FFmpeg prompt to be
+        // out of the way: two dialogs at once is a bad first
+        // impression, and the FFmpeg one is the one that blocks the
+        // app from working at all.
+        if !self.settings.welcome_seen && !self.ffmpeg_prompt_open {
+            self.welcome_open = true;
+        }
+        if self.welcome_open {
+            self.show_welcome_window(ctx);
+        }
+
+        // The guided tips, in the editor, until they are finished or
+        // skipped.
+        if self.mode == AppMode::Editor && !self.settings.tour_completed {
+            self.show_tour_window(ctx);
         }
 
         // Settings sync prompt. One check per session, like ffmpeg.

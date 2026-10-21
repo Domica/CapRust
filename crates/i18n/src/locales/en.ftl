@@ -1088,3 +1088,27 @@ menu-timeline-reset-size = Back to the size setting
 menu-zone-remove-stack = Remove the last panel from this slot
 menu-timeline-hide = Hide timeline
 menu-timeline-show = Show timeline
+
+# First run: the welcome and the guided tips
+welcome-title = Welcome to CapRust
+welcome-subtitle = A video editor that runs on your machine. Your files never leave it.
+welcome-point-import = Import your clips, images and audio.
+welcome-point-cut = Cut them on the timeline, and add text, stickers and effects.
+welcome-point-export = Export when it looks right.
+welcome-start = Show me around
+welcome-skip = Skip
+tour-title = Tips
+tour-counter = { $current } / { $total }
+tour-done-hint = done
+tour-import-title = Import your media
+tour-import-body = Drag a video, an image or an audio file into the media bin on the left.
+tour-timeline-title = Put it on the timeline
+tour-timeline-body = Drag a file from the media bin onto a track. Trim the edges, or press S to split.
+tour-export-title = Export it
+tour-export-body = The Export button renders your video with ffmpeg, right here on this machine.
+tour-next = Next
+tour-back = Back
+tour-skip = Skip
+tour-finish = Done
+settings-show-tips = Show the tips again
+settings-show-tips-hint = The guided tips walk through importing, cutting and exporting.
