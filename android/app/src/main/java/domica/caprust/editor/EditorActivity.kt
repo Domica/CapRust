@@ -16,6 +16,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import domica.caprust.remote.Client
+import domica.caprust.remote.R
 import org.json.JSONObject
 import java.io.File
 
@@ -71,7 +72,7 @@ class EditorActivity : Activity() {
         }
 
         status = TextView(this).apply {
-            text = getString(R.string.editor_starting)
+            setText(getString(R.string.editor_starting))
             setTextColor(0xFF9AA0A6.toInt())
             textSize = 13f
         }
@@ -132,7 +133,7 @@ class EditorActivity : Activity() {
 
     private fun button(label: Int, onClick: () -> Unit): Button =
         Button(this).apply {
-            text = getString(label)
+            setText(label)
             setOnClickListener { onClick() }
         }
 
@@ -182,7 +183,7 @@ class EditorActivity : Activity() {
                     val label = clip.optString("name", clip.optString("path", "?"))
                     timeline.addView(
                         TextView(this).apply {
-                            text = label
+                            setText(label)
                             setTextColor(0xFFE8EAED.toInt())
                             textSize = 14f
                             setPadding(0, dp(6), 0, dp(6))
@@ -192,7 +193,7 @@ class EditorActivity : Activity() {
                 if (clips.length() == 0) {
                     timeline.addView(
                         TextView(this).apply {
-                            text = getString(R.string.editor_empty_timeline)
+                            setText(getString(R.string.editor_empty_timeline))
                             setTextColor(0xFF9AA0A6.toInt())
                             textSize = 14f
                         },
