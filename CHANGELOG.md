@@ -4,6 +4,50 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.20] - 2026-10-21
+
+### Added
+
+- **A first-run welcome, and three guided tips.** A fresh install used
+  to open the editor with no explanation of what it was. Now it says
+  what CapRust is in three lines -- import, cut, export -- and then
+  walks through the same three things.
+- **The tips are a card, not a wizard.** It sits over the editor and
+  the editor stays usable while it is up: the point is to do the thing
+  while it is being described. It moves on when the user says so, not
+  by itself, because a tip that advances on its own is a tip the user
+  cannot go back from. Settings -> About brings them back.
+- **Enhance.** A denoise and deband effect for footage shot in bad
+  light. Measured against the clean original, the root mean square
+  error of noisy footage goes from 20.5 to 14.5.
+
+### Changed
+
+- **The release is built in CI.** Not just the binary: the installer
+  too, and the whole thing is verified before it is published. The
+  reason is code signing -- SignPath only signs artifacts that a
+  GitHub workflow produced -- and the plumbing is ready for it
+  (see `signpath/artifact-configuration.xml`). The signing step is
+  conditional on the secrets being there, so a release before the
+  approval still works, unsigned.
+- **The binary is smaller.** 26.8 MB -> 26.1 MB. The icon was 372 KB
+  because all seven sizes in it were stored as raw pixels; the two big
+  ones are PNGs now, which Windows has understood since Vista. The four
+  built-in LUTs travelled as 550 KB of `.cube` text and travel as
+  118 KB of 16-bit values instead, with the text written out to the
+  cache directory on startup, where it costs nothing.
+- **A size audit that says where the bytes are.** `cargo-bloat` on a
+  release build with its symbols, so the question "why is it so big"
+  has an answer instead of a guess.
+
+### Fixed
+
+- **The track fader and the mute are now proven to reach the
+  render.** A tone on an audio track, rendered three times: at unity,
+  at -6 dB and muted. The fader gives half the amplitude and a muted
+  track contributes nothing. It is a test that runs the real render
+  path, not one that reads the emitted graph.
+
 ## [0.9.19] - 2026-10-19
 
 ### Added

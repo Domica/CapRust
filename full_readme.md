@@ -13,7 +13,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.19-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.20-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -27,7 +27,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.19-win64-setup.exe`.
+1. Run `CapRust-0.9.20-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -52,7 +52,7 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - 🗨️ **Auto-captions.** Local Whisper (tiny→medium), styled + progressive-reveal captions, SRT export.
 - 🎙️ **Text-to-speech.** Free local Piper voices, straight onto the timeline.
 - 🪄 **Background removal.** One click per clip, cached masks, preview = export.
-- 🎬 **59 transitions, 39 effects, blend modes, film LUTs.** Live preview, same graph renders export.
+- 🎬 **59 transitions, 40 effects, blend modes, film LUTs.** Live preview, same graph renders export.
 - ⚡ **Cut fast.** Split, trim, ripple, freeze frame, 0.1x–10x speed ramps, magnetic timeline, auto-cut to beats.
 - 🎛️ **Multi-track audio.** Volume keyframes, auto-ducking, beat detection, one-switch cleanup (denoise/boost/normalize) + voice FX.
 - 🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors, plus dark/light/custom themes.
@@ -149,8 +149,8 @@ A modern video editor focused on **short-form social content**. Built from scrat
 - **Audio sync** - `Sync angles` correlates the RMS envelopes of every angle and writes per-angle offsets through `SetMultiCamSyncCommand`. Auto-aligns multi-cam recordings from any source.
 
 ### Effects, Filters and Transitions
-- **39 effect presets** - blur, vignette, glitch, RGB split, shake, zoom pulse, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, negative, pixelate, sketch, sharpen, grain, glow, cinematic bars, teal & orange, cross process, bleach bypass, moonlight, dreamy haze, 3D flip, freezeframe, echo, beauty (skin smoothing)
-- **16 color filters** - warm, cool, B&W, sepia, cinematic, vintage, vivid, matte, noir, sunset, ocean, fade, pastel, neon, gold (+ none)
+- **40 effect presets** - blur, vignette, glitch, RGB split, shake, zoom pulse, flash, mirror, kaleido, old film, VHS, light leak, particle, sparkle, ghost, lens flare, negative, pixelate, sketch, sharpen, enhance, grain, glow, cinematic bars, teal & orange, cross process, bleach bypass, moonlight, dreamy haze, 3D flip, freezeframe, echo, beauty (skin smoothing), spin, scanlines, edge glow, trails, stutter, ripple, pixel shuffle
+- **23 color filters** - warm, cool, B&W, sepia, cinematic, vintage, vivid, matte, noir, sunset, ocean, fade, pastel, neon, gold, infrared, blueprint, poster, bleach, day/night, ink, faded film (+ none)
 - **59 transitions** - fade, slide, wipe, zoom, rotate, blur, cover, reveal, diagonal, smooth, dissolve, pixelize, blinds, squeeze, crop reveals
 - **15 text styles** - default, bold, subtitle, lower, quote, caption, glow, handwrite, outline, shadow, typewriter, neon, 3D, gradient, stamp
 - **Amount-aware** - every preset scales with the per-clip amount; disabled stages are skipped

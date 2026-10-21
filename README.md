@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.19-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.20-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.19-win64-setup.exe`.
+1. Run `CapRust-0.9.20-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -52,7 +52,7 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 - 🗨️ **Auto-captions.** Local Whisper (tiny→medium), styled + progressive-reveal captions, SRT export.
 - 🎙️ **Text-to-speech.** Free local Piper voices, straight onto the timeline.
 - 🪄 **Background removal.** One click per clip, cached masks, preview = export.
-- 🎬 **59 transitions, 39 effects, blend modes, film LUTs.** Live preview, same graph renders export.
+- 🎬 **59 transitions, 40 effects, blend modes, film LUTs.** Live preview, same graph renders export.
 - ⚡ **Cut fast.** Split, trim, ripple, freeze frame, 0.1x–10x speed ramps, magnetic timeline, auto-cut to beats.
 - 🎛️ **Multi-track audio.** Volume keyframes, auto-ducking, beat detection, one-switch cleanup (denoise/boost/normalize) + voice FX.
 - 🎨 **Fully customizable UI.** Window colors, accents, UI + font size, fonts, layouts, clip borders, waveform and overlap colors, plus dark/light/custom themes.
@@ -111,7 +111,7 @@ A modern video editor focused on **short-form social content** (9:16, Reels, Sho
 - **Magnetic multi-track timeline:** V1/V2, audio, text, overlay, captions; snap, ripple, trim, split, auto-cut to beats
 - **Stickers and keyframed movement:** 108 bundled PNGs placed and turned on the frame, and a
   Trajectory tab that moves text or a sticker over time
-- **59 transitions, 39 effects, 23 filters, 15 text styles**, plus blend modes and per-clip color LUTs (`.cube` upload)
+- **59 transitions, 40 effects, 23 filters, 15 text styles**, plus blend modes and per-clip color LUTs (`.cube` upload)
 - **Local AI:** Whisper captions + SRT, Piper narration, auto-reframe, background removal
 - **Pro audio:** volume automation, auto-ducking, beat detection, fade handles, CLAP plugins
 - **Chroma key, multicam with audio sync, screen recording**, hardware encode (NVENC/AMF)
@@ -143,6 +143,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.20** | 2026-10-21 | A first-run welcome and three guided tips; the Enhance effect (denoise + deband, measured); a smaller binary -- the icon and the built-in LUTs travel packed; the release is built in CI, ready for code signing. |
 | **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame; keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg transition reachable. |
 | **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |
 | **0.9.17** | 2026-10-12 | Crash-recovery autosave, custom autosave interval, caption size proportional to frame height, one-click face anonymize; plus fixes for custom spinner persistence, preset click confirmation, Custom row visibility. |
