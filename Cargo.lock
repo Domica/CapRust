@@ -688,6 +688,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "caprust-android"
+version = "0.9.20"
+dependencies = [
+ "anyhow",
+ "caprust-core",
+ "caprust-media-io",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "caprust-app"
 version = "0.9.20"
 dependencies = [
