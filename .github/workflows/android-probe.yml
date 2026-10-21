@@ -100,6 +100,13 @@ jobs:
         continue-on-error: true
         run: cargo build --release -p caprust-media-io --target aarch64-linux-android
 
+      # The phone app's engine. This is the crate that has to exist
+      # before there is an app at all: it is the editing engine with
+      # no UI, and it has to build for the phone.
+      - name: Build caprust-android (the phone's engine)
+        continue-on-error: true
+        run: cargo build --release -p caprust-android --target aarch64-linux-android
+
       - name: Report
         if: always()
         run: |

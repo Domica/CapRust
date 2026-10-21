@@ -1,0 +1,21 @@
+[package]
+name = "caprust-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The editing engine behind the CapRust Android app"
+
+[lib]
+name = "caprust_android"
+path = "src/lib.rs"
+
+[dependencies]
+caprust-core = { path = "../core" }
+caprust-media-io = { path = "../media-io" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+caprust-core = { path = "../core" }

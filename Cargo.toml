@@ -8,6 +8,7 @@ members = [
     "crates/mcp",
     "crates/screen-record",
     "crates/otio-import",
+    "crates/android",
 ]
 resolver = "2"
 
