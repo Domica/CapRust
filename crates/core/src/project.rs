@@ -465,6 +465,12 @@ impl ProjectState {
             // projects.
             t.kind.hash(&mut h);
             t.muted.hash(&mut h);
+            // The track's fader. It is applied on top of every clip on
+            // the track, so a change to it changes what comes out.
+            // Without this the preview keeps playing the mix it cached
+            // before the fader moved: the export would honour it and
+            // the preview would not.
+            t.volume_db.to_bits().hash(&mut h);
             t.visible.hash(&mut h);
             t.pinned.hash(&mut h);
             // t.locked is UI-only (blocks clip drag); t.name, t.id
@@ -558,6 +564,10 @@ impl ProjectState {
         for t in &self.tracks {
             t.kind.hash(&mut h);
             t.muted.hash(&mut h);
+            // The track's fader, for the same reason as above: the
+            // preview plays a cached mix of the audio, and the cache is
+            // only re-rendered when this hash changes.
+            t.volume_db.to_bits().hash(&mut h);
         }
 
         h.finish()
@@ -842,6 +852,28 @@ mod tests {
         }
         let h2 = p.audio_render_hash();
         assert_ne!(h1, h2, "volume change must invalidate the audio hash");
+    }
+
+    #[test]
+    fn audio_render_hash_changes_on_track_volume_edit() {
+        // The preview plays a cached PCM mix. If the cache is not
+        // invalidated when the fader moves, the fader is silent in the
+        // preview and audible in the export -- the two disagree about
+        // the same project.
+        let mut p = ProjectState::default();
+        let h1 = p.audio_render_hash();
+        p.tracks[3].volume_db = -6.0;
+        let h2 = p.audio_render_hash();
+        assert_ne!(h1, h2, "a track fader move must invalidate the audio cache");
+    }
+
+    #[test]
+    fn render_hash_changes_on_track_volume_edit() {
+        let mut p = ProjectState::default();
+        let h1 = p.render_hash();
+        p.tracks[3].volume_db = -6.0;
+        let h2 = p.render_hash();
+        assert_ne!(h1, h2, "a track fader move must change the render");
     }
 
     #[test]
