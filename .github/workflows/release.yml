@@ -65,11 +65,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path installer\staging | Out-Null
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item target\release\caprust-app.exe installer\staging\caprust-app.exe -Force
-          $iscc = @(
-            "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          # PowerShell needs the braces around a variable whose name has
+          # parentheses in it. Without them it reads $env:ProgramFiles and
+          # then treats (x86) as an expression, and the path never
+          # resolves.
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+            "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            # The package has moved before; look for it.
+            $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}", "${env:ProgramFiles}" `
+              -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
           if (-not $iscc) { throw "ISCC.exe not found after installing Inno Setup" }
+          Write-Host ("  using " + $iscc)
           & $iscc "/DMyAppVersion=$v" installer\caprust.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           Copy-Item "installer\dist\CapRust-$v-win64-setup.exe" release\ -Force
@@ -146,7 +159,8 @@ jobs:
           GH_TOKEN: '${{ github.token }}'
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          $files = Get-ChildItem release -File | ForEach-Object { $_.FullName }
+          $files = @(Get-ChildItem release -File | ForEach-Object { $_.FullName })
+          if ($files.Count -eq 0) { throw "nothing to publish" }
           gh release create "v$v" @files `
             --title "v$v" `
             --generate-notes
@@ -161,5 +175,9 @@ jobs:
           GH_TOKEN: '${{ github.token }}'
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          $files = Get-ChildItem release -File | ForEach-Object { $_.FullName }
+          $files = @(Get-ChildItem release -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+          if ($files.Count -eq 0) {
+            Write-Host "nothing to upload"
+            exit 0
+          }
           gh release upload "v$v" @files --clobber

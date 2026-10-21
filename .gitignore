@@ -51,6 +51,9 @@ patch_*.py
 installer/dist/
 installer/staging/
 
+# The release workflow collects the files it publishes here.
+release/
+
 # local debug logs
 *.log
 
