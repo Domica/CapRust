@@ -6328,10 +6328,7 @@ impl CapRustApp {
     /// what the two regions painted.
     fn timeline_drag_separator(&mut self, ui: &mut egui::Ui, y: f32, max_h: f32) {
         const HANDLE: f32 = 7.0;
-        let rect = egui::Rect::from_center_size(
-            egui::pos2(ui.available_width() * 0.5, y),
-            egui::vec2(ui.available_width(), HANDLE),
-        );
+        let rect = seam_handle_rect(ui.max_rect(), y, HANDLE);
         let painter = ui.painter_at(rect);
         let resp = ui.interact(rect, ui.id().with("timeline_drag"), egui::Sense::drag());
         let accent = self.theme.accent_color();
@@ -9681,9 +9678,7 @@ impl CapRustApp {
         left: bool,
     ) {
         const HANDLE: f32 = 7.0;
-        let width = ui.available_width();
-        let rect =
-            egui::Rect::from_center_size(egui::pos2(width * 0.5, y), egui::vec2(width, HANDLE));
+        let rect = seam_handle_rect(ui.max_rect(), y, HANDLE);
         let painter = ui.painter_at(rect);
         let resp = ui.interact(
             rect,
@@ -9696,10 +9691,10 @@ impl CapRustApp {
         let hot = resp.hovered() || resp.dragged();
 
         painter.line_segment(
-            [egui::pos2(0.0, y), egui::pos2(width, y)],
+            [rect.left_center(), rect.right_center()],
             egui::Stroke::new(1.0, if hot { accent } else { base }),
         );
-        let grip = egui::Rect::from_center_size(egui::pos2(width * 0.5, y), egui::vec2(22.0, 5.0));
+        let grip = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 5.0));
         painter.rect_filled(
             grip,
             egui::CornerRadius::same(2),
@@ -15017,6 +15012,124 @@ pub struct TextOverlayDrag {
     /// Scale factors from frame-space to screen-space at drag start.
     pub sx: f32,
     pub sy: f32,
+}
+
+/// The rectangle a seam's drag handle occupies, in absolute screen
+/// coordinates.
+///
+/// `band` is the strip the handle sits in, and `y` is how far down that
+/// strip the middle of the handle is.
+///
+/// Both seams used to build this rectangle from the width and the
+/// offset alone -- `pos2(width * 0.5, y)`. Those two numbers are not a
+/// position: the handle was placed at the top left of the screen
+/// instead of on the seam. The painter is clipped to the strip, so the
+/// handle was never even drawn, and the pointer never found it. That is
+/// why neither the seam between the preview and the timeline nor the
+/// seams in the side columns could be dragged at all.
+fn seam_handle_rect(band: egui::Rect, y: f32, handle_h: f32) -> egui::Rect {
+    egui::Rect::from_center_size(
+        egui::pos2(band.center().x, band.top() + y),
+        egui::vec2(band.width(), handle_h),
+    )
+}
+
+#[cfg(test)]
+mod seam_tests {
+    use super::seam_handle_rect;
+
+    /// The bug this pins.
+    ///
+    /// The handle's rectangle was built from the width and the offset
+    /// as if they were a position, so it landed near the top left of
+    /// the screen: not drawn (the painter is clipped to the strip) and
+    /// not clickable. The seam could not be dragged, on either side of
+    /// the editor.
+    #[test]
+    fn the_handle_sits_on_the_seam() {
+        let band = egui::Rect::from_min_size(egui::pos2(300.0, 500.0), egui::vec2(400.0, 9.0));
+        let rect = seam_handle_rect(band, 4.5, 7.0);
+
+        assert!(
+            (rect.center().y - 504.5).abs() < 0.01,
+            "the handle is at y={} instead of on the seam",
+            rect.center().y
+        );
+        assert!(
+            (rect.width() - 400.0).abs() < 0.01,
+            "the handle is not as wide as the seam"
+        );
+        assert!((rect.height() - 7.0).abs() < 0.01);
+        assert!(band.intersects(rect), "the handle is outside its own strip");
+    }
+
+    /// The pointer has to find the handle where the handle is drawn.
+    ///
+    /// This goes through egui's own hit testing: the pointer moves to
+    /// the middle of the handle, presses, and then drags. A handle
+    /// that is drawn somewhere else than it is tested fails here.
+    #[test]
+    fn the_pointer_finds_the_handle_where_it_is_drawn() {
+        let mut raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1920.0, 1080.0),
+            )),
+            ..Default::default()
+        };
+
+        let ctx = egui::Context::default();
+
+        // One frame to find out where the strip is, and to put the
+        // handle on the table: egui works out what is under the
+        // pointer from the widgets of the frame before.
+        let mut rect = egui::Rect::ZERO;
+        let _ = ctx.run(raw.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                rect = seam_handle_rect(ui.max_rect(), 4.5, 7.0);
+                let _ = ui.interact(rect, ui.id().with("handle"), egui::Sense::drag());
+            });
+        });
+
+        // The next frame puts the pointer on the handle and presses.
+        raw.events.push(egui::Event::PointerMoved(rect.center()));
+        raw.events.push(egui::Event::PointerButton {
+            pos: rect.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        let mut pressed_on = false;
+        let _ = ctx.run(raw.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let r = seam_handle_rect(ui.max_rect(), 4.5, 7.0);
+                let resp = ui.interact(r, ui.id().with("handle"), egui::Sense::drag());
+                pressed_on = resp.is_pointer_button_down_on();
+            });
+        });
+
+        // And the frame after that drags it.
+        raw.events.push(egui::Event::PointerMoved(
+            rect.center() + egui::vec2(0.0, 20.0),
+        ));
+        let mut dragged = false;
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let r = seam_handle_rect(ui.max_rect(), 4.5, 7.0);
+                let resp = ui.interact(r, ui.id().with("handle"), egui::Sense::drag());
+                dragged = resp.dragged();
+            });
+        });
+
+        assert!(
+            pressed_on,
+            "the pointer on the seam does not press the handle at {rect:?}"
+        );
+        assert!(
+            dragged,
+            "the handle at {rect:?} does not follow the pointer"
+        );
+    }
 }
 
 #[cfg(test)]
