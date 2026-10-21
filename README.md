@@ -137,6 +137,27 @@ FFmpeg is called as a **subprocess**, never linked. See [full_readme.md](full_re
 
 ---
 
+## What's next
+
+Each item is its own issue, so it can be picked up and closed on its
+own.
+
+| | Issue | What it is |
+|---|---|---|
+| 🖥 | [#79](https://github.com/Domica/CapRust/issues/79) | Auto-update inside the app, instead of a toast that opens a browser |
+| 📉 | [#80](https://github.com/Domica/CapRust/issues/80) | The binary under 25 MB: the ONNX runtime is 7.8 MB of it, and that is a decision |
+| 📷 | [#81](https://github.com/Domica/CapRust/issues/81) | Google Photos: watch a local folder instead of the API |
+| 🔊 | [#82](https://github.com/Domica/CapRust/issues/82) | The preview's per-track fader is not verified, only the export's is |
+| 🕳 | [#83](https://github.com/Domica/CapRust/issues/83) | A clip with a missing source file is invisible on the timeline |
+| 🎚 | [#84](https://github.com/Domica/CapRust/issues/84) | The keyframe curve editor |
+| 📈 | [#85](https://github.com/Domica/CapRust/issues/85) | Easing between keyframes |
+| 🎛 | [#86](https://github.com/Domica/CapRust/issues/86) | One keyframe track per property |
+| ✨ | [#87](https://github.com/Domica/CapRust/issues/87) | Keyframing a clip's size and an effect's amount |
+| 🔏 | [#39](https://github.com/Domica/CapRust/issues/39) | AI Enhance (Real-ESRGAN): needs a runtime that can run it |
+| 🔐 | [#78](https://github.com/Domica/CapRust/issues/78) | Code signing, so SmartScreen stops saying "unknown publisher" |
+
+---
+
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
