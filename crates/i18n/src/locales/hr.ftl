@@ -1111,3 +1111,5 @@ tour-skip = Preskoči
 tour-finish = Gotovo
 settings-show-tips = Prikaži savjete ponovno
 settings-show-tips-hint = Vođeni savjeti vode kroz uvoz, rezanje i izvoz.
+menu-zone-remember-resize = Zapamti vlastnu veličinu
+menu-zone-remember-resize-hint = Zadrži veličine panela koje si povukao. Odabir S, M ili L vraća timeline na njegovu veličinu.

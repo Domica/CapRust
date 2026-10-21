@@ -1111,3 +1111,5 @@ tour-skip = Salta
 tour-finish = Fatto
 settings-show-tips = Mostra i consigli di nuovo
 settings-show-tips-hint = I suggerimenti guidati ti portano dall'importazione al montaggio e all'esportazione.
+menu-zone-remember-resize = Ricorda la dimensione personalizzata
+menu-zone-remember-resize-hint = Mantiene la dimensione dei pannelli che hai trascinato. Scegliere S, M o L riporta la timeline alla sua dimensione.

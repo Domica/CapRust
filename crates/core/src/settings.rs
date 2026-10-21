@@ -193,6 +193,23 @@ pub struct AppSettings {
     /// Settings -> About can turn them back on.
     #[serde(default)]
     pub tour_completed: bool,
+    /// Where the user put the seam in the Modern layout's left column,
+    /// as a fraction of the column's height. `None` means the preset
+    /// decides.
+    #[serde(default)]
+    pub modern_left_split: Option<f32>,
+    /// The same for the right column.
+    #[serde(default)]
+    pub modern_right_split: Option<f32>,
+    /// The height the user pulled the timeline to, in pixels. `None`
+    /// means the size preset (S, M, L) decides.
+    #[serde(default)]
+    pub modern_timeline_height: Option<f32>,
+    /// When true, picking S, M or L leaves the user's own panel sizes
+    /// where they are. Off by default: the sizes are there to place the
+    /// panels, and they win.
+    #[serde(default)]
+    pub remember_custom_resize: bool,
 }
 
 /// Autosave cadence in minutes. Every 5 minutes is short enough that
@@ -351,6 +368,10 @@ impl Default for AppSettings {
             autosave_recovery: true,
             welcome_seen: false,
             tour_completed: false,
+            modern_left_split: None,
+            modern_right_split: None,
+            modern_timeline_height: None,
+            remember_custom_resize: false,
         }
     }
 }
@@ -819,6 +840,10 @@ mod tests {
             docked_panels: vec!["text".into(), "effects".into()],
             layout: LayoutMode::Modern,
             layout_preset: Some("timeline-focus".into()),
+            modern_left_split: Some(0.42),
+            modern_right_split: Some(0.61),
+            modern_timeline_height: Some(310.0),
+            remember_custom_resize: true,
             ..Default::default()
         };
 
@@ -836,8 +861,33 @@ mod tests {
         assert_eq!(a.docked_panels, b.docked_panels);
         assert_eq!(a.layout, b.layout);
         assert_eq!(a.layout_preset, b.layout_preset);
+        // The panel sizes the user dragged have to survive a restart.
+        assert_eq!(a.modern_left_split, b.modern_left_split);
+        assert_eq!(a.modern_right_split, b.modern_right_split);
+        assert_eq!(a.modern_timeline_height, b.modern_timeline_height);
+        assert_eq!(a.remember_custom_resize, b.remember_custom_resize);
 
         let _ = fs::remove_file(&p);
+    }
+
+    /// An install from before the panel sizes existed has no such keys
+    /// in its settings file. It must open with the presets, not with a
+    /// split of zero.
+    #[test]
+    fn settings_without_panel_sizes_open_with_the_presets() {
+        let old = AppSettings::default();
+        let mut json = serde_json::to_value(&old).unwrap();
+        let map = json.as_object_mut().unwrap();
+        map.remove("modern_left_split");
+        map.remove("modern_right_split");
+        map.remove("modern_timeline_height");
+        map.remove("remember_custom_resize");
+
+        let back: AppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.modern_left_split, None);
+        assert_eq!(back.modern_right_split, None);
+        assert_eq!(back.modern_timeline_height, None);
+        assert!(!back.remember_custom_resize);
     }
 
     /// An install that predates these fields must open on exactly the

@@ -353,21 +353,6 @@ pub struct CapRustApp {
     /// Timeline collapsed: the timeline is replaced by a handle strip and
     /// the columns take the whole height.
     pub timeline_collapsed: bool,
-    /// Height the user dragged the Modern timeline to. `None` means the
-    /// timeline follows `settings.timeline_size`; picking a size clears this,
-    /// which is what makes S/M/L win over an earlier drag.
-    pub timeline_drag: Option<f32>,
-    /// Fraction of a side column taken by its top container, as the user
-    /// dragged it. `None` means the column keeps its preset split.
-    ///
-    /// The sidebars could be dragged left and right but not up and down:
-    /// the column was cut at a fixed fraction, so the two containers in it
-    /// never moved relative to each other while the middle column could be
-    /// dragged freely. These give the columns their own seam. They are not
-    /// cleared when the timeline size changes -- that setting says how tall
-    /// the timeline is, and has no business moving a sidebar.
-    pub left_split: Option<f32>,
-    pub right_split: Option<f32>,
     /// Sidebar visibility for the Modern editor. The timeline size presets
     /// these, but they can be set by hand afterwards -- at M and L the preset
     /// turns a sidebar off, and without a way to turn it back on the left
@@ -1608,9 +1593,6 @@ impl CapRustApp {
             recovery_slot_path: None,
             pending_missing_scan: false,
             timeline_collapsed: false,
-            timeline_drag: None,
-            left_split: None,
-            right_split: None,
             modern_left_on: true,
             modern_right_on: true,
             mcp_server: Default::default(),
@@ -3345,6 +3327,15 @@ impl CapRustApp {
                             // than its last dragged one.
                             ui.checkbox(&mut self.modern_left_on, tr("menu-zone-side-left"));
                             ui.checkbox(&mut self.modern_right_on, tr("menu-zone-side-right"));
+                            ui.separator();
+                            // Whether the sizes the user dragged survive
+                            // a restart, and whether picking S, M or L
+                            // takes them away.
+                            ui.checkbox(
+                                &mut self.settings.remember_custom_resize,
+                                tr("menu-zone-remember-resize"),
+                            )
+                            .on_hover_text(tr("menu-zone-remember-resize-hint"));
                             ui.separator();
                             // Add container, then which side. Both menus go
                             // through `Zone::set`, which inserts at the front
@@ -6285,21 +6276,23 @@ impl CapRustApp {
 
     /// The timeline's own height, in logical pixels.
     ///
-    /// `timeline_drag` is the height the user pulled to, and it wins while
-    /// it is set -- dragging is still allowed, because that is how the
-    /// timeline has always been sized and taking it away made the layout
-    /// feel fixed. What changed is who remembers it: a resizable
-    /// `TopBottomPanel` stores the dragged height in egui's context state,
-    /// where `default_height` can no longer reach it, and picking a size
-    /// afterwards did nothing. Here the drag lives in a field the selector
-    /// clears, so S/M/L always wins over the drag and the timeline always
-    /// comes back to where the size says it should be.
+    /// `settings.modern_timeline_height` is the height the user pulled
+    /// to, and it wins while it is set -- dragging is still allowed,
+    /// because that is how the timeline has always been sized and taking
+    /// it away made the layout feel fixed. What changed is who remembers
+    /// it: a resizable `TopBottomPanel` stores the dragged height in
+    /// egui's context state, where `default_height` can no longer reach
+    /// it, and picking a size afterwards did nothing. Here the drag
+    /// lives in the settings, so it survives a restart, and the size
+    /// selector clears it unless the user asked for their own sizes to
+    /// stick.
     fn timeline_height(&self, area_h: f32) -> f32 {
         if self.timeline_collapsed {
             return TIMELINE_HANDLE_HEIGHT;
         }
         let base = self
-            .timeline_drag
+            .settings
+            .modern_timeline_height
             .unwrap_or_else(|| self.timeline_height_default())
             .max(self.timeline_height_min());
         base.clamp(80.0, (area_h * 0.7).max(80.0))
@@ -6347,9 +6340,13 @@ impl CapRustApp {
             // `dy` is negative when the pointer moves up, which is a taller
             // timeline, so the sign is flipped.
             let dy = ui.input(|i| i.pointer.delta().y);
-            let next = (self.timeline_drag.unwrap_or(self.timeline_height_default()) - dy)
+            let next = (self
+                .settings
+                .modern_timeline_height
+                .unwrap_or(self.timeline_height_default())
+                - dy)
                 .clamp(self.timeline_height_min(), max_h);
-            self.timeline_drag = Some(next);
+            self.settings.modern_timeline_height = Some(next);
         }
     }
 
@@ -6369,7 +6366,7 @@ impl CapRustApp {
                 .clicked()
             {
                 self.timeline_collapsed = false;
-                self.timeline_drag = None;
+                self.settings.modern_timeline_height = None;
             }
         });
     }
@@ -6414,8 +6411,11 @@ impl CapRustApp {
                             self.settings.timeline_size = *size;
                             // Picking a size is a request to see the
                             // timeline at that size, so the drag that set
-                            // some other height is dropped.
-                            self.timeline_drag = None;
+                            // some other height is dropped -- unless the
+                            // user asked for their own sizes to stick.
+                            if !self.settings.remember_custom_resize {
+                                self.reset_custom_resize();
+                            }
                             self.timeline_collapsed = false;
                             ui.close_menu();
                         }
@@ -6423,11 +6423,11 @@ impl CapRustApp {
                     ui.separator();
                     if ui.button(tr("menu-timeline-collapse")).clicked() {
                         self.timeline_collapsed = true;
-                        self.timeline_drag = None;
+                        self.settings.modern_timeline_height = None;
                         ui.close_menu();
                     }
                     if ui.button(tr("menu-timeline-reset-size")).clicked() {
-                        self.timeline_drag = None;
+                        self.reset_custom_resize();
                         ui.close_menu();
                     }
                 },
@@ -6443,7 +6443,7 @@ impl CapRustApp {
                 .clicked()
             {
                 self.timeline_collapsed = true;
-                self.timeline_drag = None;
+                self.settings.modern_timeline_height = None;
             }
 
             let spacer = ((ui.available_width() - 190.0) * 0.5).max(0.0);
@@ -6454,16 +6454,29 @@ impl CapRustApp {
                     .size(15.0),
             );
 
-            if self.timeline_drag.is_some()
+            if self.settings.modern_timeline_height.is_some()
                 && ui
                     .add(egui::Button::new(
                         egui::RichText::new(tr("menu-timeline-reset-size")).size(10.0),
                     ))
                     .clicked()
             {
-                self.timeline_drag = None;
+                self.settings.modern_timeline_height = None;
             }
         });
+    }
+
+    /// Drop the panel sizes the user dragged, so the presets take over
+    /// again.
+    ///
+    /// The timeline's height and the two column splits are all "the
+    /// user dragged this" now, and all three are forgotten together:
+    /// picking a size is a request to see the layout the sizes
+    /// describe.
+    fn reset_custom_resize(&mut self) {
+        self.settings.modern_timeline_height = None;
+        self.settings.modern_left_split = None;
+        self.settings.modern_right_split = None;
     }
 
     pub(crate) fn render_timeline_panel(&mut self, ui: &mut egui::Ui) {
@@ -9629,9 +9642,9 @@ impl CapRustApp {
         // timeline follows. The clamps stop either container collapsing to
         // nothing, which is the only way this can be gotten wrong.
         let split = if left {
-            self.left_split
+            self.settings.modern_left_split
         } else {
-            self.right_split
+            self.settings.modern_right_split
         }
         .unwrap_or(split)
         .clamp(0.15, 0.85);
@@ -9710,9 +9723,9 @@ impl CapRustApp {
             let dy = ui.input(|i| i.pointer.delta().y);
             let next = (split + dy / column_h.max(1.0)).clamp(0.15, 0.85);
             if left {
-                self.left_split = Some(next);
+                self.settings.modern_left_split = Some(next);
             } else {
-                self.right_split = Some(next);
+                self.settings.modern_right_split = Some(next);
             }
         }
     }

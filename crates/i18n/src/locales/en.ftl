@@ -1112,3 +1112,5 @@ tour-skip = Skip
 tour-finish = Done
 settings-show-tips = Show the tips again
 settings-show-tips-hint = The guided tips walk through importing, cutting and exporting.
+menu-zone-remember-resize = Remember custom resize
+menu-zone-remember-resize-hint = Keep the panel sizes you dragged. Picking S, M or L moves the timeline back to its size.

@@ -147,7 +147,6 @@ own.
 | 🖥 | [#79](https://github.com/Domica/CapRust/issues/79) | Auto-update inside the app, instead of a toast that opens a browser |
 | 📷 | [#81](https://github.com/Domica/CapRust/issues/81) | Google Photos: watch a local folder instead of the API |
 | 🕳 | [#83](https://github.com/Domica/CapRust/issues/83) | A clip with a missing source file is invisible on the timeline |
-| ↔ | [#88](https://github.com/Domica/CapRust/issues/88) | The panel split is not remembered |
 | 🎚 | [#84](https://github.com/Domica/CapRust/issues/84) | The keyframe curve editor |
 | 📈 | [#85](https://github.com/Domica/CapRust/issues/85) | Easing between keyframes |
 | 🎛 | [#86](https://github.com/Domica/CapRust/issues/86) | One keyframe track per property |

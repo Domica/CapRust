@@ -4,6 +4,26 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The panel seams could not be dragged.** The handles between the
+  preview and the timeline, and between the two containers in a side
+  column, were built from the width and the offset as if they were a
+  position, so they sat in the top left of the screen: never drawn,
+  never found by the pointer. Now they are where the seam is.
+- **The track fader was silent in the preview and audible in the
+  export.** The preview plays a cached mix of the audio, and the cache
+  was not re-rendered when the fader moved, because the hash that
+  decides that covered the track's mute but not its volume. The two
+  disagreed about the same project.
+
+### Added
+
+- **The panel sizes are remembered.** The timeline's height and the
+  two column splits live in the settings now, so they survive a
+  restart. Picking S, M or L still takes them back to the preset,
+  unless *Remember custom resize* is on (View -> Modern zones).
+
 ## [0.9.20] - 2026-10-21
 
 ### Added
