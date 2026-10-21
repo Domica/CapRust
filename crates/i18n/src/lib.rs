@@ -15,10 +15,29 @@ thread_local! {
             ("it", include_str!("locales/it.ftl")),
             ("de", include_str!("locales/de.ftl")),
         ] {
-            let resource = FluentResource::try_new(ftl.to_string()).expect("valid FTL");
+            // A locale that does not parse must not take the app with
+            // it. The strings live in the binary, so a broken one is
+            // a build accident, not something the user can cause --
+            // but a panic here is a dead app with no way back, and the
+            // crash handler cannot help because the panic happens
+            // before the window exists.
+            //
+            // The English bundle is the one that has to be there: it
+            // is what the other languages fall back to. If it does
+            // not parse there is nothing sensible left to do.
+            let Ok(resource) = FluentResource::try_new(ftl.to_string()) else {
+                if lang == "en" {
+                    panic!("the English locale does not parse");
+                }
+                eprintln!("the {lang} locale does not parse; it is skipped");
+                continue;
+            };
             let lang_id: LanguageIdentifier = lang.parse().unwrap();
             let mut bundle = FluentBundle::new(vec![lang_id]);
-            bundle.add_resource(resource).expect("add FTL resource");
+            if bundle.add_resource(resource).is_err() {
+                eprintln!("the {lang} locale does not fit the bundle; it is skipped");
+                continue;
+            }
             map.insert(lang.to_string(), bundle);
         }
         map
@@ -163,6 +182,55 @@ mod tests {
     #[test]
     fn plain_translation_is_untouched() {
         assert_eq!(t_lang("props-captions-add", "en"), "Add");
+    }
+
+    /// Every locale has to parse.
+    ///
+    /// A locale that does not parse is skipped at startup now instead
+    /// of taking the app down with it, but skipping is a fallback,
+    /// not the goal: the strings should be valid. A file that was
+    /// saved as UTF-16 once is enough to break this.
+    #[test]
+    fn every_locale_parses() {
+        for (lang, ftl) in [
+            ("en", include_str!("locales/en.ftl")),
+            ("hr", include_str!("locales/hr.ftl")),
+            ("es", include_str!("locales/es.ftl")),
+            ("it", include_str!("locales/it.ftl")),
+            ("de", include_str!("locales/de.ftl")),
+        ] {
+            let res = FluentResource::try_new(ftl.to_string())
+                .unwrap_or_else(|e| panic!("the {lang} locale does not parse: {e:?}"));
+            let lang_id: LanguageIdentifier = lang.parse().unwrap();
+            let mut bundle = FluentBundle::new(vec![lang_id]);
+            bundle
+                .add_resource(res)
+                .unwrap_or_else(|e| panic!("the {lang} locale does not fit the bundle: {e:?}"));
+        }
+    }
+
+    /// The first-run strings have to be in every language, or a user
+    /// who switches gets the raw key.
+    #[test]
+    fn the_first_run_strings_are_translated() {
+        for key in [
+            "welcome-title",
+            "welcome-subtitle",
+            "welcome-start",
+            "tour-title",
+            "tour-import-title",
+            "tour-timeline-title",
+            "tour-export-title",
+            "tour-next",
+            "tour-finish",
+            "settings-show-tips",
+        ] {
+            for (lang, _) in LANGUAGES {
+                let s = t_lang(key, lang);
+                assert_ne!(s, key, "{lang} has no value for {key}");
+                assert!(!s.trim().is_empty(), "{lang} has an empty {key}");
+            }
+        }
     }
 
     #[test]
