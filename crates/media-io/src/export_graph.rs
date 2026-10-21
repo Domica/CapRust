@@ -1867,51 +1867,137 @@ fn build_effects_chain(effects: &[caprust_core::clip::EffectInstance]) -> String
     out
 }
 
-/// Resolve a clip's LUT reference to an absolute `.cube` path.
+/// The built-in LUTs, packed into one blob.
 ///
-/// `lut_id` is either a built-in LUT id (e.g. "film_kodak") mapped to a
-/// bundled asset, or an absolute path to a user-uploaded `.cube` file.
-/// Returns `None` when the id is unknown or the path does not exist.
+/// A `.cube` file is text: 17x17x17 entries of three six-decimal
+/// numbers, about 137 KB each. Four of them is 550 KB of the app
+/// binary for four colour grades, and the binary is what every user
+/// downloads. Packed as 16-bit values the same four are 118 KB, and
+/// the `.cube` text is written out again into the cache directory on
+/// the user's machine, where it costs nothing.
 ///
-/// Built-in LUTs embedded in the binary (see `EMBEDDED_LUTS` below):
-/// the installer ships only the exe, so exe-relative `assets/luts/`
-/// does not exist on installed machines — the bytes are extracted to
-/// the default cache dir on startup instead (see
-/// `ensure_builtin_luts`).
-const EMBEDDED_LUTS: &[(&str, &str, &[u8])] = &[
-    (
-        "film_kodak",
-        "film_kodak.cube",
-        include_bytes!("../../app/assets/luts/film_kodak.cube"),
-    ),
-    (
-        "film_fuji",
-        "film_fuji.cube",
-        include_bytes!("../../app/assets/luts/film_fuji.cube"),
-    ),
-    (
-        "bw_contrast",
-        "bw_contrast.cube",
-        include_bytes!("../../app/assets/luts/bw_contrast.cube"),
-    ),
-    (
-        "vintage_sepia",
-        "vintage_sepia.cube",
-        include_bytes!("../../app/assets/luts/vintage_sepia.cube"),
-    ),
+/// The order has to match [`BUILTIN_LUTS`], and the blob is written by
+/// `crates/app/assets/luts/gen_builtin_bin.py`.
+const PACKED_LUTS: &[u8] = include_bytes!("../../app/assets/luts/builtin_luts.bin");
+
+/// The built-in LUTs: the id used in a clip, the file it is written
+/// out as, and the packed blob's slot.
+const BUILTIN_LUTS: &[(&str, &str)] = &[
+    ("film_kodak", "film_kodak.cube"),
+    ("film_fuji", "film_fuji.cube"),
+    ("bw_contrast", "bw_contrast.cube"),
+    ("vintage_sepia", "vintage_sepia.cube"),
 ];
 
-/// Extract embedded built-in LUTs into the default cache dir,
-/// skipping files that already exist. Idempotent; runs once at
-/// startup. ~550 KB total, written once, never re-downloaded.
+/// A LUT that has been unpacked from the blob.
+struct PackedLut {
+    /// The grid size: 17 means 17x17x17 entries.
+    size: usize,
+    /// The largest value in the LUT. A film stock that lifts the reds
+    /// goes above 1, so the values are stored against this instead of
+    /// against 1.0.
+    scale: f32,
+    /// The three channels of every entry, in `.cube` order.
+    values: Vec<u16>,
+}
+
+impl PackedLut {
+    /// The value of one channel, as the `.cube` file writes it.
+    fn value(&self, index: usize) -> f32 {
+        self.values[index] as f32 / 65535.0 * self.scale
+    }
+}
+
+/// Unpack the blob.
+///
+/// Returns `None` if the blob is not what it says it is, rather than
+/// panicking: a corrupt asset should cost the user their colour
+/// grades, not their session.
+fn unpack_luts(bytes: &[u8]) -> Option<Vec<PackedLut>> {
+    if bytes.len() < 6 || &bytes[0..4] != b"CPLT" {
+        return None;
+    }
+    let count = bytes[4] as usize;
+    let mut at = 5usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        if at + 5 > bytes.len() {
+            return None;
+        }
+        let size = bytes[at] as usize;
+        at += 1;
+        let scale = f32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+        at += 4;
+        let n = size.checked_mul(size)?.checked_mul(size)?.checked_mul(3)?;
+        let need = n * 2;
+        if at + need > bytes.len() {
+            return None;
+        }
+        let mut values = Vec::with_capacity(n);
+        for i in 0..n {
+            values.push(u16::from_le_bytes([
+                bytes[at + i * 2],
+                bytes[at + i * 2 + 1],
+            ]));
+        }
+        at += need;
+        out.push(PackedLut {
+            size,
+            scale,
+            values,
+        });
+    }
+    Some(out)
+}
+
+/// Write a LUT out as the `.cube` text ffmpeg's `lut3d` filter reads.
+fn lut_to_cube(name: &str, lut: &PackedLut) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(lut.values.len() * 24 + 128);
+    let _ = writeln!(s, "TITLE \"{name}\"");
+    let _ = writeln!(s, "LUT_3D_SIZE {}", lut.size);
+    s.push_str("DOMAIN_MIN 0.0 0.0 0.0\n");
+    s.push_str("DOMAIN_MAX 1.0 1.0 1.0\n");
+    let mut i = 0;
+    for _ in 0..lut.size {
+        for _ in 0..lut.size {
+            for _ in 0..lut.size {
+                let _ = writeln!(
+                    s,
+                    "{:.6} {:.6} {:.6}",
+                    lut.value(i),
+                    lut.value(i + 1),
+                    lut.value(i + 2)
+                );
+                i += 3;
+            }
+        }
+    }
+    s
+}
+
+/// Extract the built-in LUTs into the default cache dir, skipping
+/// files that already exist. Idempotent; runs once at startup.
 pub fn ensure_builtin_luts() -> anyhow::Result<()> {
+    let Some(luts) = unpack_luts(PACKED_LUTS) else {
+        tracing::warn!("the built-in LUT blob is not readable; skipping the extraction");
+        return Ok(());
+    };
+    if luts.len() != BUILTIN_LUTS.len() {
+        tracing::warn!(
+            "the built-in LUT blob holds {} LUTs, expected {}",
+            luts.len(),
+            BUILTIN_LUTS.len()
+        );
+        return Ok(());
+    }
     let dir = caprust_core::settings::default_lut_cache_dir();
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("create LUT cache dir {}", dir.display()))?;
-    for (_id, filename, bytes) in EMBEDDED_LUTS {
+    for ((id, filename), lut) in BUILTIN_LUTS.iter().zip(luts.iter()) {
         let path = dir.join(filename);
         if !path.exists() {
-            std::fs::write(&path, bytes)
+            std::fs::write(&path, lut_to_cube(id, lut))
                 .with_context(|| format!("extract built-in LUT {}", path.display()))?;
         }
     }
@@ -1920,13 +2006,7 @@ pub fn ensure_builtin_luts() -> anyhow::Result<()> {
 
 fn resolve_lut_path(lut_id: &str) -> Option<PathBuf> {
     // Built-in LUTs: bundled in assets/luts/. The id maps to a filename.
-    let builtins = [
-        ("film_kodak", "film_kodak.cube"),
-        ("film_fuji", "film_fuji.cube"),
-        ("bw_contrast", "bw_contrast.cube"),
-        ("vintage_sepia", "vintage_sepia.cube"),
-    ];
-    for (id, filename) in &builtins {
+    for (id, filename) in BUILTIN_LUTS {
         if lut_id == *id {
             // assets/luts/ is bundled next to the exe in release builds
             // and in the workspace in dev. Walk up from the current exe.
@@ -4240,6 +4320,123 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_packed_luts_are_the_luts_in_the_repository() {
+        // The blob is what the binary carries; the .cube files are
+        // where the colour grades are written down. If the two drift
+        // apart, the app is grading with something nobody can see.
+        let luts = unpack_luts(PACKED_LUTS).expect("the packed LUT blob is readable");
+        assert_eq!(luts.len(), BUILTIN_LUTS.len());
+        for (slot, (id, filename)) in BUILTIN_LUTS.iter().enumerate() {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("app")
+                .join("assets")
+                .join("luts")
+                .join(filename);
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{filename} is in the repository: {e}"));
+            let original = caprust_core::settings::CubeLut::parse(&source)
+                .unwrap_or_else(|e| panic!("{filename} parses: {e}"));
+            let written = lut_to_cube(id, &luts[slot]);
+            let round = caprust_core::settings::CubeLut::parse(&written)
+                .unwrap_or_else(|e| panic!("the written {filename} parses: {e}"));
+
+            assert_eq!(original.size, round.size, "{filename}");
+            assert_eq!(original.data.len(), round.data.len(), "{filename}");
+            // A 16-bit value against a scale of at most 1.1, plus the
+            // six decimals the text carries.
+            let bound = luts[slot].scale / 65535.0 + 1e-6;
+            for (i, (a, b)) in original.data.iter().zip(round.data.iter()).enumerate() {
+                for c in 0..3 {
+                    assert!(
+                        (a[c] - b[c]).abs() <= bound,
+                        "{filename} entry {i} channel {c}: {} vs {} (bound {bound})",
+                        a[c],
+                        b[c]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_broken_blob_is_not_a_crash() {
+        assert!(unpack_luts(b"").is_none());
+        assert!(unpack_luts(b"NOPE").is_none());
+        assert!(unpack_luts(b"CPLT\x09\x00").is_none());
+    }
+
+    #[test]
+    fn real_ffmpeg_grades_the_same_with_the_packed_lut() {
+        // The packed LUT is what the app writes out and hands to
+        // ffmpeg. This runs the real filter with both files and
+        // compares the pixels: a LUT that grades differently is a LUT
+        // that changed the look of every clip with it.
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join("caprust_packed_lut");
+        std::fs::create_dir_all(&dir).unwrap();
+        let luts = unpack_luts(PACKED_LUTS).expect("the packed LUT blob is readable");
+
+        for (slot, (id, filename)) in BUILTIN_LUTS.iter().enumerate() {
+            let packed_path = dir.join(format!("{id}-packed.cube"));
+            std::fs::write(&packed_path, lut_to_cube(id, &luts[slot])).unwrap();
+
+            let original_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("app")
+                .join("assets")
+                .join("luts")
+                .join(filename);
+            let original_path = escape_movie_path(&original_path).expect("a usable path");
+
+            let render = |cube: &str| -> Vec<u8> {
+                let out = Command::new("ffmpeg")
+                    .args([
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "testsrc2=size=64x64:rate=1:duration=1",
+                        "-vf",
+                        &format!("lut3d=file={cube}"),
+                        "-pix_fmt",
+                        "rgb24",
+                        "-f",
+                        "rawvideo",
+                        "-",
+                    ])
+                    .output()
+                    .expect("ffmpeg runs");
+                assert!(
+                    out.status.success(),
+                    "ffmpeg with {cube} failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                out.stdout
+            };
+
+            let a = render(&original_path);
+            let b = render(&escape_movie_path(&packed_path).expect("a usable path"));
+            assert_eq!(a.len(), b.len(), "{id}: different frame sizes");
+            let worst = a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| (*x as i32 - *y as i32).abs())
+                .max()
+                .unwrap_or(0);
+            // 16-bit values against a scale of at most 1.1: a rounding
+            // of the last bit of 8-bit output, at the very worst.
+            assert!(
+                worst <= 1,
+                "{id}: the packed LUT grades differently ({worst})"
+            );
+        }
+    }
+
+    #[test]
     fn xfade_mapping_covers_all_ids() {
         for id in [
             "fade",
@@ -6257,14 +6454,16 @@ mod chroma_key_filter_tests {
 
     #[test]
     fn embedded_builtin_luts_are_valid_cubes() {
-        // Guards the committed .cube assets: a corrupt embed would
-        // fail every lut3d render at runtime instead.
-        for (id, filename, bytes) in EMBEDDED_LUTS {
-            let text = std::str::from_utf8(bytes).expect("cube must be UTF-8");
-            let lut = caprust_core::settings::CubeLut::parse(text)
-                .unwrap_or_else(|e| panic!("builtin {id} ({filename}) invalid: {e:#}"));
-            assert_eq!(lut.size, 17, "builtin {id} must stay 17^3");
-            assert_eq!(lut.data.len(), 17 * 17 * 17);
+        // Guards the committed LUT blob: a corrupt one would fail
+        // every lut3d render at runtime instead.
+        let luts = unpack_luts(PACKED_LUTS).expect("the packed LUT blob is readable");
+        assert_eq!(luts.len(), BUILTIN_LUTS.len());
+        for ((id, _filename), lut) in BUILTIN_LUTS.iter().zip(luts.iter()) {
+            let text = lut_to_cube(id, lut);
+            let parsed = caprust_core::settings::CubeLut::parse(&text)
+                .unwrap_or_else(|e| panic!("builtin {id} invalid: {e:#}"));
+            assert_eq!(parsed.size, 17, "builtin {id} must stay 17^3");
+            assert_eq!(parsed.data.len(), 17 * 17 * 17);
         }
     }
 
