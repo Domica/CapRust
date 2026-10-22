@@ -179,11 +179,9 @@ fn kind_from_bytes(path: &str) -> Option<MediaKind> {
     // four bytes are looked for inside the head, not at the front of
     // it.
     let has_ftyp = head.len() >= 8 && (0..=head.len() - 8).any(|i| &head[i..i + 4] == b"ftyp");
-    let kind = if has_ftyp || starts(&[0x1a, 0x45, 0xdf, 0xa3]) {
-        // An MP4 or a Matroska/WebM header.
-        MediaKind::Video
-    } else if starts(b"RIFF") {
-        // RIFF: avi or webm. Both are video here.
+    let kind = if has_ftyp || starts(&[0x1a, 0x45, 0xdf, 0xa3]) || starts(b"RIFF") {
+        // An MP4, or a Matroska/WebM header, or a RIFF container
+        // (avi or webm).
         MediaKind::Video
     } else if starts(b"OggS") {
         MediaKind::Audio
