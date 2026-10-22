@@ -111,6 +111,26 @@ jobs:
           cargo build --release -p caprust-android --target x86_64-linux-android --bin caprust-androidd
           cargo build --release -p caprust-android --target i686-linux-android --bin caprust-androidd
 
+      # The renderer. It has to be in the APK: an Android app may only
+      # run a binary out of its own native library folder, and the
+      # engine renders by calling ffmpeg.
+      #
+      # Built from source, because a third-party binary in a release is
+      # a thing that has to be trusted, and because the old prebuilt
+      # Android builds are from 2016 and have no xfade in them, so no
+      # transitions.
+      #
+      # The build is cached: the first one takes twenty minutes, the
+      # rest take a minute.
+      - name: Build ffmpeg for the phone
+        run: |
+          for ABI in aarch64-linux-android x86_64-linux-android i686-linux-android; do
+            echo "=== ffmpeg for $ABI ==="
+            android/build-ffmpeg.sh "$ABI"
+          done
+        env:
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
+
       # gradle from the runner image rather than a wrapper: the wrapper
       # would mean committing a binary jar for a build that only needs
       # assembleDebug. rust-toolchain.toml pins the Rust version, not
@@ -164,3 +184,13 @@ jobs:
           name: caprust-nightly-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+
+      # The ffmpeg build takes twenty minutes an architecture, and
+      # the nightly runs on every push. The binaries are cached, so
+      # only the first run pays for them.
+      - name: Restore the ffmpeg builds
+        uses: actions/cache@v4
+        with:
+          path: android/ffmpeg
+          key: android-ffmpeg-${{ hashFiles('android/build-ffmpeg.sh') }}
