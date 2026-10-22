@@ -180,8 +180,7 @@ fn kind_from_bytes(path: &str) -> Option<MediaKind> {
     // it.
     let has_ftyp = head.len() >= 8 && (0..=head.len() - 8).any(|i| &head[i..i + 4] == b"ftyp");
     let kind = if has_ftyp || starts(&[0x1a, 0x45, 0xdf, 0xa3]) || starts(b"RIFF") {
-        // An MP4, or a Matroska/WebM header, or a RIFF container
-        // (avi or webm).
+        // An MP4 or a Matroska/WebM header.
         MediaKind::Video
     } else if starts(b"OggS")
         || starts(b"fLaC")
@@ -189,13 +188,12 @@ fn kind_from_bytes(path: &str) -> Option<MediaKind> {
         || starts(&[0xff, 0xfb])
         || starts(&[0xff, 0xf3])
     {
-        // Ogg, FLAC, MP3.
+        // Ogg, FLAC, MP3/ID3.
         MediaKind::Audio
     } else if starts(&[0x89, b'P', b'N', b'G'])   // png
         || starts(&[0xff, 0xd8])                  // jpeg
         || starts(b"GIF8")                        // gif
-        || starts(b"BM")
-    // bmp
+        || starts(b"BM")                          // bmp
     {
         MediaKind::Image
     } else {
