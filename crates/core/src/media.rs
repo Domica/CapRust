@@ -191,9 +191,12 @@ fn kind_from_bytes(path: &str) -> Option<MediaKind> {
         MediaKind::Audio
     } else if starts(b"ID3") || starts(&[0xff, 0xfb]) || starts(&[0xff, 0xf3]) {
         MediaKind::Audio
-    } else if starts(&[0x89, b'P', b'N', b'G']) || starts(&[0xff, 0xd8]) || starts(b"GIF8") {
-        MediaKind::Image
-    } else if starts(b"BM") {
+    } else if starts(&[0x89, b'P', b'N', b'G'])   // png
+        || starts(&[0xff, 0xd8])                  // jpeg
+        || starts(b"GIF8")                        // gif
+        || starts(b"BM")
+    // bmp
+    {
         MediaKind::Image
     } else {
         return None;
