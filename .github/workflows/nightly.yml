@@ -139,10 +139,8 @@ jobs:
         run: |
           for ABI in aarch64-linux-android x86_64-linux-android i686-linux-android; do
             echo "=== ffmpeg for $ABI ==="
-            android/build-ffmpeg.sh "$ABI"
+            bash android/build-ffmpeg.sh "$ABI"
           done
-        env:
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_ROOT }}
 
       # gradle from the runner image rather than a wrapper: the wrapper
       # would mean committing a binary jar for a build that only needs

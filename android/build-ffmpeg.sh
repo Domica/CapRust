@@ -28,7 +28,9 @@ set -euo pipefail
 ABI="${1:-aarch64-linux-android}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/ffmpeg/$FOLDER"
-NDK="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
+# The runner names the NDK two ways: ANDROID_NDK_ROOT on some
+# images, ANDROID_NDK_LATEST_HOME on others. Take whichever is there.
+NDK="${ANDROID_NDK_ROOT:-${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}}"
 if [ -z "$NDK" ]; then
   echo "ANDROID_NDK_ROOT is not set" >&2
   exit 1
