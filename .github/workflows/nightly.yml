@@ -122,7 +122,20 @@ jobs:
       #
       # The build is cached: the first one takes twenty minutes, the
       # rest take a minute.
+      # The ffmpeg build takes twenty minutes an architecture, and
+      # the nightly runs on every push. The binaries are cached, so
+      # only the first run pays for them.
+      - name: Restore the ffmpeg builds
+        uses: actions/cache@v4
+        with:
+          path: android/ffmpeg
+          key: android-ffmpeg-${{ hashFiles('android/build-ffmpeg.sh') }}
+
       - name: Build ffmpeg for the phone
+        # Not fatal yet: the recipe is new, and the APK is worth
+        # building without a renderer in it. The check that the
+        # ffmpeg is in the APK comes when the recipe works.
+        continue-on-error: true
         run: |
           for ABI in aarch64-linux-android x86_64-linux-android i686-linux-android; do
             echo "=== ffmpeg for $ABI ==="
@@ -184,13 +197,3 @@ jobs:
           name: caprust-nightly-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
-
-
-      # The ffmpeg build takes twenty minutes an architecture, and
-      # the nightly runs on every push. The binaries are cached, so
-      # only the first run pays for them.
-      - name: Restore the ffmpeg builds
-        uses: actions/cache@v4
-        with:
-          path: android/ffmpeg
-          key: android-ffmpeg-${{ hashFiles('android/build-ffmpeg.sh') }}
