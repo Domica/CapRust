@@ -57,6 +57,9 @@ dependencies {
 //
 // The ffmpeg goes the same way, into the same folder: the engine runs
 // it as a separate program, and a program can only be run from there.
+//
+// One task per architecture, each with its own destination: a Copy
+// task needs one, and a destination on a child spec does not count.
 val jniLibs = file("src/main/jniLibs")
 
 val arm64Target = "aarch64-linux-android"
@@ -68,10 +71,9 @@ fun engineBinary(target: String) =
 fun ffmpegBinary(abi: String) = rootProject.file("../android/ffmpeg/$abi/ffmpeg")
 
 val copyEngineArm64 by tasks.registering(Copy::class) {
-    from(engineBinary(arm64Target)) {
-        into(File(jniLibs, "arm64-v8a"))
-        rename { "libcaprust-androidd.so" }
-    }
+    from(engineBinary(arm64Target))
+    into(File(jniLibs, "arm64-v8a"))
+    rename { "libcaprust-androidd.so" }
     // The binary is not there when the app is built without the
     // engine (a plain `gradle assembleDebug` on a laptop). The app
     // then says the engine is missing, instead of the build failing.
@@ -79,26 +81,23 @@ val copyEngineArm64 by tasks.registering(Copy::class) {
 }
 
 val copyEngineX64 by tasks.registering(Copy::class) {
-    from(engineBinary(x64Target)) {
-        into(File(jniLibs, "x86_64"))
-        rename { "libcaprust-androidd.so" }
-    }
+    from(engineBinary(x64Target))
+    into(File(jniLibs, "x86_64"))
+    rename { "libcaprust-androidd.so" }
     onlyIf { engineBinary(x64Target).exists() }
 }
 
 val copyFfmpegArm64 by tasks.registering(Copy::class) {
-    from(ffmpegBinary("arm64-v8a")) {
-        into(File(jniLibs, "arm64-v8a"))
-        rename { "libffmpeg.so" }
-    }
+    from(ffmpegBinary("arm64-v8a"))
+    into(File(jniLibs, "arm64-v8a"))
+    rename { "libffmpeg.so" }
     onlyIf { ffmpegBinary("arm64-v8a").exists() }
 }
 
 val copyFfmpegX64 by tasks.registering(Copy::class) {
-    from(ffmpegBinary("x86_64")) {
-        into(File(jniLibs, "x86_64"))
-        rename { "libffmpeg.so" }
-    }
+    from(ffmpegBinary("x86_64"))
+    into(File(jniLibs, "x86_64"))
+    rename { "libffmpeg.so" }
     onlyIf { ffmpegBinary("x86_64").exists() }
 }
 
