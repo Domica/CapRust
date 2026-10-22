@@ -71,9 +71,15 @@ jobs:
       # The same Rust the desktop runs, built for the phone's
       # architecture. It goes into the APK's native library folder,
       # which is the only place an Android app may run a binary from.
-      - name: Install the Android target
+      # Two architectures: a phone is arm64, an emulator on a laptop is
+      # x86_64. The app finds the engine in its own native library
+      # folder, which Android fills for the architecture it runs on,
+      # so the APK has to carry both.
+      - name: Install the Android targets
         run: |
-          rustup target add aarch64-linux-android --toolchain "$(cat rust-toolchain.toml | grep channel | cut -d'"' -f2)"
+          TOOLCHAIN="$(cat rust-toolchain.toml | grep channel | cut -d'"' -f2)"
+          rustup target add aarch64-linux-android --toolchain "$TOOLCHAIN"
+          rustup target add x86_64-linux-android --toolchain "$TOOLCHAIN"
 
       - name: Point cargo at the NDK clang wrappers
         run: |
@@ -83,6 +89,9 @@ jobs:
             echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android21-clang"
             echo "CC_aarch64_linux_android=$BIN/aarch64-linux-android21-clang"
             echo "CXX_aarch64_linux_android=$BIN/aarch64-linux-android21-clang++"
+            echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$BIN/x86_64-linux-android21-clang"
+            echo "CC_x86_64_linux_android=$BIN/x86_64-linux-android21-clang"
+            echo "CXX_x86_64_linux_android=$BIN/x86_64-linux-android21-clang++"
             echo "AR_aarch64_linux_android=$BIN/llvm-ar"
             echo "RANLIB_aarch64_linux_android=$BIN/llvm-ranlib"
             echo "ANDROID_API=21"
@@ -91,7 +100,9 @@ jobs:
           echo "export PATH=\"$BIN:\$PATH\"" >> "$GITHUB_PATH"
 
       - name: Build the engine for the phone
-        run: cargo build --release -p caprust-android --target aarch64-linux-android --bin caprust-androidd
+        run: |
+          cargo build --release -p caprust-android --target aarch64-linux-android --bin caprust-androidd
+          cargo build --release -p caprust-android --target x86_64-linux-android --bin caprust-androidd
 
       # gradle from the runner image rather than a wrapper: the wrapper
       # would mean committing a binary jar for a build that only needs
@@ -133,8 +144,10 @@ jobs:
           # installs and then says the engine is missing, which looks
           # like a bug in the app rather than a build that skipped a
           # step.
-          unzip -l "$APK" | grep -q 'libcaprust-androidd.so' || {
-            echo "no engine in the APK"; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libcaprust-androidd.so' || {
+            echo "no engine for the phone in the APK"; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/x86_64/libcaprust-androidd.so' || {
+            echo "no engine for the emulator in the APK"; exit 1; }
           echo "APK looks real."
 
       - uses: actions/upload-artifact@v4

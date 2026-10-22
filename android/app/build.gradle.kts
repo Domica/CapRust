@@ -50,33 +50,58 @@ dependencies {
 // may run one from: the package manager extracts it there and sets
 // the exec bit.
 //
-// The binary is built for aarch64-linux-android (the CI does it) and
-// copied in here. The ffmpeg goes the same way, into the same folder:
-// the engine runs it as a separate program, and a program can only be
-// run from there.
+// Two architectures: a phone is arm64, an emulator on a laptop is
+// x86_64. The app finds the engine in its own native library folder,
+// which Android fills for the architecture it is running on, so the
+// APK has to carry both.
+//
+// The ffmpeg goes the same way, into the same folder: the engine runs
+// it as a separate program, and a program can only be run from there.
 val jniLibs = file("src/main/jniLibs")
-val arm64 = File(jniLibs, "arm64-v8a")
 
-val engineBinary =
-    rootProject.file("../target/aarch64-linux-android/release/caprust-androidd")
+val arm64Target = "aarch64-linux-android"
+val x64Target = "x86_64-linux-android"
 
-val copyEngine by tasks.registering(Copy::class) {
-    from(engineBinary)
-    into(arm64)
-    rename { "libcaprust-androidd.so" }
+fun engineBinary(target: String) =
+    rootProject.file("../target/$target/release/caprust-androidd")
+
+fun ffmpegBinary(abi: String) = rootProject.file("../android/ffmpeg/$abi/ffmpeg")
+
+val copyEngineArm64 by tasks.registering(Copy::class) {
+    from(engineBinary(arm64Target)) {
+        into(File(jniLibs, "arm64-v8a"))
+        rename { "libcaprust-androidd.so" }
+    }
     // The binary is not there when the app is built without the
     // engine (a plain `gradle assembleDebug` on a laptop). The app
     // then says the engine is missing, instead of the build failing.
-    onlyIf { engineBinary.exists() }
+    onlyIf { engineBinary(arm64Target).exists() }
 }
 
-val copyFfmpeg by tasks.registering(Copy::class) {
-    from(rootProject.file("../android/ffmpeg/arm64-v8a/ffmpeg"))
-    into(arm64)
-    rename { "libffmpeg.so" }
-    onlyIf { rootProject.file("../android/ffmpeg/arm64-v8a/ffmpeg").exists() }
+val copyEngineX64 by tasks.registering(Copy::class) {
+    from(engineBinary(x64Target)) {
+        into(File(jniLibs, "x86_64"))
+        rename { "libcaprust-androidd.so" }
+    }
+    onlyIf { engineBinary(x64Target).exists() }
+}
+
+val copyFfmpegArm64 by tasks.registering(Copy::class) {
+    from(ffmpegBinary("arm64-v8a")) {
+        into(File(jniLibs, "arm64-v8a"))
+        rename { "libffmpeg.so" }
+    }
+    onlyIf { ffmpegBinary("arm64-v8a").exists() }
+}
+
+val copyFfmpegX64 by tasks.registering(Copy::class) {
+    from(ffmpegBinary("x86_64")) {
+        into(File(jniLibs, "x86_64"))
+        rename { "libffmpeg.so" }
+    }
+    onlyIf { ffmpegBinary("x86_64").exists() }
 }
 
 tasks.named("preBuild") {
-    dependsOn(copyEngine, copyFfmpeg)
+    dependsOn(copyEngineArm64, copyEngineX64, copyFfmpegArm64, copyFfmpegX64)
 }
