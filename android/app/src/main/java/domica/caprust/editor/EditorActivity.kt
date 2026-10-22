@@ -222,8 +222,12 @@ class EditorActivity : Activity() {
         // The engine reads files by path, and a content URI is not a
         // path. The file is copied into the app's own directory, which
         // is also where the export goes.
-        val target = File(filesDir, "media").apply { mkdirs() }
-            .let { File(it, "import-${System.currentTimeMillis()}") }
+        //
+        // The name comes with it. The engine works out what a file is
+        // from its name -- a file called "import-1759000000" is a
+        // file of no known kind, and the import is refused.
+        val mediaDir = File(filesDir, "media").apply { mkdirs() }
+        val target = File(mediaDir, nameFor(uri))
         try {
             contentResolver.openInputStream(uri)?.use { input ->
                 target.outputStream().use { output -> input.copyTo(output) }
@@ -246,6 +250,35 @@ class EditorActivity : Activity() {
                 refresh()
             }
         }
+    }
+
+    /**
+     * A name for the copied file that keeps its kind.
+     *
+     * The extension is what the engine looks at, so it has to be
+     * there: "clip.mp4" is a video, "clip" is nothing. The picker
+     * knows the name; the timestamp keeps two files with the same
+     * name from overwriting each other.
+     */
+    private fun nameFor(uri: Uri): String {
+        val name = try {
+            contentResolver
+                .query(uri, null, null, null, null)
+                ?.use { c ->
+                    val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+                }
+        } catch (e: Exception) {
+            null
+        }
+        val clean = name
+            ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            ?.takeIf { it.isNotBlank() }
+            ?: "import-${System.currentTimeMillis()}.bin"
+        val dot = clean.lastIndexOf('.')
+        val stem = if (dot > 0) clean.take(dot) else clean
+        val ext = if (dot > 0) clean.substring(dot) else ""
+        return "${System.currentTimeMillis()}-$stem$ext"
     }
 
     /** Render one frame and show it. */
