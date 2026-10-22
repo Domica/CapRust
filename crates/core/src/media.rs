@@ -183,11 +183,13 @@ fn kind_from_bytes(path: &str) -> Option<MediaKind> {
         // An MP4, or a Matroska/WebM header, or a RIFF container
         // (avi or webm).
         MediaKind::Video
-    } else if starts(b"OggS") {
-        MediaKind::Audio
-    } else if starts(b"fLaC") {
-        MediaKind::Audio
-    } else if starts(b"ID3") || starts(&[0xff, 0xfb]) || starts(&[0xff, 0xf3]) {
+    } else if starts(b"OggS")
+        || starts(b"fLaC")
+        || starts(b"ID3")
+        || starts(&[0xff, 0xfb])
+        || starts(&[0xff, 0xf3])
+    {
+        // Ogg, FLAC, MP3.
         MediaKind::Audio
     } else if starts(&[0x89, b'P', b'N', b'G'])   // png
         || starts(&[0xff, 0xd8])                  // jpeg
