@@ -137,17 +137,68 @@ fn normalize_import_path(path: &str) -> String {
 
 /// Guess kind from extension.
 pub fn guess_kind(path: &str) -> Option<MediaKind> {
+    // The name comes first: it is free, and it is right most of the
+    // time.
     let ext = std::path::Path::new(path)
         .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())?;
-    match ext.as_str() {
-        "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "wmv" | "flv" => Some(MediaKind::Video),
-        "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus" => Some(MediaKind::Audio),
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tiff" | "heic" | "heif" | "avif" => {
-            Some(MediaKind::Image)
+        .map(|e| e.to_string_lossy().to_lowercase());
+    if let Some(ext) = ext {
+        match ext.as_str() {
+            "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "wmv" | "flv" => {
+                return Some(MediaKind::Video)
+            }
+            "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus" => {
+                return Some(MediaKind::Audio)
+            }
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tiff" | "heic" | "heif" | "avif" => {
+                return Some(MediaKind::Image)
+            }
+            _ => {}
         }
-        _ => None,
     }
+    // The name says nothing, so the file is asked. Every format has a
+    // few bytes at the front that say what it is, and a file knows
+    // better than its name does: a phone's file picker hands over
+    // names like "import-1759000000.bin", and refusing those was
+    // refusing perfectly good videos.
+    kind_from_bytes(path)
+}
+
+/// What a file says it is, from its first bytes.
+fn kind_from_bytes(path: &str) -> Option<MediaKind> {
+    use std::io::Read;
+    let mut head = [0u8; 16];
+    let mut file = std::fs::File::open(path).ok()?;
+    let read = file.read(&mut head).ok()?;
+    if read == 0 {
+        return None;
+    }
+    let head = &head[..read];
+    let starts = |magic: &[u8]| head.len() >= magic.len() && &head[..magic.len()] == magic;
+    // An MP4 starts with a four byte size and then "ftyp", so the
+    // four bytes are looked for inside the head, not at the front of
+    // it.
+    let has_ftyp = head.len() >= 8 && (0..=head.len() - 8).any(|i| &head[i..i + 4] == b"ftyp");
+    let kind = if has_ftyp || starts(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        // An MP4 or a Matroska/WebM header.
+        MediaKind::Video
+    } else if starts(b"RIFF") {
+        // RIFF: avi or webm. Both are video here.
+        MediaKind::Video
+    } else if starts(b"OggS") {
+        MediaKind::Audio
+    } else if starts(b"fLaC") {
+        MediaKind::Audio
+    } else if starts(b"ID3") || starts(&[0xff, 0xfb]) || starts(&[0xff, 0xf3]) {
+        MediaKind::Audio
+    } else if starts(&[0x89, b'P', b'N', b'G']) || starts(&[0xff, 0xd8]) || starts(b"GIF8") {
+        MediaKind::Image
+    } else if starts(b"BM") {
+        MediaKind::Image
+    } else {
+        return None;
+    };
+    Some(kind)
 }
 
 /// Supported extensions for file dialogs.
@@ -156,6 +207,46 @@ pub const AUDIO_EXTS: &[&str] = &["mp3", "wav", "m4a", "aac", "flac", "ogg", "op
 pub const IMAGE_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "heic", "heif", "avif",
 ];
+
+#[cfg(test)]
+mod kind_from_bytes_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("caprust-kind-{name}"));
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(bytes).unwrap();
+        p
+    }
+
+    /// The name is not always a name. A phone's file picker hands over
+    /// things like "import-1759000000.bin", and refusing those was
+    /// refusing perfectly good videos.
+    #[test]
+    fn a_file_without_a_useful_name_still_knows_what_it_is() {
+        let mp4 = write("movie.bin", b"\x00\x00\x00\x18ftypmp42");
+        assert_eq!(guess_kind(&mp4.to_string_lossy()), Some(MediaKind::Video));
+
+        let png = write("picture.bin", b"\x89PNG\r\n\x1a\n");
+        assert_eq!(guess_kind(&png.to_string_lossy()), Some(MediaKind::Image));
+
+        let mp3 = write("sound.bin", b"ID3\x04\x00\x00\x00");
+        assert_eq!(guess_kind(&mp3.to_string_lossy()), Some(MediaKind::Audio));
+
+        let _ = std::fs::remove_file(mp4);
+        let _ = std::fs::remove_file(png);
+        let _ = std::fs::remove_file(mp3);
+    }
+
+    /// The name still wins: a .png that is really a png is a png.
+    #[test]
+    fn the_name_is_asked_first() {
+        assert_eq!(guess_kind("a.mp4"), Some(MediaKind::Video));
+        assert_eq!(guess_kind("a.PNG"), Some(MediaKind::Image));
+        assert_eq!(guess_kind("a.txt"), None);
+    }
+}
 
 #[cfg(test)]
 mod media_dedup_tests {
