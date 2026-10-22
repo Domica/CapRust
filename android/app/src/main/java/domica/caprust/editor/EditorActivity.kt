@@ -244,8 +244,12 @@ class EditorActivity : Activity() {
         // from its name, and a picker's name is not always a name: on
         // some devices the query for it comes back empty, and a file
         // called "import-1759000000.bin" is a file of no known kind.
-        // The type the picker reports is always there.
-        kindFor(uri)?.let { args.put("kind", it) }
+        //
+        // The type the picker reports is the first answer. If it does
+        // not say anything useful, the file is asked itself: every
+        // format has a few bytes at the front that say what it is.
+        val kind = kindFor(uri) ?: sniffKind(target)
+        kind?.let { args.put("kind", it) }
         client.call("add_media", args) { ok, text ->
             runOnUiThread {
                 if (!ok) {
@@ -308,6 +312,44 @@ class EditorActivity : Activity() {
             else -> extensionFor(uri)
         }
         return "${System.currentTimeMillis()}-$stem$ext"
+    }
+
+    /**
+     * What the file says it is, from its first bytes.
+     *
+     * Every format has a few bytes at the front that say what it is,
+     * and the file is right about itself more often than a picker is.
+     */
+    private fun sniffKind(file: File): String? {
+        val head = try {
+            file.inputStream().use { input ->
+                val buf = ByteArray(16)
+                val read = input.read(buf)
+                if (read <= 0) return null
+                buf.copyOf(read)
+            }
+        } catch (e: Exception) {
+            return null
+        }
+        fun starts(vararg magic: Int): Boolean {
+            if (head.size < magic.size) return false
+            return magic.withIndex().all { (i, b) -> (head[i].toInt() and 0xff) == b }
+        }
+        return when {
+            // "ftyp" at the front, or a "moov"/"mdat" atom further in.
+            starts(0x66, 0x74, 0x79, 0x70) -> "video"
+            starts(0x1a, 0x45, 0xdf, 0xa3) -> "video"
+            starts(0x52, 0x49, 0x46, 0x46) -> "video"   // RIFF: avi or webm
+            starts(0x4f, 0x67, 0x67, 0x53) -> "audio"   // Ogg
+            starts(0x49, 0x44, 0x33) -> "audio"               // mp3
+            starts(0xff, 0xfb) || starts(0xff, 0xf3) -> "audio"
+            starts(0x66, 0x4c, 0x61, 0x43) -> "audio"        // FLAC
+            starts(0x89, 0x50, 0x4e, 0x47) -> "image"        // PNG
+            starts(0xff, 0xd8) -> "image"                      // JPEG
+            starts(0x47, 0x49, 0x46, 0x38) -> "image"        // GIF
+            starts(0x42, 0x4d) -> "image"                     // BMP
+            else -> null
+        }
     }
 
     /** The extension the type implies, when the name has none. */
