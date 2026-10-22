@@ -240,6 +240,12 @@ class EditorActivity : Activity() {
         imported = target
 
         val args = JSONObject().put("path", target.absolutePath)
+        // The kind goes with it. The engine works out what a file is
+        // from its name, and a picker's name is not always a name: on
+        // some devices the query for it comes back empty, and a file
+        // called "import-1759000000.bin" is a file of no known kind.
+        // The type the picker reports is always there.
+        kindFor(uri)?.let { args.put("kind", it) }
         client.call("add_media", args) { ok, text ->
             runOnUiThread {
                 if (!ok) {
@@ -253,12 +259,33 @@ class EditorActivity : Activity() {
     }
 
     /**
+     * What the picker says the file is: "video", "audio" or "image".
+     *
+     * The type is more dependable than the name. A picker's name is
+     * sometimes empty, and the engine needs to know what a file is
+     * before it will take it.
+     */
+    private fun kindFor(uri: Uri): String? {
+        val type = try {
+            contentResolver.getType(uri)
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        return when {
+            type.startsWith("video/") -> "video"
+            type.startsWith("audio/") -> "audio"
+            type.startsWith("image/") -> "image"
+            else -> null
+        }
+    }
+
+    /**
      * A name for the copied file that keeps its kind.
      *
      * The extension is what the engine looks at, so it has to be
-     * there: "clip.mp4" is a video, "clip" is nothing. The picker
-     * knows the name; the timestamp keeps two files with the same
-     * name from overwriting each other.
+     * there: "clip.mp4" is a video, "clip" is nothing. The picker's
+     * name is used when it has one, and the type fills in the
+     * extension when it does not.
      */
     private fun nameFor(uri: Uri): String {
         val name = try {
@@ -274,11 +301,24 @@ class EditorActivity : Activity() {
         val clean = name
             ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
             ?.takeIf { it.isNotBlank() }
-            ?: "import-${System.currentTimeMillis()}.bin"
-        val dot = clean.lastIndexOf('.')
-        val stem = if (dot > 0) clean.take(dot) else clean
-        val ext = if (dot > 0) clean.substring(dot) else ""
+        val dot = clean?.lastIndexOf('.') ?: -1
+        val stem = if (dot > 0) clean!!.take(dot) else clean ?: "import-${System.currentTimeMillis()}"
+        val ext = when {
+            dot > 0 -> clean!!.substring(dot)
+            else -> extensionFor(uri)
+        }
         return "${System.currentTimeMillis()}-$stem$ext"
+    }
+
+    /** The extension the type implies, when the name has none. */
+    private fun extensionFor(uri: Uri): String {
+        val type = try {
+            contentResolver.getType(uri)
+        } catch (e: Exception) {
+            null
+        } ?: return ".bin"
+        val sub = type.substringAfter('/')
+        return if (sub.isNotBlank()) ".${sub.take(8)}" else ".bin"
     }
 
     /** Render one frame and show it. */
