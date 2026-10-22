@@ -80,6 +80,7 @@ jobs:
           TOOLCHAIN="$(cat rust-toolchain.toml | grep channel | cut -d'"' -f2)"
           rustup target add aarch64-linux-android --toolchain "$TOOLCHAIN"
           rustup target add x86_64-linux-android --toolchain "$TOOLCHAIN"
+          rustup target add i686-linux-android --toolchain "$TOOLCHAIN"
 
       - name: Point cargo at the NDK clang wrappers
         run: |
@@ -89,6 +90,11 @@ jobs:
             echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android21-clang"
             echo "CC_aarch64_linux_android=$BIN/aarch64-linux-android21-clang"
             echo "CXX_aarch64_linux_android=$BIN/aarch64-linux-android21-clang++"
+            echo "CARGO_TARGET_I686_LINUX_ANDROID_LINKER=$BIN/i686-linux-android21-clang"
+            echo "CC_i686_linux_android=$BIN/i686-linux-android21-clang"
+            echo "CXX_i686_linux_android=$BIN/i686-linux-android21-clang++"
+            echo "AR_i686_linux_android=$BIN/llvm-ar"
+            echo "RANLIB_i686_linux_android=$BIN/llvm-ranlib"
             echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$BIN/x86_64-linux-android21-clang"
             echo "CC_x86_64_linux_android=$BIN/x86_64-linux-android21-clang"
             echo "CXX_x86_64_linux_android=$BIN/x86_64-linux-android21-clang++"
@@ -103,6 +109,7 @@ jobs:
         run: |
           cargo build --release -p caprust-android --target aarch64-linux-android --bin caprust-androidd
           cargo build --release -p caprust-android --target x86_64-linux-android --bin caprust-androidd
+          cargo build --release -p caprust-android --target i686-linux-android --bin caprust-androidd
 
       # gradle from the runner image rather than a wrapper: the wrapper
       # would mean committing a binary jar for a build that only needs
@@ -148,6 +155,8 @@ jobs:
             echo "no engine for the phone in the APK"; exit 1; }
           unzip -l "$APK" | grep -q 'lib/x86_64/libcaprust-androidd.so' || {
             echo "no engine for the emulator in the APK"; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/x86/libcaprust-androidd.so' || {
+            echo "no engine for the 32-bit emulator in the APK"; exit 1; }
           echo "APK looks real."
 
       - uses: actions/upload-artifact@v4

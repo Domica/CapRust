@@ -64,6 +64,7 @@ val jniLibs = file("src/main/jniLibs")
 
 val arm64Target = "aarch64-linux-android"
 val x64Target = "x86_64-linux-android"
+val x86Target = "i686-linux-android"
 
 fun engineBinary(target: String) =
     rootProject.file("../target/$target/release/caprust-androidd")
@@ -87,6 +88,13 @@ val copyEngineX64 by tasks.registering(Copy::class) {
     onlyIf { engineBinary(x64Target).exists() }
 }
 
+val copyEngineX86 by tasks.registering(Copy::class) {
+    from(engineBinary(x86Target))
+    into(File(jniLibs, "x86"))
+    rename { "libcaprust-androidd.so" }
+    onlyIf { engineBinary(x86Target).exists() }
+}
+
 val copyFfmpegArm64 by tasks.registering(Copy::class) {
     from(ffmpegBinary("arm64-v8a"))
     into(File(jniLibs, "arm64-v8a"))
@@ -101,6 +109,16 @@ val copyFfmpegX64 by tasks.registering(Copy::class) {
     onlyIf { ffmpegBinary("x86_64").exists() }
 }
 
+val copyFfmpegX86 by tasks.registering(Copy::class) {
+    from(ffmpegBinary("x86"))
+    into(File(jniLibs, "x86"))
+    rename { "libffmpeg.so" }
+    onlyIf { ffmpegBinary("x86").exists() }
+}
+
 tasks.named("preBuild") {
-    dependsOn(copyEngineArm64, copyEngineX64, copyFfmpegArm64, copyFfmpegX64)
+    dependsOn(
+        copyEngineArm64, copyEngineX64, copyEngineX86,
+        copyFfmpegArm64, copyFfmpegX64, copyFfmpegX86,
+    )
 }
