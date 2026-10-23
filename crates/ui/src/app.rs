@@ -3037,6 +3037,28 @@ impl CapRustApp {
                 state.models.scan_local(&models_dir);
                 self.undo_stack = UndoStack::new();
                 self.project = state;
+                // Importer plugins do not set `media_id` on clips -- they
+                // predate it. Match each clip to its media item by path, so
+                // the export graph can ask the media item whether the file
+                // has an audio stream instead of guessing it does.
+                let media_by_path: std::collections::HashMap<String, uuid::Uuid> = self
+                    .project
+                    .media
+                    .items
+                    .iter()
+                    .map(|m| (m.path.clone(), m.id))
+                    .collect();
+                for clip in &mut self.project.clips {
+                    let path = match &clip.clip_type {
+                        caprust_core::ClipType::Video { path, .. }
+                        | caprust_core::ClipType::Audio { path, .. }
+                        | caprust_core::ClipType::Image { path, .. } => path.clone(),
+                        _ => continue,
+                    };
+                    if let Some(mid) = media_by_path.get(&path) {
+                        clip.media_id = Some(*mid);
+                    }
+                }
                 self.selected_clips.clear();
                 self.mode = AppMode::Editor;
                 self.backfill_missing_probes();
