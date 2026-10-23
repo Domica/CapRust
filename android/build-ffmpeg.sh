@@ -183,7 +183,6 @@ export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
   --disable-librubberband
 
 make -j"$(nproc)"
-make install
 
 # The binary the app runs. It is stripped: the APK should not carry a
 # symbol table for a renderer.
