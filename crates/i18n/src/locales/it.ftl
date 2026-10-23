@@ -1117,3 +1117,5 @@ menu-zone-remember-resize-hint = Mantiene la dimensione dei pannelli che hai tra
 welcome-point-timeline = Montali sulla timeline e aggiungi testo, sticker ed effetti.
 
 welcome-point-shape = Scegli un layout: Classico (riorganizzabile) o Moderno (zone fisse).
+
+menu-view-layout-basic = Base (Anteprima + Timeline)

@@ -184,15 +184,17 @@ pub enum LayoutPreset {
     WideTimeline,
     TimelineFocus,
     PreviewFocus,
+    Basic,
 }
 
 impl LayoutPreset {
-    pub fn all() -> [Self; 4] {
+    pub fn all() -> [Self; 5] {
         [
             Self::Classic,
             Self::WideTimeline,
             Self::TimelineFocus,
             Self::PreviewFocus,
+            Self::Basic,
         ]
     }
     pub fn label_key(&self) -> &'static str {
@@ -201,6 +203,7 @@ impl LayoutPreset {
             Self::WideTimeline => "menu-view-layout-wide-timeline",
             Self::TimelineFocus => "menu-view-layout-timeline-focus",
             Self::PreviewFocus => "menu-view-layout-preview-focus",
+            Self::Basic => "menu-view-layout-basic",
         }
     }
 
@@ -217,6 +220,7 @@ impl LayoutPreset {
             Self::WideTimeline => "wide-timeline",
             Self::TimelineFocus => "timeline-focus",
             Self::PreviewFocus => "preview-focus",
+            Self::Basic => "basic",
         }
     }
 
@@ -242,10 +246,21 @@ pub fn preset_dock_state(preset: LayoutPreset) -> DockState<Tab> {
         return default_dock_state();
     }
 
+    // Basic: the simplest layout -- preview and timeline only.
+    // Assets and properties are still reachable through the tab picker.
+    if matches!(preset, LayoutPreset::Basic) {
+        let mut state = DockState::new(vec![Tab::Preview]);
+        let surface = state.main_surface_mut();
+        let [_preview, _timeline] =
+            surface.split_below(NodeIndex::root(), 0.60, vec![Tab::Timeline]);
+        return state;
+    }
+
     let timeline_fraction = match preset {
         LayoutPreset::WideTimeline => 0.35,
         LayoutPreset::TimelineFocus => 0.50,
         LayoutPreset::PreviewFocus => 0.20,
+        LayoutPreset::Basic => unreachable!(),
         LayoutPreset::Classic => unreachable!(),
     };
 
@@ -448,7 +463,8 @@ mod layout_tests {
                 "classic",
                 "wide-timeline",
                 "timeline-focus",
-                "preview-focus"
+                "preview-focus",
+                "basic"
             ]
         );
     }

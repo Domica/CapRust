@@ -1117,3 +1117,5 @@ menu-zone-remember-resize-hint = Zadrži veličine panela koje si povukao. Odabi
 welcome-point-timeline = Režite ih na vremenskoj liniji i dodajte tekst, naljepnice i efekte.
 
 welcome-point-shape = Odaberite izgled: Klasični (premjestivi) ili Moderni (fiksne zone).
+
+menu-view-layout-basic = Osnovni (Preview + Timeline)

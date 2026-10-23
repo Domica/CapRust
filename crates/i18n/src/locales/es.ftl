@@ -1117,3 +1117,5 @@ menu-zone-remember-resize-hint = Conserva el tamaño de los paneles que arrastra
 welcome-point-timeline = Recórtalos en la línea de tiempo y añade texto, stickers y efectos.
 
 welcome-point-shape = Elige un diseño: Clásico (reorganizable) o Moderno (zonas fijas).
+
+menu-view-layout-basic = Básico (Vista previa + Línea de tiempo)

@@ -1118,3 +1118,5 @@ menu-zone-remember-resize-hint = Keep the panel sizes you dragged. Picking S, M 
 welcome-point-timeline = Cut them on the timeline, and add text, stickers and effects.
 
 welcome-point-shape = Pick a layout: Classic (rearrangeable) or Modern (fixed zones).
+
+menu-view-layout-basic = Basic (Preview + Timeline)

@@ -1117,3 +1117,5 @@ menu-zone-remember-resize-hint = Behält die Größe der Panels, die du gezogen 
 welcome-point-timeline = Schneide sie auf der Zeitleiste und füge Text, Sticker und Effekte hinzu.
 
 welcome-point-shape = Wähle ein Layout: Klassisch (verschiebbar) oder Modern (feste Zonen).
+
+menu-view-layout-basic = Basis (Vorschau + Zeitleiste)
