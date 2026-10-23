@@ -65,6 +65,7 @@ tract-onnx = { version = "0.23", default-features = false }
 cpal = "0.15"
 ringbuf = "0.4"
 rfd = "0.15"
+sha2 = "0.10"
 
 [profile.release]
 strip = true

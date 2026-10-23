@@ -30,6 +30,9 @@ pub struct UpdateInfo {
     pub current_version: String,
     /// HTML page for the release (browser target).
     pub release_url: String,
+    /// Direct download URL for the installer.
+    #[serde(default)]
+    pub download_url: String,
     /// ISO 8601 publish timestamp as reported by GitHub (informational).
     pub published_at: String,
 }
@@ -170,7 +173,7 @@ pub fn should_notify(info: &UpdateInfo) -> bool {
 /// Returns `(tag_name, html_url, published_at)`. Prerelease entries
 /// are accepted -- CapRust ships every release as a prerelease
 /// until 1.0.
-fn pick_latest_release(body: &str) -> Result<(String, String, String)> {
+fn pick_latest_release(body: &str) -> Result<(String, String, String, String)> {
     let parsed: serde_json::Value =
         serde_json::from_str(body).context("parse GitHub releases JSON")?;
     let releases = parsed
@@ -198,7 +201,27 @@ fn pick_latest_release(body: &str) -> Result<(String, String, String)> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    Ok((tag, html_url, published_at))
+    let download_url = release
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .map(|assets| {
+            assets
+                .iter()
+                .filter_map(|a| {
+                    let name = a.get("name").and_then(|v| v.as_str())?;
+                    if name.ends_with("-win64-setup.exe") {
+                        a.get("browser_download_url")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .next()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    Ok((tag, html_url, published_at, download_url))
 }
 
 /// Check GitHub Releases for the latest version.
@@ -243,7 +266,7 @@ pub fn check(current_version: &str, enabled: bool) -> Result<Option<UpdateInfo>>
     let body = resp
         .into_string()
         .context("read GitHub releases response")?;
-    let (tag, html_url, published_at) = pick_latest_release(&body)?;
+    let (tag, html_url, published_at, download_url) = pick_latest_release(&body)?;
 
     // Tags are typically prefixed with 'v'. Strip it if present.
     let latest = tag.trim_start_matches('v').to_string();
@@ -267,6 +290,7 @@ pub fn check(current_version: &str, enabled: bool) -> Result<Option<UpdateInfo>>
                     latest_version: latest,
                     current_version: current_version.to_string(),
                     release_url: html_url.to_string(),
+                    download_url: download_url.to_string(),
                     published_at,
                 }))
             } else {
@@ -384,7 +408,7 @@ mod tests {
             {"draft": false, "prerelease": true, "tag_name": "v0.9.0", "published_at": "2026-10-05T08:00:00Z", "html_url": "https://github.com/Domica/CapRust/releases/tag/v0.9.0"},
             {"draft": false, "tag_name": "v0.8.4", "html_url": "https://github.com/Domica/CapRust/releases/tag/v0.8.4"}
         ]"#;
-        let (tag, url, published) = pick_latest_release(body).unwrap();
+        let (tag, url, published, _) = pick_latest_release(body).unwrap();
         assert_eq!(tag, "v0.9.0");
         assert_eq!(url, "https://github.com/Domica/CapRust/releases/tag/v0.9.0");
         assert_eq!(published, "2026-10-05T08:00:00Z");

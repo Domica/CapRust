@@ -1119,3 +1119,5 @@ welcome-point-timeline = Schneide sie auf der Zeitleiste und füge Text, Sticker
 welcome-point-shape = Wähle ein Layout: Klassisch (verschiebbar) oder Modern (feste Zonen).
 
 menu-view-layout-basic = Basis (Vorschau + Zeitleiste)
+
+update-toast-install = Herunterladen und installieren

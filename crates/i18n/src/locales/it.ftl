@@ -1119,3 +1119,5 @@ welcome-point-timeline = Montali sulla timeline e aggiungi testo, sticker ed eff
 welcome-point-shape = Scegli un layout: Classico (riorganizzabile) o Moderno (zone fisse).
 
 menu-view-layout-basic = Base (Anteprima + Timeline)
+
+update-toast-install = Scarica e installa

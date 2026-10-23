@@ -1120,3 +1120,5 @@ welcome-point-timeline = Cut them on the timeline, and add text, stickers and ef
 welcome-point-shape = Pick a layout: Classic (rearrangeable) or Modern (fixed zones).
 
 menu-view-layout-basic = Basic (Preview + Timeline)
+
+update-toast-install = Download and install

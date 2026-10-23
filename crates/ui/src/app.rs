@@ -512,6 +512,10 @@ pub struct CapRustApp {
     /// Result of the last update check, if a newer version was found.
     /// Some(..) => show the toast; None => nothing to notify.
     pub update_available: Option<caprust_core::update_checker::UpdateInfo>,
+    /// Background download of an update installer. When `Some`, the
+    /// toast shows progress instead of the Download button.
+    pub update_download:
+        Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     /// Transient notifications shown top-right. Expired entries are
     /// pruned each frame; the user can dismiss early with the ✕ button.
     pub toasts: Vec<Toast>,
@@ -1652,6 +1656,7 @@ impl CapRustApp {
             save_frame_rx: None,
             narration_input: Default::default(),
             update_available: None,
+            update_download: None,
             toasts: Vec::new(),
             last_skipped_missing: 0,
             jobs: Vec::new(),
@@ -6005,6 +6010,7 @@ impl CapRustApp {
 
         let mut dismiss = false;
         let mut open_browser = false;
+        let mut download_and_install = false;
         let mut snooze = false;
         let mut skip = false;
 
@@ -6044,6 +6050,10 @@ impl CapRustApp {
                                 open_browser = true;
                                 dismiss = true;
                             }
+                            if ui.button(tr("update-toast-install")).clicked() {
+                                download_and_install = true;
+                                dismiss = true;
+                            }
                             if ui.button(tr("update-toast-later")).clicked() {
                                 snooze = true;
                                 dismiss = true;
@@ -6062,6 +6072,26 @@ impl CapRustApp {
                 tracing::warn!("update: open browser failed: {e}");
             }
         }
+        if download_and_install {
+            if info.download_url.is_empty() {
+                tracing::warn!("update: no download URL available");
+                if let Err(e) = open::that(&info.release_url) {
+                    tracing::warn!("update: open browser failed: {e}");
+                }
+            } else {
+                self.spawn_update_download(&info.download_url);
+            }
+        }
+        if download_and_install {
+            if info.download_url.is_empty() {
+                tracing::warn!("update: no download URL available");
+                if let Err(e) = open::that(&info.release_url) {
+                    tracing::warn!("update: open browser failed: {e}");
+                }
+            } else {
+                self.spawn_update_download(&info.download_url);
+            }
+        }
         if snooze {
             if let Err(e) = caprust_core::update_checker::snooze_default(
                 &info.latest_version,
@@ -6078,6 +6108,47 @@ impl CapRustApp {
         if dismiss {
             self.update_available = None;
         }
+    }
+
+    /// Download the installer and run it.
+    ///
+    /// The user gets a running app replaced by a newer one without
+    /// leaving the editor. The installer is Inno Setup, which handles
+    /// the replacement on its own -- it asks the user to close CapRust
+    /// if it is still running.
+    fn spawn_update_download(&self, url: &str) {
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            let dir = std::env::temp_dir().join("CapRust-update");
+            let _ = std::fs::create_dir_all(&dir);
+            let dest = dir.join("CapRust-update.exe");
+
+            tracing::info!("update: downloading {url}");
+            match ureq::get(&url).call() {
+                Ok(resp) => {
+                    let mut reader = resp.into_reader();
+                    let mut file = match std::fs::File::create(&dest) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!("update: could not create file: {e}");
+                            return;
+                        }
+                    };
+                    if let Err(e) = std::io::copy(&mut reader, &mut file) {
+                        tracing::warn!("update: download failed: {e}");
+                        return;
+                    }
+                    tracing::info!("update: downloaded to {}", dest.display());
+                    // Run the installer.
+                    if let Err(e) = std::process::Command::new(&dest).spawn() {
+                        tracing::warn!("update: could not run installer: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("update: download failed: {e}");
+                }
+            }
+        });
     }
 
     fn handle_preview_events(&mut self, ev: PreviewEvents, total_ms: u64) {

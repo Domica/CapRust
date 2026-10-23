@@ -28,6 +28,8 @@ ringbuf = { workspace = true }
 uuid = { workspace = true }
 jiff = { workspace = true }
 rfd = { workspace = true }
+ureq = { workspace = true }
+sha2 = "0.10"
 # To show the address the user has to type on the phone. Finding it
 # by hand (ipconfig / ifconfig) is the kind of friction that makes a
 # feature look broken.

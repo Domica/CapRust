@@ -1119,3 +1119,5 @@ welcome-point-timeline = Recórtalos en la línea de tiempo y añade texto, stic
 welcome-point-shape = Elige un diseño: Clásico (reorganizable) o Moderno (zonas fijas).
 
 menu-view-layout-basic = Básico (Vista previa + Línea de tiempo)
+
+update-toast-install = Descargar e instalar

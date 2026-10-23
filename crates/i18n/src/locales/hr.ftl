@@ -1119,3 +1119,5 @@ welcome-point-timeline = Režite ih na vremenskoj liniji i dodajte tekst, naljep
 welcome-point-shape = Odaberite izgled: Klasični (premjestivi) ili Moderni (fiksne zone).
 
 menu-view-layout-basic = Osnovni (Preview + Timeline)
+
+update-toast-install = Preuzmi i instaliraj
