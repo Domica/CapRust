@@ -145,7 +145,7 @@ own.
 | | Issue | What it is |
 |---|---|---|
 | 🕳 | [#83](https://github.com/Domica/CapRust/issues/83) | A clip with a missing source file is invisible on the timeline |
-| 🎚 | [#84](https://github.com/Domica/CapRust/issues/84) | The keyframe curve editor |
+| ↔ | [#88](https://github.com/Domica/CapRust/issues/88) | The panel split is not remembered |
 | 📈 | [#85](https://github.com/Domica/CapRust/issues/85) | Easing between keyframes |
 | 🎛 | [#86](https://github.com/Domica/CapRust/issues/86) | One keyframe track per property |
 | ✨ | [#87](https://github.com/Domica/CapRust/issues/87) | Keyframing a clip's size and an effect's amount |
