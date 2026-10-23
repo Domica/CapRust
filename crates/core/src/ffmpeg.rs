@@ -323,7 +323,7 @@ fn extract_tar_xz_bin(archive_path: &Path, target_dir: &Path) -> Result<()> {
         // Without it the verify step below reports a bad download.
         #[cfg(unix)]
         {
-            if let Ok(Some(mode)) = entry.header().mode() {
+            if let Ok(mode) = entry.header().mode() {
                 use std::os::unix::fs::PermissionsExt;
                 let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(mode));
             }
