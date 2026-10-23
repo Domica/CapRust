@@ -251,7 +251,7 @@ impl Daemon {
         // The preview is answered here, not by the tool: it needs the
         // project, and the project is borrowed while the tools run.
         if let Some(reply) = self.answer_preview(line) {
-            return reply;
+            return reply.to_string();
         }
 
         let request: Value = match serde_json::from_str(line) {
@@ -338,15 +338,6 @@ impl Daemon {
                 "id": id,
                 "error": {"code": -32000, "message": format!("{e:#}")},
             })),
-        }
-    }
-
-    /// The preview, answered as a string the way the other answers are.
-    fn answer_preview_text(&mut self, line: &str) -> Option<String> {
-        match self.answer_preview(line) {
-            Some(Value::String(s)) => Some(s),
-            Some(other) => Some(other.to_string()),
-            None => None,
         }
     }
 
