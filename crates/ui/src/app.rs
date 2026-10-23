@@ -514,8 +514,7 @@ pub struct CapRustApp {
     pub update_available: Option<caprust_core::update_checker::UpdateInfo>,
     /// Background download of an update installer. When `Some`, the
     /// toast shows progress instead of the Download button.
-    pub update_download:
-        Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
+    pub update_download: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     /// Transient notifications shown top-right. Expired entries are
     /// pruned each frame; the user can dismiss early with the ✕ button.
     pub toasts: Vec<Toast>,
