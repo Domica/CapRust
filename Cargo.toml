@@ -64,7 +64,13 @@ tract-onnx = { version = "0.23", default-features = false }
 # Audio playback (preview)
 cpal = "0.15"
 ringbuf = "0.4"
-rfd = "0.15"
+# On Linux the default XDG-portal backend silently returns nothing when
+# xdg-desktop-portal is missing or wedged (bare WMs, containers,
+# Crostini) -- the Browse button just does nothing, and no clip can be
+# imported. The GTK3 dialogs open on any desktop that has GTK3, which
+# every Debian/Ubuntu install does. The feature is a no-op on
+# Windows/macOS; the portal backend is compiled out.
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 sha2 = "0.10"
 
 [profile.release]

@@ -21,6 +21,16 @@ use crate::widgets::button;
 use crate::widgets::switch;
 use crate::widgets::{dialog, loading};
 
+/// Placeholder shown in the install-dir field. `%APPDATA%` means
+/// nothing on Linux, where the default is the XDG data dir.
+fn managed_dir_hint() -> &'static str {
+    if cfg!(windows) {
+        "%APPDATA%\\CapRust\\ffmpeg"
+    } else {
+        "~/.local/share/caprust/ffmpeg"
+    }
+}
+
 /// Width of the progress bar in the download / extract phases.
 /// Component-specific: matches the modal's content width.
 const PROGRESS_W: f32 = 380.0;
@@ -137,7 +147,7 @@ pub fn show(
                 ui.add(
                     egui::TextEdit::singleline(&mut state.install_dir)
                         .desired_width(340.0)
-                        .hint_text("%APPDATA%\\CapRust\\ffmpeg"),
+                        .hint_text(managed_dir_hint()),
                 );
                 if button::secondary(ui, tr("new-button-browse")).clicked() {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {

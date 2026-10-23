@@ -13884,7 +13884,7 @@ impl CapRustApp {
                     self.settings.managed_ffmpeg_dir = Some(dir.to_string_lossy().to_string());
                     let rx = caprust_core::ffmpeg::spawn_ffmpeg_download(
                         dir,
-                        caprust_core::ffmpeg::FFMPEG_URL.to_string(),
+                        caprust_core::ffmpeg::ffmpeg_url().to_string(),
                     );
                     self.ffmpeg_prompt.receiver = Some(rx);
                     self.ffmpeg_prompt.phase =
@@ -13894,13 +13894,19 @@ impl CapRustApp {
                         };
                 }
                 if ev.browse_existing {
-                    if let Some(f) = rfd::FileDialog::new()
-                        .add_filter("ffmpeg", &["exe"])
-                        .pick_file()
+                    let mut dlg = rfd::FileDialog::new();
+                    #[cfg(windows)]
                     {
+                        dlg = dlg.add_filter("ffmpeg", &["exe"]);
+                    }
+                    if let Some(f) = dlg.pick_file() {
                         self.settings.ffmpeg_path = Some(f.to_string_lossy().to_string());
                         if let Some(parent) = f.parent() {
-                            let probe = parent.join("ffprobe.exe");
+                            // The two tools ship side by side; pick the
+                            // sibling up so the user does not have to
+                            // browse twice.
+                            let probe =
+                                parent.join(caprust_core::ffmpeg::tool_file_name("ffprobe"));
                             if probe.is_file() {
                                 self.settings.ffprobe_path =
                                     Some(probe.to_string_lossy().to_string());

@@ -16,6 +16,8 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 sys-locale = { workspace = true }
+lzma-rs = "0.3.0"
+tar.workspace = true
 
 [dependencies.zip]
 version = "2"

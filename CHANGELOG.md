@@ -4,6 +4,23 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux: the file dialogs did nothing.** The Browse buttons in
+  Settings, the clip importers and the FFmpeg prompt now use the GTK3
+  dialogs instead of the XDG portal, which silently fails on systems
+  without `xdg-desktop-portal` (bare window managers, containers,
+  Crostini). No clip could be loaded on such a machine.
+- **Linux: FFmpeg download fetched a Windows build.** The auto-download
+  now picks the archive for the OS -- a `.tar.xz` of extensionless
+  binaries on Linux, with the exec bit preserved -- instead of a zip of
+  `.exe` files the kernel could not run. The managed folder follows the
+  XDG data dir (`~/.local/share/caprust/ffmpeg`) rather than a literal
+  `$HOME/CapRust`.
+- **A managed FFmpeg that cannot run was reported as installed.** The
+  lookup runs `-version` instead of trusting the file's existence, so a
+  wrong-OS or half-extracted binary no longer reads as a working one.
+
 ## [0.9.21] - 2026-10-23
 
 ### Added

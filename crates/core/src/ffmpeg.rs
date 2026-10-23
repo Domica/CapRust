@@ -27,8 +27,34 @@ use crate::settings::AppSettings;
 /// `checksums.sha256` published next to it BEFORE anything is extracted
 /// or executed. This catches corruption and a tampered archive, but not
 /// a compromised release (checksums come from the same origin).
-pub const FFMPEG_URL: &str =
+///
+/// The build is platform-specific: Windows ships a `.zip` of `.exe`
+/// files, Linux ships a `.tar.xz` of extensionless binaries. Asking for
+/// the win64 zip on Linux gets a pair of files the kernel cannot exec,
+/// which used to read as "ffmpeg installed" until a render was tried.
+pub const FFMPEG_URL_WIN: &str =
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
+pub const FFMPEG_URL_LINUX: &str =
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz";
+
+/// The archive for this OS. `ffmpeg.exe` on Windows, `ffmpeg` on Linux.
+pub fn ffmpeg_url() -> &'static str {
+    if cfg!(windows) {
+        FFMPEG_URL_WIN
+    } else {
+        FFMPEG_URL_LINUX
+    }
+}
+
+/// A tool's filename inside the managed dir. Windows needs the `.exe`
+/// suffix to run; Linux runs an extensionless file with the exec bit.
+pub fn tool_file_name(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
 
 /// Progress events the UI poll on.
 #[derive(Debug, Clone)]
@@ -51,10 +77,22 @@ pub fn managed_dir(settings: &AppSettings) -> PathBuf {
 }
 
 fn default_managed_dir() -> PathBuf {
-    let base = std::env::var("APPDATA")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(base).join("CapRust").join("ffmpeg")
+    #[cfg(windows)]
+    {
+        let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+        PathBuf::from(base).join("CapRust").join("ffmpeg")
+    }
+    // Linux convention is XDG data, not a folder in $HOME.
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                std::path::PathBuf::from(home).join(".local").join("share")
+            });
+        base.join("caprust").join("ffmpeg")
+    }
 }
 
 /// Look for ffmpeg: user override, then PATH, then the managed dir.
@@ -79,10 +117,11 @@ fn find_tool(override_path: Option<&str>, name: &str, settings: &AppSettings) ->
     if let Some(p) = which_in_path(name) {
         return Some(p);
     }
-    let managed = managed_dir(settings)
-        .join("bin")
-        .join(format!("{name}.exe"));
-    if managed.is_file() {
+    let managed = managed_dir(settings).join("bin").join(tool_file_name(name));
+    // Run `-version` rather than trusting the file's existence: a
+    // leftover binary from the wrong OS, or a half-extracted archive,
+    // reads as "installed" otherwise, and every render fails later.
+    if managed.is_file() && verify_binary(&managed) {
         return Some(managed);
     }
     None
@@ -183,36 +222,20 @@ fn download_and_extract(
         return Err(e.context("ffmpeg archive failed verification"));
     }
 
-    // BtbN layout: `<prefix>/bin/{ffmpeg,ffprobe}.exe`. We only need
-    // the bin/ files; the -gpl build is static, so no shared DLLs.
-    let file = fs::File::open(&zip_path).context("open zip")?;
-    let mut archive = zip::ZipArchive::new(file).context("read zip")?;
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
-        let Some(inner) = entry.enclosed_name() else {
-            continue;
-        };
-        let in_bin = inner.components().any(|c| c.as_os_str() == "bin");
-        if !in_bin {
-            continue;
-        }
-        let Some(file_name) = inner.file_name() else {
-            continue;
-        };
-        let dest = target_dir.join("bin").join(file_name);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut dst =
-            fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
-        std::io::copy(&mut entry, &mut dst)
-            .with_context(|| format!("extract {}", dest.display()))?;
+    // BtbN layout: `<prefix>/bin/{ffmpeg,ffprobe}`. We only need the
+    // bin/ files; the -gpl build is static, so no shared libraries.
+    // Windows ships a zip of .exe, Linux a tar.xz of extensionless
+    // binaries with the exec bit set.
+    if url.ends_with(".zip") {
+        extract_zip_bin(&zip_path, target_dir)?;
+    } else {
+        extract_tar_xz_bin(&zip_path, target_dir)?;
     }
 
     let _ = fs::remove_file(&zip_path);
 
-    let ffmpeg = target_dir.join("bin").join("ffmpeg.exe");
-    let ffprobe = target_dir.join("bin").join("ffprobe.exe");
+    let ffmpeg = target_dir.join("bin").join(tool_file_name("ffmpeg"));
+    let ffprobe = target_dir.join("bin").join(tool_file_name("ffprobe"));
     if !ffmpeg.is_file() || !verify_binary(&ffmpeg) {
         return Err(anyhow!(
             "extracted ffmpeg did not verify at {}",
@@ -227,6 +250,86 @@ fn download_and_extract(
     }
 
     let _ = tx.send(FfmpegDownloadEvent::Done);
+    Ok(())
+}
+
+/// Pull the `bin/` members out of a zip into `target_dir/bin/`.
+fn extract_zip_bin(zip_path: &Path, target_dir: &Path) -> Result<()> {
+    let file = fs::File::open(zip_path).context("open zip")?;
+    let mut archive = zip::ZipArchive::new(file).context("read zip")?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let Some(inner) = entry.enclosed_name() else {
+            continue;
+        };
+        if !inner.components().any(|c| c.as_os_str() == "bin") {
+            continue;
+        }
+        let Some(file_name) = inner.file_name() else {
+            continue;
+        };
+        let dest = target_dir.join("bin").join(file_name);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut dst =
+            fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+        std::io::copy(&mut entry, &mut dst)
+            .with_context(|| format!("extract {}", dest.display()))?;
+    }
+    Ok(())
+}
+
+/// Pull the `bin/` members out of a `.tar.xz` into `target_dir/bin/`,
+/// setting the exec bit: a Linux binary without it cannot be run, and
+/// the verify step below would then report a bad download.
+///
+/// The xz layer is decompressed to a temp file first: `lzma_rs` takes a
+/// `BufRead` and hands back bytes, and feeding that straight into a tar
+/// reader would need a streaming adapter the crate does not ship.
+fn extract_tar_xz_bin(archive_path: &Path, target_dir: &Path) -> Result<()> {
+    fs::create_dir_all(target_dir).with_context(|| format!("create {}", target_dir.display()))?;
+    let xz = fs::File::open(archive_path).context("open tar.xz")?;
+    let tar_path = target_dir.join("ffmpeg.tar.part");
+    let tar_out =
+        fs::File::create(&tar_path).with_context(|| format!("create {}", tar_path.display()))?;
+    lzma_rs::xz_decompress(
+        &mut std::io::BufReader::new(xz),
+        &mut std::io::BufWriter::new(tar_out),
+    )
+    .context("decompress xz")?;
+
+    let tar_file = fs::File::open(&tar_path).context("open tar")?;
+    let mut archive = tar::Archive::new(tar_file);
+    for entry in archive.entries().context("read tar")? {
+        let mut entry = entry.context("read tar entry")?;
+        let inner = entry.path().context("tar entry path")?.into_owned();
+        if !inner.components().any(|c| c.as_os_str() == "bin") {
+            continue;
+        }
+        let Some(file_name) = inner.file_name() else {
+            continue;
+        };
+        let dest = target_dir.join("bin").join(file_name);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut dst =
+            fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+        std::io::copy(&mut entry, &mut dst)
+            .with_context(|| format!("extract {}", dest.display()))?;
+        drop(dst);
+        // Preserve the mode the archive carried, exec bit included.
+        // Without it the verify step below reports a bad download.
+        #[cfg(unix)]
+        {
+            if let Ok(Some(mode)) = entry.header().mode() {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(mode));
+            }
+        }
+    }
+    let _ = fs::remove_file(&tar_path);
     Ok(())
 }
 
@@ -249,7 +352,9 @@ mod tests {
     fn managed_dir_default_under_caprust() {
         let d = managed_dir(&s());
         let text = d.to_string_lossy();
-        assert!(text.contains("CapRust"), "{text}");
+        // Windows: %APPDATA%\CapRust\ffmpeg; Linux: XDG data dir.
+        let brand = if cfg!(windows) { "CapRust" } else { "caprust" };
+        assert!(text.contains(brand), "{text}");
         assert!(text.ends_with("ffmpeg"), "{text}");
     }
 
@@ -265,7 +370,8 @@ mod tests {
         let mut st = s();
         st.managed_ffmpeg_dir = Some("   ".into());
         let text = managed_dir(&st).to_string_lossy().to_string();
-        assert!(text.contains("CapRust"));
+        let brand = if cfg!(windows) { "CapRust" } else { "caprust" };
+        assert!(text.contains(brand), "{text}");
     }
 
     #[test]
@@ -288,5 +394,75 @@ mod tests {
             return;
         };
         assert!(verify_binary(&p));
+    }
+
+    #[test]
+    fn url_and_tool_name_follow_the_os() {
+        let url = ffmpeg_url();
+        if cfg!(windows) {
+            assert!(url.ends_with(".zip"), "{url}");
+            assert_eq!(tool_file_name("ffmpeg"), "ffmpeg.exe");
+        } else {
+            assert!(url.ends_with(".tar.xz"), "{url}");
+            assert_eq!(tool_file_name("ffmpeg"), "ffmpeg");
+        }
+    }
+
+    /// Build a `.tar.xz` the way BtbN does -- a `bin/` folder of
+    /// extensionless binaries with the exec bit -- run the real
+    /// extractor on it, and check the files land runnable. The Linux
+    /// download path was verified by inspection before; a test keeps
+    /// it from regressing back to a Windows-only zip.
+    #[test]
+    fn extract_tar_xz_pulls_bin_and_keeps_exec_bit() {
+        let dir = std::env::temp_dir().join(format!("caprust-tarxz-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+
+        // Build the tar in memory: `<prefix>/bin/{ffmpeg,ffprobe}`.
+        let tar_path = dir.join("build.tar");
+        {
+            let out = fs::File::create(&tar_path).expect("tar");
+            let mut builder = tar::Builder::new(out);
+            for name in ["ffmpeg", "ffprobe"] {
+                let path = format!("ffmpeg-master-latest-linux64-gpl/bin/{name}");
+                let mut header = tar::Header::new_gnu();
+                header.set_size(5);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, path, &b"\x7fELF\n"[..])
+                    .expect("append");
+            }
+            builder.finish().expect("finish tar");
+        }
+        // Compress to xz, so the extractor's decompress step is exercised.
+        let xz_path = dir.join("build.tar.xz");
+        {
+            let input = fs::File::open(&tar_path).expect("read tar");
+            let output = fs::File::create(&xz_path).expect("write xz");
+            lzma_rs::xz_compress(
+                &mut std::io::BufReader::new(input),
+                &mut std::io::BufWriter::new(output),
+            )
+            .expect("xz compress");
+        }
+
+        let target = dir.join("out");
+        extract_tar_xz_bin(&xz_path, &target).expect("extract");
+
+        // The extractor keeps the archive's own names -- the URL is
+        // picked per-OS, so a Linux tar only ever reaches a Linux box.
+        let ffmpeg = target.join("bin").join("ffmpeg");
+        let ffprobe = target.join("bin").join("ffprobe");
+        assert!(ffmpeg.is_file(), "missing {}", ffmpeg.display());
+        assert!(ffprobe.is_file(), "missing {}", ffprobe.display());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&ffmpeg).expect("meta").permissions().mode();
+            assert_ne!(mode & 0o111, 0, "exec bit lost: mode {mode:o}");
+        }
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
