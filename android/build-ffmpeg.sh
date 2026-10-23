@@ -165,7 +165,7 @@ export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
   --enable-ffmpeg \
   --enable-ffprobe \
   --enable-pic \
-  --cc="$CC" --cxx="$CXX" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" \
+  --cc="$CC" --cxx="$CXX" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" --strip="$STRIP" \
   --pkg-config=pkg-config \
   --extra-cflags="-DANDROID -D__ANDROID_API__=$API" \
   --extra-ldflags="-L$PREFIX/lib" \
