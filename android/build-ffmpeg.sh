@@ -67,6 +67,23 @@ PREFIX="$WORK/prefix"
 rm -rf "$WORK"
 mkdir -p "$PREFIX" "$OUT"
 
+# x264's configure looks for <cross-prefix>gcc, <cross-prefix>as and
+# friends. The NDK does not ship tools with that name, so give it the
+# ones it expects as symlinks.
+CROSS_BIN="$WORK/cross-bin"
+mkdir -p "$CROSS_BIN"
+for tool in gcc g++ as ar ranlib strip nm strings ld; do
+  case "$tool" in
+    gcc|g++|as|ld) ln -sf "$BIN/$TRIPLE-clang" "$CROSS_BIN/$HOST-$tool" ;;
+    ar) ln -sf "$BIN/llvm-ar" "$CROSS_BIN/$HOST-ar" ;;
+    ranlib) ln -sf "$BIN/llvm-ranlib" "$CROSS_BIN/$HOST-ranlib" ;;
+    strip) ln -sf "$BIN/llvm-strip" "$CROSS_BIN/$HOST-strip" ;;
+    nm) ln -sf "$BIN/llvm-nm" "$CROSS_BIN/$HOST-nm" ;;
+    strings) [ -x "$BIN/llvm-strings" ] && ln -sf "$BIN/llvm-strings" "$CROSS_BIN/$HOST-strings" ;;
+  esac
+done
+export PATH="$CROSS_BIN:$PATH"
+
 fetch() {
   # The sources are fetched rather than vendored: they are large, and
   # the versions are pinned here so the build is the same every time.
@@ -90,6 +107,7 @@ cd "$WORK/x264"
   --enable-pic \
   --disable-cli \
   --disable-asm \
+  --extra-cflags="-DANDROID -D__ANDROID_API__=$API" \
   --prefix="$PREFIX"
 make -j"$(nproc)"
 make install
