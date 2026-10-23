@@ -51,7 +51,11 @@ jobs:
             libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev \
             libasound2-dev
       - uses: dtolnay/rust-toolchain@1.91.0
+      # Bust: the runner moved from 24.04 to 22.04, and the old cache
+      # carries build-script binaries linked against glibc 2.39.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: v2-22.04
       - run: cargo build --release -p caprust-app --no-default-features
 
       # A .deb, so a Debian or Ubuntu box can install with dpkg -i
