@@ -32,10 +32,12 @@ jobs:
 
   build-linux:
     name: Linux nightly
-    # Pinned, not ubuntu-latest: the label floats, and a newer image's
-    # glibc has a smaller _IO_FILE than whisper.cpp expects, which
-    # is a hard error in whisper-rs-sys's generated bindings.
-    runs-on: ubuntu-24.04
+    # Pinned to 22.04, not ubuntu-latest: the label floats, and a newer
+    # image's glibc has a smaller _IO_FILE than whisper.cpp expects,
+    # which is a hard error in whisper-rs-sys's generated bindings.
+    # 22.04 ships glibc 2.35, which is older than Debian 12's 2.36,
+    # so the binary built here runs on Debian 12 and on Ubuntu 22.04+.
+    runs-on: ubuntu-22.04
     env:
       # Same reasoning as the Windows job.
       CMAKE_ARGS: -DGGML_NATIVE=OFF
@@ -51,10 +53,54 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p caprust-app --no-default-features
+
+      # A .deb, so a Debian or Ubuntu box can install with dpkg -i
+      # instead of unpacking a tarball by hand.
+      - name: Build the .deb
+        run: |
+          VERSION="$(cat Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)"
+          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/share/applications pkg/usr/share/icons/hicolor/128x128/apps
+          cat > pkg/DEBIAN/control <<EOF
+          Package: caprust
+          Version: $VERSION
+          Section: video
+          Priority: optional
+          Architecture: amd64
+          Installed-Size: $(( $(stat -c%s target/release/caprust-app) / 1024 ))
+          Depends: libgtk-3-0, libasound2
+          Maintainer: Domica <noreply@github.com>
+          Homepage: https://github.com/Domica/CapRust
+          Description: Social-first video editor in Rust
+           A native video editor for short-form creators.
+           No cloud, no telemetry, MIT licensed.
+          EOF
+          cp target/release/caprust-app pkg/usr/bin/caprust
+          cp docs/logo.png pkg/usr/share/icons/hicolor/128x128/apps/caprust.png
+          cat > pkg/usr/share/applications/caprust.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=CapRust
+          Comment=Social-first video editor
+          Exec=caprust
+          Icon=caprust
+          Categories=AudioVideo;Video;AudioVideoEditing;
+          Terminal=false
+          EOF
+          dpkg-deb --build --root-owner-group pkg "caprust_${VERSION}_amd64.deb"
+          echo "Built caprust_${VERSION}_amd64.deb ($(stat -c%s "caprust_${VERSION}_amd64.deb") bytes)"
+          # Smoke test: the package unpacks and the binary is there.
+          dpkg-deb -c "caprust_${VERSION}_amd64.deb" | grep -q 'usr/bin/caprust'
+          dpkg-deb --info "caprust_${VERSION}_amd64.deb" | grep -q 'Package: caprust'
+
       - uses: actions/upload-artifact@v4
         with:
           name: caprust-nightly-linux
           path: target/release/caprust-app
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caprust-nightly-linux-deb
+          path: caprust_*_amd64.deb
           retention-days: 14
 
   build-android-apk:
