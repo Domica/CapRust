@@ -27,7 +27,6 @@ set -euo pipefail
 
 ABI="${1:-aarch64-linux-android}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="$HERE/ffmpeg/$FOLDER"
 # The runner names the NDK two ways: ANDROID_NDK_ROOT on some
 # images, ANDROID_NDK_LATEST_HOME on others. Take whichever is there.
 NDK="${ANDROID_NDK_ROOT:-${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}}"
@@ -40,11 +39,13 @@ fi
 # app supports and keeps the binaries usable on old devices.
 API=21
 case "$ABI" in
-  aarch64-linux-android) TRIPLE="aarch64-linux-android$API"; FOLDER="arm64-v8a" ;;
-  x86_64-linux-android)  TRIPLE="x86_64-linux-android$API";  FOLDER="x86_64" ;;
-  i686-linux-android)     TRIPLE="i686-linux-android$API";     FOLDER="x86" ;;
+  aarch64-linux-android) TRIPLE="aarch64-linux-android$API"; HOST="aarch64-linux-android"; ARCH="aarch64"; FOLDER="arm64-v8a" ;;
+  x86_64-linux-android)  TRIPLE="x86_64-linux-android$API";  HOST="x86_64-linux-android";  ARCH="x86_64"; FOLDER="x86_64" ;;
+  i686-linux-android)     TRIPLE="i686-linux-android$API";     HOST="i686-linux-android";     ARCH="x86";     FOLDER="x86" ;;
   *) echo "unknown abi: $ABI" >&2; exit 1 ;;
 esac
+
+OUT="$HERE/ffmpeg/$FOLDER"
 
 BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 export CC="$BIN/$TRIPLE-clang"
@@ -83,11 +84,12 @@ fetch() {
 fetch https://code.videolan.org/videolan/x264.git "$WORK/x264"
 cd "$WORK/x264"
 ./configure \
-  --cross-prefix="$TRIPLE-" \
-  --host="$TRIPLE" \
+  --cross-prefix="$HOST-" \
+  --host="$HOST" \
   --enable-static \
   --enable-pic \
   --disable-cli \
+  --disable-asm \
   --prefix="$PREFIX"
 make -j"$(nproc)"
 make install
@@ -96,8 +98,17 @@ cd - >/dev/null
 # ---- freetype -----------------------------------------------------
 fetch https://github.com/freetype/freetype.git "$WORK/freetype"
 cd "$WORK/freetype"
-./autogen.sh --enable-static --disable-shared --without-zlib --without-bzip2 \
-  --without-png --without-harfbuzz --without-brotli --prefix="$PREFIX"
+./autogen.sh
+./configure \
+  --host="$HOST" \
+  --enable-static \
+  --disable-shared \
+  --without-zlib \
+  --without-bzip2 \
+  --without-png \
+  --without-harfbuzz \
+  --without-brotli \
+  --prefix="$PREFIX"
 make -j"$(nproc)"
 make install
 cd - >/dev/null
@@ -106,7 +117,8 @@ cd - >/dev/null
 fetch https://git.ffmpeg.org/ffmpeg.git "$WORK/ffmpeg" n7.1
 cd "$WORK/ffmpeg"
 
-PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
 
 # A build with only what the editor uses. A full ffmpeg is thirty
 # megabytes of codecs the editor never asks for and takes forty
@@ -114,8 +126,8 @@ PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 ./configure \
   --target-os=android \
   --enable-cross-compile \
+  --arch="$ARCH" \
   --disable-asm \
-  --disable-programs \
   --disable-doc \
   --disable-debug \
   --disable-symver \
@@ -126,15 +138,13 @@ PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
   --disable-sdl2 \
   --disable-xlib \
   --disable-iconv \
+  --disable-ffplay \
   --enable-swscale \
   --enable-swresample \
   --enable-avfilter \
   --enable-protocol=file,pipe \
   --enable-ffmpeg \
   --enable-ffprobe \
-  --enable-neon \
-  --enable-jni \
-  --enable-mediacodec \
   --enable-pic \
   --cc="$CC" --cxx="$CXX" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" \
   --pkg-config=pkg-config \
