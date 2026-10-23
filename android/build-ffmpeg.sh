@@ -178,7 +178,6 @@ export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
   --disable-libaom \
   --disable-libsvtav1 \
   --disable-libdav1d \
-  --disable-libaom-av1 \
   --disable-libzimg \
   --disable-librubberband
 
