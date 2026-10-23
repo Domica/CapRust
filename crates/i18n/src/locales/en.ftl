@@ -1114,3 +1114,7 @@ settings-show-tips = Show the tips again
 settings-show-tips-hint = The guided tips walk through importing, cutting and exporting.
 menu-zone-remember-resize = Remember custom resize
 menu-zone-remember-resize-hint = Keep the panel sizes you dragged. Picking S, M or L moves the timeline back to its size.
+
+welcome-point-timeline = Cut them on the timeline, and add text, stickers and effects.
+
+welcome-point-shape = Pick a layout: Classic (rearrangeable) or Modern (fixed zones).

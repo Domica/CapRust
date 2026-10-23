@@ -1073,7 +1073,10 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
     undo.execute(Box::new(AddMediaCommand::new(path, kind)), project)?;
 
     let new_id = project.media.items.last().map(|m| m.id);
-    Ok(new_id.map(|id| id.to_string()).unwrap_or_default())
+    Ok(
+        json!({ "ok": true, "media_id": new_id.map(|id| id.to_string()).unwrap_or_default() })
+            .to_string(),
+    )
 }
 
 fn infer_kind(path: &str) -> Option<MediaKind> {

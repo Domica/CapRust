@@ -1113,3 +1113,7 @@ settings-show-tips = Hinweise erneut anzeigen
 settings-show-tips-hint = Die geführten Hinweise führen durch Importieren, Schneiden und Exportieren.
 menu-zone-remember-resize = Eigene Größe merken
 menu-zone-remember-resize-hint = Behält die Größe der Panels, die du gezogen hast. S, M oder L zu wählen setzt die Zeitleiste auf ihre Größe zurück.
+
+welcome-point-timeline = Schneide sie auf der Zeitleiste und füge Text, Sticker und Effekte hinzu.
+
+welcome-point-shape = Wähle ein Layout: Klassisch (verschiebbar) oder Modern (feste Zonen).
