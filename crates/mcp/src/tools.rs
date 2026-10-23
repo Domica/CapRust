@@ -1,4 +1,4 @@
-﻿//! MCP tool definitions and handlers.
+//! MCP tool definitions and handlers.
 //!
 //! Two groups:
 //! - read-only â€” pure inspection of `ProjectState`
@@ -1024,7 +1024,13 @@ fn add_clip_to_timeline(
     let new_id = clip.id;
 
     undo.execute(Box::new(RippleInsertCommand::new(clip)), project)?;
-    Ok(json!({ "ok": true, "media_id": media_id.to_string(), "clip_id": new_id.to_string() }).to_string())
+    // The result carries both ids: the media source and the clip.
+    Ok(json!({
+        "ok": true,
+        "media_id": media_id,
+        "clip_id": new_id,
+    })
+    .to_string())
 }
 
 fn do_undo(project: &mut ProjectState, undo: &mut UndoStack) -> Result<String> {

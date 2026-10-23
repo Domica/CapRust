@@ -325,23 +325,19 @@ impl Daemon {
                     },
                 }))
             }
-            Ok(None) => {
-                Some(json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "content": [{"type": "text", "text": ""}],
-                        "isError": false,
-                    },
-                }))
-            }
-            Err(e) => {
-                Some(json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {"code": -32000, "message": format!("{e:#}")},
-                }))
-            }
+            Ok(None) => Some(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [{"type": "text", "text": ""}],
+                    "isError": false,
+                },
+            })),
+            Err(e) => Some(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32000, "message": format!("{e:#}")},
+            })),
         }
     }
 

@@ -23,9 +23,10 @@ pub struct WelcomeEvents {
 }
 
 /// The three things CapRust does, in the order you do them.
-const POINTS: [&str; 3] = [
+const POINTS: [&str; 4] = [
     "welcome-point-import",
-    "welcome-point-cut",
+    "welcome-point-timeline",
+    "welcome-point-shape",
     "welcome-point-export",
 ];
 
