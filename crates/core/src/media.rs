@@ -193,7 +193,8 @@ fn kind_from_bytes(path: &str) -> Option<MediaKind> {
     } else if starts(&[0x89, b'P', b'N', b'G'])   // png
         || starts(&[0xff, 0xd8])                  // jpeg
         || starts(b"GIF8")                        // gif
-        || starts(b"BM")                          // bmp
+        || starts(b"BM")
+    // bmp
     {
         MediaKind::Image
     } else {

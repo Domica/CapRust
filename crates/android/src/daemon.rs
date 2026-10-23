@@ -289,12 +289,14 @@ impl Daemon {
     }
 
     /// The preview, answered with the project to ourselves.
-    fn answer_preview(&mut self, line: &str) -> Option<String> {
+    ///
+    /// Returns the result value, which is wrapped in the content array
+    /// the protocol uses.
+    fn answer_preview(&mut self, line: &str) -> Option<Value> {
         let request: Value = serde_json::from_str(line).ok()?;
         if request.get("method").and_then(|m| m.as_str()) != Some("tools/call") {
             return None;
         }
-        // The tool is named in the params, the way the protocol says.
         let name = request
             .get("params")
             .and_then(|p| p.get("name"))
@@ -312,39 +314,40 @@ impl Daemon {
             .clamp(64, 1280) as u32;
 
         match self.render_preview(width) {
-            Ok(Some(jpeg)) => Some(
-                json!({
+            Ok(Some(jpeg)) => {
+                let b64 = base64(&jpeg);
+                Some(json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    // The same shape every other tool answers in, so a
-                    // client cannot tell this one apart.
                     "result": {
-                        "content": [{"type": "text", "text": base64(&jpeg)}],
+                        "content": [{"type": "text", "text": b64}],
                         "isError": false,
                     },
-                })
-                .to_string(),
-            ),
-            Ok(None) => Some(
-                json!({
+                }))
+            }
+            Ok(None) => {
+                Some(json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": {
                         "content": [{"type": "text", "text": ""}],
                         "isError": false,
                     },
-                })
-                .to_string(),
-            ),
-            Err(e) => Some(
-                json!({
+                }))
+            }
+            Err(e) => {
+                Some(json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "error": {"code": -32000, "message": format!("{e:#}")},
-                })
-                .to_string(),
-            ),
+                }))
+            }
         }
+    }
+
+    /// The preview, answered as a string the way the other answers are.
+    fn answer_preview_text(&mut self, line: &str) -> Option<String> {
+        Some(self.answer_preview(line)?.to_string())
     }
 
     /// Render the preview frame at the playhead.

@@ -1,9 +1,9 @@
-//! MCP tool definitions and handlers.
+﻿//! MCP tool definitions and handlers.
 //!
 //! Two groups:
-//! - read-only — pure inspection of `ProjectState`
-//! - mutating  — every change goes through `UndoStack::execute`, per
-//!   DIRECTIVES §6 and §35.3. No direct mutation of `ProjectState`.
+//! - read-only â€” pure inspection of `ProjectState`
+//! - mutating  â€” every change goes through `UndoStack::execute`, per
+//!   DIRECTIVES Â§6 and Â§35.3. No direct mutation of `ProjectState`.
 
 use std::path::Path;
 
@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 pub fn definitions() -> Vec<Value> {
     vec![
-        // ── read-only ───────────────────────────────────────────────────────
+        // â”€â”€ read-only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         json!({
             "name": "get_project_summary",
             "description": "Return project name, dimensions, frame rate, total duration, and counts.",
@@ -50,7 +50,7 @@ pub fn definitions() -> Vec<Value> {
             "description": "List media library items.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         }),
-        // ── mutating ────────────────────────────────────────────────────────
+        // â”€â”€ mutating â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         json!({
             "name": "move_clip",
             "description": "Move a clip to a new start time (and optionally a new track).",
@@ -332,7 +332,7 @@ pub fn call<'a, 's>(
     }
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn parse_uuid(args: &Value, key: &str) -> Result<Uuid> {
     let s = args
@@ -372,7 +372,7 @@ fn clip_exists(project: &ProjectState, id: Uuid) -> Result<()> {
     }
 }
 
-// ── read-only handlers ──────────────────────────────────────────────────────
+// â”€â”€ read-only handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// The preset ids a client can choose from.
 ///
@@ -728,7 +728,7 @@ fn list_media(p: &ProjectState) -> Result<String> {
     Ok(serde_json::to_string_pretty(&arr)?)
 }
 
-// ── mutating handlers ───────────────────────────────────────────────────────
+// â”€â”€ mutating handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn move_clip(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> Result<String> {
     let clip_id = parse_uuid(args, "clip_id")?;
@@ -1024,7 +1024,7 @@ fn add_clip_to_timeline(
     let new_id = clip.id;
 
     undo.execute(Box::new(RippleInsertCommand::new(clip)), project)?;
-    Ok(json!({ "ok": true, "clip_id": new_id }).to_string())
+    Ok(json!({ "ok": true, "media_id": media_id.to_string(), "clip_id": new_id.to_string() }).to_string())
 }
 
 fn do_undo(project: &mut ProjectState, undo: &mut UndoStack) -> Result<String> {
@@ -1065,7 +1065,7 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
     undo.execute(Box::new(AddMediaCommand::new(path, kind)), project)?;
 
     let new_id = project.media.items.last().map(|m| m.id);
-    Ok(json!({ "ok": true, "media_id": new_id }).to_string())
+    Ok(new_id.to_string())
 }
 
 fn infer_kind(path: &str) -> Option<MediaKind> {
@@ -1081,7 +1081,7 @@ fn infer_kind(path: &str) -> Option<MediaKind> {
     }
 }
 
-// ── tests ───────────────────────────────────────────────────────────────────
+// â”€â”€ tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[cfg(test)]
 mod tests {
@@ -1103,7 +1103,7 @@ mod tests {
         (p, id)
     }
 
-    // ── read-only ───────────────────────────────────────────────────────────
+    // â”€â”€ read-only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn summary_of_empty_project_is_zero_duration() {
@@ -1147,7 +1147,7 @@ mod tests {
         assert!(v.as_array().unwrap().is_empty());
     }
 
-    // ── mutating ────────────────────────────────────────────────────────────
+    // â”€â”€ mutating â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn move_clip_changes_start_and_undo_restores() {
@@ -1575,7 +1575,7 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
     }
 
-    // ── presets ─────────────────────────────────────────────────────────────
+    // â”€â”€ presets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn list_assets_returns_all_three_tables() {
@@ -1747,7 +1747,7 @@ mod tests {
         assert!(p.clips[0].effects.is_empty());
     }
 
-    // ── session / project switching ────────────────────────────────────────
+    // â”€â”€ session / project switching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Stand-in for the running app.
     struct FakeSession {
