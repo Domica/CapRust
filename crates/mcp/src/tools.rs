@@ -1025,10 +1025,12 @@ fn add_clip_to_timeline(
 
     undo.execute(Box::new(RippleInsertCommand::new(clip)), project)?;
     // The result carries both ids: the media source and the clip.
+    // A UUID must be a string; `.to_string()` is on `Uuid` here,
+    // not on an `Option<Uuid>`.
     Ok(json!({
         "ok": true,
-        "media_id": media_id,
-        "clip_id": new_id,
+        "media_id": media_id.to_string(),
+        "clip_id": new_id.to_string(),
     })
     .to_string())
 }
@@ -1071,7 +1073,7 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
     undo.execute(Box::new(AddMediaCommand::new(path, kind)), project)?;
 
     let new_id = project.media.items.last().map(|m| m.id);
-    Ok(new_id.to_string())
+    Ok(new_id.map(|id| id.to_string()).unwrap_or_default())
 }
 
 fn infer_kind(path: &str) -> Option<MediaKind> {

@@ -343,7 +343,11 @@ impl Daemon {
 
     /// The preview, answered as a string the way the other answers are.
     fn answer_preview_text(&mut self, line: &str) -> Option<String> {
-        Some(self.answer_preview(line)?.to_string())
+        match self.answer_preview(line) {
+            Some(Value::String(s)) => Some(s),
+            Some(other) => Some(other.to_string()),
+            None => None,
+        }
     }
 
     /// Render the preview frame at the playhead.
