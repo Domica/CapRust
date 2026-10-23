@@ -4,7 +4,47 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.21] - 2026-10-23
+
+### Added
+
+- **The Android app.** The engine runs on the phone: a real editor, not
+  a remote control. Import a file, put it on the timeline, look at a
+  frame, render a 9:16 video and hand it to the share sheet. The engine
+  is the desktops engine, so what the phone shows and what it exports
+  are the same thing.
+- **Auto-update inside the app.** The Download button in the update toast
+  now downloads the installer and runs it.
+- **A Basic layout preset.** Preview and timeline only, with nothing else
+  on screen. For users who want the simplest shape.
+- **The panel sizes are remembered.** The timeline height and the two
+  column splits live in the settings now, so they survive a restart.
+  Picking S, M or L still takes them back to the preset, unless
+  *Remember custom resize* is on (View -> Modern zones).
+
 ### Fixed
+
+- **The seam handles were never where they were drawn.** The drag
+  handles between the preview and the timeline, and between the two
+  containers in a side column, could not be dragged: the handles
+  rectangle was built from the width and the offset as if they were a
+  position, so it sat in the top left of the screen.
+- **The track fader was silent in the preview and audible in the
+  export.** The preview plays a cached mix of the audio, and the cache
+  was not re-rendered when the fader moved, because the hash that
+  decides that covered the tracks mute but not its volume.
+- **The file is asked what it is when its name says nothing.** A file
+  whose name has no useful extension is now sniffed from its first
+  bytes, so a phones file picker can hand over import-1759000000.bin
+  and the import still works.
+- **Clips from a plugin know which media they came from.** Importer
+  plugins predate media_id, so the clips they produced had it set to
+  None. The render graph asks the media item whether the file has an
+  audio stream, and a clip that does not say leaves it guessing. The
+  CapCut importers projects played in the preview and failed on
+  export.
+
+### Unreleased
 
 - **The panel seams could not be dragged.** The handles between the
   preview and the timeline, and between the two containers in a side
