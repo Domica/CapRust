@@ -77,19 +77,16 @@ pub fn managed_dir(settings: &AppSettings) -> PathBuf {
 }
 
 fn default_managed_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
+    if cfg!(windows) {
         let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
         PathBuf::from(base).join("CapRust").join("ffmpeg")
-    }
-    // Linux convention is XDG data, not a folder in $HOME.
-    #[cfg(not(windows))]
-    {
+    } else {
+        // Linux convention is XDG data, not a folder in $HOME.
         let base = std::env::var("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
+            .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                std::path::PathBuf::from(home).join(".local").join("share")
+                PathBuf::from(home).join(".local").join("share")
             });
         base.join("caprust").join("ffmpeg")
     }

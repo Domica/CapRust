@@ -169,7 +169,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
-| **0.9.21** | 2026-10-23 | The Android app (engine + daemon + Kotlin editor + APK for arm64/x86_64/x86, with ffmpeg); auto-update downloads and runs the installer; a Basic layout preset; panel sizes remembered; seam handles fixed; track fader preview fixed; file-type sniffing; CapCut-plugin export fix. |
+| **0.9.21** | 2026-10-23 | The Android app (engine + daemon + Kotlin editor + APK for arm64/x86_64/x86, with ffmpeg); auto-update downloads and runs the installer; a Basic layout preset; panel sizes remembered; seam handles fixed; track fader preview fixed; file-type sniffing; Other-plugin export fix. |
 | **0.9.20** | 2026-10-21 | A first-run welcome and three guided tips; the Enhance effect (denoise + deband, measured); a smaller binary -- the icon and the built-in LUTs travel packed; the release is built in CI, ready for code signing. |
 | **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame; keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg transition reachable. |
 | **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |

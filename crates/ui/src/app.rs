@@ -13894,7 +13894,7 @@ impl CapRustApp {
                         };
                 }
                 if ev.browse_existing {
-                    let mut dlg = rfd::FileDialog::new();
+                    let dlg = rfd::FileDialog::new();
                     #[cfg(windows)]
                     {
                         dlg = dlg.add_filter("ffmpeg", &["exe"]);
