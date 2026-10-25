@@ -50,19 +50,28 @@ dependencies {
 // may run one from: the package manager extracts it there and sets
 // the exec bit.
 //
-// Two architectures: a phone is arm64, an emulator on a laptop is
-// x86_64. The app finds the engine in its own native library folder,
+// Three architectures: arm64 phones, armv7 (older phones), and x86_64
+// emulators. The app finds the engine in its own native library folder,
 // which Android fills for the architecture it is running on, so the
-// APK has to carry both.
+// APK has to carry all three.
 //
 // The ffmpeg goes the same way, into the same folder: the engine runs
 // it as a separate program, and a program can only be run from there.
 //
 // One task per architecture, each with its own destination: a Copy
 // task needs one, and a destination on a child spec does not count.
+// Two architectures: a phone is arm64, an emulator on a laptop is
+// x86_64. The app finds the engine in its own native library folder,
+// which Android fills for the architecture it is running on, so the
+// APK has to carry both.
+//
+// Three architectures now: arm64 phones, armv7 (older phones), and
+// x86_64 emulators.
+
 val jniLibs = file("src/main/jniLibs")
 
 val arm64Target = "aarch64-linux-android"
+val armv7Target = "armv7-linux-androideabi"
 val x64Target = "x86_64-linux-android"
 val x86Target = "i686-linux-android"
 
@@ -79,6 +88,13 @@ val copyEngineArm64 by tasks.registering(Copy::class) {
     // engine (a plain `gradle assembleDebug` on a laptop). The app
     // then says the engine is missing, instead of the build failing.
     onlyIf { engineBinary(arm64Target).exists() }
+}
+
+val copyEngineArmV7 by tasks.registering(Copy::class) {
+    from(engineBinary(armv7Target))
+    into(File(jniLibs, "armeabi-v7a"))
+    rename { "libcaprust-androidd.so" }
+    onlyIf { engineBinary(armv7Target).exists() }
 }
 
 val copyEngineX64 by tasks.registering(Copy::class) {
@@ -102,6 +118,13 @@ val copyFfmpegArm64 by tasks.registering(Copy::class) {
     onlyIf { ffmpegBinary("arm64-v8a").exists() }
 }
 
+val copyFfmpegArmV7 by tasks.registering(Copy::class) {
+    from(ffmpegBinary("armeabi-v7a"))
+    into(File(jniLibs, "armeabi-v7a"))
+    rename { "libffmpeg.so" }
+    onlyIf { ffmpegBinary("armeabi-v7a").exists() }
+}
+
 val copyFfmpegX64 by tasks.registering(Copy::class) {
     from(ffmpegBinary("x86_64"))
     into(File(jniLibs, "x86_64"))
@@ -118,7 +141,7 @@ val copyFfmpegX86 by tasks.registering(Copy::class) {
 
 tasks.named("preBuild") {
     dependsOn(
-        copyEngineArm64, copyEngineX64, copyEngineX86,
-        copyFfmpegArm64, copyFfmpegX64, copyFfmpegX86,
+        copyEngineArm64, copyEngineArmV7, copyEngineX64, copyEngineX86,
+        copyFfmpegArm64, copyFfmpegArmV7, copyFfmpegX64, copyFfmpegX86,
     )
 }
