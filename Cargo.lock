@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-android"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "anyhow",
  "caprust-core",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-app"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "caprust-ui",
  "eframe",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-core"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "anyhow",
  "blake3",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-i18n"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "fluent",
  "fluent-bundle",
@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-mcp"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "anyhow",
  "caprust-core",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-media-io"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "anyhow",
  "blake3",
@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-screen-record"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "anyhow",
  "tracing",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "caprust-ui"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "base64 0.22.1",
  "caprust-core",

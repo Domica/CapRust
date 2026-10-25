@@ -2,7 +2,21 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
-## [Unreleased]
+## [0.9.22] - 2026-10-25
+
+### Added
+
+- **Alpha Android client.** The editor runs on the phone: Rust engine
+  cross-compiled for arm64-v8a and armeabi-v7a, JSON-RPC daemon over
+  loopback, Kotlin UI with media bin, timeline, preview and export.
+  The APK carries `libffmpeg.so` for arm64-v8a, armeabi-v7a, x86 and
+  x86_64.
+- **Debian .deb package.** `caprust_0.9.22_amd64.deb` installs with
+  `dpkg -i`, includes desktop entry and icon. Runs on Debian 12 and
+  newer (glibc 2.35).
+- **Linux FFmpeg auto-download.** Picks the Linux build (`.tar.xz`)
+  instead of a Windows zip, preserves the exec bit, reports only a
+  binary that actually runs.
 
 ### Fixed
 

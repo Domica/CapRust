@@ -15,8 +15,8 @@ android {
         // socket.
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.9.18"
+        versionCode = 2
+        versionName = "0.9.22"
     }
 
     buildTypes {
