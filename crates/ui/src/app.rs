@@ -13894,6 +13894,11 @@ impl CapRustApp {
                         };
                 }
                 if ev.browse_existing {
+                    // On Windows the filter needs a mutable bind; on Unix
+                    // it doesn't. Avoid unused_mut warning on macOS/Linux.
+                    #[cfg(windows)]
+                    let mut dlg = rfd::FileDialog::new();
+                    #[cfg(not(windows))]
                     let dlg = rfd::FileDialog::new();
                     #[cfg(windows)]
                     {
