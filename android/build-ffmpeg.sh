@@ -40,7 +40,7 @@ fi
 API=21
 case "$ABI" in
   aarch64-linux-android) TRIPLE="aarch64-linux-android$API"; HOST="aarch64-linux-android"; ARCH="aarch64"; FOLDER="arm64-v8a" ;;
-  armv7-linux-androideabi) TRIPLE="armv7-linux-androideabi$API"; HOST="arm-linux-androideabi"; ARCH="arm"; FOLDER="armeabi-v7a" ;;
+  armv7-linux-androideabi) TRIPLE="armv7a-linux-androideabi$API"; HOST="arm-linux-androideabi"; ARCH="arm"; FOLDER="armeabi-v7a" ;;
   x86_64-linux-android)  TRIPLE="x86_64-linux-android$API";  HOST="x86_64-linux-android";  ARCH="x86_64"; FOLDER="x86_64" ;;
   i686-linux-android)     TRIPLE="i686-linux-android$API";     HOST="i686-linux-android";     ARCH="x86";     FOLDER="x86" ;;
   *) echo "unknown abi: $ABI" >&2; exit 1 ;;
