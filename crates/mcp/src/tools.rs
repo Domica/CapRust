@@ -1080,6 +1080,10 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
 }
 
 fn infer_kind(path: &str) -> Option<MediaKind> {
+    // The name comes first: it is free, and it is right most of the
+    // time. A phone's file picker hands over names like
+    // "import-1759000000.bin", and refusing those was refusing
+    // perfectly good videos.
     let ext = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())?
@@ -1088,7 +1092,7 @@ fn infer_kind(path: &str) -> Option<MediaKind> {
         "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => Some(MediaKind::Video),
         "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" => Some(MediaKind::Audio),
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => Some(MediaKind::Image),
-        _ => None,
+        _ => caprust_core::media::guess_kind(path),
     }
 }
 
