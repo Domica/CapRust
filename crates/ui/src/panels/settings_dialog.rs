@@ -700,28 +700,23 @@ fn show_paths(
         }
         // AI model download: u2netp for reframe / background / face
         let model_file = std::path::Path::new(&settings.models_dir).join("u2netp.onnx");
-        if !model_file.is_file() {
-            if button::primary(ui, tr("set-models-download")).clicked() {
-                let dst = settings.models_dir.clone();
-                std::thread::spawn(move || {
-                    let _ = std::fs::create_dir_all(&dst);
-                    // u2netp model from the original repo.
-                    let _ = std::fs::write(
-                        std::path::Path::new(&dst).join("u2netp.onnx"),
-                        ureq::get(
-                            "https://github.com/xuebinqin/U-2-Net/raw/master/models/u2netp.onnx",
-                        )
+        if !model_file.is_file() && button::primary(ui, tr("set-models-download")).clicked() {
+            let dst = settings.models_dir.clone();
+            std::thread::spawn(move || {
+                let _ = std::fs::create_dir_all(&dst);
+                let _ = std::fs::write(
+                    std::path::Path::new(&dst).join("u2netp.onnx"),
+                    ureq::get("https://github.com/xuebinqin/U-2-Net/raw/master/models/u2netp.onnx")
                         .call()
                         .map(|r| {
                             let mut b = Vec::new();
-                            std::io::copy(&mut r.into_reader(), &mut std::io::Cursor::new(&mut b))
-                                .ok();
+                            std::io::copy(&mut r.into_reader(), &mut std::io::Cursor::new(&mut b)).ok();
                             b
                         })
                         .unwrap_or_default(),
-                    );
-                });
-            }
+                );
+            });
+            ui.label(tr("set-models-download-started"));
         }
     });
 
