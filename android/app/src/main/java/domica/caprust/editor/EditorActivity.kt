@@ -335,15 +335,25 @@ class EditorActivity : Activity() {
             if (head.size < magic.size) return false
             return magic.withIndex().all { (i, b) -> (head[i].toInt() and 0xff) == b }
         }
+        fun startsAt(offset: Int, vararg magic: Int): Boolean {
+            if (head.size < offset + magic.size) return false
+            return magic.withIndex().all { (i, b) -> (head[offset + i].toInt() and 0xff) == b }
+        }
         return when {
-            // "ftyp" at the front, or a "moov"/"mdat" atom further in.
-            starts(0x66, 0x74, 0x79, 0x70) -> "video"
+            // MP4/MOV: 4-byte box size, then "ftyp" at offset 4.
+            startsAt(4, 0x66, 0x74, 0x79, 0x70) -> "video"
+            // WebM/MKV: EBML header at offset 0.
             starts(0x1a, 0x45, 0xdf, 0xa3) -> "video"
-            starts(0x52, 0x49, 0x46, 0x46) -> "video"   // RIFF: avi or webm
-            starts(0x4f, 0x67, 0x67, 0x53) -> "audio"   // Ogg
-            starts(0x49, 0x44, 0x33) -> "audio"               // mp3
+            // RIFF: avi or webm.
+            starts(0x52, 0x49, 0x46, 0x46) -> "video"
+            // Ogg container.
+            starts(0x4f, 0x67, 0x67, 0x53) -> "audio"
+            // MP3.
+            starts(0x49, 0x44, 0x33) -> "audio"
             starts(0xff, 0xfb) || starts(0xff, 0xf3) -> "audio"
-            starts(0x66, 0x4c, 0x61, 0x43) -> "audio"        // FLAC
+            // FLAC.
+            starts(0x66, 0x4c, 0x61, 0x43) -> "audio"
+            // Images.
             starts(0x89, 0x50, 0x4e, 0x47) -> "image"        // PNG
             starts(0xff, 0xd8) -> "image"                      // JPEG
             starts(0x47, 0x49, 0x46, 0x38) -> "image"        // GIF
