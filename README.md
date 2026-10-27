@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.22-win64-setup.exe`.
+1. Run `CapRust-0.9.23-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -169,8 +169,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.23** | 2026-10-27 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings. |
 | **0.9.22** | 2026-10-25 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection. |
-| **0.9.23** | 2026-10-23 | The Android app (engine + daemon + Kotlin editor + APK for arm64/x86_64/x86, with ffmpeg); auto-update downloads and runs the installer; a Basic layout preset; panel sizes remembered; seam handles fixed; track fader preview fixed; file-type sniffing; Other-plugin export fix. |
 | **0.9.20** | 2026-10-21 | A first-run welcome and three guided tips; the Enhance effect (denoise + deband, measured); a smaller binary -- the icon and the built-in LUTs travel packed; the release is built in CI, ready for code signing. |
 | **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame; keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg transition reachable. |
 | **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |
