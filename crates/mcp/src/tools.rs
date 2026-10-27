@@ -1088,9 +1088,9 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
             .find(|m| m.id == media_id)
             .expect("the media we just added");
         let mut clip = match kind {
-            MediaKind::Video => Clip::new_video(&media.path, 0, 0, media.duration_ms),
-            MediaKind::Audio => Clip::new_audio(&media.path, 0, 0, media.duration_ms),
-            MediaKind::Image => Clip::new_image(&media.path, 0, 0, media.duration_ms),
+            MediaKind::Video => Clip::new_video(&media.path, 0, 0, if media.duration_ms > 0 { media.duration_ms } else { 5000 }),
+            MediaKind::Audio => Clip::new_audio(&media.path, 0, 0, if media.duration_ms > 0 { media.duration_ms } else { 5000 }),
+            MediaKind::Image => Clip::new_image(&media.path, 0, 0, 0),
         };
         clip.media_id = Some(media_id);
         undo.execute(Box::new(RippleInsertCommand::new(clip)), project)?;
