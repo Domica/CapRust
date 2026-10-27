@@ -191,14 +191,30 @@ class EditorActivity : Activity() {
                 for (i in 0 until clips.length()) {
                     val clip = clips.optJSONObject(i) ?: continue
                     val label = clip.optString("name", clip.optString("path", "?"))
-                    timeline.addView(
-                        TextView(this).apply {
-                            setText(label)
-                            setTextColor(0xFFE8EAED.toInt())
-                            textSize = 14f
-                            setPadding(0, dp(6), 0, dp(6))
-                        },
-                    )
+                    val tv = TextView(this).apply {
+                        setText(labelStr + " │ " + (if (clip.optString("transition_in").isNotEmpty()) "→" else "") + (if (clip.optString("transition_out").isNotEmpty()) "←" else ""))
+                        setTextColor(0xFFE8EAED.toInt())
+                        setBackgroundColor(if (clip.optString("transition_in").isNotEmpty() || clip.optString("transition_out").isNotEmpty()) 0xFF8B3A3A.toInt() else 0xFF252530.toInt())
+                        textSize = 13f
+                        setPadding(dp(8), dp(4), dp(8), dp(4))
+                    }
+                    tv.setOnTouchListener { v, event ->
+                        when (event.action) {
+                            android.view.MotionEvent.ACTION_DOWN -> {
+                                v.tag = event.rawX.toInt()
+                                true
+                            }
+                            android.view.MotionEvent.ACTION_MOVE -> {
+                                val prev = v.tag as? Int ?: event.rawX.toInt()
+                                val dx = event.rawX.toInt() - prev
+                                v.tag = event.rawX.toInt()
+                                v.x += dx
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                    timeline.addView(tv)
                 }
                 if (clips.length() == 0) {
                     timeline.addView(
