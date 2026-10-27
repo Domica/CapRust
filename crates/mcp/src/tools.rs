@@ -677,6 +677,7 @@ fn list_clips(p: &ProjectState, args: &Value) -> Result<String> {
                 "duration_ms": c.duration_ms,
                 "kind": clip_kind_str(&c.clip_type),
                 "media_id": c.media_id,
+                "name": p.media.items.iter().find(|m| c.media_id == Some(m.id)).map(|m| m.name.clone()).unwrap_or_default(),
                 "speed": c.speed,
                 "reversed": c.reversed,
                 "flip_h": c.flip_h,
