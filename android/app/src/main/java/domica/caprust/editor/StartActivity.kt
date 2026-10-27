@@ -1,36 +1,29 @@
-package domica.caprust.editor;
+package domica.caprust.editor
 
-import android.app.Activity;
-import android.content.Intent;
-import android.os.Bundle;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.view.ViewGroup;
+import android.app.Activity
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Button
 
-public class StartActivity extends Activity {
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_start);
-        Button btnNew = findViewById(R.id.btn_new);
-        Button btnOpen = findViewById(R.id.btn_open);
-        btnNew.setOnClickListener(v -> {
-            startActivity(new Intent(this, EditorActivity.class));
-        });
-        btnOpen.setOnClickListener(v -> {
-            Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
-            pick.setType("*/*");
-            startActivityForResult(pick, 41);
-        });
+class StartActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_start)
+        val btnNew = findViewById<Button>(R.id.btn_new)
+        val btnOpen = findViewById<Button>(R.id.btn_open)
+        btnNew.setOnClickListener {
+            startActivity(Intent(this, EditorActivity::class.java))
+        }
+        btnOpen.setOnClickListener {
+            val pick = Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
+            startActivityForResult(pick, 41)
+        }
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 41 && resultCode == RESULT_OK && data != null) {
-            startActivity(new Intent(this, EditorActivity.class));
+            startActivity(Intent(this, EditorActivity::class.java))
         }
     }
 }
