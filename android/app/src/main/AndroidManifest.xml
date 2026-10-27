@@ -18,10 +18,6 @@
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="unspecified">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
         </activity>
 
         <!-- The editor. Its own icon on the home screen, so the
@@ -32,6 +28,10 @@
             android:exported="true"
             android:screenOrientation="unspecified"
             android:label="@string/editor_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>
