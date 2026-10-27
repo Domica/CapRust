@@ -57,6 +57,7 @@ class EditorActivity : Activity() {
     }
 
     override fun onDestroy() {
+        previewTicker.removeCallbacks(previewRunnable)
         daemon.stop()
         client.disconnect()
         super.onDestroy()
@@ -158,9 +159,18 @@ class EditorActivity : Activity() {
                         }
                         status.text = getString(R.string.editor_ready)
                         refresh()
+                        previewTicker.post(previewRunnable)
                     }
                 }
             }
+        }
+    }
+
+    private val previewTicker = android.os.Handler(android.os.Looper.getMainLooper())
+    private val previewRunnable = object : Runnable {
+        override fun run() {
+            renderPreview()
+            previewTicker.postDelayed(this, 400)
         }
     }
 
