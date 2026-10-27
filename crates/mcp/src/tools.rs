@@ -1071,52 +1071,13 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
         })?,
     };
 
-    // The media is added to the library. The clip also has to be
-    // added to the timeline: the Android editor does not send a
-    // separate `add_clip_to_timeline`, and without it the timeline
-    // stays empty even though the media exists.
     undo.execute(Box::new(AddMediaCommand::new(path, kind)), project)?;
 
-    let new_media_id = project.media.items.last().map(|m| m.id);
-    // The clip is added with the media's duration (not yet probed on
-    // the phone, so it comes from the media item). The timeline must
-    // show something after import.
-    if let Some(media_id) = new_media_id {
-        let media = project
-            .media
-            .items
-            .iter()
-            .find(|m| m.id == media_id)
-            .expect("the media we just added");
-        let mut clip = match kind {
-            MediaKind::Video => Clip::new_video(
-                &media.path,
-                0,
-                0,
-                if media.duration_ms > 0 {
-                    media.duration_ms
-                } else {
-                    5000
-                },
-            ),
-            MediaKind::Audio => Clip::new_audio(
-                &media.path,
-                0,
-                0,
-                if media.duration_ms > 0 {
-                    media.duration_ms
-                } else {
-                    5000
-                },
-            ),
-            MediaKind::Image => Clip::new_image(&media.path, 0, 0, 0),
-        };
-        clip.media_id = Some(media_id);
-        undo.execute(Box::new(RippleInsertCommand::new(clip)), project)?;
-    }
-
-    let new_media_id = new_media_id.unwrap();
-    Ok(json!({ "ok": true, "media_id": new_media_id.to_string() }).to_string())
+    let new_id = project.media.items.last().map(|m| m.id);
+    Ok(
+        json!({ "ok": true, "media_id": new_id.map(|id| id.to_string()).unwrap_or_default() })
+            .to_string(),
+    )
 }
 
 fn infer_kind(path: &str) -> Option<MediaKind> {

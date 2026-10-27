@@ -2,7 +2,45 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
-## [0.9.22] - 2026-10-25
+## [0.9.23] - 2026-10-27
+
+### Added
+
+- **Complete Android editor (alpha).** Feature 1: start screen (New/Open/Recent). Feature 2: live preview timer tied to timeline. Feature 3: export dialog with format/resolution settings. Feature 4: drag timeline, named clips, track display. Feature 5: transition overlap markers (red background + arrows on clips with in/out transitions).
+- **Keyframe curve editor (#84).** Draggable trajectory points with linear curve drawing and playhead line.
+- **AI settings model download.** Settings → AI Models now has a Download button for `u2netp.onnx`; the file lands in the managed models dir.
+- **Debian .deb package.** `caprust_0.9.23_amd64.deb` installs with `dpkg -i`, desktop entry included, runs on Debian 12 (glibc 2.35).
+- **Linux file picker.** GTK3 backend replaces silent-failing XDG portal, so Browse and import work on containers/Crostini/bare WMs.
+
+### Fixed
+
+- **Android import with .mp4 files.** The picker returned `.mp4` files that `infer_kind` missed (extension matched, but `guess_kind` magic bytes needed for the `.bin` case). `sniffKind` now checks `ftyp` at offset 4.
+- **Android `add_media` created media but no timeline clip.** The daemon's `add_media` now creates a `Clip` entry linked to the media via `media_id`, so `list_clips` and `refresh()` show it.
+- **Android `add_media` `duration_ms` was 0.** When unprobed, uses 5000 ms default so timeline shows length.
+- **Android manifest launcher.** `EditorActivity` is the launcher; `MainActivity` (remote/test) has no `MAIN/LAUNCHER` filter.
+- **Linux FFmpeg download fetched Windows build.** The download picks `.tar.xz` for Linux, preserves exec bit on extraction, verifies with `-version` before reporting installed.
+- **Linux managed dir.** Follows XDG (`~/.local/share/caprust/ffmpeg`), not literal `$HOME/CapRust`.
+- **FFmpeg "installed" false positive.** `find_tool` runs `-version`, not `is_file()`.
+
+### Known limitations
+
+- **Keyframe editor (#84 full).** Curve drawing + drag points work; easing curves and per-property keyframe tracks (#85, #86) are deferred.
+- **AI upscale (Real-ESRGAN, #39).** Blocked by `tract-onnx` runtime speed; the settings download prepares the model file but does not run it.
+- **Captions/narration (#81).** Whisper-rs is in CI; integration into Android daemon not yet wired.
+- **Auto-reframe / background removal (#81 follow).** Needs the `u2netp` model to be probed at runtime; settings download only stores the file.
+- **Android APK build step is `continue-on-error`.** If `ffmpeg` cross-compile fails, the APK builds without `libffmpeg.so`, and rendering/export will fail.
+
+### Technical
+
+- `Cargo.toml`: `rfd = { version = "0.15", default-features = false, features = ["gtk3"] }` (GTK3 backend, not XDG portal).
+- `crates/core/src/ffmpeg.rs`: `ffmpeg_url()` picks `FFMPEG_URL_WIN` or `FFMPEG_URL_LINUX`; `tool_file_name()` uses `.exe` or bare; `extract_tar_xz_bin` preserves exec bit; `find_tool` uses `verify_binary()`.
+- `crates/core/src/ffmpeg.rs`: `default_managed_dir()` uses `XDG_DATA_HOME` / `.local/share` on Linux.
+- `.github/workflows/nightly.yml`: Linux runner `ubuntu-22.04` (`glibc 2.35`); `.deb` built; `rust-cache` key `v2-22.04`; Android `armv7a` (`armv7a-linux-androideabi`) added; `rfd` GTK3 feature enabled.
+- `crates/core/Cargo.toml`: added `lzma-rs = "0.3.0"` and `tar.workspace = true`.
+
+Full changelog for 0.9.21 and before: see [CHANGELOG.md](CHANGELOG.md).
+
+---
 
 ### Added
 

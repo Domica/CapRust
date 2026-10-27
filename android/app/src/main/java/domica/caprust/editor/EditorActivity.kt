@@ -282,8 +282,27 @@ class EditorActivity : Activity() {
                     Toast.makeText(this, text, Toast.LENGTH_LONG).show()
                     return@runOnUiThread
                 }
-                Toast.makeText(this, R.string.editor_imported, Toast.LENGTH_SHORT).show()
-                refresh()
+                // The media is added; now put it on the timeline so
+                // refresh() shows it. add_media returns media_id.
+                val mediaId = try { org.json.JSONObject(text).optString("media_id") } catch (e: Exception) { "" }
+                if (mediaId.isNotEmpty()) {
+                    val clipArgs = org.json.JSONObject()
+                        .put("media_id", mediaId)
+                        .put("track_index", 0)
+                        .put("start_ms", 0)
+                    client.call("add_clip_to_timeline", clipArgs) { ok2, text2 ->
+                        runOnUiThread {
+                            if (!ok2) {
+                                Toast.makeText(this, text2, Toast.LENGTH_LONG).show()
+                            }
+                            Toast.makeText(this, R.string.editor_imported, Toast.LENGTH_SHORT).show()
+                            refresh()
+                        }
+                    }
+                } else {
+                    Toast.makeText(this, R.string.editor_imported, Toast.LENGTH_SHORT).show()
+                    refresh()
+                }
             }
         }
     }
