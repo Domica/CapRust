@@ -710,7 +710,8 @@ fn show_paths(
                         .call()
                         .map(|r| {
                             let mut b = Vec::new();
-                            std::io::copy(&mut r.into_reader(), &mut std::io::Cursor::new(&mut b)).ok();
+                            std::io::copy(&mut r.into_reader(), &mut std::io::Cursor::new(&mut b))
+                                .ok();
                             b
                         })
                         .unwrap_or_default(),
