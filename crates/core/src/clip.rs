@@ -545,7 +545,11 @@ pub fn trajectory_at(keys: &[MotionKeyframe], t_ms: u64) -> Option<(f32, f32)> {
                 EaseCurve::EaseIn => f * f,
                 EaseCurve::EaseOut => 1.0 - (1.0 - f) * (1.0 - f),
                 EaseCurve::EaseInOut => {
-                    if f < 0.5 { 2.0 * f * f } else { 1.0 - (-2.0 * f + 2.0).powi(2) / 2.0 }
+                    if f < 0.5 {
+                        2.0 * f * f
+                    } else {
+                        1.0 - (-2.0 * f + 2.0).powi(2) / 2.0
+                    }
                 }
             };
             return Some((
