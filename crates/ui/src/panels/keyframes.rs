@@ -6,7 +6,7 @@
 //! right-click or the delete button. An easing selector per keyframe
 //! (#85) controls the interpolation between adjacent points.
 
-use caprust_core::clip::MotionKeyframe;
+use caprust_core::clip::{EaseCurve, MotionKeyframe};
 use egui::{Color32, Pos2, Rect, Stroke, Ui, Vec2};
 
 pub struct KeyframeEditor;
@@ -87,16 +87,22 @@ impl KeyframeEditor {
             let cy = y;
 
             // Handle right-click to delete
-            if ui.ctx().pointer_hover_pos().is_some_and(|p| {
-                (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0
-            }) && ui.ctx().input(|i| i.pointer.secondary_down()) {
+            if ui
+                .ctx()
+                .pointer_hover_pos()
+                .is_some_and(|p| (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0)
+                && ui.ctx().input(|i| i.pointer.secondary_down())
+            {
                 to_delete = Some(idx);
             }
 
             // Drag point
-            if ui.ctx().pointer_hover_pos().is_some_and(|p| {
-                (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0
-            }) && ui.ctx().input(|i| i.pointer.primary_down()) {
+            if ui
+                .ctx()
+                .pointer_hover_pos()
+                .is_some_and(|p| (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0)
+                && ui.ctx().input(|i| i.pointer.primary_down())
+            {
                 let delta = ui.ctx().input(|i| i.pointer.delta());
                 let dx = delta.x / area_w;
                 let dy = delta.y / area_h;
@@ -105,11 +111,8 @@ impl KeyframeEditor {
             }
 
             // Point marker
-            ui.painter().circle_filled(
-                Pos2::new(cx, cy),
-                7.0,
-                Color32::from_rgb(0xFF, 0xAA, 0x00),
-            );
+            ui.painter()
+                .circle_filled(Pos2::new(cx, cy), 7.0, Color32::from_rgb(0xFF, 0xAA, 0x00));
             // Label
             ui.painter().text(
                 Pos2::new(cx + 10.0, cy - 10.0),
@@ -128,7 +131,10 @@ impl KeyframeEditor {
         // Playhead line
         let ph_x = rect_min.x + ((playhead_ms as f32 - min_t) / range) * area_w;
         ui.painter().line_segment(
-            [Pos2::new(ph_x, rect_min.y), Pos2::new(ph_x, rect_min.y + area_h)],
+            [
+                Pos2::new(ph_x, rect_min.y),
+                Pos2::new(ph_x, rect_min.y + area_h),
+            ],
             Stroke::new(1.5, Color32::from_rgb(0xFF, 0xFF, 0xFF)),
         );
 
@@ -145,13 +151,23 @@ impl KeyframeEditor {
         // Easing selector (#85)
         ui.add_space(4.0);
         ui.label("Easing (per keyframe)");
-        // Show easing for first keyframe as example
-        if let Some(_k) = keys.first_mut() {
+        // Show easing for each keyframe
+        for k in keys.iter_mut() {
             ui.horizontal(|ui| {
-                let _ = ui.button("Linear");
-                let _ = ui.button("EaseIn");
-                let _ = ui.button("EaseOut");
-                let _ = ui.button("EaseInOut");
+                ui.label(format!("t={}ms", k.t_ms));
+                if ui.button("Linear").clicked() {
+                    k.ease = EaseCurve::Linear;
+                }
+                if ui.button("EaseIn").clicked() {
+                    k.ease = EaseCurve::EaseIn;
+                }
+                if ui.button("EaseOut").clicked() {
+                    k.ease = EaseCurve::EaseOut;
+                }
+                if ui.button("EaseInOut").clicked() {
+                    k.ease = EaseCurve::EaseInOut;
+                }
+                let _ = ui.label(format!("{:?}", k.ease));
             });
         }
 

@@ -480,7 +480,7 @@ fn default_motion_scale() -> f32 {
 ///
 /// One space for text and for stickers, so the same keyframes mean the
 /// same thing on both and one editor can serve them.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct MotionKeyframe {
     /// When, in milliseconds from the start of the clip.
     pub t_ms: u64,
@@ -488,6 +488,9 @@ pub struct MotionKeyframe {
     pub centre_x: f32,
     /// Centre y, as a fraction of the frame height.
     pub centre_y: f32,
+    /// Easing applied to the segment starting at this keyframe.
+    #[serde(default)]
+    pub ease: EaseCurve,
 }
 
 impl MotionKeyframe {
@@ -496,6 +499,7 @@ impl MotionKeyframe {
             t_ms,
             centre_x,
             centre_y,
+            ease: EaseCurve::default(),
         }
     }
 }
@@ -535,9 +539,18 @@ pub fn trajectory_at(keys: &[MotionKeyframe], t_ms: u64) -> Option<(f32, f32)> {
                 return Some((b.centre_x, b.centre_y));
             }
             let f = (t - ta) / (tb - ta);
+            // Apply easing from the starting keyframe.
+            let eased = match a.ease {
+                EaseCurve::Linear => f,
+                EaseCurve::EaseIn => f * f,
+                EaseCurve::EaseOut => 1.0 - (1.0 - f) * (1.0 - f),
+                EaseCurve::EaseInOut => {
+                    if f < 0.5 { 2.0 * f * f } else { 1.0 - (-2.0 * f + 2.0).powi(2) / 2.0 }
+                }
+            };
             return Some((
-                a.centre_x + (b.centre_x - a.centre_x) * f,
-                a.centre_y + (b.centre_y - a.centre_y) * f,
+                a.centre_x + (b.centre_x - a.centre_x) * eased,
+                a.centre_y + (b.centre_y - a.centre_y) * eased,
             ));
         }
     }
