@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.23-win64-setup.exe`.
+1. Run `CapRust-0.9.24-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -169,6 +169,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.24** | 2026-10-29 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings; Android import + preview + export timeline; default duration fix for unprobed clips; mask_gen auto-generation for anonymize; blend/overlay extract graph fix |
 | **0.9.23** | 2026-10-27 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings. |
 | **0.9.22** | 2026-10-25 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection. |
 | **0.9.20** | 2026-10-21 | A first-run welcome and three guided tips; the Enhance effect (denoise + deband, measured); a smaller binary -- the icon and the built-in LUTs travel packed; the release is built in CI, ready for code signing. |
