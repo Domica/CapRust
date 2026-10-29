@@ -9,7 +9,7 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 - **Complete Android editor (alpha).** Feature 1: start screen (New/Open/Recent). Feature 2: live preview timer tied to timeline. Feature 3: export dialog with format/resolution settings. Feature 4: drag timeline, named clips, track display. Feature 5: transition overlap markers (red background + arrows on clips with in/out transitions).
 - **Keyframe curve editor (#84).** Draggable trajectory points with linear curve drawing and playhead line.
 - **AI settings model download.** Settings → AI Models now has a Download button for `u2netp.onnx`; the file lands in the managed models dir.
-- **Debian .deb package.** `caprust_0.9.23_amd64.deb` installs with `dpkg -i`, desktop entry included, runs on Debian 12 (glibc 2.35).
+- **Debian .deb package.** `caprust_0.9.24_amd64.deb` installs with `dpkg -i`, desktop entry included, runs on Debian 12 (glibc 2.35).
 - **Linux file picker.** GTK3 backend replaces silent-failing XDG portal, so Browse and import work on containers/Crostini/bare WMs.
 
 ### Fixed
