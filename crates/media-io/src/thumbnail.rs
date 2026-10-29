@@ -86,7 +86,7 @@ pub fn extract_jpeg(
 /// lands outside the input; [`seek_for`] returns 0.0 for those.
 pub fn best_frame_time(duration_ms: u64) -> f64 {
     if duration_ms == 0 {
-        return 0.5;
+        return 0.0;
     }
     let tenth = (duration_ms as f64) / 1000.0 * 0.10;
     tenth.clamp(0.5, 5.0)

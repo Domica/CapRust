@@ -678,7 +678,7 @@ impl RenderPlan {
                 // less.
                 let (bw, bh) = half_dims(self.width, self.height);
                 fg.push_str(&format!(
-                    "[{video_out}]split[a{i}_s][a{i}_b];[a{i}_b]scale={bw}:{bh}:flags=bilinear,boxblur=6:2,scale={w}:{h}:flags=bicubic,setsar=1[a{i}_blur];[a{i}_s][a{i}_blur][{a_label}]maskedmerge[{an_out}];",
+                    "[{video_out}]split[a{i}_s][a{i}_b];[a{i}_b]scale={bw}:{bh}:flags=bilinear,boxblur=6:2,scale={w}:{h}:flags=bicubic,setsar=1[a{i}_blur];[a{i}_s][a{i}_blur][{a_label}]blend=all_mode=normal[an_out];",
                     w = self.width,
                     h = self.height,
                 ));
@@ -726,7 +726,7 @@ impl RenderPlan {
                     dur = c.duration_sec,
                 ));
                 fg.push_str(&format!(
-                    "[{bg_label}][{anon_in}][{mask_label}]maskedmerge[{v_out}];",
+                    "[{bg_label}][{anon_in}][{mask_label}]blend=all_mode=normal[v_out];",
                 ));
             }
 
