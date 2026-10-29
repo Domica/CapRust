@@ -4,7 +4,7 @@
 //! using ffmpeg facedetect + boxblur + gray output. If the source has no
 //! face boxes, writes a black mask (no blur applied by maskedmerge).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 pub fn generate_anon_mask(clip_path: &str, mask_path: &Path, ffmpeg_path: &Path) -> Option<()> {
