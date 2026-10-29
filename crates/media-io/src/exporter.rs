@@ -47,6 +47,10 @@ pub fn run_export(
     // Parse `-progress pipe:2` output: lines like `out_time_ms=1234567`.
     let reader = BufReader::new(stderr);
     let total_us = plan.total_duration_sec * 1_000_000.0;
+    // Last non-progress stderr lines. ffmpeg prints the real reason for a
+    // failure there ("Invalid argument", "No such filter", ...), and the
+    // old message only said "ffmpeg exited exit code: 1".
+    let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
 
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim().to_string();
@@ -61,7 +65,10 @@ pub fn run_export(
                 let _ = events.send(ExportEvent::Progress(progress));
             }
         } else if line.starts_with("error") || line.contains("Error") {
-            let _ = events.send(ExportEvent::Log(line));
+            let _ = events.send(ExportEvent::Log(line.clone()));
+            push_tail(&mut tail, line);
+        } else if !line.is_empty() && !is_progress_line(&line) {
+            push_tail(&mut tail, line);
         }
     }
 
@@ -72,9 +79,47 @@ pub fn run_export(
         });
         Ok(())
     } else {
-        let _ = events.send(ExportEvent::Failed(format!("ffmpeg exited {status}")));
-        anyhow::bail!("ffmpeg failed: {status}")
+        let detail = tail.iter().cloned().collect::<Vec<_>>().join(" | ");
+        let msg = if detail.is_empty() {
+            format!("ffmpeg exited {status}")
+        } else {
+            format!("ffmpeg exited {status}: {detail}")
+        };
+        for l in &tail {
+            let _ = events.send(ExportEvent::Log(l.clone()));
+        }
+        // spawn_export reports this error as ExportEvent::Failed, so it
+        // is not sent here too (that showed the toast twice).
+        anyhow::bail!("{msg}")
     }
+}
+
+/// `-progress` key=value lines that carry no diagnostic value.
+fn is_progress_line(line: &str) -> bool {
+    const KEYS: [&str; 12] = [
+        "frame=",
+        "fps=",
+        "stream_",
+        "bitrate=",
+        "total_size=",
+        "out_time",
+        "dup_frames=",
+        "drop_frames=",
+        "speed=",
+        "progress=",
+        "size=",
+        "q=",
+    ];
+    KEYS.iter().any(|k| line.starts_with(k))
+}
+
+/// Keep only the last few lines so a long run cannot grow this.
+fn push_tail(tail: &mut std::collections::VecDeque<String>, line: String) {
+    const MAX_TAIL: usize = 6;
+    if tail.len() == MAX_TAIL {
+        tail.pop_front();
+    }
+    tail.push_back(line);
 }
 
 /// Spawn the export on a background thread.

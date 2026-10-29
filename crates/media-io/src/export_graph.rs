@@ -532,7 +532,7 @@ impl RenderPlan {
             };
             // Optional background-removal stage. When a mask is
             // present, the video chain stops at an intermediate label
-            // and a maskedmerge over a black base finishes into v_out.
+            // and an alphamerge + overlay over a black base finishes into v_out.
             // Otherwise the chain writes v_out directly.
             let mask_escaped = c.bg_removal_path.as_deref().and_then(escape_movie_path);
             let mask_active = mask_escaped.is_some();
@@ -678,7 +678,7 @@ impl RenderPlan {
                 // less.
                 let (bw, bh) = half_dims(self.width, self.height);
                 fg.push_str(&format!(
-                    "[{video_out}]split[a{i}_s][a{i}_b];[a{i}_b]scale={bw}:{bh}:flags=bilinear,boxblur=6:2,scale={w}:{h}:flags=bicubic,setsar=1[a{i}_blur];[a{i}_s][a{i}_blur][{a_label}]maskedmerge[{an_out}];",
+                    "[{video_out}]split[a{i}_s][a{i}_b];[a{i}_b]scale={bw}:{bh}:flags=bilinear,boxblur=6:2,scale={w}:{h}:flags=bicubic,setsar=1,format=yuva420p[a{i}_blur];[a{i}_blur][{a_label}]alphamerge[a{i}_bla];[a{i}_s][a{i}_bla]overlay=shortest=1:format=auto[{an_out}];",
                     w = self.width,
                     h = self.height,
                 ));
@@ -725,8 +725,17 @@ impl RenderPlan {
                     den = self.fps_den,
                     dur = c.duration_sec,
                 ));
+                //
+                // NOT `maskedmerge`: it needs all three inputs in one
+                // pixel format, so the gray mask drags the video into
+                // it. The negotiated format then gives the chroma planes
+                // a mask of 128 (half weight) or drops them entirely, so
+                // every clip came out washed out or black and white.
+                // `alphamerge` takes the gray mask as an alpha plane and
+                // leaves the video's colour alone; `overlay` then lays
+                // it over the black base.
                 fg.push_str(&format!(
-                    "[{bg_label}][{anon_in}][{mask_label}]maskedmerge[{v_out}];",
+                    "[{anon_in}]format=yuva420p[bgf{i}];[bgf{i}][{mask_label}]alphamerge[bga{i}];[{bg_label}][bga{i}]overlay=shortest=1:format=auto[{v_out}];",
                 ));
             }
 
@@ -1006,6 +1015,12 @@ impl RenderPlan {
                 .as_ref()
                 .and_then(|(p, _)| p.animation.as_deref().map(sticker_animation_fragment))
                 .unwrap_or_default();
+            // Every animation fragment starts with a comma, like the other
+            // chain fragments. Here it follows a link label, and
+            // `[label],rotate=...` is a filter with an empty name: ffmpeg
+            // fails with "No such filter: ''" / "Filter not found", which
+            // killed every export that had an animated sticker.
+            let anim = anim.trim_start_matches(',').to_string();
             match blend {
                 // Blend compositing: top = run output, bottom = base.
                 // Same EOF contract as the overlay arm (pass the base
@@ -5177,12 +5192,15 @@ mod tests {
     }
 
     #[test]
-    fn bg_removal_emits_maskedmerge() {
+    fn bg_removal_emits_alphamerge() {
         let plan = single_video_plan_with_mask(Some("/tmp/mask.mkv"));
         let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
+        assert!(fg.contains("alphamerge"), "expected alphamerge stage: {fg}");
+        // Regression: maskedmerge with a gray mask turned every clip
+        // black and white (or half desaturated).
         assert!(
-            fg.contains("maskedmerge"),
-            "expected maskedmerge stage: {fg}"
+            !fg.contains("maskedmerge"),
+            "maskedmerge must not come back: {fg}"
         );
         assert!(
             fg.contains("movie='"),
@@ -5206,12 +5224,12 @@ mod tests {
     }
 
     #[test]
-    fn bg_removal_absent_has_no_maskedmerge() {
+    fn bg_removal_absent_has_no_alphamerge() {
         let plan = single_video_plan_with_mask(None);
         let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
         assert!(
-            !fg.contains("maskedmerge"),
-            "plain plan must not emit maskedmerge: {fg}"
+            !fg.contains("alphamerge"),
+            "plain plan must not emit alphamerge: {fg}"
         );
         assert!(
             !fg.contains("v_pre0"),
@@ -5241,7 +5259,11 @@ mod tests {
             !fg.contains("boxblur=12:3"),
             "the full-resolution blur must not come back: {fg}"
         );
-        assert!(fg.contains("maskedmerge"), "expected anonymize merge: {fg}");
+        assert!(fg.contains("alphamerge"), "expected anonymize merge: {fg}");
+        assert!(
+            !fg.contains("maskedmerge"),
+            "maskedmerge must not come back: {fg}"
+        );
         assert!(
             fg.contains("/tmp/anon.mkv"),
             "anon mask path missing from filtergraph: {fg}"
@@ -5271,7 +5293,7 @@ mod tests {
         let plan = single_video_plan_with_anon(Some("/tmp/anon.mkv"));
         let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
         assert!(
-            fg.contains("maskedmerge[v_b0]"),
+            fg.contains("overlay=shortest=1:format=auto[v_b0]"),
             "anon-only merge must target the clip output: {fg}"
         );
         assert!(
@@ -5286,11 +5308,11 @@ mod tests {
         plan.video_clips[0].anon_mask_path = Some(std::path::PathBuf::from("/tmp/anon.mkv"));
         let (fg, _v, _a) = plan.build_filtergraph().expect("filtergraph");
         assert!(
-            fg.contains("maskedmerge[v_an0]"),
+            fg.contains("overlay=shortest=1:format=auto[v_an0]"),
             "anon merge must feed the bg stage: {fg}"
         );
         assert!(
-            fg.contains("maskedmerge[v_b0]"),
+            fg.contains("overlay=shortest=1:format=auto[v_b0]"),
             "bg merge must finish into the clip output: {fg}"
         );
     }
@@ -5811,6 +5833,32 @@ mod tests {
                     chain.matches(']').count(),
                     "{label}: unbalanced labels in {chain:?}\n{full}",
                     full = fg
+                );
+            }
+        }
+    }
+
+    /// A link label must be followed by a filter name, never a comma.
+    ///
+    /// The animation fragments all start with a comma, and `[label],rotate=..`
+    /// is a chain with an empty filter name: ffmpeg stops with "No such
+    /// filter: ''" / "Filter not found". Every export with an animated
+    /// sticker failed that way, while the static and "no animation" cases
+    /// (and the test above) passed.
+    #[test]
+    fn no_chain_starts_with_a_label_then_a_comma() {
+        for anim in ["pop", "bounce", "spin", "drift"] {
+            let plan = fixture_plan(Some(sticker_placement(Some(anim))));
+            let (fg, _, _) = plan.build_filtergraph().expect("filtergraph");
+            for chain in fg.split(';').map(str::trim).filter(|c| !c.is_empty()) {
+                let mut rest = chain;
+                while rest.starts_with('[') {
+                    let Some(end) = rest.find(']') else { break };
+                    rest = &rest[end + 1..];
+                }
+                assert!(
+                    !rest.starts_with(','),
+                    "{anim}: a label followed by a comma (empty filter name): {chain:?}\n{fg}"
                 );
             }
         }

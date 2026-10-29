@@ -13446,6 +13446,10 @@ impl CapRustApp {
     fn start_export(&mut self) {
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
             tracing::error!("export: ffmpeg not detected");
+            self.toast_error(format!(
+                "{}: ffmpeg not detected",
+                tr("toast-export-failed")
+            ));
             return;
         };
 
@@ -13485,7 +13489,8 @@ impl CapRustApp {
                 p
             }
             Err(e) => {
-                tracing::error!("export plan failed: {e}");
+                tracing::error!("export plan failed: {e:#}");
+                self.toast_error(format!("{}: {e:#}", tr("toast-export-failed")));
                 return;
             }
         };

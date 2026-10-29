@@ -212,7 +212,9 @@ mod tests {
     fn best_frame_time_is_for_video_only() {
         // Documents the rule seek_for enforces: images must bypass this
         // entirely, because a still has exactly one frame, at 0.
-        assert_eq!(best_frame_time(0), 0.5);
+        // An unprobed clip (duration 0) is read at 0 as well: 4feefc1
+        // changed it from 0.5 so the Android seek works before the probe.
+        assert_eq!(best_frame_time(0), 0.0);
         assert_eq!(best_frame_time(10_000), 1.0);
         assert_eq!(best_frame_time(100_000), 5.0);
     }
@@ -234,7 +236,7 @@ mod tests {
         // Video is unaffected: still the 10%-in point, which is what
         // makes a thumbnail readable instead of a black frame.
         assert_eq!(seek_for(MediaKind::Video, 10_000), 1.0);
-        assert_eq!(seek_for(MediaKind::Video, 0), 0.5);
+        assert_eq!(seek_for(MediaKind::Video, 0), 0.0);
         assert_eq!(seek_for(MediaKind::Audio, 10_000), 1.0);
     }
 }
