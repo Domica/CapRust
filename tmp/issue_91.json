@@ -1,0 +1,7 @@
+{
+  "title": "Remaining issues #91 — bg removal / anonymize faces / sticker export (v0.9.24)",
+  "body": "Confirmed bugs after v0.9.23 release:\n- Background removal: 1-frame zoom mask pasted over entire video\n- Anonymize faces: B/W applied to whole clip instead of just blurred face regions\n- Sticker overlay: export fails (Filter not found / 0xb3b6b908 exit)\n- Fix requires: proper mask generation + blend/overlay filtergraph + seek_for video\nStatus: AI effect pipeline needs mask generation + correct filter syntax before 0.9.24.",
+  "assignee": "",
+  "milestone": "0.9.24",
+  "labels": ["bug", "gui", "media-io"]
+}
