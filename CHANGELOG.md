@@ -2,7 +2,7 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
-## [0.9.23] - 2026-10-27
+## [0.9.24] - 2026-10-27
 
 ### Added
 
@@ -1472,5 +1472,6 @@ expect rough edges, broken installations, and one or two missing features.
 - FFmpeg is not bundled; the first-run prompt downloads it
 - Windows only (Linux/macOS compile in CI but are not supported)
 - Rotation on text overlays is stored but not rendered
-0 . 9 . 2 3 2  
+0 . 9 . 2 3 2 
+ 
  
