@@ -13,6 +13,7 @@ pub mod face_detect;
 pub mod ffprobe;
 pub mod filter_script;
 pub mod frame_extract;
+pub mod mask_gen;
 pub mod piper;
 pub mod player;
 pub mod preview_render;

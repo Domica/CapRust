@@ -101,14 +101,20 @@ pub fn best_frame_time(duration_ms: u64) -> f64 {
 /// caller's status check used to read as success.
 pub fn seek_for(kind: caprust_core::MediaKind, duration_ms: u64) -> f64 {
     match kind {
-        // Exactly one frame, at t=0. Seeking anywhere else means
-        // ffmpeg writes nothing.
         caprust_core::MediaKind::Image => 0.0,
-        // Audio never reaches here (it draws a waveform instead), but if
-        // it did, the 10%-in point is the sane answer rather than a
-        // silent 0.
-        caprust_core::MediaKind::Audio | caprust_core::MediaKind::Video => {
-            best_frame_time(duration_ms)
+        caprust_core::MediaKind::Audio => {
+            if duration_ms == 0 {
+                0.0
+            } else {
+                best_frame_time(duration_ms)
+            }
+        }
+        caprust_core::MediaKind::Video => {
+            if duration_ms == 0 {
+                0.0
+            } else {
+                best_frame_time(duration_ms)
+            }
         }
     }
 }
