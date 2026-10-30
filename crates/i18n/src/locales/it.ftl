@@ -320,6 +320,9 @@ props-trajectory-empty = Ancora nessun keyframe. Aggiungine uno, sposta l'oggett
 props-trajectory-time = A
 props-trajectory-add = Aggiungi keyframe alla posizione di riproduzione
 
+props-trajectory-need-more = Aggiungi keyframe usando "Aggiungi keyframe alla posizione di riproduzione" per vedere la curva.
+props-trajectory-need-second = Aggiungi un secondo keyframe per vedere la curva e l'easing.
+
 props-tab-keyframe-tracks = Tracce keyframe
 props-keyframe-tracks = Tracce keyframe
 props-keyframe-tracks-hint = Anima qualsiasi proprietà (scala, rotazione, opacità, quantità effetto) nel tempo. Ogni traccia ha i propri keyframe e easing.

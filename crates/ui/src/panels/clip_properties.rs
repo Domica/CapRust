@@ -2626,20 +2626,34 @@ fn show_trajectory(
     let mut dirty = false;
 
     // --- Curve editor (KeyframeEditor) ---
-    if keys.len() >= 2 {
-        ui.group(|ui| {
-            ui.set_min_height(140.0);
-            crate::panels::keyframes::KeyframeEditor::show(ui, &mut keys, playhead_ms);
-        });
-        ui.add_space(space::S);
-    }
+    // Show editor even with 0/1 keyframes (shows grid + points)
+    ui.group(|ui| {
+        ui.set_min_height(140.0);
+        crate::panels::keyframes::KeyframeEditor::show(ui, &mut keys, playhead_ms);
+    });
+    ui.add_space(space::S);
 
-    if keys.is_empty() {
-        ui.label(
-            egui::RichText::new(tr("props-trajectory-empty"))
-                .small()
-                .color(egui::Color32::from_gray(130)),
-        );
+    // Guidance for keyframe count
+    match keys.len() {
+        0 => {
+            ui.label(
+                egui::RichText::new(tr("props-trajectory-empty"))
+                    .small()
+                    .color(egui::Color32::from_gray(130)),
+            );
+            ui.add_space(space::XS);
+            ui.label(tr("props-trajectory-need-more"));
+        }
+        1 => {
+            ui.label(
+                egui::RichText::new(tr("props-trajectory-empty"))
+                    .small()
+                    .color(egui::Color32::from_gray(130)),
+            );
+            ui.add_space(space::XS);
+            ui.label(tr("props-trajectory-need-second"));
+        }
+        _ => {}
     }
 
     // One row per keyframe: when, where, and a way to remove it.
@@ -2737,10 +2751,13 @@ fn show_keyframe_tracks(
         ui.add_space(space::XS);
         // Prominent add track button when empty
         if ui.button(tr("props-keyframe-tracks-add")).clicked() {
-            tracks.push(caprust_core::clip::KeyframeTrack {
+            let new_track = caprust_core::clip::KeyframeTrack {
                 property: "scale".to_string(),
                 keyframes: vec![],
-            });
+            };
+            tracks.push(new_track.clone());
+            // Apply immediately to clip to prevent UI flicker
+            state.pending.push(PendingEdit::KeyframeTracks(tracks.clone()));
             dirty = true;
         }
         ui.add_space(space::S);
@@ -2752,6 +2769,7 @@ fn show_keyframe_tracks(
                     property: "scale".to_string(),
                     keyframes: vec![],
                 });
+                state.pending.push(PendingEdit::KeyframeTracks(tracks.clone()));
                 dirty = true;
             }
         });

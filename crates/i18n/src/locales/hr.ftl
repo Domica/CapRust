@@ -320,6 +320,9 @@ props-trajectory-empty = Još nema keyframeova. Dodaj jedan, pomakni stvar i dod
 props-trajectory-time = U
 props-trajectory-add = Dodaj keyframe na playheadu
 
+props-trajectory-need-more = Dodaj keyframeove koristeći "Dodaj keyframe na playheadu" da vidiš krivulju.
+props-trajectory-need-second = Dodaj drugi keyframe da vidiš krivulju i easing.
+
 props-tab-keyframe-tracks = Keyframe trake
 props-keyframe-tracks = Keyframe trake
 props-keyframe-tracks-hint = Animiraj bilo koju svojstvo (skaliranje, rotacija, neprozirnost, intenzitet efekta) vremenom. Svaka traka ima svoje keyframeove i easing.

@@ -320,6 +320,9 @@ props-trajectory-empty = Aún no hay fotogramas clave. Añade uno, mueve el obje
 props-trajectory-time = A
 props-trajectory-add = Añadir fotograma clave en el cursor
 
+props-trajectory-need-more = Añade fotogramas clave usando "Añadir fotograma clave en el cursor" para ver la curva.
+props-trajectory-need-second = Añade un segundo fotograma clave para ver la curva y el easing.
+
 props-tab-keyframe-tracks = Pistas de fotogramas clave
 props-keyframe-tracks = Pistas de fotogramas clave
 props-keyframe-tracks-hint = Animar cualquier propiedad (escala, rotación, opacidad, cantidad de efecto) con el tiempo. Cada pista tiene sus propios fotogramas clave y easing.

@@ -319,6 +319,9 @@ props-trajectory-empty = No keyframes yet. Add one, then move the thing and add 
 props-trajectory-time = At
 props-trajectory-add = Add keyframe at the playhead
 
+props-trajectory-need-more = Add keyframes using "Add keyframe at the playhead" to see the curve.
+props-trajectory-need-second = Add a second keyframe to see the curve and easing.
+
 props-tab-keyframe-tracks = Keyframe Tracks
 props-keyframe-tracks = Keyframe Tracks
 props-keyframe-tracks-hint = Animate any property (scale, rotation, opacity, effect amount) over time. Each track has its own keyframes and easing.

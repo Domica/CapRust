@@ -320,6 +320,9 @@ props-trajectory-empty = Noch keine Keyframes. Füge eines hinzu, verschiebe das
 props-trajectory-time = Bei
 props-trajectory-add = Keyframe an der Wiedergabeposition hinzufügen
 
+props-trajectory-need-more = Fügen Sie Keyframes mit "Keyframe an der Abspielposition hinzufügen" hinzu, um die Kurve zu sehen.
+props-trajectory-need-second = Fügen Sie einen zweiten Keyframe hinzu, um die Kurve und das Easing zu sehen.
+
 props-tab-keyframe-tracks = Keyframe-Spuren
 props-keyframe-tracks = Keyframe-Spuren
 props-keyframe-tracks-hint = Animieren Sie jede Eigenschaft (Skalierung, Rotation, Deckkraft, Effektstärke) über die Zeit. Jede Spur hat ihre eigenen Keyframes und Easing.
