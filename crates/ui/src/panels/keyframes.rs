@@ -25,8 +25,10 @@ impl KeyframeEditor {
             ui.add_space(4.0);
         }
 
-        // Curve area
-        let rect = ui.available_rect_before_wrap();
+        // Curve area - reserve a fixed height to avoid overlapping with content below
+        let desired_height = 140.0;
+        let (rect, _) =
+            ui.allocate_at_least(Vec2::new(200.0, desired_height), egui::Sense::hover());
         let rect_min = rect.min;
         let rect_max = rect.max;
         let w = rect_max.x - rect_min.x;
@@ -205,8 +207,10 @@ impl KeyframeEditor {
             ui.add_space(4.0);
         }
 
-        // Curve area
-        let rect = ui.available_rect_before_wrap();
+        // Curve area - reserve a fixed height to avoid overlapping with content below
+        let desired_height = 140.0;
+        let (rect, _) =
+            ui.allocate_at_least(Vec2::new(200.0, desired_height), egui::Sense::hover());
         let rect_min = rect.min;
         let rect_max = rect.max;
         let w = rect_max.x - rect_min.x;
