@@ -2785,11 +2785,7 @@ fn show_keyframe_tracks(
 
             // Show editor even with 0/1 keyframes (shows grid + points)
             ui.add_space(space::XS);
-            crate::panels::keyframes::KeyframeEditor::show_keyframes(
-                ui,
-                &mut keys,
-                playhead_ms,
-            );
+            crate::panels::keyframes::KeyframeEditor::show_keyframes(ui, &mut keys, playhead_ms);
 
             // Sync back
             track.keyframes = keys.clone();
