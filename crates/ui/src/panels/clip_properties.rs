@@ -1175,7 +1175,9 @@ pub fn show(
             PropertiesTab::Effects => show_effects(ui, clip, state),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
-            PropertiesTab::KeyframeTracks => show_keyframe_tracks(ui, clip, state, playhead_ms, dims),
+            PropertiesTab::KeyframeTracks => {
+                show_keyframe_tracks(ui, clip, state, playhead_ms, dims)
+            }
         });
 }
 
@@ -2773,7 +2775,11 @@ fn show_keyframe_tracks(
 
             if keys.len() >= 2 {
                 ui.add_space(space::XS);
-                crate::panels::keyframes::KeyframeEditor::show_keyframes(ui, &mut keys, playhead_ms);
+                crate::panels::keyframes::KeyframeEditor::show_keyframes(
+                    ui,
+                    &mut keys,
+                    playhead_ms,
+                );
             }
 
             // Sync back
@@ -2788,7 +2794,9 @@ fn show_keyframe_tracks(
                         value: 1.0,
                         ease: caprust_core::clip::EaseCurve::default(),
                     });
-                    track.keyframes.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+                    track
+                        .keyframes
+                        .sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
                     dirty = true;
                 }
             });

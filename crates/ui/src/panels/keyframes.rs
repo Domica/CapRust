@@ -176,14 +176,7 @@ impl KeyframeEditor {
 
     /// Show the curve editor for generic keyframes (scale, rotation, opacity, etc.)
     pub fn show_keyframes(ui: &mut Ui, keys: &mut Vec<Keyframe>, playhead_ms: u64) {
-        Self::show_generic(
-            ui,
-            keys,
-            playhead_ms,
-            |k| k.t,
-            |k| k.value,
-            |k| &mut k.ease,
-        );
+        Self::show_generic(ui, keys, playhead_ms, |k| k.t, |k| k.value, |k| &mut k.ease);
     }
 
     /// Generic curve editor for any keyframe type with time, value, and easing.
@@ -201,7 +194,11 @@ impl KeyframeEditor {
         ui.add_space(4.0);
 
         // Sort keyframes by time for consistent display.
-        keys.sort_by(|a, b| get_time(a).partial_cmp(&get_time(b)).unwrap_or(std::cmp::Ordering::Equal));
+        keys.sort_by(|a, b| {
+            get_time(a)
+                .partial_cmp(&get_time(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         if keys.is_empty() {
             ui.label("No keyframes. Click on the curve to add one.");
