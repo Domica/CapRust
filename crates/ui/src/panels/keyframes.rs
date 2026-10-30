@@ -142,14 +142,6 @@ impl KeyframeEditor {
 
         ui.add_space(4.0);
 
-        // Add keyframe button
-        if ui.button("Add keyframe at playhead").clicked() {
-            let t = playhead_ms.clamp(min_t as u64, max_t as u64);
-            if !keys.iter().any(|k| k.t_ms == t) {
-                keys.push(MotionKeyframe::new(t, 0.5, 0.5));
-            }
-        }
-
         // Easing selector (#85)
         ui.add_space(4.0);
         ui.label("Easing (per keyframe)");
@@ -178,7 +170,16 @@ impl KeyframeEditor {
 
     /// Show the curve editor for generic keyframes (scale, rotation, opacity, etc.)
     pub fn show_keyframes(ui: &mut Ui, keys: &mut Vec<Keyframe>, playhead_ms: u64) {
-        Self::show_generic(ui, keys, playhead_ms, |k| k.t, |k| k.value, |k| &mut k.ease);
+        Self::show_generic(
+            ui,
+            keys,
+            playhead_ms,
+            |k| k.t,
+            |k| k.value,
+            |k| &mut k.ease,
+            |k, v| k.t = v,
+            |k, v| k.value = v,
+        );
     }
 
     /// Generic curve editor for any keyframe type with time, value, and easing.
@@ -189,6 +190,8 @@ impl KeyframeEditor {
         get_time: impl Fn(&K) -> f64,
         get_value: impl Fn(&K) -> f32,
         get_ease: impl Fn(&mut K) -> &mut EaseCurve,
+        set_time: impl Fn(&mut K, f64),
+        set_value: impl Fn(&mut K, f32),
     ) where
         K: Clone + 'static,
     {
@@ -278,6 +281,25 @@ impl KeyframeEditor {
                 && ui.ctx().input(|i| i.pointer.secondary_down())
             {
                 to_delete = Some(idx);
+            }
+
+            // Drag point - check hover and primary down
+            let is_hovered = ui
+                .ctx()
+                .pointer_hover_pos()
+                .is_some_and(|p| (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0);
+            let is_dragging = is_hovered && ui.ctx().input(|i| i.pointer.primary_down());
+
+            if is_dragging {
+                let delta = ui.ctx().input(|i| i.pointer.delta());
+                if delta.length() > 0.0 {
+                    let dx = delta.x / area_w;
+                    let dy = delta.y / area_h;
+                    let new_time = (get_time(k) as f32 + dx * range).clamp(min_t, max_t) as f64;
+                    let new_value = (get_value(k) - dy).clamp(0.0, 1.0);
+                    set_time(k, new_time);
+                    set_value(k, new_value);
+                }
             }
 
             // Point marker
