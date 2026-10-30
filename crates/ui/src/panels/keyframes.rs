@@ -183,6 +183,7 @@ impl KeyframeEditor {
     }
 
     /// Generic curve editor for any keyframe type with time, value, and easing.
+    #[allow(clippy::too_many_arguments)]
     fn show_generic<K>(
         ui: &mut Ui,
         keys: &mut Vec<K>,
