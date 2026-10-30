@@ -2734,10 +2734,8 @@ fn show_keyframe_tracks(
         );
         ui.add_space(space::S);
         ui.label(tr("props-keyframe-tracks-add-hint"));
-    }
-
-    // Add track button
-    ui.horizontal(|ui| {
+        ui.add_space(space::XS);
+        // Prominent add track button when empty
         if ui.button(tr("props-keyframe-tracks-add")).clicked() {
             tracks.push(caprust_core::clip::KeyframeTrack {
                 property: "scale".to_string(),
@@ -2745,8 +2743,20 @@ fn show_keyframe_tracks(
             });
             dirty = true;
         }
-    });
-    ui.add_space(space::S);
+        ui.add_space(space::S);
+    } else {
+        // Add track button (when tracks exist)
+        ui.horizontal(|ui| {
+            if ui.button(tr("props-keyframe-tracks-add")).clicked() {
+                tracks.push(caprust_core::clip::KeyframeTrack {
+                    property: "scale".to_string(),
+                    keyframes: vec![],
+                });
+                dirty = true;
+            }
+        });
+        ui.add_space(space::S);
+    }
 
     // Show each track
     let mut remove_track: Option<usize> = None;
@@ -2773,17 +2783,35 @@ fn show_keyframe_tracks(
             // Keyframe editor for this track - uses Keyframe directly
             let mut keys = track.keyframes.clone();
 
-            if keys.len() >= 2 {
-                ui.add_space(space::XS);
-                crate::panels::keyframes::KeyframeEditor::show_keyframes(
-                    ui,
-                    &mut keys,
-                    playhead_ms,
-                );
-            }
+            // Show editor even with 0/1 keyframes (shows grid + points)
+            ui.add_space(space::XS);
+            crate::panels::keyframes::KeyframeEditor::show_keyframes(
+                ui,
+                &mut keys,
+                playhead_ms,
+            );
 
             // Sync back
-            track.keyframes = keys;
+            track.keyframes = keys.clone();
+
+            // Guidance for keyframe count
+            match keys.len() {
+                0 => {
+                    ui.label(
+                        egui::RichText::new(tr("props-keyframe-need-more"))
+                            .small()
+                            .color(egui::Color32::from_gray(130)),
+                    );
+                }
+                1 => {
+                    ui.label(
+                        egui::RichText::new(tr("props-keyframe-need-second"))
+                            .small()
+                            .color(egui::Color32::from_gray(130)),
+                    );
+                }
+                _ => {}
+            }
 
             // Add keyframe at playhead
             ui.add_space(space::XS);

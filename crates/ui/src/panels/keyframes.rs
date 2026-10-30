@@ -258,7 +258,7 @@ impl KeyframeEditor {
             }
         }
 
-        // Draw draggable points
+        // Draw draggable points (show even with 1 keyframe)
         let mut to_delete: Option<usize> = None;
         for (idx, k) in keys.iter_mut().enumerate() {
             let x = rect_min.x + ((get_time(k) as f32 - min_t) / range) * area_w;
