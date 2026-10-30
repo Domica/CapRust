@@ -444,6 +444,16 @@ pub struct Keyframe {
     pub ease: EaseCurve,
 }
 
+/// A named track of keyframes for animating a single property (scale, rotation, opacity, effect amount, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KeyframeTrack {
+    /// Property name being animated (e.g., "scale", "rotation", "opacity", "blur.amount").
+    pub property: String,
+    /// Keyframes for this property.
+    #[serde(default)]
+    pub keyframes: Vec<Keyframe>,
+}
+
 /// Which portion of a clip the speed ramp occupies. The complementary
 /// portion (if any) stays at `speed_end` (FirstN) or `speed` (LastN).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1049,6 +1059,11 @@ pub struct Clip {
     /// works on either.
     #[serde(default)]
     pub trajectory: Vec<MotionKeyframe>,
+    /// Generic keyframe tracks for animatable properties. Each track
+    /// animates one property (scale, rotation, opacity, effect amount, etc.).
+    /// Keyframes use the same time/value/ease format as trajectory.
+    #[serde(default)]
+    pub keyframe_tracks: Vec<KeyframeTrack>,
     #[serde(default)]
     pub effects: Vec<EffectInstance>,
     /// Color LUT applied to this clip. `None` = no LUT.
@@ -1269,6 +1284,7 @@ impl Clip {
             media_id: None,
             overlay: None,
             trajectory: Vec::new(),
+            keyframe_tracks: Vec::new(),
         }
     }
 
@@ -1326,6 +1342,7 @@ impl Clip {
             media_id: None,
             overlay: None,
             trajectory: Vec::new(),
+            keyframe_tracks: Vec::new(),
         }
     }
 
@@ -1383,6 +1400,7 @@ impl Clip {
             media_id: None,
             overlay: None,
             trajectory: Vec::new(),
+            keyframe_tracks: Vec::new(),
         }
     }
 
@@ -1444,6 +1462,7 @@ impl Clip {
             media_id: None,
             overlay: None,
             trajectory: Vec::new(),
+            keyframe_tracks: Vec::new(),
         }
     }
 
@@ -1511,6 +1530,7 @@ impl Clip {
             media_id: None,
             overlay: None,
             trajectory: Vec::new(),
+            keyframe_tracks: Vec::new(),
         }
     }
 
@@ -1576,6 +1596,7 @@ impl Clip {
             media_id: None,
             overlay: None,
             trajectory: Vec::new(),
+            keyframe_tracks: Vec::new(),
         }
     }
 

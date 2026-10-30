@@ -16,8 +16,8 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use caprust_core::clip::{EaseCurve, Keyframe};
 use crate::export::RateMode;
+use caprust_core::clip::{EaseCurve, Keyframe};
 
 /// One input file we'll hand to ffmpeg with `-ss` / `-t`.
 #[derive(Debug, Clone)]
@@ -7412,13 +7412,21 @@ mod reverse_filtergraph_tests {
     /// looking right.
     #[test]
     fn the_trajectory_expression_moves_the_sticker_over_time() {
-        use super::{trajectory_expr, Keyframe, EaseCurve};
+        use super::{trajectory_expr, EaseCurve, Keyframe};
 
         // Two keyframes: a quarter of the way across at t=0, three
         // quarters at t=2s.
         let keys = [
-            Keyframe { t: 0.0, value: 0.25, ease: EaseCurve::Linear },
-            Keyframe { t: 2.0, value: 0.75, ease: EaseCurve::Linear },
+            Keyframe {
+                t: 0.0,
+                value: 0.25,
+                ease: EaseCurve::Linear,
+            },
+            Keyframe {
+                t: 2.0,
+                value: 0.75,
+                ease: EaseCurve::Linear,
+            },
         ];
         let expr = trajectory_expr(&keys);
         assert!(!expr.is_empty());
@@ -7464,16 +7472,40 @@ mod reverse_filtergraph_tests {
     /// ones.
     #[test]
     fn the_expression_is_built_from_sorted_keyframes() {
-        use super::{trajectory_expr, Keyframe, EaseCurve};
+        use super::{trajectory_expr, EaseCurve, Keyframe};
         let sorted = trajectory_expr(&[
-            Keyframe { t: 0.0, value: 0.1, ease: EaseCurve::Linear },
-            Keyframe { t: 1.0, value: 0.2, ease: EaseCurve::Linear },
-            Keyframe { t: 2.0, value: 0.3, ease: EaseCurve::Linear },
+            Keyframe {
+                t: 0.0,
+                value: 0.1,
+                ease: EaseCurve::Linear,
+            },
+            Keyframe {
+                t: 1.0,
+                value: 0.2,
+                ease: EaseCurve::Linear,
+            },
+            Keyframe {
+                t: 2.0,
+                value: 0.3,
+                ease: EaseCurve::Linear,
+            },
         ]);
         let unsorted = trajectory_expr(&[
-            Keyframe { t: 2.0, value: 0.3, ease: EaseCurve::Linear },
-            Keyframe { t: 0.0, value: 0.1, ease: EaseCurve::Linear },
-            Keyframe { t: 1.0, value: 0.2, ease: EaseCurve::Linear },
+            Keyframe {
+                t: 2.0,
+                value: 0.3,
+                ease: EaseCurve::Linear,
+            },
+            Keyframe {
+                t: 0.0,
+                value: 0.1,
+                ease: EaseCurve::Linear,
+            },
+            Keyframe {
+                t: 1.0,
+                value: 0.2,
+                ease: EaseCurve::Linear,
+            },
         ]);
         assert_eq!(sorted, unsorted, "the order of the keyframes leaked in");
     }
