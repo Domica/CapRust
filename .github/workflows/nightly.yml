@@ -27,7 +27,7 @@ jobs:
       - name: Install cargo-strip
         run: cargo install cargo-strip --locked
       - name: Strip Windows binary
-        run: cargo strip --bin caprust-app
+        run: cargo strip -p caprust-app
       - uses: actions/upload-artifact@v4
         with:
           name: caprust-nightly-win64
