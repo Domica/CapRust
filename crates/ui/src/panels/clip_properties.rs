@@ -2757,7 +2757,9 @@ fn show_keyframe_tracks(
             };
             tracks.push(new_track.clone());
             // Apply immediately to clip to prevent UI flicker
-            state.pending.push(PendingEdit::KeyframeTracks(tracks.clone()));
+            state
+                .pending
+                .push(PendingEdit::KeyframeTracks(tracks.clone()));
             dirty = true;
         }
         ui.add_space(space::S);
@@ -2769,7 +2771,9 @@ fn show_keyframe_tracks(
                     property: "scale".to_string(),
                     keyframes: vec![],
                 });
-                state.pending.push(PendingEdit::KeyframeTracks(tracks.clone()));
+                state
+                    .pending
+                    .push(PendingEdit::KeyframeTracks(tracks.clone()));
                 dirty = true;
             }
         });
