@@ -2,6 +2,31 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.25] - 2026-10-30
+
+### Added
+
+- **Complete keyframe animation system (#84-87).** Generic `KeyframeTrack` per property (scale, rotation, opacity, blur.amount, position, etc.). `EaseCurve` enum (Linear/EaseIn/EaseOut/EaseInOut) on each keyframe. `trajectory_expr()` generates ffmpeg easing expressions for export.
+- **Curve editor in Trajectory tab.** Draggable keyframe points, playhead line, easing selector per keyframe, grid visible even with 0/1 keyframes.
+- **Keyframe Tracks tab.** Add/remove tracks, property name editor, per-track curve editor with easing. No-flicker Add Track UX (immediate pending push).
+- **i18n for keyframe UI.** English, Croatian, German, Spanish, Italian translations.
+- **Windows binary stripping in CI.** `cargo strip` reduces release binary to ~10 MB.
+
+### Fixed
+
+- **Add Track button flicker.** The button no longer appears/disappears; track is added to pending edits immediately.
+- **Trajectory graph missing with 0/1 keyframes.** Grid and points now render in all states with guidance text.
+- **Borrow checker in KeyframeTracks loop.** Fixed by deferring pending push until after the loop.
+
+### Technical
+
+- `crates/core/src/clip.rs`: `EaseCurve`, `Keyframe`, `KeyframeTrack`, `trajectory_expr()`.
+- `crates/media-io/src/export_graph.rs`: easing integration in ffmpeg filtergraph.
+- `crates/ui/src/panels/keyframes.rs`: `KeyframeEditor::show_keyframes()` generic curve UI.
+- `crates/ui/src/panels/clip_properties.rs`: Trajectory tab + KeyframeTracks tab.
+- `crates/i18n/src/locales/*.ftl`: keyframe UI strings.
+- `.github/workflows/nightly.yml`: `cargo strip` step for Windows binary.
+
 ## [0.9.24] - 2026-10-27
 
 ### Added

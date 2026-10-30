@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.24-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.25-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.24-win64-setup.exe`.
+1. Run `CapRust-0.9.25-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -170,6 +170,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.25** | 2026-10-30 | Keyframe system: generic `KeyframeTrack` per property (scale, rotation, opacity, blur.amount, etc.), `EaseCurve` (Linear/EaseIn/EaseOut/EaseInOut), curve editor with draggable points, trajectory graph shows with 0/1 keyframes, no-flicker Add Track UX; Windows binary stripped (~10 MB); CI passes on 3 platforms |
 | **0.9.24** | 2026-10-29 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings; Android import + preview + export timeline; default duration fix for unprobed clips; mask_gen auto-generation for anonymize; blend/overlay extract graph fix |
 | **0.9.23** | 2026-10-27 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings. |
 | **0.9.22** | 2026-10-25 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection. |

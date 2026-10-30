@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CapRust v0.9.24 — Android editor, .deb, Linux file picker, AI settings, keyframe editor, timeline drag</title>
+  <title>CapRust v0.9.25 — Keyframe animation system, generic tracks per property, easing curves, curve editor, Windows binary stripped to ~10 MB</title>
   <meta name="description" content="A native Windows video editor for short-form creators. Built in Rust. AI captions, auto-reframe, background removal. Free and open source.">
   <link rel="icon" href="logo.png" type="image/png">
   <link rel="stylesheet" href="style.css">
@@ -28,7 +28,7 @@
 
 <header class="hero">
   <div class="container">
-    <div class="badge">v0.9.24 - Alpha Android client (engine + daemon + Kotlin editor, import + preview + export + timeline), Debian .deb, Linux file dialogs, platform-aware FFmpeg download
+    <div class="badge">v0.9.25 - Keyframe animation system: generic tracks per property (scale, rotation, opacity, blur.amount), easing curves (Linear/EaseIn/EaseOut/EaseInOut), curve editor with draggable points, no-flicker Add Track UX, Windows binary stripped to ~10 MB
     <h1>Video editing.<br>Without the drag.</h1>
     <p class="tagline">
       A native Windows video editor for short-form creators.
@@ -265,9 +265,9 @@
 <section id="download" class="download">
   <div class="container">
     <h2>Download CapRust</h2>
-    <p>v0.9.24 brings the editor to the phone: the same Rust engine, running on Android, importing, previewing and rendering 9:16 video. On the desktop it auto-updates, remembers panel sizes, fixes the seam handles and the track fader in preview, and sniffs a file's type from its bytes when the name says nothing.</p>
+    <p>v0.9.25 delivers the complete keyframe animation system: generic tracks per property (scale, rotation, opacity, blur.amount, position), easing curves (Linear/EaseIn/EaseOut/EaseInOut), curve editor with draggable points, no-flicker Add Track UX, and a stripped Windows binary (~10 MB). CI passes on Ubuntu, Windows, and macOS.</p>
     <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
-      ↓&nbsp; Download v0.9.24 for Windows
+      ↓&nbsp; Download v0.9.25 for Windows
     </a>
     <p class="verify">
       SHA-256 for each release is on the
@@ -326,7 +326,7 @@
       <details>
         <summary>It says "beta" — is it stable?</summary>
         <div class="answer">
-          v0.9.24 brings the editor to Android and auto-updates; v0.9.20 added a first-run welcome, guided tips and the Enhance effect; v0.9.19 added stickers and keyframed movement; v0.9.18 added the Modern editor, plugin-based importers and remote control. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
+          v0.9.25 adds complete keyframe animation system with generic tracks, easing curves, and curve editor; v0.9.24 brought the editor to Android and auto-updates; v0.9.20 added a first-run welcome, guided tips and the Enhance effect; v0.9.19 added stickers and keyframed movement; v0.9.18 added the Modern editor, plugin-based importers and remote control. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
           audio effects, CLAP hosting and the MCP server are all in. Expect
           rough edges; a crash handler writes a report to
           <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and
