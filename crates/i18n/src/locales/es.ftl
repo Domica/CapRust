@@ -319,6 +319,15 @@ props-trajectory-hint = Donde estan el texto o el adhesivo en cada momento. 0,5,
 props-trajectory-empty = Aún no hay fotogramas clave. Añade uno, mueve el objeto y añade otro.
 props-trajectory-time = A
 props-trajectory-add = Añadir fotograma clave en el cursor
+
+props-tab-keyframe-tracks = Pistas de fotogramas clave
+props-keyframe-tracks = Pistas de fotogramas clave
+props-keyframe-tracks-hint = Animar cualquier propiedad (escala, rotación, opacidad, cantidad de efecto) con el tiempo. Cada pista tiene sus propios fotogramas clave y easing.
+props-keyframe-tracks-empty = Aún no hay pistas de fotogramas clave. Añade una para empezar a animar una propiedad.
+props-keyframe-tracks-add-hint = Haz clic en "Añadir pista" y elige una propiedad como "scale", "rotation", "opacity" o "blur.amount"
+props-keyframe-tracks-add = Añadir pista
+props-keyframe-property = Propiedad
+props-keyframe-add-at-playhead = Añadir fotograma clave en el cursor
 props-tab-sticker = Pegatina
 props-sticker-timing = Tiempo
 props-sticker-duration = En pantalla durante

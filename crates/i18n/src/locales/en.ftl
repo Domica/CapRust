@@ -318,6 +318,15 @@ props-trajectory-hint = Where the text or the sticker is at each moment. 0.5, 0.
 props-trajectory-empty = No keyframes yet. Add one, then move the thing and add another.
 props-trajectory-time = At
 props-trajectory-add = Add keyframe at the playhead
+
+props-tab-keyframe-tracks = Keyframe Tracks
+props-keyframe-tracks = Keyframe Tracks
+props-keyframe-tracks-hint = Animate any property (scale, rotation, opacity, effect amount) over time. Each track has its own keyframes and easing.
+props-keyframe-tracks-empty = No keyframe tracks yet. Add one to start animating a property.
+props-keyframe-tracks-add-hint = Click "Add track" then choose a property like "scale", "rotation", "opacity", or "blur.amount"
+props-keyframe-tracks-add = Add track
+props-keyframe-property = Property
+props-keyframe-add-at-playhead = Add keyframe at playhead
 props-tab-sticker = Sticker
 props-sticker-timing = Timing
 props-sticker-duration = On screen for

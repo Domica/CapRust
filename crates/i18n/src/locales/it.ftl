@@ -319,6 +319,15 @@ props-trajectory-hint = Dove sono il testo o l'adesivo in ogni momento. 0,5, 0,5
 props-trajectory-empty = Ancora nessun keyframe. Aggiungine uno, sposta l'oggetto e aggiungine un altro.
 props-trajectory-time = A
 props-trajectory-add = Aggiungi keyframe alla posizione di riproduzione
+
+props-tab-keyframe-tracks = Tracce keyframe
+props-keyframe-tracks = Tracce keyframe
+props-keyframe-tracks-hint = Anima qualsiasi proprietà (scala, rotazione, opacità, quantità effetto) nel tempo. Ogni traccia ha i propri keyframe e easing.
+props-keyframe-tracks-empty = Nessuna traccia keyframe ancora. Aggiungine una per iniziare ad animare una proprietà.
+props-keyframe-tracks-add-hint = Clicca "Aggiungi traccia" poi scegli una proprietà come "scale", "rotation", "opacity" o "blur.amount"
+props-keyframe-tracks-add = Aggiungi traccia
+props-keyframe-property = Proprietà
+props-keyframe-add-at-playhead = Aggiungi keyframe alla posizione di riproduzione
 props-tab-sticker = Adesivo
 props-sticker-timing = Temporale
 props-sticker-duration = A schermo per

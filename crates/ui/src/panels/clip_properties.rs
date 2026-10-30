@@ -24,6 +24,8 @@ pub enum PropertiesTab {
     /// Keyframed movement, for text and for stickers. The same tab and
     /// the same keyframes for both.
     Trajectory,
+    /// Generic per-property keyframe tracks (scale, rotation, opacity, effect amount, etc.).
+    KeyframeTracks,
 }
 
 #[derive(Debug, Default)]
@@ -135,6 +137,8 @@ pub enum PendingEdit {
     TextEffect(Option<caprust_core::clip::TextEffect>),
     /// Replace the whole volume automation curve on a clip.
     VolumeKeyframes(Vec<caprust_core::clip::VolumeKeyframe>),
+    /// Replace the generic keyframe tracks on a clip.
+    KeyframeTracks(Vec<caprust_core::clip::KeyframeTrack>),
     /// Fade-in duration in seconds. UI works in seconds; converted
     /// to ms in the drain handler (SetClipCommand::fade_in_ms).
     FadeInSec(f32),
@@ -1133,6 +1137,18 @@ pub fn show(
         {
             state.tab = PropertiesTab::Trajectory;
         }
+        // Keyframe tracks tab: available for clips with overlay (stickers, text)
+        // and for video clips that can have effects.
+        if (clip_can_trajectory || !clip_is_audio)
+            && chip::chip(
+                ui,
+                tr("props-tab-keyframe-tracks"),
+                state.tab == PropertiesTab::KeyframeTracks,
+            )
+            .clicked()
+        {
+            state.tab = PropertiesTab::KeyframeTracks;
+        }
         if chip::chip(
             ui,
             tr("props-tab-effects"),
@@ -1159,6 +1175,7 @@ pub fn show(
             PropertiesTab::Effects => show_effects(ui, clip, state),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
+            PropertiesTab::KeyframeTracks => show_keyframe_tracks(ui, clip, state, playhead_ms, dims),
         });
 }
 
@@ -2606,6 +2623,15 @@ fn show_trajectory(
     let mut keys = clip.trajectory.clone();
     let mut dirty = false;
 
+    // --- Curve editor (KeyframeEditor) ---
+    if keys.len() >= 2 {
+        ui.group(|ui| {
+            ui.set_min_height(140.0);
+            crate::panels::keyframes::KeyframeEditor::show(ui, &mut keys, playhead_ms);
+        });
+        ui.add_space(space::S);
+    }
+
     if keys.is_empty() {
         ui.label(
             egui::RichText::new(tr("props-trajectory-empty"))
@@ -2672,6 +2698,110 @@ fn show_trajectory(
 
     if dirty {
         state.pending.push(PendingEdit::Trajectory(keys.clone()));
+    }
+}
+
+/// Show the generic keyframe tracks for a clip (scale, rotation, opacity, effect amount, etc.).
+fn show_keyframe_tracks(
+    ui: &mut Ui,
+    clip: &Clip,
+    state: &mut PropertiesState,
+    playhead_ms: u64,
+    project_dimensions: (u32, u32),
+) {
+    let (fw, fh) = project_dimensions;
+    let _fa = fw as f32 / fh.max(1) as f32;
+
+    ui.label(egui::RichText::new(tr("props-keyframe-tracks")).strong());
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("props-keyframe-tracks-hint"))
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
+    ui.add_space(space::S);
+
+    let mut tracks = clip.keyframe_tracks.clone();
+    let mut dirty = false;
+
+    if tracks.is_empty() {
+        ui.label(
+            egui::RichText::new(tr("props-keyframe-tracks-empty"))
+                .small()
+                .color(egui::Color32::from_gray(130)),
+        );
+        ui.add_space(space::S);
+        ui.label(tr("props-keyframe-tracks-add-hint"));
+    }
+
+    // Add track button
+    ui.horizontal(|ui| {
+        if ui.button(tr("props-keyframe-tracks-add")).clicked() {
+            tracks.push(caprust_core::clip::KeyframeTrack {
+                property: "scale".to_string(),
+                keyframes: vec![],
+            });
+            dirty = true;
+        }
+    });
+    ui.add_space(space::S);
+
+    // Show each track
+    let mut remove_track: Option<usize> = None;
+    for (track_idx, track) in tracks.iter_mut().enumerate() {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&track.property).strong());
+                if ui.small_button("x").clicked() {
+                    remove_track = Some(track_idx);
+                }
+            });
+            ui.add_space(space::XS);
+
+            // Property name editor
+            ui.horizontal(|ui| {
+                ui.label(tr("props-keyframe-property"));
+                let mut prop = track.property.clone();
+                if ui.text_edit_singleline(&mut prop).changed() {
+                    track.property = prop;
+                    dirty = true;
+                }
+            });
+
+            // Keyframe editor for this track - uses Keyframe directly
+            let mut keys = track.keyframes.clone();
+
+            if keys.len() >= 2 {
+                ui.add_space(space::XS);
+                crate::panels::keyframes::KeyframeEditor::show_keyframes(ui, &mut keys, playhead_ms);
+            }
+
+            // Sync back
+            track.keyframes = keys;
+
+            // Add keyframe at playhead
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(tr("props-keyframe-add-at-playhead")).clicked() {
+                    track.keyframes.push(caprust_core::clip::Keyframe {
+                        t: (playhead_ms.saturating_sub(clip.start_time_ms) as f64) / 1000.0,
+                        value: 1.0,
+                        ease: caprust_core::clip::EaseCurve::default(),
+                    });
+                    track.keyframes.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+                    dirty = true;
+                }
+            });
+        });
+    }
+
+    if let Some(idx) = remove_track {
+        tracks.remove(idx);
+        dirty = true;
+    }
+
+    if dirty {
+        state.pending.push(PendingEdit::KeyframeTracks(tracks));
     }
 }
 

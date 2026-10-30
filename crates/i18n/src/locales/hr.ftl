@@ -319,6 +319,15 @@ props-trajectory-hint = Gdje su tekst ili naljepnica u svakom trenutku. 0,5, 0,5
 props-trajectory-empty = Još nema keyframeova. Dodaj jedan, pomakni stvar i dodaj drugi.
 props-trajectory-time = U
 props-trajectory-add = Dodaj keyframe na playheadu
+
+props-tab-keyframe-tracks = Keyframe trake
+props-keyframe-tracks = Keyframe trake
+props-keyframe-tracks-hint = Animiraj bilo koju svojstvo (skaliranje, rotacija, neprozirnost, intenzitet efekta) vremenom. Svaka traka ima svoje keyframeove i easing.
+props-keyframe-tracks-empty = Još nema keyframe traka. Dodaj jednu da zapochnes animirati svojstvo.
+props-keyframe-tracks-add-hint = Klikni "Dodaj traku" pa odaberi svojstvo poput "scale", "rotation", "opacity", ili "blur.amount"
+props-keyframe-tracks-add = Dodaj traku
+props-keyframe-property = Svojstvo
+props-keyframe-add-at-playhead = Dodaj keyframe na playheadu
 props-tab-sticker = Naljepnica
 props-sticker-timing = Vrijeme
 props-sticker-duration = Na ekranu
