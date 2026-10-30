@@ -238,8 +238,8 @@ impl KeyframeEditor {
         }
 
         // Compute time range
-        let min_t = keys.first().map(|k| get_time(k)).unwrap_or(0.0) as f32;
-        let max_t = keys.last().map(|k| get_time(k)).unwrap_or(1000.0) as f32;
+        let min_t = keys.first().map(&get_time).unwrap_or(0.0) as f32;
+        let max_t = keys.last().map(&get_time).unwrap_or(1000.0) as f32;
         let range = (max_t - min_t).max(1.0);
 
         // Draw curve between points
