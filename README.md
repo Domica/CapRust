@@ -144,13 +144,14 @@ own.
 
 | | Issue | What it is |
 |---|---|---|
-| 📱 | [#89](https://github.com/Domica/CapRust/issues/89) | The Android app: engine + daemon + Kotlin UI + APK |
 | 👁 | [#81](https://github.com/Domica/CapRust/issues/81) | Google Photos: watch a local folder for new imports |
+| 📈 | [#84](https://github.com/Domica/CapRust/issues/84) | The keyframe curve editor |
 | 📈 | [#85](https://github.com/Domica/CapRust/issues/85) | Easing between keyframes |
 | 🎛 | [#86](https://github.com/Domica/CapRust/issues/86) | One keyframe track per property |
 | ✨ | [#87](https://github.com/Domica/CapRust/issues/87) | Keyframing a clip's size and an effect's amount |
 | 🔏 | [#39](https://github.com/Domica/CapRust/issues/39) | AI Enhance (Real-ESRGAN): needs a runtime that can run it |
 | 🔐 | [#78](https://github.com/Domica/CapRust/issues/78) | Code signing, so SmartScreen stops saying "unknown publisher" |
+| 🤖 | [#91](https://github.com/Domica/CapRust/issues/91) | Model apply bug: AI mask / sticker / preview issues |
 
 **The binary is 26.1 MB, and that is the number.** The AI runtime -- the
 face detection and the background removal -- is 7.8 MB of it, and it

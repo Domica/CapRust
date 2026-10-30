@@ -432,6 +432,18 @@ pub enum EaseCurve {
     EaseInOut,
 }
 
+/// A generic keyframe with time, value, and easing for the segment starting at this keyframe.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct Keyframe {
+    /// Time in seconds from the start of the clip.
+    pub t: f64,
+    /// The value at this keyframe.
+    pub value: f32,
+    /// Easing applied to the segment starting at this keyframe.
+    #[serde(default)]
+    pub ease: EaseCurve,
+}
+
 /// Which portion of a clip the speed ramp occupies. The complementary
 /// portion (if any) stays at `speed_end` (FirstN) or `speed` (LastN).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

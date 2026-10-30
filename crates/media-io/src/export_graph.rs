@@ -16,6 +16,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
+use caprust_core::clip::{EaseCurve, Keyframe};
 use crate::export::RateMode;
 
 /// One input file we'll hand to ffmpeg with `-ss` / `-t`.
@@ -108,13 +109,12 @@ pub struct VideoClip {
     /// Resolved face-anonymize mask path. None = no anonymization.
     pub anon_mask_path: Option<std::path::PathBuf>,
 }
-
-/// The ffmpeg expression for one axis of a trajectory.
 ///
-/// The keyframes are `(time in seconds, value)`. Between two of them the
-/// value is linear, and outside them it holds: the first segment is
-/// clamped at the first keyframe so the mark does not run backwards
-/// before it starts, and the last keyframe's value is the fallback.
+/// The keyframes are `(time in seconds, value, ease)`. Between two of them
+/// the value is interpolated with the easing from the starting keyframe,
+/// and outside them it holds: the first segment is clamped at the first
+/// keyframe so the mark does not run backwards before it starts, and the
+/// last keyframe's value is the fallback.
 ///
 /// The expression is evaluated per frame. The overlay filter's `x` and
 /// `y` are, and drawtext's are, which is what makes a trajectory
@@ -123,42 +123,57 @@ pub struct VideoClip {
 /// A trajectory with fewer than two keyframes has no interpolation to
 /// do, so it is not a trajectory: one keyframe is a position at a moment
 /// with nothing to move between.
-pub fn trajectory_expr(keys: &[(f64, f32)]) -> String {
+pub fn trajectory_expr(keys: &[Keyframe]) -> String {
     if keys.is_empty() {
         return "0".to_string();
     }
     if keys.len() == 1 {
-        return format!("{:.6}", keys[0].1);
+        return format!("{:.6}", keys[0].value);
     }
-    let mut sorted: Vec<(f64, f32)> = keys.to_vec();
-    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut sorted: Vec<Keyframe> = keys.to_vec();
+    sorted.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
 
     // Innermost is the last keyframe's value: everything before it is
     // wrapped in a conditional.
-    let mut expr = format!("{:.6}", sorted[sorted.len() - 1].1);
+    let mut expr = format!("{:.6}", sorted[sorted.len() - 1].value);
     for i in (0..sorted.len() - 1).rev() {
-        let (t0, v0) = sorted[i];
-        let (t1, v1) = sorted[i + 1];
-        let dt = t1 - t0;
+        let k0 = sorted[i];
+        let k1 = sorted[i + 1];
+        let dt = k1.t - k0.t;
         if dt.abs() < 1e-9 {
             // Two keyframes at the same moment: nothing to interpolate
             // from, so the later one wins from that moment on.
-            expr = format!("if(lt(t,{:.6}),{:.6},{})", t1, v0, expr);
+            expr = format!("if(lt(t,{:.6}),{:.6},{})", k1.t, k0.value, expr);
             continue;
         }
         // The segment runs from the keyframe at t0 to the one at t1, so
         // the fraction is (t - t0) / dt. Clamped at the start so the mark
         // does not run backwards before it begins; the clamp is
         // harmless in the later segments, where t is already past t0.
-        let seg = format!(
+        let linear = format!(
             "({:.6}+({:.6})*(((max(t,{:.6}))-({:.6}))/({:.6})))",
-            v0,
-            v1 - v0,
-            t0,
-            t0,
+            k0.value,
+            k1.value - k0.value,
+            k0.t,
+            k0.t,
             dt
         );
-        expr = format!("if(lt(t,{:.6}),{},{})", t1, seg, expr);
+        // Apply easing from the starting keyframe.
+        let eased = match k0.ease {
+            EaseCurve::Linear => linear,
+            EaseCurve::EaseIn => format!("({})*({})", linear, linear),
+            EaseCurve::EaseOut => format!("1-({})*({})", linear, linear),
+            EaseCurve::EaseInOut => {
+                // if(lt(f,0.5), 2*f*f, 1-(-2*f+2)^2/2)
+                // where f = (t - t0) / dt
+                let f = format!("(((max(t,{:.6}))-({:.6}))/({:.6}))", k0.t, k0.t, dt);
+                format!(
+                    "if(lt({f},0.5),2*({f})*({f}),1-(-2*({f})+2)*(-2*({f})+2)/2)",
+                    f = f
+                )
+            }
+        };
+        expr = format!("if(lt(t,{:.6}),{},{})", k1.t, eased, expr);
     }
     expr
 }
@@ -169,7 +184,7 @@ pub fn trajectory_expr(keys: &[(f64, f32)]) -> String {
 /// The keyframes are in centre fractions -- 0.5 is the middle of the
 /// frame -- and this is the same space, so the expression is the centre
 /// position. The caller turns it into pixels.
-pub fn trajectory_x_expr(keys: &[(f64, f32)]) -> String {
+pub fn trajectory_x_expr(keys: &[Keyframe]) -> String {
     trajectory_expr(keys)
 }
 
@@ -998,8 +1013,22 @@ impl RenderPlan {
             // and cannot be one.
             let xy = match placed.as_ref() {
                 Some((_p, traj)) if traj.len() >= 2 => {
-                    let xs: Vec<(f64, f32)> = traj.iter().map(|(t, x, _)| (*t, *x)).collect();
-                    let ys: Vec<(f64, f32)> = traj.iter().map(|(t, _, y)| (*t, *y)).collect();
+                    let xs: Vec<Keyframe> = traj
+                        .iter()
+                        .map(|(t, x, _)| Keyframe {
+                            t: *t,
+                            value: *x,
+                            ease: EaseCurve::Linear,
+                        })
+                        .collect();
+                    let ys: Vec<Keyframe> = traj
+                        .iter()
+                        .map(|(t, _, y)| Keyframe {
+                            t: *t,
+                            value: *y,
+                            ease: EaseCurve::Linear,
+                        })
+                        .collect();
                     let ex = trajectory_expr(&xs);
                     let ey = trajectory_expr(&ys);
                     format!(":x='({ex})*W-w/2':y='({ey})*H-h/2'")
@@ -1120,20 +1149,28 @@ impl RenderPlan {
                 // filter's `t` is already the clip's own time and the
                 // keyframe times need no shifting.
                 let traj_x: Option<String> = if t.trajectory.len() >= 2 {
-                    let xs: Vec<(f64, f32)> = t
+                    let xs: Vec<Keyframe> = t
                         .trajectory
                         .iter()
-                        .map(|k| (k.t_ms as f64 / 1000.0, k.centre_x))
+                        .map(|k| Keyframe {
+                            t: k.t_ms as f64 / 1000.0,
+                            value: k.centre_x,
+                            ease: k.ease,
+                        })
                         .collect();
                     Some(trajectory_expr(&xs))
                 } else {
                     None
                 };
                 let traj_y: Option<String> = if t.trajectory.len() >= 2 {
-                    let ys: Vec<(f64, f32)> = t
+                    let ys: Vec<Keyframe> = t
                         .trajectory
                         .iter()
-                        .map(|k| (k.t_ms as f64 / 1000.0, k.centre_y))
+                        .map(|k| Keyframe {
+                            t: k.t_ms as f64 / 1000.0,
+                            value: k.centre_y,
+                            ease: k.ease,
+                        })
                         .collect();
                     Some(trajectory_expr(&ys))
                 } else {
@@ -7375,11 +7412,14 @@ mod reverse_filtergraph_tests {
     /// looking right.
     #[test]
     fn the_trajectory_expression_moves_the_sticker_over_time() {
-        use super::trajectory_expr;
+        use super::{trajectory_expr, Keyframe, EaseCurve};
 
         // Two keyframes: a quarter of the way across at t=0, three
         // quarters at t=2s.
-        let keys = [(0.0f64, 0.25f32), (2.0, 0.75)];
+        let keys = [
+            Keyframe { t: 0.0, value: 0.25, ease: EaseCurve::Linear },
+            Keyframe { t: 2.0, value: 0.75, ease: EaseCurve::Linear },
+        ];
         let expr = trajectory_expr(&keys);
         assert!(!expr.is_empty());
 
@@ -7409,7 +7449,14 @@ mod reverse_filtergraph_tests {
     #[test]
     fn one_keyframe_is_not_a_trajectory() {
         assert_eq!(super::trajectory_expr(&[]), "0");
-        assert_eq!(super::trajectory_expr(&[(1.0, 0.5)]), "0.500000");
+        assert_eq!(
+            super::trajectory_expr(&[Keyframe {
+                t: 1.0,
+                value: 0.5,
+                ease: EaseCurve::Linear,
+            }]),
+            "0.500000"
+        );
     }
 
     /// The keyframes come out of the model sorted by time, whatever order
@@ -7417,9 +7464,17 @@ mod reverse_filtergraph_tests {
     /// ones.
     #[test]
     fn the_expression_is_built_from_sorted_keyframes() {
-        use super::trajectory_expr;
-        let sorted = trajectory_expr(&[(0.0, 0.1), (1.0, 0.2), (2.0, 0.3)]);
-        let unsorted = trajectory_expr(&[(2.0, 0.3), (0.0, 0.1), (1.0, 0.2)]);
+        use super::{trajectory_expr, Keyframe, EaseCurve};
+        let sorted = trajectory_expr(&[
+            Keyframe { t: 0.0, value: 0.1, ease: EaseCurve::Linear },
+            Keyframe { t: 1.0, value: 0.2, ease: EaseCurve::Linear },
+            Keyframe { t: 2.0, value: 0.3, ease: EaseCurve::Linear },
+        ]);
+        let unsorted = trajectory_expr(&[
+            Keyframe { t: 2.0, value: 0.3, ease: EaseCurve::Linear },
+            Keyframe { t: 0.0, value: 0.1, ease: EaseCurve::Linear },
+            Keyframe { t: 1.0, value: 0.2, ease: EaseCurve::Linear },
+        ]);
         assert_eq!(sorted, unsorted, "the order of the keyframes leaked in");
     }
 
