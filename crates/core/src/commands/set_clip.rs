@@ -35,6 +35,10 @@ pub struct SetClipCommand {
     /// Keyframed movement over the clip's own time. `Some(vec)` replaces
     /// the trajectory, an empty vector meaning "no trajectory".
     pub trajectory: Option<Vec<crate::clip::MotionKeyframe>>,
+    /// Generic keyframe tracks per property (scale, rotation, opacity,
+    /// effect amount, etc.). `Some(vec)` replaces the tracks, an empty
+    /// vector meaning "no keyframe tracks".
+    pub keyframe_tracks: Option<Vec<crate::clip::KeyframeTrack>>,
     /// Only meaningful on TextOverlay clips: Some(Some(x)) sets the
     /// effect, Some(None) clears it, None leaves untouched.
     pub text_effect: Option<Option<crate::clip::TextEffect>>,
@@ -108,6 +112,7 @@ impl SetClipCommand {
             text_motion: None,
             overlay: None,
             trajectory: None,
+            keyframe_tracks: None,
             text_effect: None,
             fade_in_ms: None,
             fade_out_ms: None,
@@ -201,6 +206,12 @@ impl SetClipCommand {
     /// trajectory".
     pub fn trajectory(mut self, v: Vec<crate::clip::MotionKeyframe>) -> Self {
         self.trajectory = Some(v);
+        self
+    }
+    /// Replace the clip's generic keyframe tracks (scale, rotation,
+    /// opacity, effect amount, etc.). An empty vector means "no keyframe tracks".
+    pub fn keyframe_tracks(mut self, v: Vec<crate::clip::KeyframeTrack>) -> Self {
+        self.keyframe_tracks = Some(v);
         self
     }
 
@@ -399,6 +410,9 @@ impl Command for SetClipCommand {
         }
         if let Some(v) = self.trajectory.take() {
             c.trajectory = v;
+        }
+        if let Some(v) = self.keyframe_tracks.take() {
+            c.keyframe_tracks = v;
         }
         if let Some(v) = self.text_motion {
             match &mut c.clip_type {

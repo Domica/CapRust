@@ -10566,6 +10566,7 @@ impl CapRustApp {
                                 PendingEdit::TrackIndex(v) => cmd.track_index(v),
                                 PendingEdit::Overlay(v) => cmd.overlay(v),
                                 PendingEdit::Trajectory(v) => cmd.trajectory(v),
+                                PendingEdit::KeyframeTracks(v) => cmd.keyframe_tracks(v),
                                 _ => cmd,
                             });
                         }
