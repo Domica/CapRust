@@ -95,7 +95,7 @@ impl KeyframeEditor {
 
         for (idx, k) in keys.iter_mut().enumerate() {
             let x = rect_min.x + ((k.t_ms as f32 - min_t) / range) * area_w;
-            let y = rect_min.y + (1.0 - k.centre_x) * area_h;
+            let y = rect_min.y + (1.0 - k.centre_y) * area_h;
             let cx = x;
             let cy = y;
 
