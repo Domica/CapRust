@@ -2740,7 +2740,10 @@ fn show_keyframe_tracks(
     let mut tracks = clip.keyframe_tracks.clone();
     let mut dirty = false;
 
-    if tracks.is_empty() {
+    // Track if we just added a track to avoid UI flicker between empty/non-empty layouts
+    let mut just_added = false;
+
+    if tracks.is_empty() && !just_added {
         ui.label(
             egui::RichText::new(tr("props-keyframe-tracks-empty"))
                 .small()
@@ -2756,10 +2759,13 @@ fn show_keyframe_tracks(
                 keyframes: vec![],
             };
             tracks.push(new_track.clone());
+            just_added = true;
             dirty = true;
         }
         ui.add_space(space::S);
-    } else {
+    }
+
+    if !tracks.is_empty() || just_added {
         // Add track button (when tracks exist)
         ui.horizontal(|ui| {
             if ui.button(tr("props-keyframe-tracks-add")).clicked() {
