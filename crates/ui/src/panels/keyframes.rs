@@ -83,13 +83,11 @@ impl KeyframeEditor {
         // Draw draggable points
         let mut to_delete: Option<usize> = None;
 
-        // Persistent drag state - survives across frames
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut dragged_idx: Option<usize> = std::cell::RefCell::new(None).into_inner();
-        #[cfg(target_arch = "wasm32")]
-        let mut dragged_idx: Option<usize> = None; // wasm doesn't support thread-local well
+        // Persistent drag state using ui.memory()
+        let drag_id = egui::Id::new("trajectory_keyframe_drag");
+        let mut dragged_idx: Option<usize> =
+            ui.memory(|m| m.data.get_temp(drag_id)).unwrap_or(None);
 
-        // Check if we should start dragging a new point
         let primary_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
         let primary_released = ui.ctx().input(|i| i.pointer.primary_released());
         let primary_down = ui.ctx().input(|i| i.pointer.primary_down());
@@ -148,6 +146,9 @@ impl KeyframeEditor {
                 Color32::from_gray(200),
             );
         }
+
+        // Persist drag state
+        ui.memory_mut(|m| m.data.insert_temp(drag_id, dragged_idx));
 
         // Delete point if right-clicked
         if let Some(idx) = to_delete {
@@ -293,11 +294,10 @@ impl KeyframeEditor {
         // Draw draggable points (show even with 1 keyframe)
         let mut to_delete: Option<usize> = None;
 
-        // Persistent drag state
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut dragged_idx: Option<usize> = std::cell::RefCell::new(None).into_inner();
-        #[cfg(target_arch = "wasm32")]
-        let mut dragged_idx: Option<usize> = None;
+        // Persistent drag state using ui.memory()
+        let drag_id = egui::Id::new("keyframe_drag");
+        let mut dragged_idx: Option<usize> =
+            ui.memory(|m| m.data.get_temp(drag_id)).unwrap_or(None);
 
         let primary_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
         let primary_released = ui.ctx().input(|i| i.pointer.primary_released());
@@ -359,6 +359,9 @@ impl KeyframeEditor {
                 Color32::from_gray(200),
             );
         }
+
+        // Persist drag state
+        ui.memory_mut(|m| m.data.insert_temp(drag_id, dragged_idx));
 
         // Delete point if right-clicked
         if let Some(idx) = to_delete {
