@@ -2740,10 +2740,21 @@ fn show_keyframe_tracks(
     let mut tracks = clip.keyframe_tracks.clone();
     let mut dirty = false;
 
-    // Track if we just added a track to avoid UI flicker between empty/non-empty layouts
-    let mut just_added = false;
+    // Always render the track list area (handles 0 tracks gracefully)
+    // Add track button
+    ui.horizontal(|ui| {
+        if ui.button(tr("props-keyframe-tracks-add")).clicked() {
+            tracks.push(caprust_core::clip::KeyframeTrack {
+                property: "scale".to_string(),
+                keyframes: vec![],
+            });
+            dirty = true;
+        }
+    });
+    ui.add_space(space::S);
 
-    if tracks.is_empty() && !just_added {
+    // Show empty hint when no tracks
+    if tracks.is_empty() {
         ui.label(
             egui::RichText::new(tr("props-keyframe-tracks-empty"))
                 .small()
@@ -2751,31 +2762,6 @@ fn show_keyframe_tracks(
         );
         ui.add_space(space::S);
         ui.label(tr("props-keyframe-tracks-add-hint"));
-        ui.add_space(space::XS);
-        // Prominent add track button when empty
-        if ui.button(tr("props-keyframe-tracks-add")).clicked() {
-            let new_track = caprust_core::clip::KeyframeTrack {
-                property: "scale".to_string(),
-                keyframes: vec![],
-            };
-            tracks.push(new_track.clone());
-            just_added = true;
-            dirty = true;
-        }
-        ui.add_space(space::S);
-    }
-
-    if !tracks.is_empty() || just_added {
-        // Add track button (when tracks exist)
-        ui.horizontal(|ui| {
-            if ui.button(tr("props-keyframe-tracks-add")).clicked() {
-                tracks.push(caprust_core::clip::KeyframeTrack {
-                    property: "scale".to_string(),
-                    keyframes: vec![],
-                });
-                dirty = true;
-            }
-        });
         ui.add_space(space::S);
     }
 
