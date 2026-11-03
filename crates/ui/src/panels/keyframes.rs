@@ -83,10 +83,11 @@ impl KeyframeEditor {
         // Draw draggable points
         let mut to_delete: Option<usize> = None;
 
-        // Persistent drag state using ui.memory()
-        let drag_id = egui::Id::new("trajectory_keyframe_drag");
-        let mut dragged_idx: Option<usize> =
-            ui.memory(|m| m.data.get_temp(drag_id)).unwrap_or(None);
+        // Persistent drag state using thread-local storage (egui 0.31 persistent API limitation workaround)
+        thread_local! {
+            static TRAJECTORY_DRAG_IDX: std::cell::RefCell<Option<usize>> = const { std::cell::RefCell::new(None) };
+        }
+        let mut dragged_idx = TRAJECTORY_DRAG_IDX.with(|cell| *cell.borrow());
 
         let primary_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
         let primary_released = ui.ctx().input(|i| i.pointer.primary_released());
@@ -148,7 +149,7 @@ impl KeyframeEditor {
         }
 
         // Persist drag state
-        ui.memory_mut(|m| m.data.insert_temp(drag_id, dragged_idx));
+        TRAJECTORY_DRAG_IDX.with(|cell| *cell.borrow_mut() = dragged_idx);
 
         // Delete point if right-clicked
         if let Some(idx) = to_delete {
@@ -294,10 +295,11 @@ impl KeyframeEditor {
         // Draw draggable points (show even with 1 keyframe)
         let mut to_delete: Option<usize> = None;
 
-        // Persistent drag state using ui.memory()
-        let drag_id = egui::Id::new("keyframe_drag");
-        let mut dragged_idx: Option<usize> =
-            ui.memory(|m| m.data.get_temp(drag_id)).unwrap_or(None);
+        // Persistent drag state using thread-local storage (egui 0.31 persistent API limitation workaround)
+        thread_local! {
+            static KEYFRAME_DRAG_IDX: std::cell::RefCell<Option<usize>> = const { std::cell::RefCell::new(None) };
+        }
+        let mut dragged_idx = KEYFRAME_DRAG_IDX.with(|cell| *cell.borrow());
 
         let primary_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
         let primary_released = ui.ctx().input(|i| i.pointer.primary_released());
@@ -361,7 +363,7 @@ impl KeyframeEditor {
         }
 
         // Persist drag state
-        ui.memory_mut(|m| m.data.insert_temp(drag_id, dragged_idx));
+        KEYFRAME_DRAG_IDX.with(|cell| *cell.borrow_mut() = dragged_idx);
 
         // Delete point if right-clicked
         if let Some(idx) = to_delete {
