@@ -82,6 +82,18 @@ impl KeyframeEditor {
 
         // Draw draggable points
         let mut to_delete: Option<usize> = None;
+
+        // Persistent drag state - survives across frames
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut dragged_idx: Option<usize> = std::cell::RefCell::new(None).into_inner();
+        #[cfg(target_arch = "wasm32")]
+        let mut dragged_idx: Option<usize> = None; // wasm doesn't support thread-local well
+
+        // Check if we should start dragging a new point
+        let primary_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
+        let primary_released = ui.ctx().input(|i| i.pointer.primary_released());
+        let primary_down = ui.ctx().input(|i| i.pointer.primary_down());
+
         for (idx, k) in keys.iter_mut().enumerate() {
             let x = rect_min.x + ((k.t_ms as f32 - min_t) / range) * area_w;
             let y = rect_min.y + (1.0 - k.centre_x) * area_h;
@@ -98,18 +110,30 @@ impl KeyframeEditor {
                 to_delete = Some(idx);
             }
 
-            // Drag point
-            if ui
+            // Start drag on primary_pressed over point
+            let is_hovered = ui
                 .ctx()
                 .pointer_hover_pos()
-                .is_some_and(|p| (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0)
-                && ui.ctx().input(|i| i.pointer.primary_down())
-            {
+                .is_some_and(|p| (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0);
+
+            if primary_pressed && is_hovered {
+                dragged_idx = Some(idx);
+            }
+
+            // End drag on primary_released
+            if primary_released {
+                dragged_idx = None;
+            }
+
+            // Drag the point if it's being dragged
+            if dragged_idx == Some(idx) && primary_down {
                 let delta = ui.ctx().input(|i| i.pointer.delta());
-                let dx = delta.x / area_w;
-                let dy = delta.y / area_h;
-                k.t_ms = (k.t_ms as f32 + dx * range).clamp(min_t, max_t) as u64;
-                k.centre_x = (k.centre_x - dy).clamp(0.0, 1.0);
+                if delta.length() > 0.0 {
+                    let dx = delta.x / area_w;
+                    let dy = delta.y / area_h;
+                    k.t_ms = (k.t_ms as f32 + dx * range).clamp(min_t, max_t) as u64;
+                    k.centre_x = (k.centre_x - dy).clamp(0.0, 1.0);
+                }
             }
 
             // Point marker
@@ -268,6 +292,17 @@ impl KeyframeEditor {
 
         // Draw draggable points (show even with 1 keyframe)
         let mut to_delete: Option<usize> = None;
+
+        // Persistent drag state
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut dragged_idx: Option<usize> = std::cell::RefCell::new(None).into_inner();
+        #[cfg(target_arch = "wasm32")]
+        let mut dragged_idx: Option<usize> = None;
+
+        let primary_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
+        let primary_released = ui.ctx().input(|i| i.pointer.primary_released());
+        let primary_down = ui.ctx().input(|i| i.pointer.primary_down());
+
         for (idx, k) in keys.iter_mut().enumerate() {
             let x = rect_min.x + ((get_time(k) as f32 - min_t) / range) * area_w;
             let y = rect_min.y + (1.0 - get_value(k)) * area_h;
@@ -284,14 +319,23 @@ impl KeyframeEditor {
                 to_delete = Some(idx);
             }
 
-            // Drag point - check hover and primary down
+            // Start drag on primary_pressed over point
             let is_hovered = ui
                 .ctx()
                 .pointer_hover_pos()
                 .is_some_and(|p| (p.x - cx).abs() < 12.0 && (p.y - cy).abs() < 12.0);
-            let is_dragging = is_hovered && ui.ctx().input(|i| i.pointer.primary_down());
 
-            if is_dragging {
+            if primary_pressed && is_hovered {
+                dragged_idx = Some(idx);
+            }
+
+            // End drag on primary_released
+            if primary_released {
+                dragged_idx = None;
+            }
+
+            // Drag the point if it's being dragged
+            if dragged_idx == Some(idx) && primary_down {
                 let delta = ui.ctx().input(|i| i.pointer.delta());
                 if delta.length() > 0.0 {
                     let dx = delta.x / area_w;
