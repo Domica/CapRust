@@ -12,6 +12,7 @@
 //! This gives ~1 in-flight ffmpeg process with zero backlog, so latency
 //! stays bounded (~150 ms) regardless of how fast the user seeks.
 
+use crate::double_buffer_preview::{DoubleBufferConfig, DoubleBufferPreview, PreviewFrame};
 use caprust_media_io::streamer::FrameStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -104,6 +105,8 @@ pub struct PreviewPlayer {
     /// Straight RGBA, not egui's premultiplied storage, so it can go
     /// straight into an image encoder.
     frame: Option<RawFrame>,
+    /// Double-buffer preview system for seamless playback and scrubbing.
+    double_buffer: Option<DoubleBufferPreview>,
 }
 
 /// Straight-RGBA frame, kept for anything that needs pixels.
@@ -219,6 +222,7 @@ impl PreviewPlayer {
             rx: Some(rx),
             stream: None,
             frame: None,
+            double_buffer: Some(DoubleBufferPreview::new(DoubleBufferConfig::default())),
         }
     }
 
@@ -263,6 +267,11 @@ impl PreviewPlayer {
         });
         self.pending = Some(key);
         self.last_error = None;
+
+        // Initialize double buffer if not already
+        if self.double_buffer.is_none() {
+            self.double_buffer = Some(DoubleBufferPreview::new(DoubleBufferConfig::default()));
+        }
     }
 
     /// Poll for completed frames. Uploads RGBA → egui texture.
@@ -294,10 +303,40 @@ impl PreviewPlayer {
             if res.rgba.len() < expected {
                 continue;
             }
-            let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
-            self.publish_frame(ctx, &name, w, h, &res.rgba[..expected]);
-            self.last_key = Some(res.key);
-            self.decoded += 1;
+
+            // Submit to double-buffer system
+            if let Some(db) = &self.double_buffer {
+                let frame = PreviewFrame {
+                    rgba: res.rgba[..expected].to_vec(),
+                    width: res.key.width,
+                    height: res.key.height,
+                    timestamp_ms: res.key.at_ms,
+                    clip_id: res.key.clip_id,
+                    sequence: res.key.at_ms / 100, // Use rounded ms as sequence
+                };
+
+                db.submit_frame(frame);
+
+                // Try to commit and swap
+                if let Some(front_frame) = db.commit_and_swap() {
+                    let name = format!("prev-{}-{}", front_frame.clip_id, front_frame.timestamp_ms);
+                    self.publish_frame(
+                        ctx,
+                        &name,
+                        front_frame.width as usize,
+                        front_frame.height as usize,
+                        &front_frame.rgba,
+                    );
+                    self.last_key = Some(res.key);
+                    self.decoded += 1;
+                }
+            } else {
+                // Fallback to direct publish
+                let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
+                self.publish_frame(ctx, &name, w, h, &res.rgba[..expected]);
+                self.last_key = Some(res.key);
+                self.decoded += 1;
+            }
         }
     }
 
@@ -305,6 +344,10 @@ impl PreviewPlayer {
     pub fn stop_stream(&mut self) {
         if let Some(mut s) = self.stream.take() {
             s.kill();
+        }
+        // Clear double-buffer when stopping stream
+        if let Some(db) = &self.double_buffer {
+            db.clear();
         }
     }
 
@@ -365,6 +408,35 @@ impl PreviewPlayer {
         if buf.len() < expected {
             return false;
         }
+
+        // Submit to double-buffer system
+        if let Some(db) = &self.double_buffer {
+            let frame = PreviewFrame {
+                rgba: buf[..expected].to_vec(),
+                width: s.width,
+                height: s.height,
+                timestamp_ms: (s.started_at_sec * 1000.0) as u64,
+                clip_id: s.clip_id,
+                sequence: (s.started_at_sec * 1000.0) as u64,
+            };
+
+            db.submit_frame(frame);
+
+            // Try to commit and swap
+            if let Some(front_frame) = db.commit_and_swap() {
+                self.publish_frame(
+                    ctx,
+                    "preview-stream",
+                    front_frame.width as usize,
+                    front_frame.height as usize,
+                    &front_frame.rgba,
+                );
+                self.decoded += 1;
+                return true;
+            }
+        }
+
+        // Fallback to direct publish
         self.publish_frame(ctx, "preview-stream", w, h, &buf[..expected]);
         self.decoded += 1;
         true
@@ -373,7 +445,8 @@ impl PreviewPlayer {
     /// If a stream is active, returns (started_at_sec, 1/fps seconds per frame).
     pub fn stream_frame_duration_ms(&self) -> Option<u64> {
         let s = self.stream.as_ref()?;
-        let ms = (1000.0 / s.fps).round() as u64;
+        let fps: f64 = s.fps;
+        let ms = (1000.0 / fps).round() as u64;
         Some(ms.max(1))
     }
 
@@ -393,6 +466,11 @@ impl PreviewPlayer {
         self.last_key = None;
         self.cancel_pending();
         self.has_frame = false;
+
+        // Clear double-buffer state
+        if let Some(db) = &self.double_buffer {
+            db.clear();
+        }
     }
 }
 

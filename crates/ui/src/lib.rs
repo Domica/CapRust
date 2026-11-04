@@ -1,5 +1,6 @@
 pub mod app;
 pub mod dock;
+pub mod double_buffer_preview;
 pub mod i18n_helper;
 pub mod media_jobs;
 pub mod panels;
