@@ -6,7 +6,7 @@
 //! right-click or the delete button. An easing selector per keyframe
 //! (#85) controls the interpolation between adjacent points.
 
-use caprust_core::clip::{Clip, EaseCurve, Keyframe, MotionKeyframe};
+use caprust_core::clip::{Clip, EaseCurve, Keyframe};
 use egui::{Color32, Pos2, Rect, Stroke, Ui, Vec2};
 
 pub struct KeyframeEditor;
