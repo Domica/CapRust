@@ -2,6 +2,22 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.26] - 2026-11-04
+
+### Fixed
+
+- **Trajectory drag visual feedback.** Točka sada prati miš na grafu u real-time prilikom vučenja (dodano `request_repaint()`).
+- **Keyframe Tracks drag visual feedback.** Isto za scale, rotation, opacity, blur.amount keyframe-ove.
+- **Drag persistence.** Popravljeno korištenjem thread-local storage (egui 0.31 API workaround).
+- **Right-click delete na keyframe-ovima.** Radi u Trajectory tabu i Keyframe Tracks tabu.
+- **Trajectory Y coordinate bug fix.** Popravljeno `centre_y` umjesto `centre_x` za vertikalnu os.
+
+### Technical
+
+- `crates/ui/src/panels/keyframes.rs`: `KeyframeEditor::show()` prima `&mut Clip`, direktno ažurira `clip.trajectory`.
+- `crates/ui/src/panels/clip_properties.rs`: `show_trajectory()` koristi `clip.trajectory` direktno umjesto kloniranja.
+- Thread-local storage za drag persistence (`TRAJECTORY_DRAG_IDX`).
+
 ## [0.9.25] - 2026-11-04
 
 ### Added
