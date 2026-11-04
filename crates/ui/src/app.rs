@@ -10320,7 +10320,7 @@ impl CapRustApp {
         let selected = self.selected_clips.first().copied();
         crate::panels::clip_properties::show(
             ui,
-            &self.project,
+            &mut self.project,
             selected,
             &mut self.properties,
             self.playhead_ms,

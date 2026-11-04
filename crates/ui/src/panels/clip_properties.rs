@@ -228,7 +228,7 @@ pub enum PendingEdit {
 
 pub fn show(
     ui: &mut Ui,
-    project: &ProjectState,
+    project: &mut ProjectState,
     selected: Option<Uuid>,
     state: &mut PropertiesState,
     playhead_ms: u64,
@@ -243,7 +243,7 @@ pub fn show(
         );
         return;
     };
-    let Some(clip) = project.clips.iter().find(|c| c.id == id) else {
+    let Some(clip) = project.clips.iter_mut().find(|c| c.id == id) else {
         ui.label(
             egui::RichText::new(tr("props-empty"))
                 .italics()
@@ -1075,9 +1075,16 @@ pub fn show(
         ClipType::Audio { .. } | ClipType::Narration { .. }
     );
 
-    // A sticker's maximum size depends on the frame it is composited
-    // into, so its controls need to know what that frame is.
     let dims = project.project_dimensions();
+
+    let Some(clip) = project.clips.iter_mut().find(|c| c.id == id) else {
+        ui.label(
+            egui::RichText::new(tr("props-empty"))
+                .italics()
+                .color(egui::Color32::from_gray(140)),
+        );
+        return;
+    };
 
     // A sticker is a still on the frame: no speed, no transitions, no
     // audio. The video tab's controls are meaningless on it and the sound
@@ -2592,7 +2599,7 @@ fn format_duration(ms: u64) -> String {
 /// which is why the tab converts rather than sharing the numbers.
 fn show_trajectory(
     ui: &mut Ui,
-    clip: &Clip,
+    clip: &mut Clip,
     state: &mut PropertiesState,
     playhead_ms: u64,
     project_dimensions: (u32, u32),
@@ -2622,16 +2629,17 @@ fn show_trajectory(
     );
     ui.add_space(space::S);
 
-    let mut keys = clip.trajectory.clone();
-    let mut dirty = false;
-
     // --- Curve editor (KeyframeEditor) ---
     // Show editor even with 0/1 keyframes (shows grid + points)
     ui.group(|ui| {
         ui.set_min_height(140.0);
-        crate::panels::keyframes::KeyframeEditor::show(ui, &mut keys, playhead_ms);
+        crate::panels::keyframes::KeyframeEditor::show(ui, clip, playhead_ms);
     });
     ui.add_space(space::S);
+
+    // Use clip.trajectory directly for immediate visual feedback during drag
+    let keys = &mut clip.trajectory;
+    let mut dirty = false;
 
     // Guidance for keyframe count
     match keys.len() {

@@ -6,16 +6,19 @@
 //! right-click or the delete button. An easing selector per keyframe
 //! (#85) controls the interpolation between adjacent points.
 
-use caprust_core::clip::{EaseCurve, Keyframe, MotionKeyframe};
+use caprust_core::clip::{Clip, EaseCurve, Keyframe, MotionKeyframe};
 use egui::{Color32, Pos2, Rect, Stroke, Ui, Vec2};
 
 pub struct KeyframeEditor;
 
 impl KeyframeEditor {
     /// Show the curve editor for a clip's trajectory keyframes.
-    pub fn show(ui: &mut Ui, keys: &mut Vec<MotionKeyframe>, playhead_ms: u64) {
+    /// Modifies clip.trajectory directly for immediate visual feedback during drag.
+    pub fn show(ui: &mut Ui, clip: &mut Clip, playhead_ms: u64) {
         ui.label("Trajectory keyframes");
         ui.add_space(4.0);
+
+        let keys = &mut clip.trajectory;
 
         // Sort keyframes by time for consistent display.
         keys.sort_by_key(|k| k.t_ms);
