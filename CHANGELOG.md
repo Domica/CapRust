@@ -2,7 +2,7 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
-## [0.9.25] - 2026-10-30
+## [0.9.25] - 2026-11-04
 
 ### Added
 
@@ -11,12 +11,17 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 - **Keyframe Tracks tab.** Add/remove tracks, property name editor, per-track curve editor with easing. No-flicker Add Track UX (immediate pending push).
 - **i18n for keyframe UI.** English, Croatian, German, Spanish, Italian translations.
 - **Windows binary stripping in CI.** `cargo strip` reduces release binary to ~10 MB.
+- **Release artifacts:** Windows installer (`.exe`), Linux package (`.deb`), Android APK (`.apk`).
 
 ### Fixed
 
 - **Add Track button flicker.** The button no longer appears/disappears; track is added to pending edits immediately.
 - **Trajectory graph missing with 0/1 keyframes.** Grid and points now render in all states with guidance text.
 - **Borrow checker in KeyframeTracks loop.** Fixed by deferring pending push until after the loop.
+- **Trajectory Y coordinate.** Fixed using `centre_y` instead of `centre_x` for vertical axis.
+- **Drag visual feedback.** Added `request_repaint()` during drag for immediate graph updates.
+- **Drag persistence.** Fixed using thread-local storage (egui 0.31 API workaround).
+- **Right-click delete on keyframes.** Works in both trajectory and keyframe tracks tabs.
 
 ### Technical
 
