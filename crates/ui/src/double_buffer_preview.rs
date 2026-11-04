@@ -202,9 +202,7 @@ impl DoubleBufferPreview {
     pub fn commit_and_swap(&self) -> Option<PreviewFrame> {
         let mut frame_pair = self.frame_pair.lock().unwrap();
 
-        if frame_pair.back.is_none() {
-            return None;
-        }
+        let _ = frame_pair.back.as_ref()?;
 
         // Swap front and back
         frame_pair.swap();
