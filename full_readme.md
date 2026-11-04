@@ -13,7 +13,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.20-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.25-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -27,7 +27,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.20-win64-setup.exe`.
+1. Run `CapRust-0.9.25-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -417,6 +417,18 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.25** | 2026-10-30 | Keyframe animation system: generic `KeyframeTrack` per property (scale, rotation, opacity, blur.amount, position), `EaseCurve` (Linear/EaseIn/EaseOut/EaseInOut), curve editor with draggable points, no-flicker Add Track UX, Windows binary stripped to ~10 MB, CI passes on 3 platforms. |
+| **0.9.24** | 2026-10-29 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings; Android import + preview + export timeline; default duration fix for unprobed clips; mask_gen auto-generation for anonymize; blend/overlay extract graph fix. |
+| **0.9.23** | 2026-10-27 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg, import + preview + export + timeline drag); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection; keyframe curve editor (basic); AI model download in Settings. |
+| **0.9.22** | 2026-10-25 | Alpha Android client (engine + daemon + Kotlin editor, APK for arm64-v8a/armeabi-v7a/x86/x86_64 with ffmpeg); Debian .deb package; Linux file dialogs via GTK3; platform-aware FFmpeg download (Linux: tar.xz with exec bit); fixed FFmpeg "installed" detection. |
+| **0.9.21** | 2026-10-23 | Keyframe curve editor improvements: grid visible with 0/1 keyframes, guidance text; timeline drag improvements; video filter fixes; export progress UI. |
+| **0.9.20** | 2026-10-21 | A first-run welcome and three guided tips; the Enhance effect (denoise + deband, measured); a smaller binary -- the icon and the built-in LUTs travel packed; the release is built in CI, ready for code signing. |
+| **0.9.19** | 2026-10-19 | Stickers (108 bundled PNGs) placed, sized and turned on the frame; keyframed movement for text and stickers; 14 more effects and filters; every ffmpeg transition reachable. |
+| **0.9.18** | 2026-10-18 | A second editor (Modern) with dock-style zones, stacked containers and S/M/L timeline sizes; importer plugins as separate programs, with an OTIO importer and *Import plugin* to load any of them from disk. Plus nine Modern-layout defects, preview and thumbnail fixes for still images, and remote-reply routing. |
+| **0.9.17** | 2026-10-12 | Crash-recovery autosave, custom autosave interval, caption size proportional to frame height, one-click face anonymize; plus fixes for custom spinner persistence, preset click confirmation, Custom row visibility. |
+| **0.9.16** | 2026-10-12 | Face anonymize per clip, caption segment editing, color grading panel, built-in sound-effects library. |
+| **0.9.15** | 2026-10-11 | Timeline templates (bundled + save/import/apply), theme save/load files, export 32K command-line fix, preview A/V restart on seek. |
+| **0.9.14** | 2026-10-10 | Spanish, Italian, German UI; slim README + full_readme; landing screenshot carousel; LUT + CLAP folder pickers in Settings; models rescan fix. |
 | **0.9.13** | 2026-10-09 | Text effects parity (EFFECTS stack on text overlays), blend modes for layer compositing, clip rename via double-click/menu, refresh imported files, per-clip split display, clip border width/color options, Logs+Updates moved to About. |
 | **0.9.12** | 2026-10-09 | Save Frame EINVAL fix (video-only filtergraph), media-bin tab layout persistence, 27 new transitions, 10 new effects (incl. beauty skin smoothing), color LUT pipeline (.cube upload + 4 film LUTs), 5 effect/filter repairs, beat snap-to-grid + auto-cut. |
 | **0.9.11** | 2026-10-08 | Three-color waveform, media bin sidebar with TabLayout (NoFilter/Filtered), 8 new text styles, View menu Tab Layout toggle, waveform color pickers, save frame path fix, disk-full hardening, vertical asset tabs. |
