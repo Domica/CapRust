@@ -536,6 +536,12 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
         clicked = Some(id);
     }
 
+    ui.add_space(space::L);
+    ui.label(egui::RichText::new(tr("set-models-enhance")).strong());
+    if let Some(id) = show_model_group(ui, models, ModelKind::Enhancer) {
+        clicked = Some(id);
+    }
+
     clicked
 }
 

@@ -22,6 +22,9 @@ pub enum ModelKind {
     /// the primary auto-reframe detector when present; YuNet stays as
     /// a fallback.
     ScrfdDetector,
+    /// AI Enhance (Real-ESRGAN) for super-resolution upscaling.
+    /// Single ONNX file. Runs during export/render (too slow for real-time preview).
+    Enhancer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,6 +290,24 @@ impl Default for ModelRegistry {
                 )
                 .with_sha256(
                     "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
+                ),
+                // --- AI Enhance (Real-ESRGAN) ---
+                // realesrgan-x4plus, Apache 2.0. Input 320x320 RGB (or
+                // variable), output 4x upscaled. Too slow for real-time
+                /// preview with tract-onnx; runs during export/render.
+                ModelInfo::new(
+                    "realesrgan-x4plus",
+                    "Real-ESRGAN x4+",
+                    ModelKind::Enhancer,
+                    "multi",
+                    68,
+                    "AI super-resolution upscaler (4x). Runs during export — too slow for real-time preview.",
+                )
+                .with_url(
+                    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/realesrgan-x4plus.onnx",
+                )
+                .with_sha256(
+                    "0000000000000000000000000000000000000000000000000000000000000000",
                 ),
             ],
         }

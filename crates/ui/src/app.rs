@@ -5666,6 +5666,7 @@ impl CapRustApp {
             caprust_core::ModelKind::FaceDetector => (format!("{model_id}.onnx"), None),
             caprust_core::ModelKind::ScrfdDetector => (format!("{model_id}.onnx"), None),
             caprust_core::ModelKind::BackgroundRemover => (format!("{model_id}.onnx"), None),
+            caprust_core::ModelKind::Enhancer => (format!("{model_id}.onnx"), None),
         };
         let target = dir.join(filename);
         tracing::info!(
@@ -13112,6 +13113,7 @@ impl CapRustApp {
             caprust_core::ModelKind::FaceDetector => tr("mp-face-title"),
             caprust_core::ModelKind::ScrfdDetector => tr("mp-scrfd-title"),
             caprust_core::ModelKind::BackgroundRemover => tr("mp-bg-title"),
+            caprust_core::ModelKind::Enhancer => tr("mp-enhance-title"),
         };
 
         let mut open = true;
@@ -13126,27 +13128,27 @@ impl CapRustApp {
             .default_width(560.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                // Tab strip: switch between Caption and Narration
-                // model lists without closing the window. Needed
-                // because the toolbar's download icon opens the prompt
-                // for only one family at a time (the one with more
-                // missing entries), which left the other family
-                // unreachable from the UI once a tie occurred.
+                // Tab strip: switch between Caption, Narration, and Enhancer
+                // model lists without closing the window.
                 ui.horizontal(|ui| {
                     let mut active = self.model_prompt_tab;
-                    let labels = [tr("mp-tab-captions"), tr("mp-tab-narration")];
+                    let labels = [tr("mp-tab-captions"), tr("mp-tab-narration"), tr("mp-tab-enhance")];
                     let selected = if active == caprust_core::ModelKind::Caption {
                         0
-                    } else {
+                    } else if active == caprust_core::ModelKind::Narration {
                         1
+                    } else {
+                        2
                     };
                     let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
                     if let Some(i) = clicked {
                         if i != selected {
                             active = if i == 0 {
                                 caprust_core::ModelKind::Caption
-                            } else {
+                            } else if i == 1 {
                                 caprust_core::ModelKind::Narration
+                            } else {
+                                caprust_core::ModelKind::Enhancer
                             };
                         }
                     }
@@ -13332,6 +13334,10 @@ impl CapRustApp {
                 caprust_core::ModelKind::BackgroundRemover => {
                     // P3 path resolves the model from the registry on
                     // demand; same as FaceDetector.
+                }
+                caprust_core::ModelKind::Enhancer => {
+                    // AI Enhance model resolved on demand during export/render.
+                    // No immediate UI action needed beyond success toast.
                 }
             }
             let _ = model_id; // reserved for future "pin this model" behaviour
