@@ -354,7 +354,7 @@ Full details in [DIRECTIVES.md](DIRECTIVES.md).
 | **U2** | Media bin multi-select + long-press batch drag | Done |
 | **I** | CLAP audio plugins | Done |
 | **N** | MCP server - AI-driven editing | Done |
-| **K2** | Seamless double-buffer preview | Planned |
+| **K2** | Seamless double-buffer preview | Done |
 | **Q** | Multi-cam + screen record | Done |
 | **Chroma** | Chroma key (green screen) | Done |
 
