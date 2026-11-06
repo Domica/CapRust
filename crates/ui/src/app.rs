@@ -5667,6 +5667,8 @@ impl CapRustApp {
             caprust_core::ModelKind::ScrfdDetector => (format!("{model_id}.onnx"), None),
             caprust_core::ModelKind::BackgroundRemover => (format!("{model_id}.onnx"), None),
             caprust_core::ModelKind::Enhancer => (format!("{model_id}.onnx"), None),
+            caprust_core::ModelKind::Segmenter => (format!("{model_id}.onnx"), None),
+            caprust_core::ModelKind::Inpainter => (format!("{model_id}.onnx"), None),
         };
         let target = dir.join(filename);
         tracing::info!(
@@ -13120,6 +13122,8 @@ impl CapRustApp {
             caprust_core::ModelKind::ScrfdDetector => tr("mp-scrfd-title"),
             caprust_core::ModelKind::BackgroundRemover => tr("mp-bg-title"),
             caprust_core::ModelKind::Enhancer => tr("mp-enhance-title"),
+            caprust_core::ModelKind::Segmenter => tr("mp-segmenter-title"),
+            caprust_core::ModelKind::Inpainter => tr("mp-inpainter-title"),
         };
 
         let mut open = true;
@@ -13134,7 +13138,7 @@ impl CapRustApp {
             .default_width(560.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                // Tab strip: switch between Caption, Narration, and Enhancer
+                // Tab strip: switch between Caption, Narration, Enhancer, Segmenter, Inpainter
                 // model lists without closing the window.
                 ui.horizontal(|ui| {
                     let mut active = self.model_prompt_tab;
@@ -13142,13 +13146,21 @@ impl CapRustApp {
                         tr("mp-tab-captions"),
                         tr("mp-tab-narration"),
                         tr("mp-tab-enhance"),
+                        tr("mp-tab-segmenter"),
+                        tr("mp-tab-inpainter"),
                     ];
                     let selected = if active == caprust_core::ModelKind::Caption {
                         0
                     } else if active == caprust_core::ModelKind::Narration {
                         1
-                    } else {
+                    } else if active == caprust_core::ModelKind::Enhancer {
                         2
+                    } else if active == caprust_core::ModelKind::Segmenter {
+                        3
+                    } else if active == caprust_core::ModelKind::Inpainter {
+                        4
+                    } else {
+                        0
                     };
                     let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
                     if let Some(i) = clicked {
@@ -13157,8 +13169,12 @@ impl CapRustApp {
                                 caprust_core::ModelKind::Caption
                             } else if i == 1 {
                                 caprust_core::ModelKind::Narration
-                            } else {
+                            } else if i == 2 {
                                 caprust_core::ModelKind::Enhancer
+                            } else if i == 3 {
+                                caprust_core::ModelKind::Segmenter
+                            } else {
+                                caprust_core::ModelKind::Inpainter
                             };
                         }
                     }
@@ -13347,6 +13363,14 @@ impl CapRustApp {
                 }
                 caprust_core::ModelKind::Enhancer => {
                     // AI Enhance model resolved on demand during export/render.
+                    // No immediate UI action needed beyond success toast.
+                }
+                caprust_core::ModelKind::Segmenter => {
+                    // MobileSAM model resolved on demand for object removal.
+                    // No immediate UI action needed beyond success toast.
+                }
+                caprust_core::ModelKind::Inpainter => {
+                    // LaMa inpainter model resolved on demand during export/render.
                     // No immediate UI action needed beyond success toast.
                 }
             }

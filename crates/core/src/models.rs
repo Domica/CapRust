@@ -25,6 +25,12 @@ pub enum ModelKind {
     /// AI Enhance (Real-ESRGAN) for super-resolution upscaling.
     /// Single ONNX file. Runs during export/render (too slow for real-time preview).
     Enhancer,
+    /// Object segmentation for video inpainting (MobileSAM).
+    /// Single ONNX file. Generates mask from point/box prompt.
+    Segmenter,
+    /// AI Inpainting for object removal (LaMa).
+    /// Single ONNX file. Runs during export/render to fill masked regions.
+    Inpainter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,6 +315,42 @@ impl Default for ModelRegistry {
                 .with_sha256(
                     "0000000000000000000000000000000000000000000000000000000000000000",
                 ),
+                // --- Object Segmentation (MobileSAM) ---
+                // MobileSAM, Apache 2.0. Input 1024x1024 RGB + point/box prompt,
+                // output 256x256 mask logits. Lightweight SAM variant (~40 MB).
+                // Runs during export/render for object removal inpainting.
+                ModelInfo::new(
+                    "mobile-sam",
+                    "MobileSAM",
+                    ModelKind::Segmenter,
+                    "multi",
+                    40,
+                    "Lightweight object segmentation for video inpainting (object removal). Click to select object.",
+                )
+                .with_url(
+                    "https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.onnx",
+                )
+                .with_sha256(
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                ),
+                // --- AI Inpainting (LaMa) ---
+                // LaMa (Large Mask Inpainting), Apache 2.0. Input 512x512 RGB + mask,
+                // output inpainted RGB. Excellent for object removal.
+                // Runs during export/render (too slow for real-time preview).
+                ModelInfo::new(
+                    "lama-inpainter",
+                    "LaMa Inpainter",
+                    ModelKind::Inpainter,
+                    "multi",
+                    50,
+                    "AI inpainting for object removal. Fill masked regions naturally. Runs during export.",
+                )
+                .with_url(
+                    "https://huggingface.co/sberbank-ai/lama/resolve/main/lama.onnx",
+                )
+                .with_sha256(
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                ),
             ],
         }
     }
@@ -341,6 +383,20 @@ impl ModelRegistry {
         self.models
             .iter()
             .filter(|m| m.kind == ModelKind::Narration && m.status == ModelStatus::Ready)
+            .collect()
+    }
+
+    pub fn ready_segmenter(&self) -> Vec<&ModelInfo> {
+        self.models
+            .iter()
+            .filter(|m| m.kind == ModelKind::Segmenter && m.status == ModelStatus::Ready)
+            .collect()
+    }
+
+    pub fn ready_inpainter(&self) -> Vec<&ModelInfo> {
+        self.models
+            .iter()
+            .filter(|m| m.kind == ModelKind::Inpainter && m.status == ModelStatus::Ready)
             .collect()
     }
 

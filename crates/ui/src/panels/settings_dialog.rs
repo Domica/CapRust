@@ -542,6 +542,18 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
         clicked = Some(id);
     }
 
+    ui.add_space(space::L);
+    ui.label(egui::RichText::new(tr("set-models-segmenter")).strong());
+    if let Some(id) = show_model_group(ui, models, ModelKind::Segmenter) {
+        clicked = Some(id);
+    }
+
+    ui.add_space(space::L);
+    ui.label(egui::RichText::new(tr("set-models-inpainter")).strong());
+    if let Some(id) = show_model_group(ui, models, ModelKind::Inpainter) {
+        clicked = Some(id);
+    }
+
     clicked
 }
 
