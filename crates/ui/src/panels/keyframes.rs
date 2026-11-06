@@ -134,7 +134,7 @@ impl KeyframeEditor {
                     let dx = delta.x / area_w;
                     let dy = delta.y / area_h;
                     k.t_ms = (k.t_ms as f32 + dx * range).clamp(min_t, max_t) as u64;
-                    k.centre_x = (k.centre_x - dy).clamp(0.0, 1.0);
+                    k.centre_y = (k.centre_y - dy).clamp(0.0, 1.0);
                     ui.ctx().request_repaint();
                 }
             }
