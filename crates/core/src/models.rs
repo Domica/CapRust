@@ -292,9 +292,9 @@ impl Default for ModelRegistry {
                     "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
                 ),
                 // --- AI Enhance (Real-ESRGAN) ---
-                // realesrgan-x4plus, Apache 2.0. Input 320x320 RGB (or
-                // variable), output 4x upscaled. Too slow for real-time
-                /// preview with tract-onnx; runs during export/render.
+                // realesrgan-x4plus, Apache 2.0. Input variable RGB, output 4x upscaled.
+                // Too slow for real-time preview with tract-onnx; runs during export/render.
+                // ONNX model from Hugging Face mirror (original: xinntao/Real-ESRGAN)
                 ModelInfo::new(
                     "realesrgan-x4plus",
                     "Real-ESRGAN x4+",
@@ -304,7 +304,7 @@ impl Default for ModelRegistry {
                     "AI super-resolution upscaler (4x). Runs during export — too slow for real-time preview.",
                 )
                 .with_url(
-                    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/realesrgan-x4plus.onnx",
+                    "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/realesrgan-x4plus.onnx",
                 )
                 .with_sha256(
                     "0000000000000000000000000000000000000000000000000000000000000000",

@@ -5,7 +5,10 @@ use crate::theme::tokens::{space, text};
 use crate::widgets::button;
 use crate::widgets::chip;
 use crate::widgets::switch;
-use caprust_core::{Clip, ClipType, ProjectState};
+use caprust_core::{
+    models::{ModelRegistry, ModelStatus},
+    Clip, ClipType, ProjectState,
+};
 use egui::Ui;
 use egui_phosphor::regular as ph;
 use uuid::Uuid;
@@ -76,6 +79,7 @@ pub struct PropertiesState {
 #[derive(Debug)]
 pub enum PendingEdit {
     RemoveEffect(String),
+    AddEffect(String),
     ClearTransitionIn,
     ClearTransitionOut,
     Speed(f32),
@@ -1179,7 +1183,7 @@ pub fn show(
                 }
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui, clip, state),
+            PropertiesTab::Effects => show_effects(ui, clip, state, &project.models),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
             PropertiesTab::KeyframeTracks => {
@@ -2311,7 +2315,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     }
 }
 
-fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &ModelRegistry) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(space::S);
 
@@ -2567,6 +2571,40 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
             .small()
             .color(egui::Color32::from_gray(160)),
     );
+
+    // --- AI Enhance (Real-ESRGAN) ---
+    // Check if Real-ESRGAN model is ready and enabled
+    let enhance_model = models.models.iter().find(|m| m.id == "realesrgan-x4plus");
+    if let Some(model) = enhance_model {
+        if model.status == ModelStatus::Ready && model.enabled {
+            ui.add_space(space::M);
+            ui.separator();
+            ui.add_space(space::S);
+            ui.label(egui::RichText::new("AI Enhance (Real-ESRGAN)").strong());
+            ui.add_space(space::XS);
+            ui.label(
+                egui::RichText::new("Super-resolution upscaler (4x). Runs during export.")
+                    .small()
+                    .color(egui::Color32::from_gray(160)),
+            );
+            let has_enhance = clip.effects.iter().any(|fx| fx.effect_id == "ai_enhance");
+            let mut enhance_enabled = has_enhance;
+            if ui
+                .checkbox(&mut enhance_enabled, "Enable AI Enhance")
+                .changed()
+            {
+                if enhance_enabled {
+                    state
+                        .pending
+                        .push(PendingEdit::AddEffect("ai_enhance".to_string()));
+                } else {
+                    state
+                        .pending
+                        .push(PendingEdit::RemoveEffect("ai_enhance".to_string()));
+                }
+            }
+        }
+    }
 }
 
 fn clip_kind_label(clip: &Clip) -> &'static str {
@@ -2796,17 +2834,11 @@ fn show_keyframe_tracks(
             });
 
             // Keyframe editor for this track - uses Keyframe directly
-            let mut keys = track.keyframes.clone();
-
-            // Show editor even with 0/1 keyframes (shows grid + points)
             ui.add_space(space::XS);
-            crate::panels::keyframes::KeyframeEditor::show_keyframes(ui, &mut keys, playhead_ms);
-
-            // Sync back
-            track.keyframes = keys.clone();
+            crate::panels::keyframes::KeyframeEditor::show_keyframe_track(ui, track, playhead_ms);
 
             // Guidance for keyframe count
-            match keys.len() {
+            match track.keyframes.len() {
                 0 => {
                     ui.label(
                         egui::RichText::new(tr("props-keyframe-need-more"))

@@ -73,9 +73,9 @@ impl KeyframeEditor {
                 let a = pair[0];
                 let b = pair[1];
                 let x1 = rect_min.x + ((a.t_ms as f32 - min_t) / range) * area_w;
-                let y1 = rect_min.y + (1.0 - a.centre_x) * area_h;
+                let y1 = rect_min.y + (1.0 - a.centre_y) * area_h;
                 let x2 = rect_min.x + ((b.t_ms as f32 - min_t) / range) * area_w;
-                let y2 = rect_min.y + (1.0 - b.centre_x) * area_h;
+                let y2 = rect_min.y + (1.0 - b.centre_y) * area_h;
                 ui.painter().line_segment(
                     [Pos2::new(x1, y1), Pos2::new(x2, y2)],
                     Stroke::new(2.5, Color32::from_rgb(0xFF, 0x8B, 0xFD)),
@@ -196,6 +196,24 @@ impl KeyframeEditor {
         }
 
         ui.add_space(4.0);
+    }
+
+    /// Show the curve editor for a KeyframeTrack directly (modifies in place for immediate visual feedback).
+    pub fn show_keyframe_track(
+        ui: &mut Ui,
+        track: &mut caprust_core::clip::KeyframeTrack,
+        playhead_ms: u64,
+    ) {
+        Self::show_generic(
+            ui,
+            &mut track.keyframes,
+            playhead_ms,
+            |k| k.t,
+            |k| k.value,
+            |k| &mut k.ease,
+            |k, v| k.t = v,
+            |k, v| k.value = v,
+        );
     }
 
     /// Show the curve editor for generic keyframes (scale, rotation, opacity, etc.)

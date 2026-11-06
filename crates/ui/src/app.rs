@@ -10343,6 +10343,12 @@ impl CapRustApp {
                             );
                             let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
                         }
+                        PendingEdit::AddEffect(effect_id) => {
+                            let c = caprust_core::commands::set_effect::AddEffectCommand::new(
+                                id, effect_id,
+                            );
+                            let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                        }
                         PendingEdit::ClearTransitionIn => {
                             let c = caprust_core::commands::set_effect::SetTransitionCommand::new(
                                 id, true, None,
