@@ -310,7 +310,7 @@ impl Default for ModelRegistry {
                     "AI super-resolution upscaler (4x). Runs during export — too slow for real-time preview.",
                 )
                 .with_url(
-                    "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/realesrgan-x4plus.onnx",
+                    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-x4plus.onnx",
                 )
                 .with_sha256(
                     "0000000000000000000000000000000000000000000000000000000000000000",
@@ -328,7 +328,7 @@ impl Default for ModelRegistry {
                     "Lightweight object segmentation for video inpainting (object removal). Click to select object.",
                 )
                 .with_url(
-                    "https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.onnx",
+                    "https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam.onnx",
                 )
                 .with_sha256(
                     "0000000000000000000000000000000000000000000000000000000000000000",
@@ -346,7 +346,7 @@ impl Default for ModelRegistry {
                     "AI inpainting for object removal. Fill masked regions naturally. Runs during export.",
                 )
                 .with_url(
-                    "https://huggingface.co/sberbank-ai/lama/resolve/main/lama.onnx",
+                    "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama.onnx",
                 )
                 .with_sha256(
                     "0000000000000000000000000000000000000000000000000000000000000000",
