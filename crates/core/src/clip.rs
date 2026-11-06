@@ -1199,6 +1199,16 @@ pub struct Clip {
     /// through this mask.
     #[serde(default)]
     pub anon_mask: Option<String>,
+    /// Path to the per-clip object removal mask. Relative to the
+    /// project directory, e.g. "cache/objrem/<clip_id>.mkv". None = no
+    /// object removal. Populated by the object removal job (MobileSAM mask),
+    /// consumed by the render graph, which merges an inpainted copy
+    /// through this mask (LaMa ONNX).
+    #[serde(default)]
+    pub object_removal_mask: Option<String>,
+    /// Whether object removal (AI inpainting) is enabled for this clip.
+    #[serde(default)]
+    pub object_removal_enabled: bool,
     /// Path to the per-clip vidstab transforms file (stabilization
     /// pass 1). Relative to the project directory, e.g.
     /// "cache/stab/<clip_id>.trf". None = no stabilization.
@@ -1280,6 +1290,8 @@ impl Clip {
             blend_mode: None,
             color_grade: None,
             anon_mask: None,
+            object_removal_mask: None,
+            object_removal_enabled: false,
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
@@ -1338,6 +1350,8 @@ impl Clip {
             blend_mode: None,
             color_grade: None,
             anon_mask: None,
+            object_removal_mask: None,
+            object_removal_enabled: false,
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
@@ -1396,6 +1410,8 @@ impl Clip {
             blend_mode: None,
             color_grade: None,
             anon_mask: None,
+            object_removal_mask: None,
+            object_removal_enabled: false,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1458,6 +1474,8 @@ impl Clip {
             blend_mode: None,
             color_grade: None,
             anon_mask: None,
+            object_removal_mask: None,
+            object_removal_enabled: false,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1526,6 +1544,8 @@ impl Clip {
             blend_mode: None,
             color_grade: None,
             anon_mask: None,
+            object_removal_mask: None,
+            object_removal_enabled: false,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1592,6 +1612,8 @@ impl Clip {
             blend_mode: None,
             color_grade: None,
             anon_mask: None,
+            object_removal_mask: None,
+            object_removal_enabled: false,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,

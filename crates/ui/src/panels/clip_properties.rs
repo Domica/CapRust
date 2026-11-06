@@ -90,6 +90,10 @@ pub enum PendingEdit {
     TrimStart(u64),
     TrimDuration(u64),
     TrackIndex(usize),
+    /// Enable/disable object removal (AI inpainting) for a clip.
+    SetObjectRemovalEnabled(bool),
+    /// Clear the object removal mask for a clip.
+    ClearObjectRemovalMask,
     /// Overlay placement for a sticker. `None` clears it and puts the clip
     /// back to filling the frame.
     Overlay(Option<caprust_core::clip::OverlayPlacement>),
@@ -2601,6 +2605,52 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
                     state
                         .pending
                         .push(PendingEdit::RemoveEffect("ai_enhance".to_string()));
+                }
+            }
+        }
+    }
+
+    // --- Object Removal (AI Inpainting) ---
+    // Check if MobileSAM + LaMa models are ready and enabled
+    let segmenter_model = models.models.iter().find(|m| m.id == "mobile-sam");
+    let inpainter_model = models.models.iter().find(|m| m.id == "lama-inpainter");
+    let segmenter_ready = segmenter_model
+        .map(|m| m.status == ModelStatus::Ready && m.enabled)
+        .unwrap_or(false);
+    let inpainter_ready = inpainter_model
+        .map(|m| m.status == ModelStatus::Ready && m.enabled)
+        .unwrap_or(false);
+    if segmenter_ready && inpainter_ready {
+        ui.add_space(space::M);
+        ui.separator();
+        ui.add_space(space::S);
+        ui.label(egui::RichText::new("Object Removal (AI Inpainting)").strong());
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new("Remove unwanted objects/people. Uses MobileSAM (click-to-mask) + LaMa (inpaint). Runs during export.")
+                .small()
+                .color(egui::Color32::from_gray(160)),
+        );
+        let mut obj_removal_enabled = clip.object_removal_enabled;
+        if ui
+            .checkbox(&mut obj_removal_enabled, "Enable Object Removal")
+            .changed()
+        {
+            state
+                .pending
+                .push(PendingEdit::SetObjectRemovalEnabled(obj_removal_enabled));
+        }
+        if obj_removal_enabled {
+            ui.add_space(space::XS);
+            ui.label(
+                egui::RichText::new("Click on the preview to select object to remove.")
+                    .small()
+                    .color(egui::Color32::from_rgb(100, 200, 100)),
+            );
+            if clip.object_removal_mask.is_some() {
+                ui.add_space(space::XS);
+                if ui.button("Clear Mask").clicked() {
+                    state.pending.push(PendingEdit::ClearObjectRemovalMask);
                 }
             }
         }

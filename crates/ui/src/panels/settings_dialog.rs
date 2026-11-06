@@ -507,47 +507,60 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
 
     let mut clicked: Option<String> = None;
 
-    ui.label(egui::RichText::new(tr("set-models-captions")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::Caption) {
-        clicked = Some(id);
-    }
+    // Captions (collapsible, multiple models)
+    egui::CollapsingHeader::new(tr("set-models-captions"))
+        .default_open(false)
+        .show(ui, |ui| {
+            if let Some(id) = show_model_group(ui, models, ModelKind::Caption) {
+                clicked = Some(id);
+            }
+        });
 
-    ui.add_space(space::L);
-    ui.label(egui::RichText::new(tr("set-models-narration")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::Narration) {
-        clicked = Some(id);
-    }
+    // Narration (collapsible, multiple models)
+    egui::CollapsingHeader::new(tr("set-models-narration"))
+        .default_open(false)
+        .show(ui, |ui| {
+            if let Some(id) = show_model_group(ui, models, ModelKind::Narration) {
+                clicked = Some(id);
+            }
+        });
 
+    // Face detection (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-face")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::FaceDetector) {
         clicked = Some(id);
     }
 
+    // Background removal (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-bg")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::BackgroundRemover) {
         clicked = Some(id);
     }
 
+    // SCRFD detector (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-scrfd")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::ScrfdDetector) {
         clicked = Some(id);
     }
 
+    // AI Enhance (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-enhance")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::Enhancer) {
         clicked = Some(id);
     }
 
+    // Object Segmentation (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-segmenter")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::Segmenter) {
         clicked = Some(id);
     }
 
+    // AI Inpainting (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-inpainter")).strong());
     if let Some(id) = show_model_group(ui, models, ModelKind::Inpainter) {
