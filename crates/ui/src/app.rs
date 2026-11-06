@@ -13132,7 +13132,11 @@ impl CapRustApp {
                 // model lists without closing the window.
                 ui.horizontal(|ui| {
                     let mut active = self.model_prompt_tab;
-                    let labels = [tr("mp-tab-captions"), tr("mp-tab-narration"), tr("mp-tab-enhance")];
+                    let labels = [
+                        tr("mp-tab-captions"),
+                        tr("mp-tab-narration"),
+                        tr("mp-tab-enhance"),
+                    ];
                     let selected = if active == caprust_core::ModelKind::Caption {
                         0
                     } else if active == caprust_core::ModelKind::Narration {
