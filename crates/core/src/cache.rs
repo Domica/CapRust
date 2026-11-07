@@ -96,6 +96,24 @@ pub fn stab_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
     p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
 }
 
+/// Path: <project>/cache/inpaint/<clip_id>.mp4
+///
+/// Inpainted video from LaMa inpainting (object removal Phase 2).
+/// Keyed by clip id for the same reason as `mask_path` (per-clip trim window).
+/// H.264 MP4 for compatibility with the export pipeline.
+pub fn inpaint_path(project_path: &Path, clip_id: uuid::Uuid) -> std::path::PathBuf {
+    project_path
+        .join("cache")
+        .join("inpaint")
+        .join(format!("{clip_id}.mp4"))
+}
+
+/// Best-effort: does a non-empty inpainted video already exist?
+pub fn inpaint_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
+    let p = inpaint_path(project_path, clip_id);
+    p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+}
+
 pub fn clear_cache(project_path: &Path) -> Result<usize> {
     let cache_dir = project_path.join("cache");
     if !cache_dir.exists() {

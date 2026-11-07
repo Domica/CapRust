@@ -1209,6 +1209,12 @@ pub struct Clip {
     /// Whether object removal (AI inpainting) is enabled for this clip.
     #[serde(default)]
     pub object_removal_enabled: bool,
+    /// Path to the inpainted video for object removal. Relative to the
+    /// project directory, e.g. "cache/inpaint/<clip_id>.mp4". None = no
+    /// inpainted video yet. Populated by the LaMa inpainting job,
+    /// consumed by the render graph as the replacement video.
+    #[serde(default)]
+    pub object_removal_video: Option<String>,
     /// Path to the per-clip vidstab transforms file (stabilization
     /// pass 1). Relative to the project directory, e.g.
     /// "cache/stab/<clip_id>.trf". None = no stabilization.
@@ -1292,6 +1298,7 @@ impl Clip {
             anon_mask: None,
             object_removal_mask: None,
             object_removal_enabled: false,
+            object_removal_video: None,
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
@@ -1352,6 +1359,7 @@ impl Clip {
             anon_mask: None,
             object_removal_mask: None,
             object_removal_enabled: false,
+            object_removal_video: None,
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
@@ -1412,6 +1420,7 @@ impl Clip {
             anon_mask: None,
             object_removal_mask: None,
             object_removal_enabled: false,
+            object_removal_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1476,6 +1485,7 @@ impl Clip {
             anon_mask: None,
             object_removal_mask: None,
             object_removal_enabled: false,
+            object_removal_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1546,6 +1556,7 @@ impl Clip {
             anon_mask: None,
             object_removal_mask: None,
             object_removal_enabled: false,
+            object_removal_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1614,6 +1625,7 @@ impl Clip {
             anon_mask: None,
             object_removal_mask: None,
             object_removal_enabled: false,
+            object_removal_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,

@@ -83,6 +83,8 @@ impl Slot {
 #[derive(Default)]
 pub struct PreviewPlayer {
     pub texture: Option<egui::TextureHandle>,
+    /// Mask texture for object removal preview (red overlay showing segmented object).
+    pub mask_texture: Option<egui::TextureHandle>,
     pub last_key: Option<FrameKey>,
     /// Key currently being decoded (as far as the UI knows).
     pub pending: Option<FrameKey>,
@@ -160,6 +162,29 @@ impl PreviewPlayer {
         self.has_frame = true;
         self.capture_frame(width, height, rgba);
     }
+
+    /// Set the mask texture for object removal preview.
+    /// The mask should be a grayscale image where white = object, black = background.
+    pub fn set_mask(&mut self, ctx: &egui::Context, name: &str, width: usize, height: usize, gray: &[u8]) {
+        // Convert grayscale to red-tinted RGBA for overlay
+        let mut rgba = Vec::with_capacity(width * height * 4);
+        for &g in gray {
+            // Red tint with alpha based on mask intensity
+            let alpha = g as f32 / 255.0;
+            let r = (255.0 * alpha) as u8;
+            rgba.push(r);
+            rgba.push(0);
+            rgba.push(0);
+            rgba.push(g); // Use mask value as alpha
+        }
+        let img = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
+        self.mask_texture = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));
+    }
+
+    /// Clear the mask texture.
+    pub fn clear_mask(&mut self) {
+        self.mask_texture = None;
+    }
 }
 
 impl std::fmt::Debug for PreviewPlayer {
@@ -213,6 +238,7 @@ impl PreviewPlayer {
 
         Self {
             texture: None,
+            mask_texture: None,
             last_key: None,
             pending: None,
             has_frame: false,

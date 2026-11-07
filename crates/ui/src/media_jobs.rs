@@ -1074,6 +1074,357 @@ fn run_bg_removal_inner(
     Ok(())
 }
 
+/// MobileSAM segmentation (Phase K2 - Object Removal)
+/// ---------------------------------------------------------------------------
+
+/// Progress events emitted by a MobileSAM segmentation job. Modeled on
+/// `BgRemovalEvent`: the worker sends these over an mpsc channel,
+/// the UI drains them per frame.
+#[derive(Debug)]
+pub enum SegmentEvent {
+    /// Emitted after probe + extraction, before the per-frame loop.
+    Started { total_frames: usize },
+    /// Emitted every N frames (see PROGRESS_STRIDE).
+    Progress { done: usize, total: usize },
+    /// Terminal success. `mask_path` is the FFV1 MKV on disk.
+    Finished {
+        clip_id: uuid::Uuid,
+        mask_path: std::path::PathBuf,
+        frame_count: usize,
+    },
+    /// Terminal failure. `reason` is a user-readable string.
+    Failed(String),
+}
+
+/// Request for a MobileSAM segmentation job. Everything the worker needs
+/// to run end to end, with no back-reference into the project state.
+#[derive(Debug)]
+pub struct SegmentRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: std::path::PathBuf,
+    /// Offset inside the source where the clip begins.
+    pub t_start_ms: u64,
+    /// Length of the source window to process.
+    pub duration_ms: u64,
+    /// Frame rate to sample and encode at. Must match the project's
+    /// frame rate so the mask aligns with the render output 1:1.
+    pub fps: f64,
+    /// Path to the MobileSAM encoder ONNX model on disk.
+    pub encoder_path: std::path::PathBuf,
+    /// Path to the MobileSAM decoder ONNX model on disk.
+    pub decoder_path: std::path::PathBuf,
+    /// Where to write the FFV1 MKV mask. Resolved by the caller via
+    /// `caprust_core::cache::mask_path`.
+    pub mask_output: std::path::PathBuf,
+    /// Click X coordinate in normalized coordinates [0, 1].
+    pub click_x: f32,
+    /// Click Y coordinate in normalized coordinates [0, 1].
+    pub click_y: f32,
+    /// Downscale the longer side of each extracted frame to at most
+    /// this before running inference.
+    pub max_side: u32,
+}
+
+/// Spawn a background thread that runs the full MobileSAM segmentation
+/// pipeline: probe source dimensions, extract sampled frames, run
+/// MobileSAM encoder+decoder on each with point prompt, and write the
+/// per-frame binary masks to a single FFV1 Matroska file. Emits
+/// `SegmentEvent`s as it progresses.
+///
+/// Returns immediately with a receiver. `ffmpeg` and `ffprobe` must
+/// be valid paths.
+pub fn spawn_segment_job(
+    ffmpeg: std::path::PathBuf,
+    ffprobe: std::path::PathBuf,
+    req: SegmentRequest,
+) -> std::sync::mpsc::Receiver<SegmentEvent> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-segment".into())
+        // tract inference is stack-hungry; 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            if let Err(reason) = run_segment_inner(&ffmpeg, &ffprobe, &req, &tx) {
+                tracing::error!("segment: {reason}");
+                let _ = tx.send(SegmentEvent::Failed(reason));
+            }
+        })
+        .expect("spawn segment thread");
+
+    rx
+}
+
+fn run_segment_inner(
+    ffmpeg: &std::path::Path,
+    ffprobe: &std::path::Path,
+    req: &SegmentRequest,
+    tx: &std::sync::mpsc::Sender<SegmentEvent>,
+) -> Result<(), String> {
+    // 1. Probe for native dimensions.
+    let probe = caprust_media_io::ffprobe::probe(ffprobe, &req.source_path)
+        .map_err(|e| format!("probe {}: {e}", req.source_path.display()))?;
+    if !probe.has_video {
+        return Err("source has no video stream".into());
+    }
+    let src_w = probe
+        .width
+        .ok_or_else(|| "probe: missing width".to_string())?;
+    let src_h = probe
+        .height
+        .ok_or_else(|| "probe: missing height".to_string())?;
+    if src_w < 2 || src_h < 2 {
+        return Err(format!("invalid source dimensions {src_w}x{src_h}"));
+    }
+
+    // 2. Extract sampled frames at the project's frame rate.
+    let frames = caprust_media_io::frame_extract::extract_rgb_frames(
+        ffmpeg,
+        &req.source_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("frame extraction: {e}"))?;
+
+    let total = frames.len();
+    if total == 0 {
+        return Err("no frames extracted".into());
+    }
+    let _ = tx.send(SegmentEvent::Started {
+        total_frames: total,
+    });
+    tracing::info!(
+        "segment: clip {} -- {} frames to process",
+        req.clip_id,
+        total
+    );
+
+    // 3. Load the MobileSAM model once.
+    let model = caprust_media_io::mobile_sam::MobileSam::load(&req.encoder_path, &req.decoder_path)
+        .map_err(|e| format!("load MobileSAM: {e}"))?;
+
+    // 4. Open the FFV1 writer on the output path.
+    let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
+
+    // 5. Per-frame inference + write.
+    for (i, frame) in frames.iter().enumerate() {
+        let mask = model
+            .segment_point(&frame.rgb, frame.width, frame.height, req.click_x, req.click_y)
+            .map_err(|e| format!("infer frame {i}: {e}"))?;
+        writer
+            .write_frame(&mask)
+            .map_err(|e| format!("write frame {i}: {e}"))?;
+
+        if (i + 1) % PROGRESS_STRIDE == 0 || i + 1 == total {
+            tracing::info!("segment: frame {}/{}", i + 1, total);
+            let _ = tx.send(SegmentEvent::Progress { done: i + 1, total });
+        }
+    }
+
+    // 6. Flush and close the writer.
+    writer
+        .finish()
+        .map_err(|e| format!("flush mask writer: {e}"))?;
+
+    let _ = tx.send(SegmentEvent::Finished {
+        clip_id: req.clip_id,
+        mask_path: req.mask_output.clone(),
+        frame_count: total,
+    });
+    tracing::info!(
+        "segment: clip {} done -- {} frames -> {}",
+        req.clip_id,
+        total,
+        req.mask_output.display()
+    );
+    Ok(())
+}
+
+/// LaMa inpainting (Phase K2 - Object Removal)
+/// ---------------------------------------------------------------------------
+
+/// Progress events emitted by a LaMa inpainting job. Modeled on
+/// `BgRemovalEvent`: the worker sends these over an mpsc channel,
+/// the UI drains them per frame.
+#[derive(Debug)]
+pub enum InpaintEvent {
+    /// Emitted after probe + extraction, before the per-frame loop.
+    Started { total_frames: usize },
+    /// Emitted every N frames (see PROGRESS_STRIDE).
+    Progress { done: usize, total: usize },
+    /// Terminal success. `output_path` is the inpainted video on disk.
+    Finished {
+        clip_id: uuid::Uuid,
+        output_path: std::path::PathBuf,
+        frame_count: usize,
+    },
+    /// Terminal failure. `reason` is a user-readable string.
+    Failed(String),
+}
+
+/// Request for a LaMa inpainting job. Everything the worker needs
+/// to run end to end, with no back-reference into the project state.
+#[derive(Debug)]
+pub struct InpaintRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: std::path::PathBuf,
+    /// Offset inside the source where the clip begins.
+    pub t_start_ms: u64,
+    /// Length of the source window to process.
+    pub duration_ms: u64,
+    /// Frame rate to sample and encode at. Must match the project's
+    /// frame rate so the output aligns with the render output 1:1.
+    pub fps: f64,
+    /// Path to the LaMa ONNX model on disk.
+    pub model_path: std::path::PathBuf,
+    /// Path to the mask video (FFV1 MKV) generated by MobileSAM.
+    pub mask_path: std::path::PathBuf,
+    /// Where to write the inpainted video.
+    pub output_path: std::path::PathBuf,
+    /// Downscale the longer side of each extracted frame to at most
+    /// this before running inference. LaMa runs at 512x512
+    /// internally.
+    pub max_side: u32,
+}
+
+/// Spawn a background thread that runs the full LaMa inpainting
+/// pipeline: probe source dimensions, extract sampled frames + masks,
+/// run LaMa on each, and write the inpainted frames to a video file.
+/// Emits `InpaintEvent`s as it progresses.
+///
+/// Returns immediately with a receiver. `ffmpeg` and `ffprobe` must
+/// be valid paths.
+pub fn spawn_inpaint_job(
+    ffmpeg: std::path::PathBuf,
+    ffprobe: std::path::PathBuf,
+    req: InpaintRequest,
+) -> std::sync::mpsc::Receiver<InpaintEvent> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("caprust-inpaint".into())
+        // tract inference is stack-hungry; 32 MB is comfortable.
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            if let Err(reason) = run_inpaint_inner(&ffmpeg, &ffprobe, &req, &tx) {
+                tracing::error!("inpaint: {reason}");
+                let _ = tx.send(InpaintEvent::Failed(reason));
+            }
+        })
+        .expect("spawn inpaint thread");
+
+    rx
+}
+
+fn run_inpaint_inner(
+    ffmpeg: &std::path::Path,
+    ffprobe: &std::path::Path,
+    req: &InpaintRequest,
+    tx: &std::sync::mpsc::Sender<InpaintEvent>,
+) -> Result<(), String> {
+    // 1. Probe for native dimensions.
+    let probe = caprust_media_io::ffprobe::probe(ffprobe, &req.source_path)
+        .map_err(|e| format!("probe {}: {e}", req.source_path.display()))?;
+    if !probe.has_video {
+        return Err("source has no video stream".into());
+    }
+    let src_w = probe
+        .width
+        .ok_or_else(|| "probe: missing width".to_string())?;
+    let src_h = probe
+        .height
+        .ok_or_else(|| "probe: missing height".to_string())?;
+    if src_w < 2 || src_h < 2 {
+        return Err(format!("invalid source dimensions {src_w}x{src_h}"));
+    }
+
+    // 2. Extract sampled frames at the project's frame rate.
+    let frames = caprust_media_io::frame_extract::extract_rgb_frames(
+        ffmpeg,
+        &req.source_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("frame extraction: {e}"))?;
+
+    // 3. Extract mask frames (grayscale) from the mask video.
+    let mask_frames = caprust_media_io::frame_extract::extract_gray_frames(
+        ffmpeg,
+        &req.mask_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("mask frame extraction: {e}"))?;
+
+    let total = frames.len();
+    if total == 0 {
+        return Err("no frames extracted".into());
+    }
+    if mask_frames.len() != total {
+        return Err(format!("frame count mismatch: {} video frames vs {} mask frames", total, mask_frames.len()));
+    }
+    let _ = tx.send(InpaintEvent::Started {
+        total_frames: total,
+    });
+    tracing::info!(
+        "inpaint: clip {} -- {} frames to process",
+        req.clip_id,
+        total
+    );
+
+    // 4. Load the LaMa model once.
+    let model = caprust_media_io::lama::Lama::load(&req.model_path)
+        .map_err(|e| format!("load LaMa: {e}"))?;
+
+    // 5. Open the video writer for inpainted output.
+    let mut writer = spawn_video_writer(ffmpeg, &req.output_path, &frames[0], req.fps)?;
+
+    // 6. Per-frame inpainting + write.
+    for (i, (frame, mask)) in frames.iter().zip(mask_frames.iter()).enumerate() {
+        let inpainted = model
+            .inpaint(&frame.rgb, &mask.gray, frame.width, frame.height)
+            .map_err(|e| format!("inpaint frame {i}: {e}"))?;
+        writer
+            .write_frame(&inpainted)
+            .map_err(|e| format!("write frame {i}: {e}"))?;
+
+        if (i + 1) % PROGRESS_STRIDE == 0 || i + 1 == total {
+            tracing::info!("inpaint: frame {}/{}", i + 1, total);
+            let _ = tx.send(InpaintEvent::Progress { done: i + 1, total });
+        }
+    }
+
+    // 7. Flush and close the writer.
+    writer
+        .finish()
+        .map_err(|e| format!("flush video writer: {e}"))?;
+
+    let _ = tx.send(InpaintEvent::Finished {
+        clip_id: req.clip_id,
+        output_path: req.output_path.clone(),
+        frame_count: total,
+    });
+    tracing::info!(
+        "inpaint: clip {} done -- {} frames -> {}",
+        req.clip_id,
+        total,
+        req.output_path.display()
+    );
+    Ok(())
+}
+
 /// Request for a face-anonymize job. Mirrors `BgRemovalRequest`:
 /// detect faces per extracted frame with YuNet, paint expanded
 /// filled boxes onto a black canvas, encode the sequence as FFV1.
@@ -1368,6 +1719,111 @@ fn spawn_mask_writer(
         child,
         stdin,
         frame_bytes: (w as usize) * (h as usize),
+    })
+}
+
+/// Video writer for inpainted frames (color output).
+pub struct VideoWriter {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    frame_bytes: usize,
+}
+
+impl VideoWriter {
+    pub fn write_frame(&mut self, rgb: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        if rgb.len() != self.frame_bytes {
+            return Err(format!(
+                "frame size mismatch: expected {}, got {}",
+                self.frame_bytes,
+                rgb.len()
+            ));
+        }
+        self.stdin
+            .write_all(rgb)
+            .map_err(|e| format!("write frame to ffmpeg: {e}"))?;
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<(), String> {
+        drop(self.stdin);
+        let status = self
+            .child
+            .wait()
+            .map_err(|e| format!("wait ffmpeg video writer: {e}"))?;
+        if !status.success() {
+            return Err(format!("ffmpeg video writer exited {}", status));
+        }
+        Ok(())
+    }
+}
+
+fn spawn_video_writer(
+    ffmpeg: &std::path::Path,
+    output: &std::path::Path,
+    first_frame: &caprust_media_io::frame_extract::RgbFrame,
+    fps: f64,
+) -> Result<VideoWriter, String> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let w = first_frame.width;
+    let h = first_frame.height;
+    let args: Vec<String> = vec![
+        "-y".into(),
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-f".into(),
+        "rawvideo".into(),
+        "-pix_fmt".into(),
+        "rgb24".into(),
+        "-s".into(),
+        format!("{w}x{h}"),
+        "-r".into(),
+        format!("{fps:.6}"),
+        "-i".into(),
+        "-".into(),
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "veryfast".into(),
+        "-pix_fmt".into(),
+        "yuv420p".into(),
+        "-crf".into(),
+        "23".into(),
+        output.to_string_lossy().into_owned(),
+    ];
+    tracing::debug!("inpaint: video writer args: {:?}", args);
+    let mut child = caprust_media_io::silent_cmd::silent_command(ffmpeg)
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg video writer: {e}"))?;
+
+    if let Some(mut err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(&mut err);
+            for line in reader.lines().map_while(std::result::Result::ok) {
+                if !line.trim().is_empty() {
+                    tracing::warn!("inpaint ffmpeg: {line}");
+                }
+            }
+        });
+    }
+
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "ffmpeg video writer: stdin missing".to_string())?;
+
+    Ok(VideoWriter {
+        child,
+        stdin,
+        frame_bytes: (w as usize) * (h as usize) * 3,
     })
 }
 

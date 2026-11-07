@@ -202,6 +202,9 @@ pub enum JobKind {
     /// Background removal (Phase P3c): per-frame u2netp inference,
     /// mask written as FFV1 MKV into the project cache.
     BgRemoval,
+    /// Object removal (Phase K2): MobileSAM segmentation + LaMa inpainting,
+    /// mask written as FFV1 MKV into the project cache.
+    ObjectRemoval,
     /// Beat analysis: onset-flux BPM + markers for an audio clip.
     Beat,
     /// Stabilization pass 1 (vidstabdetect): measures camera motion
@@ -507,6 +510,25 @@ pub struct CapRustApp {
     /// Receiver for an in-flight save-frame worker. Single result
     /// message (Ok(path) / Err(reason)), drained per frame.
     pub save_frame_rx: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
+    /// Receiver for an in-flight MobileSAM segmentation job.
+    /// Emits Started / Progress / Finished / Failed events.
+    pub segment_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
+    /// Job id for the segment bar entry.
+    pub segment_job_id: Option<u64>,
+    /// The clip ID currently being processed by the segment job.
+    pub segment_job_clip_id: Option<uuid::Uuid>,
+    /// The click coordinates (click_x, click_y) that triggered the segment job.
+    pub segment_job_click: Option<(f32, f32)>,
+    /// Mask frame data for preview overlay (set when segment job finishes).
+    /// (width, height, gray_bytes)
+    pub segment_mask_frame: Option<(u32, u32, Vec<u8>)>,
+    /// Receiver for an in-flight LaMa inpainting job.
+    /// Emits Started / Progress / Finished / Failed events.
+    pub inpaint_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
+    /// Job id for the inpaint bar entry.
+    pub inpaint_job_id: Option<u64>,
+    /// The clip ID currently being processed by the inpaint job.
+    pub inpaint_clip_id: Option<uuid::Uuid>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -1653,6 +1675,14 @@ impl CapRustApp {
             stab_job_id: None,
             stab_rel_path: None,
             save_frame_rx: None,
+            segment_rx: None,
+            segment_job_id: None,
+            segment_job_clip_id: None,
+            segment_job_click: None,
+            segment_mask_frame: None,
+            inpaint_rx: None,
+            inpaint_job_id: None,
+            inpaint_clip_id: None,
             narration_input: Default::default(),
             update_available: None,
             update_download: None,
@@ -4803,6 +4833,307 @@ impl CapRustApp {
         }
         if still_live {
             self.stab_rx = Some(rx);
+        }
+    }
+
+    /// Poll the in-flight MobileSAM segmentation job. On Finished, store
+    /// the mask path and the click coordinates for later use in the
+    /// LaMa inpainting job. On Failed, toast and clear state.
+    fn drain_segment_job(&mut self) {
+        // Take the receiver so we can process every queued event and
+        // put it back only while the stream is still live. Same shape
+        // as drain_bg_removal_job.
+        let Some(rx) = self.segment_rx.take() else {
+            return;
+        };
+        let mut still_live = true;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::media_jobs::SegmentEvent::Started { total_frames }) => {
+                    tracing::info!("segment: started, {total_frames} frames to process");
+                    if let Some(id) = self.segment_job_id {
+                        // Stay indeterminate until the first Progress
+                        // event: in debug builds frame 1/N can take
+                        // minutes, and a 0 percent bar reads as stuck.
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+                    }
+                }
+                Ok(crate::media_jobs::SegmentEvent::Progress { done, total }) => {
+                    let p = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    };
+                    if let Some(id) = self.segment_job_id {
+                        self.update_job_progress(id, p);
+                    }
+                }
+                Ok(crate::media_jobs::SegmentEvent::Finished {
+                    clip_id,
+                    mask_path,
+                    frame_count,
+                }) => {
+                    // Store the mask path and click coordinates for later use in LaMa inpainting
+                    self.segment_job_clip_id = Some(clip_id);
+                    let click_coords = self.segment_job_click.take();
+                    
+                    // Load the first mask frame for preview overlay
+                    if let Some(ffmpeg) = &self.ffmpeg_status.ffmpeg {
+                        if let Ok(mask_frames) = caprust_media_io::frame_extract::extract_gray_frames(
+                            std::path::Path::new(ffmpeg),
+                            &mask_path,
+                            0, 0, // Will be probed
+                            0.0,
+                            f64::MAX,
+                            30.0,
+                            480,
+                        ) {
+                            if let Some(first_mask) = mask_frames.first() {
+                                // Store mask frame data for later texture creation in render loop
+                                self.segment_mask_frame = Some((
+                                    first_mask.width,
+                                    first_mask.height,
+                                    first_mask.gray.clone(),
+                                ));
+                            }
+                        }
+                    }
+                    
+                    // Store the mask path relative to project
+                    let project_path = self.project.project_path.clone();
+                    let stored = project_path.and_then(|p| {
+                        mask_path
+                            .strip_prefix(&p)
+                            .ok()
+                            .map(|r| r.to_string_lossy().into_owned())
+                    });
+                    if let Some(rel) = stored {
+                        let cmd = caprust_core::commands::set_clip::SetClipCommand::new(clip_id)
+                            .bg_removal(Some(rel));
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("segment: apply failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-bg-removal-failed")));
+                        } else {
+                            tracing::info!(
+                                "segment: clip {} mask applied ({frame_count} frames)",
+                                clip_id
+                            );
+                            self.toast(tr("toast-object-removal-mask-ready"));
+                            
+                            // Auto-start LaMa inpainting job if click coordinates are available
+                            if let Some((click_x, click_y)) = click_coords {
+                                self.start_inpaint_job(clip_id, mask_path, click_x, click_y);
+                            }
+                        }
+                    } else {
+                        tracing::warn!("segment: finished but no relative path available");
+                        self.toast_error(tr("toast-bg-removal-failed"));
+                    }
+                    if let Some(id) = self.segment_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::SegmentEvent::Failed(msg)) => {
+                    tracing::error!("segment: job failed: {msg}");
+                    self.toast_error(format!("{}: {msg}", tr("toast-bg-removal-failed")));
+                    if let Some(id) = self.segment_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.segment_job_clip_id = None;
+                    self.segment_job_click = None;
+                    still_live = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("segment: receiver disconnected unexpectedly");
+                    if let Some(id) = self.segment_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.segment_job_clip_id = None;
+                    self.segment_job_click = None;
+                    still_live = false;
+                    break;
+                }
+            }
+        }
+        if still_live {
+            self.segment_rx = Some(rx);
+        }
+    }
+
+    /// Start a LaMa inpainting job for the given clip using the mask from MobileSAM.
+    fn start_inpaint_job(&mut self, clip_id: uuid::Uuid, mask_path: std::path::PathBuf, _click_x: f32, _click_y: f32) {
+        if self.inpaint_rx.is_some() {
+            self.toast(tr("toast-inpaint-busy"));
+            return;
+        }
+        let Some(project_path) = self.project.project_path.clone() else {
+            self.toast(tr("toast-inpaint-needs-project"));
+            return;
+        };
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. }
+            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-inpaint-needs-video"));
+                return;
+            }
+        };
+        if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
+            self.toast(tr("toast-inpaint-unsupported"));
+            return;
+        }
+        let duration_ms = clip.duration_ms;
+        if duration_ms == 0 {
+            self.toast(tr("toast-inpaint-needs-video"));
+            return;
+        }
+        let t_start_ms = clip.source_offset_ms;
+
+        // Check if LaMa model is ready
+        let inpainter_ready = self.project.models.ready_inpainter().iter().any(|m| m.enabled);
+        if !inpainter_ready {
+            self.toast(tr("toast-inpaint-needs-model"));
+            return;
+        }
+        let model_path = self.project.models.local_path(std::path::Path::new(&self.settings.models_dir), "lama");
+
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-inpaint-needs-ffmpeg"));
+            return;
+        };
+        let Some(ffprobe) = self.ffmpeg_status.ffprobe.clone() else {
+            self.toast(tr("toast-inpaint-needs-ffmpeg"));
+            return;
+        };
+
+        let fps = {
+            let fr = &self.project.frame_rate;
+            if fr.den == 0 { 30.0 } else { fr.num as f64 / fr.den as f64 }
+        };
+
+        // Output path for inpainted video
+        let output_path = caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
+
+        let req = crate::media_jobs::InpaintRequest {
+            clip_id,
+            source_path,
+            t_start_ms,
+            duration_ms,
+            fps,
+            model_path,
+            mask_path,
+            output_path,
+            max_side: 512, // LaMa runs at 512x512 internally
+        };
+        let rx = crate::media_jobs::spawn_inpaint_job(
+            std::path::PathBuf::from(ffmpeg),
+            std::path::PathBuf::from(ffprobe),
+            req,
+        );
+        let job_id = self.begin_job(JobKind::ObjectRemoval, tr("job-object-removal-inpaint"));
+        self.inpaint_job_id = Some(job_id);
+        self.inpaint_rx = Some(rx);
+        self.inpaint_clip_id = Some(clip_id);
+        self.toast(tr("toast-inpaint-started"));
+        tracing::info!("Started LaMa inpainting job for clip {}", clip_id);
+    }
+
+    /// Poll the in-flight LaMa inpainting job. On Finished, store the
+    /// output video path in the clip for export. On Failed, toast and clear state.
+    fn drain_inpaint_job(&mut self) {
+        let Some(rx) = self.inpaint_rx.take() else {
+            return;
+        };
+        let mut still_live = true;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::media_jobs::InpaintEvent::Started { total_frames }) => {
+                    tracing::info!("inpaint: started, {total_frames} frames to process");
+                    if let Some(id) = self.inpaint_job_id {
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+                    }
+                }
+                Ok(crate::media_jobs::InpaintEvent::Progress { done, total }) => {
+                    let p = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    };
+                    if let Some(id) = self.inpaint_job_id {
+                        self.update_job_progress(id, p);
+                    }
+                }
+                Ok(crate::media_jobs::InpaintEvent::Finished {
+                    clip_id,
+                    output_path,
+                    frame_count,
+                }) => {
+                    // Store the inpainted video path relative to project
+                    let project_path = self.project.project_path.clone();
+                    let stored = project_path.and_then(|p| {
+                        output_path
+                            .strip_prefix(&p)
+                            .ok()
+                            .map(|r| r.to_string_lossy().into_owned())
+                    });
+                    if let Some(rel) = stored {
+                        let cmd = caprust_core::commands::set_clip::SetClipCommand::new(clip_id)
+                            .object_removal_video(Some(rel));
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("inpaint: apply failed: {e}");
+                            self.toast_error(format!("{}: {e}", tr("toast-inpaint-failed")));
+                        } else {
+                            tracing::info!(
+                                "inpaint: clip {} inpainted video applied ({frame_count} frames)",
+                                clip_id
+                            );
+                            self.toast(tr("toast-inpaint-done"));
+                        }
+                    } else {
+                        tracing::warn!("inpaint: finished but no relative path available");
+                        self.toast_error(tr("toast-inpaint-failed"));
+                    }
+                    if let Some(id) = self.inpaint_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    // Clear mask overlay
+                    self.preview_player.clear_mask();
+                    self.segment_mask_frame = None;
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::InpaintEvent::Failed(msg)) => {
+                    tracing::error!("inpaint: job failed: {msg}");
+                    self.toast_error(format!("{}: {msg}", tr("toast-inpaint-failed")));
+                    if let Some(id) = self.inpaint_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.inpaint_clip_id = None;
+                    // Clear mask overlay on failure too
+                    self.preview_player.clear_mask();
+                    self.segment_mask_frame = None;
+                    still_live = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("inpaint: receiver disconnected unexpectedly");
+                    if let Some(id) = self.inpaint_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.inpaint_clip_id = None;
+                    self.preview_player.clear_mask();
+                    self.segment_mask_frame = None;
+                    still_live = false;
+                    break;
+                }
+            }
+        }
+        if still_live {
+            self.inpaint_rx = Some(rx);
         }
     }
 
@@ -12117,7 +12448,138 @@ impl CapRustApp {
                 egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+
+            // ---- Object Removal: Click to select object ----
+            // Add interaction for object removal click
+            let preview_response = ui.interact(
+                draw_rect,
+                ui.id().with("preview_object_removal"),
+                egui::Sense::click(),
+            );
+            
+            if preview_response.clicked() {
+                if let Some(pointer_pos) = preview_response.interact_pointer_pos() {
+                    // Convert click position to normalized coordinates [0, 1]
+                    let rel_x = (pointer_pos.x - draw_rect.left()) / draw_rect.width();
+                    let rel_y = (pointer_pos.y - draw_rect.top()) / draw_rect.height();
+                    
+                    // Clamp to [0, 1]
+                    let click_x = rel_x.clamp(0.0, 1.0);
+                    let click_y = rel_y.clamp(0.0, 1.0);
+                    
+                    tracing::info!("Object removal click at normalized coordinates: ({:.3}, {:.3})", click_x, click_y);
+                    
+                    // Find the clip under the playhead
+                    if let Some(clip_info) = clip_info {
+                        // Extract clip data before mutable borrow
+                        let clip_id = clip_info.0;
+                        let source_path = clip_info.1.clone();
+                        let clip_data = self.project.clips.iter().find(|c| c.id == clip_id);
+                        if let Some(clip) = clip_data {
+                            let clip_id = clip.id;
+                            let start_time_ms = clip.start_time_ms;
+                            let duration_ms = clip.duration_ms;
+                            let object_removal_enabled = clip.object_removal_enabled;
+                            
+                            // Check if object removal is enabled and models are ready
+                            if object_removal_enabled {
+                                // Check if both MobileSAM encoder and decoder are downloaded
+                                let models_dir = std::path::Path::new(&self.settings.models_dir);
+                                let encoder_path = self.project.models.local_path(models_dir, "mobile-sam-encoder");
+                                let decoder_path = self.project.models.local_path(models_dir, "mobile-sam-decoder");
+                                let segmenter_ready = encoder_path.is_file() && decoder_path.is_file();
+                                
+                                // Check if LaMa inpainter is downloaded
+                                let inpainter_path = self.project.models.local_path(models_dir, "lama-inpainter");
+                                let inpainter_ready = inpainter_path.is_file();
+                                
+                                if segmenter_ready && inpainter_ready {
+                                    let project_path = self.project.project_path.as_deref().unwrap_or(".");
+                                    let mask_output = caprust_core::cache::mask_path(std::path::Path::new(project_path), clip_id);
+                                    
+                                    // Get fps from project frame rate
+                                    let fps = {
+                                        let fr = &self.project.frame_rate;
+                                        if fr.den == 0 { 30.0 } else { fr.num as f64 / fr.den as f64 }
+                                    };
+                                    
+                                    let req = crate::media_jobs::SegmentRequest {
+                                        clip_id,
+                                        source_path: std::path::PathBuf::from(source_path),
+                                        t_start_ms: start_time_ms,
+                                        duration_ms: duration_ms,
+                                        fps,
+                                        encoder_path,
+                                        decoder_path,
+                                        mask_output,
+                                        click_x,
+                                        click_y,
+                                        max_side: 480,
+                                    };
+                                    
+                                    let rx = crate::media_jobs::spawn_segment_job(
+                                        std::path::PathBuf::from(self.ffmpeg_status.ffmpeg.clone().unwrap()),
+                                        std::path::PathBuf::from(self.ffmpeg_status.ffprobe.clone().unwrap()),
+                                        req,
+                                    );
+                                    
+                                    // Store the receiver to poll for progress
+                                    self.segment_rx = Some(rx);
+                                    self.segment_job_clip_id = Some(clip_id);
+                                    self.segment_job_click = Some((click_x, click_y));
+                                    let job_id = self.begin_job(JobKind::ObjectRemoval, tr("job-object-removal"));
+                                    self.segment_job_id = Some(job_id);
+                                    
+                                    tracing::info!("Started MobileSAM segment job for clip {}", clip_id);
+                                } else {
+                                    tracing::warn!("MobileSAM or LaMa models not ready for object removal");
+                                    self.toast(tr("toast-object-removal-models-not-ready"));
+                                }
+                            } else {
+                                tracing::warn!("Object removal not enabled for clip");
+                                self.toast(tr("toast-object-removal-not-enabled"));
+                            }
+                        }
+                    }
+                }
+            }
+
             overlay_ctx = Some((draw_rect, tex_size));
+
+            // ---- Object Removal: Create mask texture from stored frame data ----
+            if let Some((w, h, gray)) = self.segment_mask_frame.take() {
+                // Convert grayscale to red-tinted RGBA for overlay
+                let mut rgba = Vec::with_capacity((w as usize) * (h as usize) * 4);
+                for &g in &gray {
+                    let alpha = g as f32 / 255.0;
+                    let r = (255.0 * alpha) as u8;
+                    rgba.push(r);
+                    rgba.push(0);
+                    rgba.push(0);
+                    rgba.push(g);
+                }
+                let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                self.preview_player.mask_texture = Some(ctx.load_texture("object_removal_mask", img, egui::TextureOptions::LINEAR));
+            }
+
+            // ---- Object Removal: Mask overlay ----
+            // Draw the mask on top of the video frame if available.
+            if let Some(mask_tex) = &self.preview_player.mask_texture {
+                let mask_size = mask_tex.size_vec2();
+                // Scale mask to match the drawn frame
+                let scale_x = draw_rect.width() / mask_size.x;
+                let scale_y = draw_rect.height() / mask_size.y;
+                let mask_draw_rect = egui::Rect::from_min_size(
+                    draw_rect.min,
+                    egui::vec2(mask_size.x * scale_x, mask_size.y * scale_y),
+                );
+                ui.painter().image(
+                    mask_tex.id(),
+                    mask_draw_rect,
+                    egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
         } else {
             let msg = if self.ffmpeg_status.ffmpeg.is_none() {
                 "FFmpeg not detected — set it in Settings → Paths".to_string()
@@ -14305,6 +14767,7 @@ impl CapRustApp {
             self.settings_sync_prompt = None;
         }
     }
+
 }
 
 /// Wall-clock "14:05" for a Unix timestamp, in the user's local zone.
@@ -14463,6 +14926,8 @@ impl eframe::App for CapRustApp {
         self.drain_bg_removal_job();
         self.drain_anon_job();
         self.drain_stab_job();
+        self.drain_segment_job();
+        self.drain_inpaint_job();
         self.drain_save_frame();
         self.poll_audio_cache();
         let thumbs_ready = self.job_runner.drain(&mut self.project);

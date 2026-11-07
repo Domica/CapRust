@@ -108,6 +108,10 @@ pub struct VideoClip {
     pub color_grade: Option<caprust_core::clip::ColorGrade>,
     /// Resolved face-anonymize mask path. None = no anonymization.
     pub anon_mask_path: Option<std::path::PathBuf>,
+    /// Resolved object removal mask path. None = no object removal.
+    pub object_removal_mask_path: Option<std::path::PathBuf>,
+    /// Whether object removal (AI inpainting) is enabled for this clip.
+    pub object_removal_enabled: bool,
 }
 ///
 /// The keyframes are `(time in seconds, value, ease)`. Between two of them
@@ -3763,6 +3767,8 @@ pub fn plan_from_project(
                         blend_mode: c.blend_mode.clone(),
                         color_grade: c.color_grade,
                         anon_mask_path: resolve_anon_path(project, c),
+                        object_removal_mask_path: c.object_removal_mask.clone().map(std::path::PathBuf::from),
+                        object_removal_enabled: c.object_removal_enabled,
                     });
                 }
                 ClipType::Image { path, .. } => {
@@ -3813,6 +3819,8 @@ pub fn plan_from_project(
                         blend_mode: c.blend_mode.clone(),
                         color_grade: c.color_grade,
                         anon_mask_path: resolve_anon_path(project, c),
+                        object_removal_mask_path: c.object_removal_mask.clone().map(std::path::PathBuf::from),
+                        object_removal_enabled: c.object_removal_enabled,
                     });
                 }
                 ClipType::TextOverlay {
@@ -4679,6 +4687,8 @@ mod tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5206,6 +5216,8 @@ mod tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -5789,6 +5801,8 @@ mod tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }
         }
         RenderPlan {
@@ -5962,6 +5976,8 @@ mod tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -6023,6 +6039,8 @@ mod tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -6250,6 +6268,8 @@ mod tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -6977,6 +6997,8 @@ mod flip_filtergraph_tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],
@@ -7078,6 +7100,8 @@ mod reverse_filtergraph_tests {
                 blend_mode: None,
                 color_grade: None,
                 anon_mask_path: None,
+                object_removal_mask_path: None,
+                object_removal_enabled: false,
             }],
             audio_clips: vec![],
             text_clips: vec![],

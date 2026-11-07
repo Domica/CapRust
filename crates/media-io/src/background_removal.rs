@@ -179,7 +179,7 @@ fn find_d0(outputs: &[TValue]) -> Result<&TValue> {
 /// `(sx, sy)`. Coordinates may fall outside the source; those samples
 /// clamp to the nearest edge pixel. Same algorithm as face_detect.rs;
 /// duplicated here to avoid a shared util module for two callers.
-fn bilinear_rgb(rgb: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> (f32, f32, f32) {
+pub fn bilinear_rgb(rgb: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> (f32, f32, f32) {
     let w = width as i32;
     let h = height as i32;
     let x0 = sx.floor() as i32;
@@ -214,7 +214,7 @@ fn bilinear_rgb(rgb: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> (f32, 
 }
 
 /// Bilinear upscale of a single-channel u8 mask.
-fn upscale_mask(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
+pub fn upscale_mask(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
     if sw == dw && sh == dh {
         return src.to_vec();
     }

@@ -319,37 +319,53 @@ impl Default for ModelRegistry {
                 // MobileSAM, Apache 2.0. Input 1024x1024 RGB + point/box prompt,
                 // output 256x256 mask logits. Lightweight SAM variant (~40 MB).
                 // Runs during export/render for object removal inpainting.
+                // MobileSAM has TWO files: encoder and decoder.
                 ModelInfo::new(
-                    "mobile-sam",
-                    "MobileSAM",
+                    "mobile-sam-encoder",
+                    "MobileSAM Encoder",
                     ModelKind::Segmenter,
                     "multi",
-                    40,
-                    "Lightweight object segmentation for video inpainting (object removal). Click to select object.",
+                    28,
+                    "MobileSAM image encoder (1024x1024). Part of MobileSAM segmentation for object removal.",
                 )
                 .with_url(
-                    "https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam.onnx",
+                    "https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam_image_encoder.onnx",
                 )
                 .with_sha256(
-                    "0000000000000000000000000000000000000000000000000000000000000000",
+                    "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749",
+                ),
+                ModelInfo::new(
+                    "mobile-sam-decoder",
+                    "MobileSAM Decoder",
+                    ModelKind::Segmenter,
+                    "multi",
+                    17,
+                    "MobileSAM mask decoder (single mask). Part of MobileSAM segmentation for object removal.",
+                )
+                .with_url(
+                    "https://huggingface.co/Acly/MobileSAM/resolve/main/sam_mask_decoder_single.onnx",
+                )
+                .with_sha256(
+                    "93915fc7c993ab9d59ab8c9ccd3bce37f7509c81ab4150a74abd4d2abbd8570d",
                 ),
                 // --- AI Inpainting (LaMa) ---
                 // LaMa (Large Mask Inpainting), Apache 2.0. Input 512x512 RGB + mask,
                 // output inpainted RGB. Excellent for object removal.
                 // Runs during export/render (too slow for real-time preview).
+                // Recommended: lama_fp32.onnx (exported with torch.onnx.export, opset 17)
                 ModelInfo::new(
                     "lama-inpainter",
                     "LaMa Inpainter",
                     ModelKind::Inpainter,
                     "multi",
-                    50,
+                    208,
                     "AI inpainting for object removal. Fill masked regions naturally. Runs during export.",
                 )
                 .with_url(
-                    "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama.onnx",
+                    "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
                 )
                 .with_sha256(
-                    "0000000000000000000000000000000000000000000000000000000000000000",
+                    "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
                 ),
             ],
         }

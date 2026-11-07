@@ -197,6 +197,158 @@ pub fn extract_rgb_frames(
     Ok(frames)
 }
 
+/// One decoded grayscale frame: timestamp relative to the extraction window
+/// start, dimensions, and a tightly packed gray buffer of length
+/// `width * height`.
+#[derive(Debug, Clone)]
+pub struct GrayFrame {
+    pub t_ms: u64,
+    pub width: u32,
+    pub height: u32,
+    pub gray: Vec<u8>,
+}
+
+impl GrayFrame {
+    pub fn byte_len(&self) -> usize {
+        (self.width as usize) * (self.height as usize)
+    }
+}
+
+/// Extract grayscale frames from `input` between `[t_start_sec, t_start_sec +
+/// duration_sec)` at `fps`, scaled so the longer side is at most
+/// `max_side`.
+///
+/// Returns frames in playback order with `t_ms` relative to
+/// `t_start_sec` (first frame is ~0, last is ~duration_sec * 1000).
+///
+/// Blocking. Call from a background thread.
+#[allow(clippy::too_many_arguments)]
+pub fn extract_gray_frames(
+    ffmpeg: &Path,
+    input: &Path,
+    src_w: u32,
+    src_h: u32,
+    t_start_sec: f64,
+    duration_sec: f64,
+    fps: f64,
+    max_side: u32,
+) -> Result<Vec<GrayFrame>> {
+    if duration_sec <= 0.0 || fps <= 0.0 {
+        return Ok(Vec::new());
+    }
+    let (out_w, out_h) = scaled_dims(src_w, src_h, max_side);
+    if out_w < 2 || out_h < 2 {
+        return Err(anyhow!("invalid source dimensions {src_w}x{src_h}"));
+    }
+
+    let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into()];
+    if t_start_sec > 0.0 {
+        args.push("-ss".into());
+        args.push(format!("{t_start_sec:.6}"));
+    }
+    args.push("-protocol_whitelist".into());
+    args.push("file".into());
+    args.push("-i".into());
+    args.push(input.to_string_lossy().into_owned());
+    args.push("-t".into());
+    args.push(format!("{duration_sec:.6}"));
+    args.push("-vf".into());
+    args.push(format!("fps={fps:.6},scale={out_w}:{out_h}:flags=bilinear,format=gray"));
+    args.push("-f".into());
+    args.push("rawvideo".into());
+    args.push("-pix_fmt".into());
+    args.push("gray".into());
+    args.push("-".into());
+
+    tracing::debug!(
+        "frame_extract: ffmpeg args: {}",
+        args.iter()
+            .map(|a| if a.contains(' ') {
+                format!("{a:?}")
+            } else {
+                a.clone()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    let mut child = crate::silent_cmd::silent_command(ffmpeg)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawn ffmpeg frame extraction on {}", input.display()))?;
+
+    if let Some(mut err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(&mut err);
+            for line in reader.lines().map_while(std::result::Result::ok) {
+                if !line.trim().is_empty() {
+                    tracing::warn!("frame_extract ffmpeg: {line}");
+                }
+            }
+        });
+    }
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("ffmpeg stdout missing"))?;
+
+    let frame_size = (out_w as usize) * (out_h as usize);
+    let frame_interval_ms = (1000.0 / fps).round() as u64;
+    let mut frames: Vec<GrayFrame> = Vec::new();
+    let mut buf = vec![0u8; frame_size];
+    let mut idx: u64 = 0;
+
+    loop {
+        match stdout.read_exact(&mut buf) {
+            Ok(()) => {
+                frames.push(GrayFrame {
+                    t_ms: idx.saturating_mul(frame_interval_ms),
+                    width: out_w,
+                    height: out_h,
+                    gray: buf.clone(),
+                });
+                idx += 1;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(anyhow!("read frame {idx} from ffmpeg: {e}"));
+            }
+        }
+        if frames.len() > 36_000 {
+            let _ = child.kill();
+            return Err(anyhow!("frame extraction exceeded 36000 frames; aborting"));
+        }
+    }
+
+    let status = child.wait().context("wait ffmpeg")?;
+    if !status.success() {
+        return Err(anyhow!(
+            "ffmpeg frame extraction exited {} on {}",
+            status,
+            input.display()
+        ));
+    }
+
+    tracing::info!(
+        "frame_extract: {} gray frames ({}x{}) from {} [{:.2}s..{:.2}s @ {:.2}fps]",
+        frames.len(),
+        out_w,
+        out_h,
+        input.display(),
+        t_start_sec,
+        t_start_sec + duration_sec,
+        fps,
+    );
+
+    Ok(frames)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
