@@ -7,6 +7,7 @@ use crate::widgets::chip;
 use crate::widgets::switch;
 use caprust_core::{
     models::{ModelRegistry, ModelStatus},
+    AppSettings,
     Clip, ClipType, ProjectState,
 };
 use egui::Ui;
@@ -2624,7 +2625,15 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
     let inpainter_ready = inpainter_model
         .map(|m| m.status == ModelStatus::Ready && m.enabled)
         .unwrap_or(false);
-    if segmenter_ready && inpainter_ready {
+
+    // Fallback: also check if model files exist on disk (in case registry status not updated)
+    let models_dir = std::path::PathBuf::from(&AppSettings::default().models_dir);
+    let encoder_path = models_dir.join("mobile-sam-encoder.onnx");
+    let decoder_path = models_dir.join("mobile-sam-decoder.onnx");
+    let inpainter_path = models_dir.join("lama-inpainter.onnx");
+    let files_exist = encoder_path.is_file() && decoder_path.is_file() && inpainter_path.is_file();
+
+    if segmenter_ready && inpainter_ready || files_exist {
         ui.add_space(space::M);
         ui.separator();
         ui.add_space(space::S);

@@ -299,21 +299,21 @@ impl Default for ModelRegistry {
                 ),
                 // --- AI Enhance (Real-ESRGAN) ---
                 // realesrgan-x4plus, Apache 2.0 / BSD-3-Clause. Input variable RGB, output 4x upscaled.
-                // ONNX model from Hugging Face mirror (original: xinntao/Real-ESRGAN, converted by skillsafe-ai/jonathanst29)
+                // ONNX model from Hugging Face mirror (original: xinntao/Real-ESRGAN, converted by jonathanst29/tinier-upscale-models)
                 // Runs during export for AI super-resolution.
                 ModelInfo::new(
                     "realesrgan-x4plus",
                     "Real-ESRGAN x4+",
                     ModelKind::Enhancer,
                     "multi",
-                    64,
+                    67,
                     "AI super-resolution upscaler (4x). Runs during export — too slow for real-time preview.",
                 )
                 .with_url(
-                    "https://huggingface.co/skillsafe-ai/realesrgan-x4plus/resolve/main/model.onnx",
+                    "https://huggingface.co/jonathanst29/tinier-upscale-models/resolve/main/realesrgan-x4plus.onnx",
                 )
                 .with_sha256(
-                    "4851ec156207d271f5328605d0582eeb851e656227da8aca093ced9e60789291",
+                    "4ed6a45a8185bde6c8d7c7790a6e80e3c5b9f608946f634021068dd0fd0473c8",
                 ),
                 // --- Object Segmentation (MobileSAM) ---
                 // MobileSAM, Apache 2.0. Input 1024x1024 RGB + point/box prompt,
