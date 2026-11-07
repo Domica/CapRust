@@ -2636,6 +2636,9 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
     );
 
     // --- AI Enhance (Real-ESRGAN) ---
+    // Ensure models are scanned first
+    models.scan_local(std::path::Path::new(&settings.models_dir));
+
     // Check if Real-ESRGAN model is ready and enabled
     let enhance_model = models.models.iter().find(|m| m.id == "realesrgan-x4plus");
     if let Some(model) = enhance_model {
@@ -2643,17 +2646,18 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
             ui.add_space(space::M);
             ui.separator();
             ui.add_space(space::S);
-            ui.label(egui::RichText::new("AI Enhance (Real-ESRGAN)").strong());
+            ui.label(egui::RichText::new(tr("props-ai-enhance")).strong());
             ui.add_space(space::XS);
             ui.label(
-                egui::RichText::new("Super-resolution upscaler (4x). Runs during export.")
+                egui::RichText::new(tr("props-ai-enhance-hint"))
                     .small()
                     .color(egui::Color32::from_gray(160)),
             );
             let has_enhance = clip.effects.iter().any(|fx| fx.effect_id == "ai_enhance");
             let mut enhance_enabled = has_enhance;
             if ui
-                .checkbox(&mut enhance_enabled, "Enable AI Enhance")
+                .checkbox(&mut enhance_enabled, tr("props-ai-enhance-enable"))
+                .on_hover_text(tr("props-ai-enhance-enable-hint"))
                 .changed()
             {
                 if enhance_enabled {
@@ -2671,6 +2675,9 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
 
     // --- Object Removal (AI Inpainting) ---
     // Check if MobileSAM encoder + decoder + LaMa models are ready and enabled
+    // Ensure models are scanned first to pick up any newly downloaded files
+    models.scan_local(std::path::Path::new(&settings.models_dir));
+
     let encoder_model = models.models.iter().find(|m| m.id == "mobile-sam-encoder");
     let decoder_model = models.models.iter().find(|m| m.id == "mobile-sam-decoder");
     let inpainter_model = models.models.iter().find(|m| m.id == "lama-inpainter");
