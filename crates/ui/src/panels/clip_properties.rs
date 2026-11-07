@@ -245,6 +245,8 @@ pub fn show(
     selected: Option<Uuid>,
     state: &mut PropertiesState,
     playhead_ms: u64,
+    segment_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
+    inpaint_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
 ) {
     state.last_playhead_ms = playhead_ms;
     state.last_project_clips = project.clips.clone();
@@ -1188,7 +1190,7 @@ pub fn show(
                 if clip_is_audio {
                     show_sound(ui, clip, state);
                 } else {
-                    show_video(ui, clip, state);
+                    show_video(ui, clip, state, &mut project.models, &AppSettings::default(), segment_rx, inpaint_rx);
                 }
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
@@ -1363,7 +1365,15 @@ fn show_color_grade(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     });
 }
 
-fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
+fn show_video(
+    ui: &mut Ui,
+    clip: &Clip,
+    state: &mut PropertiesState,
+    models: &mut ModelRegistry,
+    settings: &AppSettings,
+    segment_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
+    inpaint_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
+) {
     // --- Main ---
     ui.label(egui::RichText::new(tr("props-video-main")).strong());
     ui.add_space(space::XS);
@@ -1483,54 +1493,107 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
 
         // --- Object Removal (AI Inpainting) ---
         // Similar to Background Removal: click-to-mask with MobileSAM, then LaMa inpainting.
-        ui.label(egui::RichText::new(tr("props-video-object-removal")).strong());
-        ui.add_space(space::XS);
-        ui.label(
-            egui::RichText::new(tr("props-object-removal-hint"))
-                .small()
-                .color(egui::Color32::from_gray(150)),
-        );
-        ui.horizontal(|ui| {
+        // Ensure models are scanned first to pick up any newly downloaded files
+        models.scan_local(&settings.effective_models_dir());
+
+        // Check if MobileSAM encoder + decoder + LaMa models are ready and enabled
+        let encoder_model = models.models.iter().find(|m| m.id == "mobile-sam-encoder");
+        let decoder_model = models.models.iter().find(|m| m.id == "mobile-sam-decoder");
+        let inpainter_model = models.models.iter().find(|m| m.id == "lama-inpainter");
+        let segmenter_ready = encoder_model
+            .map(|m| m.status == ModelStatus::Ready && m.enabled)
+            .unwrap_or(false)
+            && decoder_model
+                .map(|m| m.status == ModelStatus::Ready && m.enabled)
+                .unwrap_or(false);
+        let inpainter_ready = inpainter_model
+            .map(|m| m.status == ModelStatus::Ready && m.enabled)
+            .unwrap_or(false);
+
+        // Fallback: also check if model files exist on disk (in case registry status not updated)
+        let models_dir = settings.effective_models_dir();
+        let encoder_path = models_dir.join("mobile-sam-encoder.onnx");
+        let decoder_path = models_dir.join("mobile-sam-decoder.onnx");
+        let inpainter_path = models_dir.join("lama-inpainter.onnx");
+        let files_exist = encoder_path.is_file() && decoder_path.is_file() && inpainter_path.is_file();
+
+        if (segmenter_ready && inpainter_ready) || files_exist {
+            ui.add_space(space::M_PLUS);
+            ui.separator();
+
+            ui.label(egui::RichText::new(tr("props-video-object-removal")).strong());
+            ui.add_space(space::XS);
+            ui.label(
+                egui::RichText::new(tr("props-object-removal-hint"))
+                    .small()
+                    .color(egui::Color32::from_gray(150)),
+            );
+
             let can_run = matches!(
                 clip.clip_type,
                 ClipType::Video { .. } | ClipType::Image { .. }
             );
             let has_inpainted = clip.object_removal_video.is_some();
+            let is_job_running = segment_rx.is_some() || inpaint_rx.is_some();
             let mut obj_removal_enabled = clip.object_removal_enabled;
-            if has_inpainted {
-                ui.label(
-                    egui::RichText::new(tr("props-object-removal-done"))
-                        .small()
-                        .color(egui::Color32::from_gray(200)),
-                );
-            } else {
-                ui.label(
-                    egui::RichText::new(tr("props-object-removal-none"))
-                        .small()
-                        .color(egui::Color32::from_gray(140)),
-                );
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if has_inpainted
-                    && button::ghost(ui, tr("props-object-removal-clear"))
-                        .on_hover_text(tr("props-object-removal-clear-hint"))
-                        .clicked()
-                {
-                    state.pending.push(PendingEdit::ClearObjectRemovalVideo);
+
+            ui.horizontal(|ui| {
+                if has_inpainted {
+                    ui.label(
+                        egui::RichText::new(tr("props-object-removal-done"))
+                            .small()
+                            .color(egui::Color32::from_gray(200)),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(tr("props-object-removal-none"))
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
+                    );
                 }
-                ui.add_enabled_ui(can_run, |ui| {
-                    if ui
-                        .checkbox(&mut obj_removal_enabled, tr("props-object-removal-enable"))
-                        .on_hover_text(tr("props-object-removal-enable-hint"))
-                        .changed()
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if has_inpainted
+                        && button::ghost(ui, tr("props-object-removal-clear"))
+                            .on_hover_text(tr("props-object-removal-clear-hint"))
+                            .clicked()
                     {
-                        state
-                            .pending
-                            .push(PendingEdit::SetObjectRemovalEnabled(obj_removal_enabled));
+                        state.pending.push(PendingEdit::ClearObjectRemovalVideo);
                     }
+                    ui.add_enabled_ui(can_run && !is_job_running, |ui| {
+                        if ui
+                            .checkbox(&mut obj_removal_enabled, tr("props-object-removal-enable"))
+                            .on_hover_text(tr("props-object-removal-enable-hint"))
+                            .changed()
+                        {
+                            state
+                                .pending
+                                .push(PendingEdit::SetObjectRemovalEnabled(obj_removal_enabled));
+                        }
+                    });
                 });
             });
-        });
+
+            // Show job progress on preview area
+            if is_job_running {
+                ui.add_space(space::XS);
+                ui.label(
+                    egui::RichText::new(tr("props-object-removal-processing"))
+                        .small()
+                        .color(egui::Color32::from_rgb(100, 200, 255)),
+                );
+            } else if clip.object_removal_enabled
+            && clip.object_removal_video.is_none()
+            && matches!(clip.clip_type, ClipType::Video { .. } | ClipType::Image { .. })
+{
+                ui.add_space(space::XS);
+                ui.label(
+                    egui::RichText::new(tr("props-object-removal-click-hint"))
+                        .small()
+                        .color(egui::Color32::from_rgb(100, 200, 100)),
+                );
+            }
+        }
 
         ui.add_space(space::M_PLUS);
         ui.separator();
@@ -2668,69 +2731,6 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
                     state
                         .pending
                         .push(PendingEdit::RemoveEffect("ai_enhance".to_string()));
-                }
-            }
-        }
-    }
-
-    // --- Object Removal (AI Inpainting) ---
-    // Ensure models are scanned first to pick up any newly downloaded files
-    models.scan_local(&settings.effective_models_dir());
-
-    // Check if MobileSAM encoder + decoder + LaMa models are ready and enabled
-    let encoder_model = models.models.iter().find(|m| m.id == "mobile-sam-encoder");
-    let decoder_model = models.models.iter().find(|m| m.id == "mobile-sam-decoder");
-    let inpainter_model = models.models.iter().find(|m| m.id == "lama-inpainter");
-    let segmenter_ready = encoder_model
-        .map(|m| m.status == ModelStatus::Ready && m.enabled)
-        .unwrap_or(false)
-        && decoder_model
-            .map(|m| m.status == ModelStatus::Ready && m.enabled)
-            .unwrap_or(false);
-    let inpainter_ready = inpainter_model
-        .map(|m| m.status == ModelStatus::Ready && m.enabled)
-        .unwrap_or(false);
-
-    // Fallback: also check if model files exist on disk (in case registry status not updated)
-    let models_dir = settings.effective_models_dir();
-    let encoder_path = models_dir.join("mobile-sam-encoder.onnx");
-    let decoder_path = models_dir.join("mobile-sam-decoder.onnx");
-    let inpainter_path = models_dir.join("lama-inpainter.onnx");
-    let files_exist = encoder_path.is_file() && decoder_path.is_file() && inpainter_path.is_file();
-
-    if (segmenter_ready && inpainter_ready) || files_exist {
-        ui.add_space(space::M);
-        ui.separator();
-        ui.add_space(space::S);
-        ui.label(egui::RichText::new("Object Removal (AI Inpainting)").strong());
-        ui.add_space(space::XS);
-        ui.label(
-            egui::RichText::new("Remove unwanted objects/people. Uses MobileSAM (click-to-mask) + LaMa (inpaint). Runs during export.")
-                .small()
-                .color(egui::Color32::from_gray(160)),
-        );
-
-        let mut obj_removal_enabled = clip.object_removal_enabled;
-    if ui
-        .checkbox(&mut obj_removal_enabled, tr("props-object-removal-enable"))
-        .on_hover_text(tr("props-object-removal-enable-hint"))
-        .changed()
-    {
-            state
-                .pending
-                .push(PendingEdit::SetObjectRemovalEnabled(obj_removal_enabled));
-        }
-        if obj_removal_enabled {
-            ui.add_space(space::XS);
-            ui.label(
-                egui::RichText::new("Click on the preview to select object to remove.")
-                    .small()
-                    .color(egui::Color32::from_rgb(100, 200, 100)),
-            );
-            if clip.object_removal_mask.is_some() {
-                ui.add_space(space::XS);
-                if ui.button("Clear Mask").clicked() {
-                    state.pending.push(PendingEdit::ClearObjectRemovalMask);
                 }
             }
         }
