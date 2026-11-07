@@ -11015,6 +11015,11 @@ impl CapRustApp {
                                 .object_removal_video(None);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
+                        PendingEdit::SetObjectRemovalEnabled(enabled) => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .object_removal_enabled(enabled);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
                         PendingEdit::ChromaKey(v) => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .chroma_key(v);
