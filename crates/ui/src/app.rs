@@ -4137,12 +4137,19 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
-            caprust_core::clip::ClipType::Audio { path, .. } => std::path::PathBuf::from(path),
+        let source_path_raw = match &clip.clip_type {
+            caprust_core::clip::ClipType::Audio { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-beat-needs-audio"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
             self.toast(tr("toast-beat-needs-ffmpeg"));
@@ -4166,13 +4173,20 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
+        let source_path_raw = match &clip.clip_type {
             caprust_core::ClipType::Video { path, .. }
-            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            | caprust_core::ClipType::Image { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-reframe-needs-video"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         let t_start_ms = clip.start_time_ms;
         let duration_ms = clip.duration_ms;
@@ -4436,13 +4450,20 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
+        let source_path_raw = match &clip.clip_type {
             caprust_core::ClipType::Video { path, .. }
-            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            | caprust_core::ClipType::Image { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-bg-removal-needs-video"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         let t_start_ms = clip.start_time_ms;
         let duration_ms = clip.duration_ms;
@@ -4543,13 +4564,20 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
+        let source_path_raw = match &clip.clip_type {
             caprust_core::ClipType::Video { path, .. }
-            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            | caprust_core::ClipType::Image { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-object-removal-needs-video"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
             self.toast(tr("toast-object-removal-unsupported"));
@@ -4711,12 +4739,19 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
-            caprust_core::ClipType::Video { path, .. } => std::path::PathBuf::from(path),
+        let source_path_raw = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-anon-needs-video"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
             self.toast(tr("toast-anon-unsupported"));
@@ -4836,12 +4871,19 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
-            caprust_core::ClipType::Video { path, .. } => std::path::PathBuf::from(path),
+        let source_path_raw = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-stab-needs-video"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
             self.toast(tr("toast-stab-unsupported"));
@@ -5145,13 +5187,20 @@ impl CapRustApp {
         let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
             return;
         };
-        let source_path = match &clip.clip_type {
+        let source_path_raw = match &clip.clip_type {
             caprust_core::ClipType::Video { path, .. }
-            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            | caprust_core::ClipType::Image { path, .. } => path.clone(),
             _ => {
                 self.toast(tr("toast-inpaint-needs-video"));
                 return;
             }
+        };
+        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+            std::path::PathBuf::from(source_path_raw)
+        } else if let Some(project_path) = self.project.project_path.as_ref() {
+            std::path::Path::new(project_path).join(source_path_raw)
+        } else {
+            std::path::PathBuf::from(source_path_raw)
         };
         if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
             self.toast(tr("toast-inpaint-unsupported"));
@@ -12659,7 +12708,15 @@ impl CapRustApp {
                     if let Some(clip_info) = clip_info {
                         // Extract clip data before mutable borrow
                         let clip_id = clip_info.0;
-                        let source_path = clip_info.1.clone();
+                        let source_path_raw = clip_info.1.clone();
+                        // Resolve the source path to an absolute path
+                        let source_path = if std::path::Path::new(&source_path_raw).is_absolute() {
+                            std::path::PathBuf::from(source_path_raw)
+                        } else if let Some(project_path) = self.project.project_path.as_ref() {
+                            std::path::Path::new(project_path).join(source_path_raw)
+                        } else {
+                            std::path::PathBuf::from(source_path_raw)
+                        };
                         let clip_data = self.project.clips.iter().find(|c| c.id == clip_id);
                         if let Some(clip) = clip_data {
                             let clip_id = clip.id;
