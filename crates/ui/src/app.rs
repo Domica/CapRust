@@ -12667,8 +12667,11 @@ impl CapRustApp {
                             let duration_ms = clip.duration_ms;
                             let object_removal_enabled = clip.object_removal_enabled;
                             
-                            // Check if object removal is enabled and models are ready
-                            if object_removal_enabled {
+                            // Check if object removal is enabled (use the value we just set, not the clip which may not be updated yet)
+                            // The checkbox sets this value immediately via state.pending
+                            let is_enabled = object_removal_enabled;
+                            
+                            if is_enabled {
                                 // Check if both MobileSAM encoder and decoder are downloaded
                                 let models_dir = self.settings.effective_models_dir();
                                 let encoder_path = self.project.models.local_path(&models_dir, "mobile-sam-encoder");
