@@ -1192,7 +1192,7 @@ pub fn show(
                 }
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui, clip, state, &project.models, &AppSettings::default()),
+            PropertiesTab::Effects => show_effects(ui, clip, state, &mut project.models, &AppSettings::default()),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
             PropertiesTab::KeyframeTracks => {
@@ -2378,7 +2378,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     }
 }
 
-fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &ModelRegistry, settings: &AppSettings) {
+fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &mut ModelRegistry, settings: &AppSettings) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(space::S);
 
@@ -2702,11 +2702,15 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
                 .small()
                 .color(egui::Color32::from_gray(160)),
         );
-        let mut obj_removal_enabled = clip.object_removal_enabled;
-        if ui
-            .checkbox(&mut obj_removal_enabled, "Enable Object Removal")
-            .changed()
-        {
+        // Ensure models are scanned before checking status
+    models.scan_local(std::path::Path::new(&settings.models_dir));
+
+    let mut obj_removal_enabled = clip.object_removal_enabled;
+    if ui
+        .checkbox(&mut obj_removal_enabled, tr("props-object-removal-enable"))
+        .on_hover_text(tr("props-object-removal-enable-hint"))
+        .changed()
+    {
             state
                 .pending
                 .push(PendingEdit::SetObjectRemovalEnabled(obj_removal_enabled));
