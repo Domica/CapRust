@@ -2611,12 +2611,16 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
     }
 
     // --- Object Removal (AI Inpainting) ---
-    // Check if MobileSAM + LaMa models are ready and enabled
-    let segmenter_model = models.models.iter().find(|m| m.id == "mobile-sam");
+    // Check if MobileSAM encoder + decoder + LaMa models are ready and enabled
+    let encoder_model = models.models.iter().find(|m| m.id == "mobile-sam-encoder");
+    let decoder_model = models.models.iter().find(|m| m.id == "mobile-sam-decoder");
     let inpainter_model = models.models.iter().find(|m| m.id == "lama-inpainter");
-    let segmenter_ready = segmenter_model
+    let segmenter_ready = encoder_model
         .map(|m| m.status == ModelStatus::Ready && m.enabled)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && decoder_model
+            .map(|m| m.status == ModelStatus::Ready && m.enabled)
+            .unwrap_or(false);
     let inpainter_ready = inpainter_model
         .map(|m| m.status == ModelStatus::Ready && m.enabled)
         .unwrap_or(false);
