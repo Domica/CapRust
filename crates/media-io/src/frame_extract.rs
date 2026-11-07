@@ -81,10 +81,17 @@ pub fn extract_rgb_frames(
         return Err(anyhow!("invalid source dimensions {src_w}x{src_h}"));
     }
 
+    // Verify input file exists and is readable
+    if !input.exists() {
+        return Err(anyhow!("input video file not found: {}", input.display()));
+    }
+    if !input.is_file() {
+        return Err(anyhow!("input path is not a file: {}", input.display()));
+    }
+
     let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into()];
-    // -ss BEFORE -i is fast but may drop the first keyframe's frames;
-    // for analysis we care about approximate positions, not exact
-    // frame-accurate seek. Keeps extraction fast on long clips.
+    // -ss BEFORE -i for fast seeking (approximate but fast)
+    // For frame extraction, we use fast seek which is good enough for our use case
     if t_start_sec > 0.0 {
         args.push("-ss".into());
         args.push(format!("{t_start_sec:.6}"));
@@ -93,6 +100,15 @@ pub fn extract_rgb_frames(
     args.push("file".into());
     args.push("-i".into());
     args.push(input.to_string_lossy().into_owned());
+    args.push("-t".into());
+    args.push(format!("{duration_sec:.6}"));
+    args.push("-vf".into());
+    args.push(format!("fps={fps:.6},scale={out_w}:{out_h}:flags=bilinear"));
+    args.push("-f".into());
+    args.push("rawvideo".into());
+    args.push("-pix_fmt".into());
+    args.push("rgb24".into());
+    args.push("-".into());
     args.push("-t".into());
     args.push(format!("{duration_sec:.6}"));
     args.push("-vf".into());
