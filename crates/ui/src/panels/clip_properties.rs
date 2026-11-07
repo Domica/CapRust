@@ -245,6 +245,7 @@ pub fn show(
     selected: Option<Uuid>,
     state: &mut PropertiesState,
     playhead_ms: u64,
+    settings: &AppSettings,
     segment_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
     inpaint_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
 ) {
@@ -1190,11 +1191,11 @@ pub fn show(
                 if clip_is_audio {
                     show_sound(ui, clip, state);
                 } else {
-                    show_video(ui, clip, state, &mut project.models, &AppSettings::default(), segment_rx, inpaint_rx);
+                    show_video(ui, clip, state, &mut project.models, &settings, segment_rx, inpaint_rx);
                 }
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui, clip, state, &mut project.models, &AppSettings::default()),
+            PropertiesTab::Effects => show_effects(ui, clip, state, &mut project.models, &settings),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
             PropertiesTab::KeyframeTracks => {

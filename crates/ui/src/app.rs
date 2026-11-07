@@ -10828,6 +10828,7 @@ impl CapRustApp {
             selected,
             &mut self.properties,
             self.playhead_ms,
+            &self.settings,
             &self.segment_rx,
             &self.inpaint_rx,
         );
