@@ -436,9 +436,11 @@ impl ModelRegistry {
         for d in &defaults.models {
             match self.models.iter_mut().find(|m| m.id == d.id) {
                 Some(m) => {
+                    // Preserve user-enabled state; only update metadata from defaults
                     m.kind = d.kind;
                     m.url = d.url.clone();
                     m.sha256 = d.sha256.clone();
+                    // m.enabled is intentionally preserved
                 }
                 None => self.models.push(d.clone()),
             }
