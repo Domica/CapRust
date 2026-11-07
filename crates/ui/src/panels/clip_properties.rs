@@ -1188,7 +1188,7 @@ pub fn show(
                 }
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui, clip, state, &project.models),
+            PropertiesTab::Effects => show_effects(ui, clip, state, &project.models, &AppSettings::default()),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
             PropertiesTab::KeyframeTracks => {
@@ -2320,7 +2320,7 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     }
 }
 
-fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &ModelRegistry) {
+fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &ModelRegistry, settings: &AppSettings) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(space::S);
 
@@ -2627,7 +2627,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
         .unwrap_or(false);
 
     // Fallback: also check if model files exist on disk (in case registry status not updated)
-    let models_dir = std::path::PathBuf::from(&AppSettings::default().models_dir);
+    let models_dir = std::path::PathBuf::from(&settings.models_dir);
     let encoder_path = models_dir.join("mobile-sam-encoder.onnx");
     let decoder_path = models_dir.join("mobile-sam-decoder.onnx");
     let inpainter_path = models_dir.join("lama-inpainter.onnx");
