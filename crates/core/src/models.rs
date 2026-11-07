@@ -617,15 +617,12 @@ impl ModelRegistry {
     ) -> std::path::PathBuf {
         let kind = models.iter().find(|m| m.id == id).map(|m| m.kind);
         let filename = match kind {
-            // Caption models are Whisper GGML .bin files; everything
-            // else on the registry is ONNX.
-            Some(
-                ModelKind::Narration
-                | ModelKind::FaceDetector
-                | ModelKind::ScrfdDetector
-                | ModelKind::BackgroundRemover,
-            ) => format!("{id}.onnx"),
-            _ => format!("{id}.bin"),
+            // Whisper GGML weights are the only .bin files. Unknown ids keep
+            // the legacy .bin name.
+            Some(ModelKind::Caption) | None => format!("{id}.bin"),
+            // Every other model (narration, face/SCRFD, background removal,
+            // segmenter, inpainter, upscaler, ...) is ONNX.
+            Some(_) => format!("{id}.onnx"),
         };
         models_dir.join(filename)
     }

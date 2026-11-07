@@ -5170,7 +5170,7 @@ impl CapRustApp {
             self.toast(tr("toast-inpaint-needs-model"));
             return;
         }
-        let model_path = self.project.models.local_path(std::path::Path::new(&self.settings.models_dir), "lama-inpainter");
+        let model_path = self.project.models.local_path(&self.settings.effective_models_dir(), "lama-inpainter");
 
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
             self.toast(tr("toast-inpaint-needs-ffmpeg"));
@@ -12662,13 +12662,13 @@ impl CapRustApp {
                             // Check if object removal is enabled and models are ready
                             if object_removal_enabled {
                                 // Check if both MobileSAM encoder and decoder are downloaded
-                                let models_dir = std::path::Path::new(&self.settings.models_dir);
-                                let encoder_path = self.project.models.local_path(models_dir, "mobile-sam-encoder");
-                                let decoder_path = self.project.models.local_path(models_dir, "mobile-sam-decoder");
+                                let models_dir = self.settings.effective_models_dir();
+                                let encoder_path = self.project.models.local_path(&models_dir, "mobile-sam-encoder");
+                                let decoder_path = self.project.models.local_path(&models_dir, "mobile-sam-decoder");
                                 let segmenter_ready = encoder_path.is_file() && decoder_path.is_file();
                                 
                                 // Check if LaMa inpainter is downloaded
-                                let inpainter_path = self.project.models.local_path(models_dir, "lama-inpainter");
+                                let inpainter_path = self.project.models.local_path(&models_dir, "lama-inpainter");
                                 let inpainter_ready = inpainter_path.is_file();
                                 
                                 if segmenter_ready && inpainter_ready {
