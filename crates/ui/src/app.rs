@@ -12667,6 +12667,7 @@ impl CapRustApp {
                             let duration_ms = clip.duration_ms;
                             
                             // Check if object removal is enabled - check pending edits first (checkbox updates go through pending)
+                            // Also check clip field as fallback (in case pending edit was already processed)
                             let is_enabled = self.properties.pending.iter().rev().find_map(|edit| {
                                 match edit {
                                     crate::panels::clip_properties::PendingEdit::SetObjectRemovalEnabled(enabled) => Some(*enabled),
@@ -12674,6 +12675,9 @@ impl CapRustApp {
                                 }
                             }).unwrap_or(clip.object_removal_enabled);
                             
+                            // Also check clip field directly as fallback
+                            let is_enabled = is_enabled || clip.object_removal_enabled;
+
                             if is_enabled {
                                 // Check if both MobileSAM encoder and decoder are downloaded
                                 let models_dir = self.settings.effective_models_dir();
