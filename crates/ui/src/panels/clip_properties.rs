@@ -2633,7 +2633,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
     let inpainter_path = models_dir.join("lama-inpainter.onnx");
     let files_exist = encoder_path.is_file() && decoder_path.is_file() && inpainter_path.is_file();
 
-    if segmenter_ready && inpainter_ready || files_exist {
+    if (segmenter_ready && inpainter_ready) || files_exist {
         ui.add_space(space::M);
         ui.separator();
         ui.add_space(space::S);
