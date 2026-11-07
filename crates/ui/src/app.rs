@@ -5170,7 +5170,7 @@ impl CapRustApp {
             self.toast(tr("toast-inpaint-needs-model"));
             return;
         }
-        let model_path = self.project.models.local_path(std::path::Path::new(&self.settings.models_dir), "lama");
+        let model_path = self.project.models.local_path(std::path::Path::new(&self.settings.models_dir), "lama-inpainter");
 
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
             self.toast(tr("toast-inpaint-needs-ffmpeg"));

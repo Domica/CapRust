@@ -2637,7 +2637,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
 
     // --- AI Enhance (Real-ESRGAN) ---
     // Ensure models are scanned first
-    models.scan_local(std::path::Path::new(&settings.models_dir));
+    models.scan_local(&settings.effective_models_dir());
 
     // Check if Real-ESRGAN model is ready and enabled
     let enhance_model = models.models.iter().find(|m| m.id == "realesrgan-x4plus");
@@ -2674,10 +2674,10 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
     }
 
     // --- Object Removal (AI Inpainting) ---
-    // Check if MobileSAM encoder + decoder + LaMa models are ready and enabled
     // Ensure models are scanned first to pick up any newly downloaded files
-    models.scan_local(std::path::Path::new(&settings.models_dir));
+    models.scan_local(&settings.effective_models_dir());
 
+    // Check if MobileSAM encoder + decoder + LaMa models are ready and enabled
     let encoder_model = models.models.iter().find(|m| m.id == "mobile-sam-encoder");
     let decoder_model = models.models.iter().find(|m| m.id == "mobile-sam-decoder");
     let inpainter_model = models.models.iter().find(|m| m.id == "lama-inpainter");
@@ -2692,7 +2692,7 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
         .unwrap_or(false);
 
     // Fallback: also check if model files exist on disk (in case registry status not updated)
-    let models_dir = std::path::PathBuf::from(&settings.models_dir);
+    let models_dir = settings.effective_models_dir();
     let encoder_path = models_dir.join("mobile-sam-encoder.onnx");
     let decoder_path = models_dir.join("mobile-sam-decoder.onnx");
     let inpainter_path = models_dir.join("lama-inpainter.onnx");
@@ -2709,10 +2709,8 @@ fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &
                 .small()
                 .color(egui::Color32::from_gray(160)),
         );
-        // Ensure models are scanned before checking status
-    models.scan_local(std::path::Path::new(&settings.models_dir));
 
-    let mut obj_removal_enabled = clip.object_removal_enabled;
+        let mut obj_removal_enabled = clip.object_removal_enabled;
     if ui
         .checkbox(&mut obj_removal_enabled, tr("props-object-removal-enable"))
         .on_hover_text(tr("props-object-removal-enable-hint"))

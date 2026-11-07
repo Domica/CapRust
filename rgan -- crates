@@ -1,0 +1,104 @@
+[35mcrates/app/assets/gen_stickers.py[m[36m:[m[32m738[m[36m:[m    ('bubble-exclaim', 'Exc[1;31mlama[mtion Bubble', b_exclaim),
+[35mcrates/app/assets/gen_stickers.py[m[36m:[m[32m1209[m[36m:[m    ('sym-exclaim', 'Exc[1;31mlama[mtion Mark', y_exclaim),
+[35mcrates/core/src/cache.rs[m[36m:[m[32m101[m[36m:[m/// Inpainted video from [1;31mLaMa[m inpainting (object removal Phase 2).
+[35mcrates/core/src/clip.rs[m[36m:[m[32m1206[m[36m:[m    /// through this mask ([1;31mLaMa[m ONNX).
+[35mcrates/core/src/clip.rs[m[36m:[m[32m1214[m[36m:[m    /// inpainted video yet. Populated by the [1;31mLaMa[m inpainting job,
+[35mcrates/core/src/clip.rs.bak[m[36m:[m[32m1206[m[36m:[m    /// through this mask ([1;31mLaMa[m ONNX).
+[35mcrates/core/src/models.rs[m[36m:[m[32m31[m[36m:[m    /// AI Inpainting for object removal ([1;31mLaMa[m).
+[35mcrates/core/src/models.rs[m[36m:[m[32m351[m[36m:[m                // --- AI Inpainting ([1;31mLaMa[m) ---
+[35mcrates/core/src/models.rs[m[36m:[m[32m352[m[36m:[m                // [1;31mLaMa[m (Large Mask Inpainting), Apache 2.0. Input 512x512 RGB + mask,
+[35mcrates/core/src/models.rs[m[36m:[m[32m355[m[36m:[m                // Recommended: [1;31mlama[m_fp32.onnx (exported with torch.onnx.export, opset 17)
+[35mcrates/core/src/models.rs[m[36m:[m[32m357[m[36m:[m                    "[1;31mlama[m-inpainter",
+[35mcrates/core/src/models.rs[m[36m:[m[32m358[m[36m:[m                    "[1;31mLaMa[m Inpainter",
+[35mcrates/core/src/models.rs[m[36m:[m[32m365[m[36m:[m                    "https://huggingface.co/Carve/[1;31mLaMa[m-ONNX/resolve/main/[1;31mlama[m_fp32.onnx",
+[35mcrates/core/src/models.rs[m[36m:[m[32m368[m[36m:[m                    "[1;31m1faef530[m1d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
+[35mcrates/core/src/stickers.rs[m[36m:[m[32m373[m[36m:[m        name: "Exc[1;31mlama[mtion Bubble",
+[35mcrates/core/src/stickers.rs[m[36m:[m[32m619[m[36m:[m        name: "Exc[1;31mlama[mtion Mark",
+[35mcrates/i18n/src/locales/de.ftl[m[36m:[m[32m531[m[36m:[mset-models-inpainter = AI Inpainting ([1;31mLaMa[m)
+[35mcrates/i18n/src/locales/de.ftl[m[36m:[m[32m796[m[36m:[mprops-object-removal-hint = Objekt mit MobileSAM (Klick-zu-Maske) erkennen und mit [1;31mLaMa[m inpaintieren. Läuft beim Export.
+[35mcrates/i18n/src/locales/de.ftl[m[36m:[m[32m829[m[36m:[mtoast-object-removal-models-not-ready = MobileSAM oder [1;31mLaMa[m Modelle nicht bereit. In Einstellungen → KI-Modelle herunterladen.
+[35mcrates/i18n/src/locales/de.ftl[m[36m:[m[32m846[m[36m:[mtoast-inpaint-needs-model = [1;31mLaMa[m-Modell in Einstellungen -> KI-Modelle herunterladen.
+[35mcrates/i18n/src/locales/en.ftl[m[36m:[m[32m531[m[36m:[mset-models-inpainter = AI Inpainting ([1;31mLaMa[m)
+[35mcrates/i18n/src/locales/en.ftl[m[36m:[m[32m796[m[36m:[mprops-object-removal-hint = Detect object with MobileSAM (click-to-mask) and inpaint with [1;31mLaMa[m. Runs during export.
+[35mcrates/i18n/src/locales/en.ftl[m[36m:[m[32m829[m[36m:[mtoast-object-removal-models-not-ready = MobileSAM or [1;31mLaMa[m models not ready. Download them in Settings → AI models.
+[35mcrates/i18n/src/locales/en.ftl[m[36m:[m[32m846[m[36m:[mtoast-inpaint-needs-model = Download the [1;31mLaMa[m model in Settings -> AI models.
+[35mcrates/i18n/src/locales/es.ftl[m[36m:[m[32m531[m[36m:[mset-models-inpainter = AI Inpainting ([1;31mLaMa[m)
+[35mcrates/i18n/src/locales/es.ftl[m[36m:[m[32m796[m[36m:[mprops-object-removal-hint = Detecta objeto con MobileSAM (clic-para-máscara) e inpinta con [1;31mLaMa[m. Se ejecuta al exportar.
+[35mcrates/i18n/src/locales/es.ftl[m[36m:[m[32m829[m[36m:[mtoast-object-removal-models-not-ready = Modelos MobileSAM o [1;31mLaMa[m no listos. Descárgalos en Ajustes → Modelos de IA.
+[35mcrates/i18n/src/locales/es.ftl[m[36m:[m[32m846[m[36m:[mtoast-inpaint-needs-model = Descarga el modelo [1;31mLaMa[m en Ajustes -> Modelos de IA.
+[35mcrates/i18n/src/locales/hr.ftl[m[36m:[m[32m531[m[36m:[mset-models-inpainter = AI Inpainting ([1;31mLaMa[m)
+[35mcrates/i18n/src/locales/hr.ftl[m[36m:[m[32m796[m[36m:[mprops-object-removal-hint = Detektiraj objekt s MobileSAM (klik-za-masku) i inpaint sa [1;31mLaMa[m. Radi prilikom izvoza.
+[35mcrates/i18n/src/locales/hr.ftl[m[36m:[m[32m829[m[36m:[mtoast-object-removal-models-not-ready = MobileSAM ili [1;31mLaMa[m modeli nisu spremni. Preuzmi ih u Postavke → AI modeli.
+[35mcrates/i18n/src/locales/hr.ftl[m[36m:[m[32m846[m[36m:[mtoast-inpaint-needs-model = Preuzmi [1;31mLaMa[m model u Postavke -> AI modeli.
+[35mcrates/i18n/src/locales/it.ftl[m[36m:[m[32m531[m[36m:[mset-models-inpainter = AI Inpainting ([1;31mLaMa[m)
+[35mcrates/i18n/src/locales/it.ftl[m[36m:[m[32m796[m[36m:[mprops-object-removal-hint = Rileva oggetto con MobileSAM (clic-per-maschera) e inpaint con [1;31mLaMa[m. Esegue durante l'esportazione.
+[35mcrates/i18n/src/locales/it.ftl[m[36m:[m[32m829[m[36m:[mtoast-object-removal-models-not-ready = Modelli MobileSAM o [1;31mLaMa[m non pronti. Scaricali in Impostazioni → Modelli IA.
+[35mcrates/i18n/src/locales/it.ftl[m[36m:[m[32m846[m[36m:[mtoast-inpaint-needs-model = Scarica il modello [1;31mLaMa[m in Impostazioni -> Modelli IA.
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m1[m[36m:[m//! [1;31mLaMa[m inpainting (Phase K2 - Object Removal).
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m3[m[36m:[m//! [1;31mLaMa[m (Large Mask Inpainting) is a transformer-based inpainting model
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m17[m[36m:[m/// Fixed input resolution of the [1;31mLaMa[m ONNX model.
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m18[m[36m:[mpub const [1;31mLAMA[m_INPUT_SIZE: u32 = 512;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m20[m[36m:[m/// ImageNet normalization constants used by [1;31mLaMa[m's training pipeline.
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m24[m[36m:[m/// Loaded [1;31mLaMa[m model. Construct once and reuse.
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m25[m[36m:[mpub struct [1;31mLama[m {
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m31[m[36m:[mimpl [1;31mLama[m {
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m32[m[36m:[m    /// Load and optimize [1;31mLaMa[m ONNX model from disk.
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m33[m[36m:[m    /// Expects file: [1;31mlama[m.onnx
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m36[m[36m:[m            return Err(anyhow!("[1;31mLaMa[m model not found: {}", model_path.display()));
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m41[m[36m:[m            .map_err(|e| anyhow!("load [1;31mLaMa[m ONNX {}: {:?}", model_path.display(), e))?
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m43[m[36m:[m            .map_err(|e| anyhow!("optimize [1;31mLaMa[m: {:?}", e))?
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m45[m[36m:[m            .map_err(|e| anyhow!("build [1;31mLaMa[m runnable: {:?}", e))?;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m47[m[36m:[m        tracing::info!("[1;31mLaMa[m: loaded {}", model_path.display());
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m51[m[36m:[m                "[1;31mLaMa[m: running under a debug build. \
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m107[m[36m:[m            .map_err(|e| anyhow!("[1;31mLaMa[m inference: {:?}", e))?;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m125[m[36m:[m            for y in 0..[1;31mLAMA[m_INPUT_SIZE as usize {
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m126[m[36m:[m                for x in 0..[1;31mLAMA[m_INPUT_SIZE as usize {
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m132[m[36m:[m                    let src_idx = c * ([1;31mLAMA[m_INPUT_SIZE as usize) * ([1;31mLAMA[m_INPUT_SIZE as usize) + y * ([1;31mLAMA[m_INPUT_SIZE as usize) + x;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m133[m[36m:[m                    let dst_idx = (y * [1;31mLAMA[m_INPUT_SIZE as usize + x) * 3 + c;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m140[m[36m:[m        if [1;31mLAMA[m_INPUT_SIZE == target_width && [1;31mLAMA[m_INPUT_SIZE == target_height {
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m143[m[36m:[m            Ok(upscale_rgb(&result, [1;31mLAMA[m_INPUT_SIZE, [1;31mLAMA[m_INPUT_SIZE, target_width, target_height))
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m147[m[36m:[m    /// Preprocess image and mask for [1;31mLaMa[m inference.
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m150[m[36m:[m        let mut image_arr = tract_ndarray::Array4::<f32>::zeros((1, 3, [1;31mLAMA[m_INPUT_SIZE as usize, [1;31mLAMA[m_INPUT_SIZE as usize));
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m151[m[36m:[m        let mut mask_arr = tract_ndarray::Array4::<f32>::zeros((1, 1, [1;31mLAMA[m_INPUT_SIZE as usize, [1;31mLAMA[m_INPUT_SIZE as usize));
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m153[m[36m:[m        let sx = width as f32 / [1;31mLAMA[m_INPUT_SIZE as f32;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m154[m[36m:[m        let sy = height as f32 / [1;31mLAMA[m_INPUT_SIZE as f32;
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m156[m[36m:[m        for dy in 0..[1;31mLAMA[m_INPUT_SIZE {
+[35mcrates/media-io/src/lama.rs[m[36m:[m[32m157[m[36m:[m            for dx in 0..[1;31mLAMA[m_INPUT_SIZE {
+[35mcrates/media-io/src/lib.rs[m[36m:[m[32m6[m[36m:[mpub mod [1;31mlama[m;
+[35mcrates/ui/src/app.rs[m[36m:[m[32m205[m[36m:[m    /// Object removal (Phase K2): MobileSAM segmentation + [1;31mLaMa[m inpainting,
+[35mcrates/ui/src/app.rs[m[36m:[m[32m525[m[36m:[m    /// Receiver for an in-flight [1;31mLaMa[m inpainting job.
+[35mcrates/ui/src/app.rs[m[36m:[m[32m4527[m[36m:[m    /// Kick off an object removal job (MobileSAM + [1;31mLaMa[m) for the given clip.
+[35mcrates/ui/src/app.rs[m[36m:[m[32m4528[m[36m:[m    /// Requires a saved project, MobileSAM encoder+decoder models, [1;31mLaMa[m model,
+[35mcrates/ui/src/app.rs[m[36m:[m[32m4533[m[36m:[m    /// 2. [1;31mLaMa[m: inpaints the masked region
+[35mcrates/ui/src/app.rs[m[36m:[m[32m4611[m[36m:[m        // Find [1;31mLaMa[m inpainter
+[35mcrates/ui/src/app.rs[m[36m:[m[32m4617[m[36m:[m            .find(|m| m.id == "[1;31mlama[m-inpainter")
+[35mcrates/ui/src/app.rs[m[36m:[m[32m4670[m[36m:[m        // Phase 2: [1;31mLaMa[m inpaint job (will be started after segment job completes)
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5011[m[36m:[m    /// [1;31mLaMa[m inpainting job. On Failed, toast and clear state.
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5046[m[36m:[m                    // Store the mask path and click coordinates for later use in [1;31mLaMa[m inpainting
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5093[m[36m:[m                            // Auto-start [1;31mLaMa[m inpainting job if click coordinates are available
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5135[m[36m:[m    /// Start a [1;31mLaMa[m inpainting job for the given clip using the mask from MobileSAM.
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5167[m[36m:[m        // Check if [1;31mLaMa[m model is ready
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5173[m[36m:[m        let model_path = self.project.models.local_path(std::path::Path::new(&self.settings.models_dir), "[1;31mlama[m");
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5201[m[36m:[m            max_side: 512, // [1;31mLaMa[m runs at 512x512 internally
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5213[m[36m:[m        tracing::info!("Started [1;31mLaMa[m inpainting job for clip {}", clip_id);
+[35mcrates/ui/src/app.rs[m[36m:[m[32m5216[m[36m:[m    /// Poll the in-flight [1;31mLaMa[m inpainting job. On Finished, store the
+[35mcrates/ui/src/app.rs[m[36m:[m[32m12670[m[36m:[m                                // Check if [1;31mLaMa[m inpainter is downloaded
+[35mcrates/ui/src/app.rs[m[36m:[m[32m12671[m[36m:[m                                let inpainter_path = self.project.models.local_path(models_dir, "[1;31mlama[m-inpainter");
+[35mcrates/ui/src/app.rs[m[36m:[m[32m12713[m[36m:[m                                    tracing::warn!("MobileSAM or [1;31mLaMa[m models not ready for object removal");
+[35mcrates/ui/src/app.rs[m[36m:[m[32m14013[m[36m:[m                    // [1;31mLaMa[m inpainter model resolved on demand during export/render.
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1247[m[36m:[m/// [1;31mLaMa[m inpainting (Phase K2 - Object Removal)
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1250[m[36m:[m/// Progress events emitted by a [1;31mLaMa[m inpainting job. Modeled on
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1269[m[36m:[m/// Request for a [1;31mLaMa[m inpainting job. Everything the worker needs
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1282[m[36m:[m    /// Path to the [1;31mLaMa[m ONNX model on disk.
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1289[m[36m:[m    /// this before running inference. [1;31mLaMa[m runs at 512x512
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1294[m[36m:[m/// Spawn a background thread that runs the full [1;31mLaMa[m inpainting
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1296[m[36m:[m/// run [1;31mLaMa[m on each, and write the inpainted frames to a video file.
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1387[m[36m:[m    // 4. Load the [1;31mLaMa[m model once.
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1388[m[36m:[m    let model = caprust_media_io::[1;31mlama[m::[1;31mLama[m::load(&req.model_path)
+[35mcrates/ui/src/media_jobs.rs[m[36m:[m[32m1389[m[36m:[m        .map_err(|e| format!("load [1;31mLaMa[m: {e}"))?;
+[35mcrates/ui/src/panels/clip_properties.rs[m[36m:[m[32m100[m[36m:[m    /// Start object removal job (MobileSAM + [1;31mLaMa[m).
+[35mcrates/ui/src/panels/clip_properties.rs[m[36m:[m[32m1485[m[36m:[m        // Similar to Background Removal: click-to-mask with MobileSAM, then [1;31mLaMa[m inpainting.
+[35mcrates/ui/src/panels/clip_properties.rs[m[36m:[m[32m2677[m[36m:[m    // Check if MobileSAM encoder + decoder + [1;31mLaMa[m models are ready and enabled
+[35mcrates/ui/src/panels/clip_properties.rs[m[36m:[m[32m2683[m[36m:[m    let inpainter_model = models.models.iter().find(|m| m.id == "[1;31mlama[m-inpainter");
+[35mcrates/ui/src/panels/clip_properties.rs[m[36m:[m[32m2698[m[36m:[m    let inpainter_path = models_dir.join("[1;31mlama[m-inpainter.onnx");
+[35mcrates/ui/src/panels/clip_properties.rs[m[36m:[m[32m2708[m[36m:[m            egui::RichText::new("Remove unwanted objects/people. Uses MobileSAM (click-to-mask) + [1;31mLaMa[m (inpaint). Runs during export.")
