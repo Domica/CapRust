@@ -4524,6 +4524,176 @@ impl CapRustApp {
         tracing::info!("bg-removal: job spawned for clip {clip_id}");
     }
 
+    /// Kick off an object removal job (MobileSAM + LaMa) for the given clip.
+    /// Requires a saved project, MobileSAM encoder+decoder models, LaMa model,
+    /// and ffmpeg + ffprobe. Video/image clips only, 1.0x non-reversed.
+    /// 
+    /// This is a two-phase job:
+    /// 1. MobileSAM: generates mask from click point
+    /// 2. LaMa: inpaints the masked region
+    fn start_object_removal_job(&mut self, clip_id: uuid::Uuid) {
+        if self.segment_rx.is_some() || self.inpaint_rx.is_some() {
+            self.toast(tr("toast-object-removal-busy"));
+            return;
+        }
+        let Some(project_path) = self.project.project_path.clone() else {
+            self.toast(tr("toast-object-removal-needs-project"));
+            return;
+        };
+        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        let source_path = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. }
+            | caprust_core::ClipType::Image { path, .. } => std::path::PathBuf::from(path),
+            _ => {
+                self.toast(tr("toast-object-removal-needs-video"));
+                return;
+            }
+        };
+        if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
+            self.toast(tr("toast-object-removal-unsupported"));
+            return;
+        }
+        let duration_ms = clip.duration_ms;
+        if duration_ms == 0 {
+            self.toast(tr("toast-object-removal-needs-video"));
+            return;
+        }
+        let t_start_ms = clip.source_offset_ms;
+
+        // Check if models are available locally
+        self.project
+            .models
+            .scan_local(&self.settings.effective_models_dir());
+        let models_dir = self.settings.effective_models_dir();
+
+        // Find MobileSAM encoder
+        let encoder_path = self
+            .project
+            .models
+            .models
+            .iter()
+            .find(|m| m.id == "mobile-sam-encoder")
+            .map(|m| {
+                caprust_core::models::ModelRegistry::local_path_static(
+                    &self.project.models.models,
+                    &models_dir,
+                    &m.id,
+                )
+            })
+            .filter(|p| p.is_file());
+        let Some(encoder_path) = encoder_path else {
+            self.toast(tr("toast-object-removal-needs-encoder"));
+            return;
+        };
+
+        // Find MobileSAM decoder
+        let decoder_path = self
+            .project
+            .models
+            .models
+            .iter()
+            .find(|m| m.id == "mobile-sam-decoder")
+            .map(|m| {
+                caprust_core::models::ModelRegistry::local_path_static(
+                    &self.project.models.models,
+                    &models_dir,
+                    &m.id,
+                )
+            })
+            .filter(|p| p.is_file());
+        let Some(decoder_path) = decoder_path else {
+            self.toast(tr("toast-object-removal-needs-decoder"));
+            return;
+        };
+
+        // Find LaMa inpainter
+        let inpainter_path = self
+            .project
+            .models
+            .models
+            .iter()
+            .find(|m| m.id == "lama-inpainter")
+            .map(|m| {
+                caprust_core::models::ModelRegistry::local_path_static(
+                    &self.project.models.models,
+                    &models_dir,
+                    &m.id,
+                )
+            })
+            .filter(|p| p.is_file());
+        let Some(inpainter_path) = inpainter_path else {
+            self.toast(tr("toast-inpaint-needs-model"));
+            return;
+        };
+
+        let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
+            self.toast(tr("toast-object-removal-needs-ffmpeg"));
+            return;
+        };
+        let Some(ffprobe) = self.ffmpeg_status.ffprobe.clone() else {
+            self.toast(tr("toast-object-removal-needs-ffmpeg"));
+            return;
+        };
+
+        let fps = {
+            let fr = &self.project.frame_rate;
+            if fr.den == 0 { 30.0 } else { fr.num as f64 / fr.den as f64 }
+        };
+
+        // Mask output path
+        let mask_output = caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
+        // Inpainted video output path
+        let inpaint_output = caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
+
+        // Phase 1: MobileSAM segment job
+        let segment_req = crate::media_jobs::SegmentRequest {
+            clip_id,
+            source_path: source_path.clone(),
+            t_start_ms,
+            duration_ms,
+            fps,
+            encoder_path,
+            decoder_path,
+            mask_output: mask_output.clone(),
+            click_x: 0.5, // Will be updated from preview click
+            click_y: 0.5,
+            max_side: 480,
+        };
+        let segment_rx = crate::media_jobs::spawn_segment_job(
+            std::path::PathBuf::from(ffmpeg.clone()),
+            std::path::PathBuf::from(ffprobe.clone()),
+            segment_req,
+        );
+
+        // Phase 2: LaMa inpaint job (will be started after segment job completes)
+        let inpaint_req = crate::media_jobs::InpaintRequest {
+            clip_id,
+            source_path,
+            t_start_ms,
+            duration_ms,
+            fps,
+            model_path: inpainter_path,
+            mask_path: mask_output,
+            output_path: inpaint_output,
+            max_side: 512,
+        };
+        let inpaint_rx = crate::media_jobs::spawn_inpaint_job(
+            std::path::PathBuf::from(ffmpeg),
+            std::path::PathBuf::from(ffprobe),
+            inpaint_req,
+        );
+
+        let job_id = self.begin_job(JobKind::ObjectRemoval, tr("job-object-removal"));
+        self.segment_job_id = Some(job_id);
+        self.segment_rx = Some(segment_rx);
+        self.inpaint_job_id = Some(job_id);
+        self.inpaint_rx = Some(inpaint_rx);
+        self.toast(tr("toast-object-removal-started"));
+        tracing::info!("object-removal: job spawned for clip {clip_id}");
+    }
+
     /// Kick off a face-anonymize job for the given clip. Requires a
     /// saved project (mask cache), the YuNet model on disk, and
     /// ffmpeg + ffprobe. Video clips only, 1.0x non-reversed (the
@@ -10835,6 +11005,14 @@ impl CapRustApp {
                         PendingEdit::ClearBgRemoval => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
                                 .bg_removal(None);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
+                        }
+                        PendingEdit::StartObjectRemoval => {
+                            self.start_object_removal_job(id);
+                        }
+                        PendingEdit::ClearObjectRemovalVideo => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .object_removal_video(None);
                             let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                         PendingEdit::ChromaKey(v) => {

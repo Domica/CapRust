@@ -95,6 +95,10 @@ pub enum PendingEdit {
     SetObjectRemovalEnabled(bool),
     /// Clear the object removal mask for a clip.
     ClearObjectRemovalMask,
+    /// Clear the inpainted video for object removal.
+    ClearObjectRemovalVideo,
+    /// Start object removal job (MobileSAM + LaMa).
+    StartObjectRemoval,
     /// Overlay placement for a sticker. `None` clears it and puts the clip
     /// back to filling the frame.
     Overlay(Option<caprust_core::clip::OverlayPlacement>),
@@ -1469,6 +1473,60 @@ fn show_video(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
                         .clicked()
                     {
                         state.pending.push(PendingEdit::StartBgRemoval);
+                    }
+                });
+            });
+        });
+
+        ui.add_space(space::M_PLUS);
+        ui.separator();
+
+        // --- Object Removal (AI Inpainting) ---
+        // Similar to Background Removal: click-to-mask with MobileSAM, then LaMa inpainting.
+        ui.label(egui::RichText::new(tr("props-video-object-removal")).strong());
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new(tr("props-object-removal-hint"))
+                .small()
+                .color(egui::Color32::from_gray(150)),
+        );
+        ui.horizontal(|ui| {
+            let can_run = matches!(
+                clip.clip_type,
+                ClipType::Video { .. } | ClipType::Image { .. }
+            );
+            let has_inpainted = clip.object_removal_video.is_some();
+            let mut obj_removal_enabled = clip.object_removal_enabled;
+            if has_inpainted {
+                ui.label(
+                    egui::RichText::new(tr("props-object-removal-done"))
+                        .small()
+                        .color(egui::Color32::from_gray(200)),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(tr("props-object-removal-none"))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if has_inpainted
+                    && button::ghost(ui, tr("props-object-removal-clear"))
+                        .on_hover_text(tr("props-object-removal-clear-hint"))
+                        .clicked()
+                {
+                    state.pending.push(PendingEdit::ClearObjectRemovalVideo);
+                }
+                ui.add_enabled_ui(can_run, |ui| {
+                    if ui
+                        .checkbox(&mut obj_removal_enabled, tr("props-object-removal-enable"))
+                        .on_hover_text(tr("props-object-removal-enable-hint"))
+                        .changed()
+                    {
+                        state
+                            .pending
+                            .push(PendingEdit::SetObjectRemovalEnabled(obj_removal_enabled));
                     }
                 });
             });
