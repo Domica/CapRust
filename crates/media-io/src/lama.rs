@@ -39,6 +39,22 @@ impl Lama {
         let model = tract_onnx::onnx()
             .model_for_path(model_path)
             .map_err(|e| anyhow!("load LaMa ONNX {}: {:?}", model_path.display(), e))?
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(
+                    f32::datum_type(),
+                    tvec!(1, 3, LAMA_INPUT_SIZE as i64, LAMA_INPUT_SIZE as i64),
+                ),
+            )
+            .map_err(|e| anyhow!("pin LaMa input 0 shape: {e:?}"))?
+            .with_input_fact(
+                1,
+                InferenceFact::dt_shape(
+                    f32::datum_type(),
+                    tvec!(1, 1, LAMA_INPUT_SIZE as i64, LAMA_INPUT_SIZE as i64),
+                ),
+            )
+            .map_err(|e| anyhow!("pin LaMa input 1 shape: {e:?}"))?
             .into_optimized()
             .map_err(|e| anyhow!("optimize LaMa: {:?}", e))?
             .into_runnable()

@@ -54,6 +54,14 @@ impl MobileSam {
         let encoder = tract_onnx::onnx()
             .model_for_path(encoder_path)
             .map_err(|e| anyhow!("load encoder ONNX {}: {:?}", encoder_path.display(), e))?
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(
+                    f32::datum_type(),
+                    tvec!(1, 3, MOBILE_SAM_INPUT_SIZE as i64, MOBILE_SAM_INPUT_SIZE as i64),
+                ),
+            )
+            .map_err(|e| anyhow!("pin MobileSAM encoder input shape: {e:?}"))?
             .into_optimized()
             .map_err(|e| anyhow!("optimize encoder: {:?}", e))?
             .into_runnable()

@@ -12720,7 +12720,7 @@ impl CapRustApp {
                         let clip_data = self.project.clips.iter().find(|c| c.id == clip_id);
                         if let Some(clip) = clip_data {
                             let clip_id = clip.id;
-                            let start_time_ms = clip.start_time_ms;
+                            let start_time_ms = clip.source_offset_ms;
                             let duration_ms = clip.duration_ms;
                             
                             // Check if object removal is enabled - check pending edits first (checkbox updates go through pending)
