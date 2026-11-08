@@ -38,7 +38,7 @@ pub struct MobileSam {
     decoder: RunnableModel,   // Mask decoder
 }
 
-type RunnableModel = std::sync::Arc<tract_onnx::prelude::InferenceSimplePlan>;
+type RunnableModel = std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
 
 impl MobileSam {
     /// Load and optimize MobileSAM ONNX model from disk.
@@ -62,12 +62,16 @@ impl MobileSam {
                 ),
             )
             .map_err(|e| anyhow!("pin MobileSAM encoder input shape: {e:?}"))?
+            .into_typed()
+            .map_err(|e| anyhow!("type inference encoder: {:?}", e))?
             .into_runnable()
             .map_err(|e| anyhow!("build encoder runnable: {:?}", e))?;
 
         let decoder = tract_onnx::onnx()
             .model_for_path(decoder_path)
             .map_err(|e| anyhow!("load decoder ONNX {}: {:?}", decoder_path.display(), e))?
+            .into_typed()
+            .map_err(|e| anyhow!("type inference decoder: {:?}", e))?
             .into_runnable()
             .map_err(|e| anyhow!("build decoder runnable: {:?}", e))?;
 

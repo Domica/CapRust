@@ -26,7 +26,7 @@ pub struct Lama {
     model: RunnableModel,
 }
 
-type RunnableModel = std::sync::Arc<tract_onnx::prelude::InferenceSimplePlan>;
+type RunnableModel = std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
 
 impl Lama {
     /// Load and optimize LaMa ONNX model from disk.
@@ -55,6 +55,8 @@ impl Lama {
                 ),
             )
             .map_err(|e| anyhow!("pin LaMa input 1 shape: {e:?}"))?
+            .into_typed()
+            .map_err(|e| anyhow!("type inference LaMa: {:?}", e))?
             .into_runnable()
             .map_err(|e| anyhow!("build LaMa runnable: {:?}", e))?;
 
