@@ -41,8 +41,7 @@ pub struct BackgroundRemover {
 // `RunnableModel` is the stable name going forward.
 // tract 0.23 wraps the runnable plan in an Arc; `run()` takes
 // `self: &Arc<Self>` so the alias carries the Arc.
-type RunnableModel =
-    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
+type RunnableModel = std::sync::Arc<tract_onnx::prelude::InferenceSimplePlan>;
 
 impl BackgroundRemover {
     /// Load and optimize a u2netp ONNX model from disk.
@@ -62,8 +61,6 @@ impl BackgroundRemover {
                     model_path.display()
                 )
             })?
-            .into_optimized()
-            .map_err(|e| anyhow!("optimize ONNX model: {e:?}"))?
             .into_runnable()
             .map_err(|e| anyhow!("build runnable plan: {e:?}"))?;
         tracing::info!("background_removal: loaded {}", model_path.display());
