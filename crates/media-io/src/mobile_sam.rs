@@ -164,16 +164,13 @@ impl MobileSam {
     fn decode_mask(&self, image_embedding: &tract_onnx::prelude::TValue, point_coords: &Tensor, point_labels: &Tensor) -> Result<tract_onnx::prelude::TValue> {
         // Decoder inputs: image_embedding, point_coords, point_labels
         // Also needs: has_mask_input (bool), mask_input (optional)
-        let _has_mask_input = Tensor::from(false); // no mask input for first iteration
-        let _mask_input = Tensor::zero::<f32>(&[1, 1, 256, 256])?; // dummy
-        
         let outputs = self
             .decoder
             .run(tvec!(
                 image_embedding.clone().into(),
                 point_coords.clone().into(),
                 point_labels.clone().into(),
-                Tensor::from(false).into(),
+                Tensor::from(0.0f32).into(),  // has_mask_input: float (not bool)
                 Tensor::zero::<f32>(&[1, 1, 256, 256])?.into(),
             ))
             .map_err(|e| anyhow!("decoder inference: {:?}", e))?;
