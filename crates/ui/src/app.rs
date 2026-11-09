@@ -4596,41 +4596,59 @@ impl CapRustApp {
             .scan_local(&self.settings.effective_models_dir());
         let models_dir = self.settings.effective_models_dir();
 
-        // Find MobileSAM encoder
+        // Find MobileSAM encoder (check custom path from settings first)
         let encoder_path = self
-            .project
-            .models
-            .models
-            .iter()
-            .find(|m| m.id == "mobile-sam-encoder")
-            .map(|m| {
-                caprust_core::models::ModelRegistry::local_path_static(
-                    &self.project.models.models,
-                    &models_dir,
-                    &m.id,
-                )
+            .settings
+            .mobile_sam_encoder_path
+            .as_ref()
+            .and_then(|p| {
+                let path = std::path::PathBuf::from(p);
+                if path.is_file() { Some(path) } else { None }
             })
-            .filter(|p| p.is_file());
+            .or_else(|| {
+                self.project
+                    .models
+                    .models
+                    .iter()
+                    .find(|m| m.id == "mobile-sam-encoder")
+                    .map(|m| {
+                        caprust_core::models::ModelRegistry::local_path_static(
+                            &self.project.models.models,
+                            &models_dir,
+                            &m.id,
+                        )
+                    })
+                    .filter(|p| p.is_file())
+            });
         let Some(encoder_path) = encoder_path else {
             self.toast(tr("toast-object-removal-needs-encoder"));
             return;
         };
 
-        // Find MobileSAM decoder
+        // Find MobileSAM decoder (check custom path from settings first)
         let decoder_path = self
-            .project
-            .models
-            .models
-            .iter()
-            .find(|m| m.id == "mobile-sam-decoder")
-            .map(|m| {
-                caprust_core::models::ModelRegistry::local_path_static(
-                    &self.project.models.models,
-                    &models_dir,
-                    &m.id,
-                )
+            .settings
+            .mobile_sam_decoder_path
+            .as_ref()
+            .and_then(|p| {
+                let path = std::path::PathBuf::from(p);
+                if path.is_file() { Some(path) } else { None }
             })
-            .filter(|p| p.is_file());
+            .or_else(|| {
+                self.project
+                    .models
+                    .models
+                    .iter()
+                    .find(|m| m.id == "mobile-sam-decoder")
+                    .map(|m| {
+                        caprust_core::models::ModelRegistry::local_path_static(
+                            &self.project.models.models,
+                            &models_dir,
+                            &m.id,
+                        )
+                    })
+                    .filter(|p| p.is_file())
+            });
         let Some(decoder_path) = decoder_path else {
             self.toast(tr("toast-object-removal-needs-decoder"));
             return;

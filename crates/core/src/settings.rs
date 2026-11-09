@@ -139,6 +139,16 @@ pub struct AppSettings {
     /// for plugin loads (see media-io `clap_host::effective_scan_dirs`).
     #[serde(default)]
     pub clap_dir: Option<String>,
+    /// Optional custom path to MobileSAM encoder ONNX model. If set,
+    /// overrides the registry-downloaded path for object removal.
+    /// Useful for testing alternative ONNX exports with fixed input
+    /// dimensions that tract-onnx 0.23 can handle.
+    #[serde(default)]
+    pub mobile_sam_encoder_path: Option<String>,
+    /// Optional custom path to MobileSAM decoder ONNX model. If set,
+    /// overrides the registry-downloaded path for object removal.
+    #[serde(default)]
+    pub mobile_sam_decoder_path: Option<String>,
     /// Minutes between automatic crash-recovery snapshots. `None` or
     /// 0 disables autosave entirely. See `crate::recovery`.
     #[serde(default = "default_autosave_minutes")]
@@ -372,6 +382,8 @@ impl Default for AppSettings {
             modern_right_split: None,
             modern_timeline_height: None,
             remember_custom_resize: false,
+            mobile_sam_encoder_path: None,
+            mobile_sam_decoder_path: None,
         }
     }
 }

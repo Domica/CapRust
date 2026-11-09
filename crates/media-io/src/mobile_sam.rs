@@ -55,7 +55,10 @@ impl MobileSam {
             .model_for_path(encoder_path)
             .map_err(|e| anyhow!("load encoder ONNX {}: {:?}", encoder_path.display(), e))?
             .into_typed()
-            .map_err(|e| anyhow!("type inference encoder: {:?}", e))?
+            .map_err(|e| anyhow!(
+                "type inference encoder {}: {:?}\n  NOTE: This MobileSAM ONNX export uses dynamic symbolic\n  dimensions (image_width/image_height) that tract-onnx 0.23\n  cannot resolve. Re-export the model with fixed dimensions:\n    torch.onnx.export(model, dummy, \"model.onnx\",\n      dynamic_axes=None, opset_version=17)\n  Or set a custom encoder path in Settings → Paths → MobileSAM Encoder.",
+                encoder_path.display(), e
+            ))?
             .into_runnable()
             .map_err(|e| anyhow!("build encoder runnable: {:?}", e))?;
 
@@ -63,7 +66,10 @@ impl MobileSam {
             .model_for_path(decoder_path)
             .map_err(|e| anyhow!("load decoder ONNX {}: {:?}", decoder_path.display(), e))?
             .into_typed()
-            .map_err(|e| anyhow!("type inference decoder: {:?}", e))?
+            .map_err(|e| anyhow!(
+                "type inference decoder {}: {:?}\n  NOTE: This MobileSAM ONNX export may use dynamic symbolic\n  dimensions. Re-export with fixed dimensions (dynamic_axes=None)\n  Or set a custom decoder path in Settings → Paths → MobileSAM Decoder.",
+                decoder_path.display(), e
+            ))?
             .into_runnable()
             .map_err(|e| anyhow!("build decoder runnable: {:?}", e))?;
 

@@ -320,6 +320,17 @@ impl Default for ModelRegistry {
                 // output 256x256 mask logits. Lightweight SAM variant (~40 MB).
                 // Runs during export/render for object removal inpainting.
                 // MobileSAM has TWO files: encoder and decoder.
+                //
+                // IMPORTANT for tract-onnx 0.23 compatibility:
+                // The ONNX export must use FIXED input dimensions (no symbolic
+                // image_width/image_height in Pad/Transpose nodes). Export with:
+                //   torch.onnx.export(model, dummy_input, "model.onnx",
+                //     input_names=["images"], output_names=["..."],
+                //     dynamic_axes=None, opset_version=17)
+                // The Acly/MobileSAM export uses dynamic symbolic dims which
+                // tract-onnx 0.23 cannot resolve ("Undetermined symbol in
+                // expression: 1024+-1*image_height"). If you hit this, re-export
+                // the model with fixed dimensions or use an alternative export.
                 ModelInfo::new(
                     "mobile-sam-encoder",
                     "MobileSAM Encoder",
@@ -334,6 +345,18 @@ impl Default for ModelRegistry {
                 .with_sha256(
                     "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749",
                 ),
+                // Alternative encoder URL (uncomment and update sha256 if using a
+                // different export with fixed input dimensions):
+                // ModelInfo::new(
+                //     "mobile-sam-encoder-alt",
+                //     "MobileSAM Encoder (alt)",
+                //     ModelKind::Segmenter,
+                //     "multi",
+                //     28,
+                //     "Alternative MobileSAM image encoder export with fixed dims.",
+                // )
+                // .with_url("https://huggingface.co/YOUR_REPO/resolve/main/encoder.onnx")
+                // .with_sha256("..."),
                 ModelInfo::new(
                     "mobile-sam-decoder",
                     "MobileSAM Decoder",
@@ -348,6 +371,18 @@ impl Default for ModelRegistry {
                 .with_sha256(
                     "93915fc7c993ab9d59ab8c9ccd3bce37f7509c81ab4150a74abd4d2abbd8570d",
                 ),
+                // Alternative decoder URL (uncomment and update sha256 if using a
+                // different export with fixed input dimensions):
+                // ModelInfo::new(
+                //     "mobile-sam-decoder-alt",
+                //     "MobileSAM Decoder (alt)",
+                //     ModelKind::Segmenter,
+                //     "multi",
+                //     17,
+                //     "Alternative MobileSAM mask decoder export with fixed dims.",
+                // )
+                // .with_url("https://huggingface.co/YOUR_REPO/resolve/main/decoder.onnx")
+                // .with_sha256("..."),
                 // --- AI Inpainting (LaMa) ---
                 // LaMa (Large Mask Inpainting), Apache 2.0. Input 512x512 RGB + mask,
                 // output inpainted RGB. Excellent for object removal.
