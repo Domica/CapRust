@@ -170,7 +170,7 @@ impl MobileSam {
                 image_embedding.clone().into(),
                 point_coords.clone().into(),
                 point_labels.clone().into(),
-                Tensor::from(0.0f32).into(),  // has_mask_input: float (not bool)
+                Tensor::zero::<f32>(&[1])?.into(),  // has_mask_input: float [1]
                 Tensor::zero::<f32>(&[1, 1, 256, 256])?.into(),
             ))
             .map_err(|e| anyhow!("decoder inference: {:?}", e))?;
