@@ -12420,7 +12420,6 @@ impl CapRustApp {
                         // desktop played happily.
                         self.preview_player.publish_frame(
                             &ctx,
-                            "preview-timeline",
                             w,
                             h,
                             &buf[..expected],
@@ -12626,7 +12625,6 @@ impl CapRustApp {
                     if buf.len() >= expected {
                         self.preview_player.publish_frame(
                             &ctx,
-                            "preview-timeline",
                             w,
                             h,
                             &buf[..expected],
@@ -16064,7 +16062,7 @@ mod preview_encoding_tests {
         // come apart. This is the invariant that was missing: three
         // rendering sites assigned `texture` directly and left `frame`
         // as None.
-        player.publish_frame(&egui::Context::default(), "test", w, h, &rgba);
+        player.publish_frame(&egui::Context::default(), w, h, &rgba);
 
         let held = player.raw_frame().expect("frame kept for the reader");
         assert_eq!((held.width, held.height), (w, h));

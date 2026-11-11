@@ -32,9 +32,10 @@ pub enum SubmitOutcome {
     /// The frame was accepted and swapped to the front. Publish `frame`.
     Committed(PreviewFrame),
     /// The frame is not newer than the one still waiting in the back
-    /// buffer (a backwards seek). The buffered history was discarded;
-    /// publish the raw decoded buffer directly instead.
-    Stale,
+    /// buffer (a backwards seek). The buffered history was discarded and
+    /// the rejected frame is handed back, so the caller can publish the
+    /// decoded pixels directly instead of a stale buffer.
+    Stale(PreviewFrame),
 }
 
 /// A double-buffer frame pair (front/back).
@@ -191,8 +192,9 @@ impl DoubleBufferPreview {
     }
 
     /// Submit a new frame to the back buffer.
-    /// Returns true if the frame was accepted.
-    pub fn submit_frame(&self, frame: PreviewFrame) -> bool {
+    /// Returns `Err(frame)` (the rejected frame) if it was not newer than the
+    /// buffered one, or `Ok(())` if accepted.
+    pub fn submit_frame(&self, frame: PreviewFrame) -> Result<(), PreviewFrame> {
         let mut frame_pair = self.frame_pair.lock().unwrap();
 
         // Only accept if back buffer is free or we're overwriting stale data
@@ -200,13 +202,13 @@ impl DoubleBufferPreview {
             // Check if the existing back buffer is stale (older sequence)
             if let Some(existing) = &frame_pair.back {
                 if existing.sequence >= frame.sequence {
-                    return false; // New frame is stale, reject
+                    return Err(frame); // New frame is stale, reject and hand back
                 }
             }
         }
 
         frame_pair.back = Some(frame);
-        true
+        Ok(())
     }
 
     /// Complete rendering into back buffer and swap.
@@ -234,13 +236,24 @@ impl DoubleBufferPreview {
     /// again. On rejection we drop the buffered history instead so the
     /// caller can publish the frame it actually decoded.
     pub fn submit_and_commit(&self, frame: PreviewFrame) -> SubmitOutcome {
-        if !self.submit_frame(frame) {
-            self.clear();
-            return SubmitOutcome::Stale;
-        }
-        match self.commit_and_swap() {
-            Some(front) => SubmitOutcome::Committed(front),
-            None => SubmitOutcome::Stale,
+        match self.submit_frame(frame) {
+            Err(rejected) => {
+                self.clear();
+                // Hand the rejected frame back: the caller publishes the pixels
+                // it actually decoded instead of the stale back buffer.
+                SubmitOutcome::Stale(rejected)
+            }
+            Ok(()) => match self.commit_and_swap() {
+                Some(front) => SubmitOutcome::Committed(front),
+                None => {
+                    // `back` was just populated, so this branch is unreachable;
+                    // recover the frame defensively so we always hand one back.
+                    let mut frame_pair = self.frame_pair.lock().unwrap();
+                    SubmitOutcome::Stale(
+                        frame_pair.back.take().expect("buffered frame present"),
+                    )
+                }
+            },
         }
     }
 
@@ -400,7 +413,10 @@ mod tests {
             sequence: 1,
         };
 
-        preview.submit_frame(frame1.clone());
+        assert!(
+            preview.submit_frame(frame1.clone()).is_ok(),
+            "first frame should be accepted into the back buffer"
+        );
         let front = preview.commit_and_swap();
         assert!(front.is_some());
         assert_eq!(front.unwrap().sequence, 1);
@@ -446,18 +462,18 @@ mod tests {
         // left behind in the back buffer.
         match preview.submit_and_commit(frame(10)) {
             SubmitOutcome::Committed(f) => assert_eq!(f.sequence, 10),
-            SubmitOutcome::Stale => panic!("first frame was rejected"),
+            SubmitOutcome::Stale(_) => panic!("first frame was rejected"),
         }
         match preview.submit_and_commit(frame(20)) {
             SubmitOutcome::Committed(f) => assert_eq!(f.sequence, 20),
-            SubmitOutcome::Stale => panic!("second frame was rejected"),
+            SubmitOutcome::Stale(_) => panic!("second frame was rejected"),
         }
 
         // Scrub back to 5. The back buffer still holds 10, so submit_frame
         // rejects it. The old code swapped that 10 to the front anyway.
         assert!(matches!(
             preview.submit_and_commit(frame(5)),
-            SubmitOutcome::Stale
+            SubmitOutcome::Stale(_)
         ));
         {
             let pair = preview.frame_pair().lock().unwrap();
@@ -468,7 +484,7 @@ mod tests {
         // And playback recovers on the very next frame.
         match preview.submit_and_commit(frame(6)) {
             SubmitOutcome::Committed(f) => assert_eq!(f.sequence, 6),
-            SubmitOutcome::Stale => panic!("playback did not recover after a seek"),
+            SubmitOutcome::Stale(_) => panic!("playback did not recover after a seek"),
         }
     }
 
@@ -490,7 +506,7 @@ mod tests {
         preview.submit_and_commit(frame(8)); // front=8, back=7
         assert!(matches!(
             preview.submit_and_commit(frame(7)),
-            SubmitOutcome::Stale
+            SubmitOutcome::Stale(_)
         ));
     }
 

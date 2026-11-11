@@ -20,6 +20,13 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Stable name for the single preview texture. A constant (rather than a
+/// per-frame timestamp) lets egui reuse one GPU texture across frames
+/// instead of allocating a fresh one on every frame during playback —
+/// the old timestamp-based name churned through thousands of orphaned
+/// textures over a long preview.
+const PREVIEW_TEXTURE_NAME: &str = "caprust-preview-texture";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameKey {
     pub clip_id: uuid::Uuid,
@@ -154,13 +161,17 @@ impl PreviewPlayer {
     pub fn publish_frame(
         &mut self,
         ctx: &egui::Context,
-        name: &str,
         width: usize,
         height: usize,
         rgba: &[u8],
     ) {
         let img = egui::ColorImage::from_rgba_unmultiplied([width, height], rgba);
-        self.texture = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));
+        // Reuse one stable texture across frames. `load_texture` resolves the
+        // name in the texture manager and updates the existing slot in place
+        // when the name is already registered, so a constant name keeps a
+        // single persistent texture instead of churning a new one per frame.
+        self.texture =
+            Some(ctx.load_texture(PREVIEW_TEXTURE_NAME, img, egui::TextureOptions::LINEAR));
         self.has_frame = true;
         self.capture_frame(width, height, rgba);
     }
@@ -332,10 +343,13 @@ impl PreviewPlayer {
                 continue;
             }
 
-            // Submit to double-buffer system
+            // Submit to double-buffer system. Move the decoded pixels into the
+            // frame instead of cloning them (was a full-frame copy per frame).
             if let Some(db) = &self.double_buffer {
+                let mut rgba = res.rgba;
+                rgba.truncate(expected);
                 let frame = PreviewFrame {
-                    rgba: res.rgba[..expected].to_vec(),
+                    rgba,
                     width: res.key.width,
                     height: res.key.height,
                     timestamp_ms: res.key.at_ms,
@@ -345,31 +359,31 @@ impl PreviewPlayer {
 
                 match db.submit_and_commit(frame) {
                     SubmitOutcome::Committed(front_frame) => {
-                        let name =
-                            format!("prev-{}-{}", front_frame.clip_id, front_frame.timestamp_ms);
                         self.publish_frame(
                             ctx,
-                            &name,
                             front_frame.width as usize,
                             front_frame.height as usize,
                             &front_frame.rgba,
                         );
                     }
-                    SubmitOutcome::Stale => {
-                        // Backwards seek: the buffered history was dropped.
-                        // Publish the frame we actually decoded instead of
-                        // the stale back buffer, and record its key so the
-                        // player does not get stuck refusing to re-request.
-                        let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
-                        self.publish_frame(ctx, &name, w, h, &res.rgba[..expected]);
+                    SubmitOutcome::Stale(front_frame) => {
+                        // Backwards seek: submit_and_commit dropped the buffered
+                        // history and handed the decoded frame back. Publish it
+                        // so the preview shows the right picture and the player
+                        // does not get stuck refusing to re-request.
+                        self.publish_frame(
+                            ctx,
+                            front_frame.width as usize,
+                            front_frame.height as usize,
+                            &front_frame.rgba,
+                        );
                     }
                 }
                 self.last_key = Some(res.key);
                 self.decoded += 1;
             } else {
                 // Fallback to direct publish
-                let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
-                self.publish_frame(ctx, &name, w, h, &res.rgba[..expected]);
+                self.publish_frame(ctx, w, h, &res.rgba[..expected]);
                 self.last_key = Some(res.key);
                 self.decoded += 1;
             }
@@ -445,10 +459,13 @@ impl PreviewPlayer {
             return false;
         }
 
-        // Submit to double-buffer system
+        // Submit to double-buffer system. Move the decoded pixels in instead
+        // of cloning them.
         if let Some(db) = &self.double_buffer {
+            let mut rgba = buf;
+            rgba.truncate(expected);
             let frame = PreviewFrame {
-                rgba: buf[..expected].to_vec(),
+                rgba,
                 width: s.width,
                 height: s.height,
                 timestamp_ms: (s.started_at_sec * 1000.0) as u64,
@@ -456,26 +473,37 @@ impl PreviewPlayer {
                 sequence: (s.started_at_sec * 1000.0) as u64,
             };
 
-            // Never swap a rejected frame. `sequence` here is the
-            // stream's start time, so every frame after the first carries
-            // the same number and is rejected; the direct publish below
-            // is therefore the normal path until the stream gets a real
-            // per-frame counter.
-            if let SubmitOutcome::Committed(front_frame) = db.submit_and_commit(frame) {
-                self.publish_frame(
-                    ctx,
-                    "preview-stream",
-                    front_frame.width as usize,
-                    front_frame.height as usize,
-                    &front_frame.rgba,
-                );
-                self.decoded += 1;
-                return true;
+            // `sequence` here is the stream's start time, so every frame after
+            // the first carries the same number and is rejected (Stale). On
+            // Stale the decoded frame is handed back; publish it directly.
+            match db.submit_and_commit(frame) {
+                SubmitOutcome::Committed(front_frame) => {
+                    self.publish_frame(
+                        ctx,
+                        front_frame.width as usize,
+                        front_frame.height as usize,
+                        &front_frame.rgba,
+                    );
+                    self.decoded += 1;
+                    return true;
+                }
+                SubmitOutcome::Stale(front_frame) => {
+                    self.publish_frame(
+                        ctx,
+                        front_frame.width as usize,
+                        front_frame.height as usize,
+                        &front_frame.rgba,
+                    );
+                    self.decoded += 1;
+                    return true;
+                }
             }
         }
 
-        // Fallback to direct publish
-        self.publish_frame(ctx, "preview-stream", w, h, &buf[..expected]);
+        // Fallback to direct publish (double buffer absent).
+        let mut rgba = buf;
+        rgba.truncate(expected);
+        self.publish_frame(ctx, w, h, &rgba);
         self.decoded += 1;
         true
     }
@@ -532,7 +560,7 @@ mod tests {
         let w = 64usize;
         let h = 32usize;
         let rgba = vec![200u8; w * h * 4];
-        player.publish_frame(&egui::Context::default(), "test", w, h, &rgba);
+        player.publish_frame(&egui::Context::default(), w, h, &rgba);
 
         let held = player.raw_frame().expect("frame kept for the reader");
         assert_eq!((held.width, held.height), (w, h));

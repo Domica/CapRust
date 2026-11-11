@@ -2,6 +2,26 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.27] - 2026-11-11
+
+### Fixed
+
+- **Trajectory & keyframe graph now follows the dragged cursor (3.0.1).** Dragging a point on the trajectory or a keyframe-track graph updates the preview in real time — the point no longer snaps back to its old position while dragging.
+- **Preview & export invalidated on trajectory / keyframe change (3.0.4).** Editing a clip's trajectory or keyframe tracks now bumps the render and preview hashes, so the preview refreshes and export re-renders instead of showing the stale cached frame.
+- **Double-buffer preview froze on a backwards seek (6.1).** Scrubbing back to an earlier frame used to swap a stale back-buffer frame to the front, freezing the preview while the player recorded the new key. Rejected frames are now dropped and the freshly decoded frame is published directly.
+
+### Performance
+
+- **Stable preview texture (6.x).** The preview reuses one egui texture across frames instead of creating a new one per frame, removing per-frame texture churn and GPU allocation.
+- **Zero-copy frame upload (6.x).** Decoded RGBA is moved into the preview frame instead of cloned, removing a full-frame copy per frame during playback and scrubbing.
+
+### Technical
+
+- `crates/ui/src/panels/keyframes.rs`, `clip_properties.rs`: trajectory/keyframe edits snapshot the pre-drag value so `SetClipCommand` undo captures the correct state; keyframe-track edits mark the panel dirty.
+- `crates/core/src/project.rs`: `hash_with()` now hashes `trajectory` and `keyframe_tracks` (property, keyframe count, per-keyframe t/value/ease); video keyframe edits do not invalidate the audio PCM cache.
+- `crates/ui/src/double_buffer_preview.rs`: `SubmitOutcome::Stale` now carries the rejected frame; `submit_frame` returns `Result<(), PreviewFrame>`.
+- `crates/ui/src/preview_player.rs`: `publish_frame` reuses a stable texture name (`PREVIEW_TEXTURE_NAME`) and moves decoded pixels into the frame.
+
 ## [0.9.26] - 2026-11-04
 
 ### Fixed
