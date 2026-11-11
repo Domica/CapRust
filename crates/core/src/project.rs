@@ -420,6 +420,27 @@ impl ProjectState {
                 k.cx_norm.to_bits().hash(&mut h);
                 k.cy_norm.to_bits().hash(&mut h);
             }
+            // Both keyframe collections feed the ffmpeg expression graph
+            // (export_graph.rs). They used to be absent here, so a drag
+            // changed the model while render_hash()/preview_hash() stayed
+            // put and the preview never respawned.
+            c.trajectory.len().hash(&mut h);
+            for k in &c.trajectory {
+                k.t_ms.hash(&mut h);
+                k.centre_x.to_bits().hash(&mut h);
+                k.centre_y.to_bits().hash(&mut h);
+                format!("{:?}", k.ease).hash(&mut h);
+            }
+            c.keyframe_tracks.len().hash(&mut h);
+            for kt in &c.keyframe_tracks {
+                kt.property.hash(&mut h);
+                kt.keyframes.len().hash(&mut h);
+                for k in &kt.keyframes {
+                    k.t.to_bits().hash(&mut h);
+                    k.value.to_bits().hash(&mut h);
+                    format!("{:?}", k.ease).hash(&mut h);
+                }
+            }
             c.bg_removal.hash(&mut h);
             c.stab_trf.hash(&mut h);
             // The placement is what decides where a sticker lands and how
@@ -1772,5 +1793,172 @@ mod relink_orphan_tests {
         p.clips.push(c);
 
         assert_eq!(p.stickers_under_playhead(0).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod keyframe_hash_tests {
+    use crate::clip::{Clip, EaseCurve, Keyframe, KeyframeTrack, MotionKeyframe};
+    use crate::project::ProjectState;
+
+    fn project_with_clip() -> ProjectState {
+        let mut p = ProjectState::default();
+        p.add_clip(Clip::new_video("a.mp4", 0, 0, 4000));
+        p
+    }
+
+    /// Both hashes decide whether the preview / export renderer respawns.
+    /// A dragged trajectory point has to reach both of them.
+    #[test]
+    fn dragging_a_trajectory_point_invalidates_both_hashes() {
+        let mut p = project_with_clip();
+        let render_before = p.render_hash();
+        let preview_before = p.preview_hash();
+
+        p.clips[0].trajectory = vec![MotionKeyframe::new(0, 0.5, 0.5)];
+
+        assert_ne!(
+            render_before,
+            p.render_hash(),
+            "trajectory must invalidate the render hash"
+        );
+        assert_ne!(
+            preview_before,
+            p.preview_hash(),
+            "trajectory must invalidate the preview hash"
+        );
+    }
+
+    #[test]
+    fn trajectory_hash_notices_every_field() {
+        let base = MotionKeyframe::new(0, 0.5, 0.5);
+        let variants: [(&str, MotionKeyframe); 4] = [
+            ("t_ms", MotionKeyframe { t_ms: 1000, ..base }),
+            (
+                "centre_x",
+                MotionKeyframe {
+                    centre_x: 0.9,
+                    ..base
+                },
+            ),
+            (
+                "centre_y",
+                MotionKeyframe {
+                    centre_y: 0.1,
+                    ..base
+                },
+            ),
+            (
+                "ease",
+                MotionKeyframe {
+                    ease: EaseCurve::EaseInOut,
+                    ..base
+                },
+            ),
+        ];
+
+        for (field, changed) in variants {
+            let mut p = project_with_clip();
+            p.clips[0].trajectory = vec![base];
+            let before = p.preview_hash();
+            p.clips[0].trajectory = vec![changed];
+            assert_ne!(
+                before,
+                p.preview_hash(),
+                "changing {field} did not change the preview hash"
+            );
+        }
+    }
+
+    /// The generic track editor used to mutate a clone that was never
+    /// written back. Even once it is, the hash still has to see the edit.
+    #[test]
+    fn adding_a_keyframe_track_invalidates_both_hashes() {
+        let mut p = project_with_clip();
+        let render_before = p.render_hash();
+        let preview_before = p.preview_hash();
+
+        p.clips[0].keyframe_tracks = vec![KeyframeTrack {
+            property: String::from("scale"),
+            keyframes: vec![Keyframe::default()],
+        }];
+
+        assert_ne!(render_before, p.render_hash());
+        assert_ne!(preview_before, p.preview_hash());
+    }
+
+    fn hash_with_track(track: KeyframeTrack) -> u64 {
+        let mut p = project_with_clip();
+        p.clips[0].keyframe_tracks = vec![track];
+        p.preview_hash()
+    }
+
+    #[test]
+    fn keyframe_track_hash_notices_every_field() {
+        let base = KeyframeTrack {
+            property: String::from("scale"),
+            keyframes: vec![Keyframe {
+                t: 0.0,
+                value: 1.0,
+                ease: EaseCurve::Linear,
+            }],
+        };
+        let before = hash_with_track(base.clone());
+
+        let mut changed = base.clone();
+        changed.property = String::from("opacity");
+        assert_ne!(before, hash_with_track(changed), "property is not hashed");
+
+        let mut changed = base.clone();
+        changed.keyframes[0].t = 1.5;
+        assert_ne!(
+            before,
+            hash_with_track(changed),
+            "keyframe time is not hashed"
+        );
+
+        let mut changed = base.clone();
+        changed.keyframes[0].value = 0.25;
+        assert_ne!(
+            before,
+            hash_with_track(changed),
+            "keyframe value is not hashed"
+        );
+
+        let mut changed = base.clone();
+        changed.keyframes[0].ease = EaseCurve::EaseInOut;
+        assert_ne!(
+            before,
+            hash_with_track(changed),
+            "keyframe easing is not hashed"
+        );
+
+        let mut changed = base.clone();
+        changed.keyframes.clear();
+        assert_ne!(
+            before,
+            hash_with_track(changed),
+            "keyframe count is not hashed"
+        );
+    }
+
+    /// These are video-only fields. Hashing them into the audio PCM key
+    /// would re-render the whole mix on every graph drag for no reason.
+    #[test]
+    fn audio_render_hash_ignores_video_keyframes() {
+        let mut p = project_with_clip();
+        let before = p.audio_render_hash();
+
+        p.clips[0].trajectory = vec![MotionKeyframe::new(0, 0.2, 0.8)];
+        p.clips[0].keyframe_tracks = vec![KeyframeTrack {
+            property: String::from("scale"),
+            keyframes: vec![Keyframe::default()],
+        }];
+
+        assert_eq!(
+            before,
+            p.audio_render_hash(),
+            "video keyframes must not invalidate the preview PCM cache"
+        );
     }
 }
