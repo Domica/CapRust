@@ -2798,17 +2798,28 @@ fn show_trajectory(
     );
     ui.add_space(space::S);
 
+    // The editor paints from the live clip so a drag gives immediate
+    // visual feedback, but only SetClipCommand may write the project.
+    // Otherwise the command snapshots the already-dragged trajectory as
+    // its `before` (set_clip.rs:383) and undo becomes a no-op. Remember
+    // the pre-edit value and restore it just before emitting the command;
+    // the command is drained and executed later in this same frame
+    // (app.rs:10904), so the next frame already shows the new value.
+    let before = clip.trajectory.clone();
+
     // --- Curve editor (KeyframeEditor) ---
     // Show editor even with 0/1 keyframes (shows grid + points)
+    let mut dirty = false;
     ui.group(|ui| {
         ui.set_min_height(140.0);
-        crate::panels::keyframes::KeyframeEditor::show(ui, clip, playhead_ms);
+        if crate::panels::keyframes::KeyframeEditor::show(ui, clip, playhead_ms) {
+            dirty = true;
+        }
     });
     ui.add_space(space::S);
 
     // Use clip.trajectory directly for immediate visual feedback during drag
     let keys = &mut clip.trajectory;
-    let mut dirty = false;
 
     // Guidance for keyframe count
     match keys.len() {
@@ -2890,7 +2901,9 @@ fn show_trajectory(
     }
 
     if dirty {
-        state.pending.push(PendingEdit::Trajectory(keys.clone()));
+        let next = keys.clone();
+        clip.trajectory = before;
+        state.pending.push(PendingEdit::Trajectory(next));
     }
 }
 
@@ -2964,9 +2977,19 @@ fn show_keyframe_tracks(
                 }
             });
 
-            // Keyframe editor for this track - uses Keyframe directly
+            // Keyframe editor for this track - uses Keyframe directly.
+            // `tracks` above is a clone: without this flag a dragged
+            // point is never written back to the clip and the bullet
+            // snaps back on the next frame (3.0.1).
             ui.add_space(space::XS);
-            crate::panels::keyframes::KeyframeEditor::show_keyframe_track(ui, track, playhead_ms);
+            let changed = crate::panels::keyframes::KeyframeEditor::show_keyframe_track(
+                ui,
+                track,
+                playhead_ms,
+            );
+            if changed {
+                dirty = true;
+            }
 
             // Guidance for keyframe count
             match track.keyframes.len() {

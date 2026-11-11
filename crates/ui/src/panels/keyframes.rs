@@ -13,12 +13,16 @@ pub struct KeyframeEditor;
 
 impl KeyframeEditor {
     /// Show the curve editor for a clip's trajectory keyframes.
-    /// Modifies clip.trajectory directly for immediate visual feedback during drag.
-    pub fn show(ui: &mut Ui, clip: &mut Clip, playhead_ms: u64) {
+    /// Mutates `clip.trajectory` in place for immediate visual feedback
+    /// during a drag, and reports whether anything changed this frame so
+    /// the caller can route the edit through `PendingEdit::Trajectory`
+    /// (and therefore through `SetClipCommand` / the undo stack).
+    pub fn show(ui: &mut Ui, clip: &mut Clip, playhead_ms: u64) -> bool {
         ui.label("Trajectory keyframes");
         ui.add_space(4.0);
 
         let keys = &mut clip.trajectory;
+        let mut changed = false;
 
         // Sort keyframes by time for consistent display.
         keys.sort_by_key(|k| k.t_ms);
@@ -135,6 +139,7 @@ impl KeyframeEditor {
                     let dy = delta.y / area_h;
                     k.t_ms = (k.t_ms as f32 + dx * range).clamp(min_t, max_t) as u64;
                     k.centre_y = (k.centre_y - dy).clamp(0.0, 1.0);
+                    changed = true;
                     ui.ctx().request_repaint();
                 }
             }
@@ -158,6 +163,7 @@ impl KeyframeEditor {
         // Delete point if right-clicked
         if let Some(idx) = to_delete {
             keys.remove(idx);
+            changed = true;
         }
 
         // Playhead line
@@ -181,29 +187,36 @@ impl KeyframeEditor {
                 ui.label(format!("t={}ms", k.t_ms));
                 if ui.button("Linear").clicked() {
                     k.ease = EaseCurve::Linear;
+                    changed = true;
                 }
                 if ui.button("EaseIn").clicked() {
                     k.ease = EaseCurve::EaseIn;
+                    changed = true;
                 }
                 if ui.button("EaseOut").clicked() {
                     k.ease = EaseCurve::EaseOut;
+                    changed = true;
                 }
                 if ui.button("EaseInOut").clicked() {
                     k.ease = EaseCurve::EaseInOut;
+                    changed = true;
                 }
                 let _ = ui.label(format!("{:?}", k.ease));
             });
         }
 
         ui.add_space(4.0);
+        changed
     }
 
-    /// Show the curve editor for a KeyframeTrack directly (modifies in place for immediate visual feedback).
+    /// Show the curve editor for a KeyframeTrack directly (modifies in
+    /// place for immediate visual feedback). Returns `true` when a
+    /// keyframe was changed this frame.
     pub fn show_keyframe_track(
         ui: &mut Ui,
         track: &mut caprust_core::clip::KeyframeTrack,
         playhead_ms: u64,
-    ) {
+    ) -> bool {
         Self::show_generic(
             ui,
             &mut track.keyframes,
@@ -213,11 +226,12 @@ impl KeyframeEditor {
             |k| &mut k.ease,
             |k, v| k.t = v,
             |k, v| k.value = v,
-        );
+        )
     }
 
-    /// Show the curve editor for generic keyframes (scale, rotation, opacity, etc.)
-    pub fn show_keyframes(ui: &mut Ui, keys: &mut Vec<Keyframe>, playhead_ms: u64) {
+    /// Show the curve editor for generic keyframes (scale, rotation, opacity, etc.).
+    /// Returns `true` when a keyframe was changed this frame.
+    pub fn show_keyframes(ui: &mut Ui, keys: &mut Vec<Keyframe>, playhead_ms: u64) -> bool {
         Self::show_generic(
             ui,
             keys,
@@ -227,7 +241,7 @@ impl KeyframeEditor {
             |k| &mut k.ease,
             |k, v| k.t = v,
             |k, v| k.value = v,
-        );
+        )
     }
 
     /// Generic curve editor for any keyframe type with time, value, and easing.
@@ -241,11 +255,14 @@ impl KeyframeEditor {
         get_ease: impl Fn(&mut K) -> &mut EaseCurve,
         set_time: impl Fn(&mut K, f64),
         set_value: impl Fn(&mut K, f32),
-    ) where
+    ) -> bool
+    where
         K: Clone + 'static,
     {
         ui.label("Keyframes");
         ui.add_space(4.0);
+
+        let mut changed = false;
 
         // Sort keyframes by time for consistent display.
         keys.sort_by(|a, b| {
@@ -368,6 +385,7 @@ impl KeyframeEditor {
                     let new_value = (get_value(k) - dy).clamp(0.0, 1.0);
                     set_time(k, new_time);
                     set_value(k, new_value);
+                    changed = true;
                     ui.ctx().request_repaint();
                 }
             }
@@ -391,6 +409,7 @@ impl KeyframeEditor {
         // Delete point if right-clicked
         if let Some(idx) = to_delete {
             keys.remove(idx);
+            changed = true;
         }
 
         // Playhead line
@@ -413,20 +432,25 @@ impl KeyframeEditor {
                 ui.label(format!("t={:.1}s", get_time(k) as f32));
                 if ui.button("Linear").clicked() {
                     *get_ease(k) = EaseCurve::Linear;
+                    changed = true;
                 }
                 if ui.button("EaseIn").clicked() {
                     *get_ease(k) = EaseCurve::EaseIn;
+                    changed = true;
                 }
                 if ui.button("EaseOut").clicked() {
                     *get_ease(k) = EaseCurve::EaseOut;
+                    changed = true;
                 }
                 if ui.button("EaseInOut").clicked() {
                     *get_ease(k) = EaseCurve::EaseInOut;
+                    changed = true;
                 }
                 let _ = ui.label(format!("{:?}", get_ease(k)));
             });
         }
 
         ui.add_space(4.0);
+        changed
     }
 }
