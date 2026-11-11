@@ -12,7 +12,9 @@
 //! This gives ~1 in-flight ffmpeg process with zero backlog, so latency
 //! stays bounded (~150 ms) regardless of how fast the user seeks.
 
-use crate::double_buffer_preview::{DoubleBufferConfig, DoubleBufferPreview, PreviewFrame};
+use crate::double_buffer_preview::{
+    DoubleBufferConfig, DoubleBufferPreview, PreviewFrame, SubmitOutcome,
+};
 use caprust_media_io::streamer::FrameStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -341,21 +343,29 @@ impl PreviewPlayer {
                     sequence: res.key.at_ms / 100, // Use rounded ms as sequence
                 };
 
-                db.submit_frame(frame);
-
-                // Try to commit and swap
-                if let Some(front_frame) = db.commit_and_swap() {
-                    let name = format!("prev-{}-{}", front_frame.clip_id, front_frame.timestamp_ms);
-                    self.publish_frame(
-                        ctx,
-                        &name,
-                        front_frame.width as usize,
-                        front_frame.height as usize,
-                        &front_frame.rgba,
-                    );
-                    self.last_key = Some(res.key);
-                    self.decoded += 1;
+                match db.submit_and_commit(frame) {
+                    SubmitOutcome::Committed(front_frame) => {
+                        let name =
+                            format!("prev-{}-{}", front_frame.clip_id, front_frame.timestamp_ms);
+                        self.publish_frame(
+                            ctx,
+                            &name,
+                            front_frame.width as usize,
+                            front_frame.height as usize,
+                            &front_frame.rgba,
+                        );
+                    }
+                    SubmitOutcome::Stale => {
+                        // Backwards seek: the buffered history was dropped.
+                        // Publish the frame we actually decoded instead of
+                        // the stale back buffer, and record its key so the
+                        // player does not get stuck refusing to re-request.
+                        let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
+                        self.publish_frame(ctx, &name, w, h, &res.rgba[..expected]);
+                    }
                 }
+                self.last_key = Some(res.key);
+                self.decoded += 1;
             } else {
                 // Fallback to direct publish
                 let name = format!("prev-{}-{}", res.key.clip_id, res.key.at_ms);
@@ -446,10 +456,12 @@ impl PreviewPlayer {
                 sequence: (s.started_at_sec * 1000.0) as u64,
             };
 
-            db.submit_frame(frame);
-
-            // Try to commit and swap
-            if let Some(front_frame) = db.commit_and_swap() {
+            // Never swap a rejected frame. `sequence` here is the
+            // stream's start time, so every frame after the first carries
+            // the same number and is rejected; the direct publish below
+            // is therefore the normal path until the stream gets a real
+            // per-frame counter.
+            if let SubmitOutcome::Committed(front_frame) = db.submit_and_commit(frame) {
                 self.publish_frame(
                     ctx,
                     "preview-stream",

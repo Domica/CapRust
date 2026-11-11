@@ -25,6 +25,18 @@ pub struct PreviewFrame {
     pub sequence: u64,
 }
 
+/// What the caller must do after handing a freshly decoded frame to the
+/// double buffer.
+#[derive(Debug)]
+pub enum SubmitOutcome {
+    /// The frame was accepted and swapped to the front. Publish `frame`.
+    Committed(PreviewFrame),
+    /// The frame is not newer than the one still waiting in the back
+    /// buffer (a backwards seek). The buffered history was discarded;
+    /// publish the raw decoded buffer directly instead.
+    Stale,
+}
+
 /// A double-buffer frame pair (front/back).
 #[derive(Debug)]
 pub struct DoubleBufferFrame {
@@ -211,6 +223,27 @@ impl DoubleBufferPreview {
         frame_pair.front.clone()
     }
 
+    /// Submit a frame and commit the swap *only if it was accepted*.
+    ///
+    /// `submit_frame` returns false when the incoming sequence is not
+    /// newer than the frame still sitting in the back buffer. Callers
+    /// used to ignore that bool and call `commit_and_swap()` anyway,
+    /// which swapped the stale back buffer to the front: the preview
+    /// showed the previous picture while `PreviewPlayer` recorded the
+    /// new frame key, and `request()` then refused to decode that frame
+    /// again. On rejection we drop the buffered history instead so the
+    /// caller can publish the frame it actually decoded.
+    pub fn submit_and_commit(&self, frame: PreviewFrame) -> SubmitOutcome {
+        if !self.submit_frame(frame) {
+            self.clear();
+            return SubmitOutcome::Stale;
+        }
+        match self.commit_and_swap() {
+            Some(front) => SubmitOutcome::Committed(front),
+            None => SubmitOutcome::Stale,
+        }
+    }
+
     /// Add frame to queue for smooth scrubbing/playback.
     pub fn enqueue(&self, frame: PreviewFrame) {
         self.frame_queue.lock().unwrap().push(frame);
@@ -393,6 +426,72 @@ mod tests {
         let frame = preview.dequeue();
         assert!(frame.is_some());
         assert_eq!(preview.queue_depth(), 0);
+    }
+
+    /// Reproduces the exact forward-playback / backwards-seek sequence
+    /// that used to publish the previous frame while recording the new key.
+    #[test]
+    fn backwards_seek_never_commits_a_stale_frame() {
+        let preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
+        let frame = |seq: u64| PreviewFrame {
+            rgba: vec![seq as u8; 4],
+            width: 1,
+            height: 1,
+            timestamp_ms: seq * 100,
+            clip_id: Uuid::nil(),
+            sequence: seq,
+        };
+
+        // Forward playback. After the second swap the old front (10) is
+        // left behind in the back buffer.
+        match preview.submit_and_commit(frame(10)) {
+            SubmitOutcome::Committed(f) => assert_eq!(f.sequence, 10),
+            SubmitOutcome::Stale => panic!("first frame was rejected"),
+        }
+        match preview.submit_and_commit(frame(20)) {
+            SubmitOutcome::Committed(f) => assert_eq!(f.sequence, 20),
+            SubmitOutcome::Stale => panic!("second frame was rejected"),
+        }
+
+        // Scrub back to 5. The back buffer still holds 10, so submit_frame
+        // rejects it. The old code swapped that 10 to the front anyway.
+        assert!(matches!(
+            preview.submit_and_commit(frame(5)),
+            SubmitOutcome::Stale
+        ));
+        {
+            let pair = preview.frame_pair().lock().unwrap();
+            assert!(pair.front.is_none(), "stale front buffer survived");
+            assert!(pair.back.is_none(), "stale back buffer survived");
+        }
+
+        // And playback recovers on the very next frame.
+        match preview.submit_and_commit(frame(6)) {
+            SubmitOutcome::Committed(f) => assert_eq!(f.sequence, 6),
+            SubmitOutcome::Stale => panic!("playback did not recover after a seek"),
+        }
+    }
+
+    /// `>=` in submit_frame means an equal sequence is stale too. That
+    /// case must not be committed either.
+    #[test]
+    fn equal_sequence_is_rejected_not_swapped() {
+        let preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
+        let frame = |seq: u64| PreviewFrame {
+            rgba: vec![seq as u8; 4],
+            width: 1,
+            height: 1,
+            timestamp_ms: seq * 100,
+            clip_id: Uuid::nil(),
+            sequence: seq,
+        };
+
+        preview.submit_and_commit(frame(7));
+        preview.submit_and_commit(frame(8)); // front=8, back=7
+        assert!(matches!(
+            preview.submit_and_commit(frame(7)),
+            SubmitOutcome::Stale
+        ));
     }
 
     #[test]
