@@ -269,7 +269,9 @@ pub fn extract_gray_frames(
     args.push("-t".into());
     args.push(format!("{duration_sec:.6}"));
     args.push("-vf".into());
-    args.push(format!("fps={fps:.6},scale={out_w}:{out_h}:flags=bilinear,format=gray"));
+    args.push(format!(
+        "fps={fps:.6},scale={out_w}:{out_h}:flags=bilinear,format=gray"
+    ));
     args.push("-f".into());
     args.push("rawvideo".into());
     args.push("-pix_fmt".into());

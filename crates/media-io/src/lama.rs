@@ -26,7 +26,8 @@ pub struct Lama {
     model: RunnableModel,
 }
 
-type RunnableModel = std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
+type RunnableModel =
+    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
 
 impl Lama {
     /// Load and optimize LaMa ONNX model from disk.
@@ -55,32 +56,30 @@ impl Lama {
             );
         }
 
-        Ok(Self {
-            model: model,
-        })
+        Ok(Self { model })
     }
 
     /// Run inpainting on an image with a mask.
     /// Returns an inpainted RGB image at original resolution.
-    pub fn inpaint(
-        &self,
-        rgb: &[u8],
-        mask: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u8>> {
+    pub fn inpaint(&self, rgb: &[u8], mask: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         let expected = (width as usize) * (height as usize) * 3;
         let mask_expected = (width as usize) * (height as usize);
         if rgb.len() != expected {
             return Err(anyhow!(
                 "rgb buffer length {} != expected {} ({}x{}x3)",
-                rgb.len(), expected, width, height
+                rgb.len(),
+                expected,
+                width,
+                height
             ));
         }
         if mask.len() != mask_expected {
             return Err(anyhow!(
                 "mask buffer length {} != expected {} ({}x{})",
-                mask.len(), mask_expected, width, height
+                mask.len(),
+                mask_expected,
+                width,
+                height
             ));
         }
         if width == 0 || height == 0 {
@@ -103,7 +102,10 @@ impl Lama {
     fn infer(&self, image_tensor: &Tensor, mask_tensor: &Tensor) -> Result<Tensor> {
         let outputs = self
             .model
-            .run(tvec!(image_tensor.clone().into(), mask_tensor.clone().into()))
+            .run(tvec!(
+                image_tensor.clone().into(),
+                mask_tensor.clone().into()
+            ))
             .map_err(|e| anyhow!("LaMa inference: {:?}", e))?;
 
         // First output is inpainted image [1, 3, 512, 512]
@@ -112,14 +114,19 @@ impl Lama {
     }
 
     /// Post-process output tensor to RGB bytes at target resolution.
-    fn postprocess(&self, output: &Tensor, target_width: u32, target_height: u32) -> Result<Vec<u8>> {
+    fn postprocess(
+        &self,
+        output: &Tensor,
+        target_width: u32,
+        target_height: u32,
+    ) -> Result<Vec<u8>> {
         let output = output.to_plain_array_view::<f32>()?;
         let output = output.into_dimensionality::<tract_ndarray::Ix4>()?;
         // Shape: [1, 3, 512, 512]
 
         // Denormalize: (x * std + mean) * 255
         let mut result = vec![0u8; (target_width * target_height * 3) as usize];
-        
+
         // Convert from CHW to HWC and denormalize
         for c in 0..3 {
             for y in 0..LAMA_INPUT_SIZE as usize {
@@ -127,9 +134,8 @@ impl Lama {
                     let val = output[[0, c, y, x]];
                     let denorm = val * STD[c] + MEAN[c];
                     let byte = (denorm * 255.0).clamp(0.0, 255.0).round() as u8;
-                    
+
                     // Convert from CHW to HWC
-                    let src_idx = c * (LAMA_INPUT_SIZE as usize) * (LAMA_INPUT_SIZE as usize) + y * (LAMA_INPUT_SIZE as usize) + x;
                     let dst_idx = (y * LAMA_INPUT_SIZE as usize + x) * 3 + c;
                     result[dst_idx] = byte;
                 }
@@ -140,15 +146,37 @@ impl Lama {
         if LAMA_INPUT_SIZE == target_width && LAMA_INPUT_SIZE == target_height {
             Ok(result)
         } else {
-            Ok(upscale_rgb(&result, LAMA_INPUT_SIZE, LAMA_INPUT_SIZE, target_width, target_height))
+            Ok(upscale_rgb(
+                &result,
+                LAMA_INPUT_SIZE,
+                LAMA_INPUT_SIZE,
+                target_width,
+                target_height,
+            ))
         }
     }
 
     /// Preprocess image and mask for LaMa inference.
-    fn preprocess(&self, rgb: &[u8], mask: &[u8], width: u32, height: u32) -> Result<(Tensor, Tensor)> {
+    fn preprocess(
+        &self,
+        rgb: &[u8],
+        mask: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<(Tensor, Tensor)> {
         // Preprocess image: resize to 512x512, normalize
-        let mut image_arr = tract_ndarray::Array4::<f32>::zeros((1, 3, LAMA_INPUT_SIZE as usize, LAMA_INPUT_SIZE as usize));
-        let mut mask_arr = tract_ndarray::Array4::<f32>::zeros((1, 1, LAMA_INPUT_SIZE as usize, LAMA_INPUT_SIZE as usize));
+        let mut image_arr = tract_ndarray::Array4::<f32>::zeros((
+            1,
+            3,
+            LAMA_INPUT_SIZE as usize,
+            LAMA_INPUT_SIZE as usize,
+        ));
+        let mut mask_arr = tract_ndarray::Array4::<f32>::zeros((
+            1,
+            1,
+            LAMA_INPUT_SIZE as usize,
+            LAMA_INPUT_SIZE as usize,
+        ));
 
         let sx = width as f32 / LAMA_INPUT_SIZE as f32;
         let sy = height as f32 / LAMA_INPUT_SIZE as f32;
@@ -157,7 +185,8 @@ impl Lama {
             for dx in 0..LAMA_INPUT_SIZE {
                 let src_x = (dx as f32 + 0.5) * sx - 0.5;
                 let src_y = (dy as f32 + 0.5) * sy - 0.5;
-                let (r, g, b) = crate::background_removal::bilinear_rgb(rgb, width, height, src_x, src_y);
+                let (r, g, b) =
+                    crate::background_removal::bilinear_rgb(rgb, width, height, src_x, src_y);
                 let m = bilinear_mask(mask, width, height, src_x, src_y);
 
                 let dy_usize = dy as usize;
@@ -189,14 +218,16 @@ fn bilinear_mask(mask: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> f32 
     let at = |x: i32, y: i32| -> f32 {
         let xc = clamp(x, w);
         let yc = clamp(y, h);
-        let i = ((yc as usize) * (width as usize) + (xc as usize));
+        let i = (yc as usize) * (width as usize) + (xc as usize);
         mask[i] as f32 / 255.0
     };
 
-    let w = width as i32;
-    let h = height as i32;
-
-    let (m00, m10, m01, m11) = (at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1));
+    let (m00, m10, m01, m11) = (
+        at(x0, y0),
+        at(x0 + 1, y0),
+        at(x0, y0 + 1),
+        at(x0 + 1, y0 + 1),
+    );
 
     let lerp = |a: f32, b: f32, c: f32, d: f32| -> f32 {
         let top = a * (1.0 - fx) + b * fx;
@@ -208,13 +239,17 @@ fn bilinear_mask(mask: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> f32 
 }
 
 // Reuse upscale_mask from background_removal for single-channel masks
+//
+// Nothing calls it yet: the LaMa mask is fed to the model at model
+// resolution, so the upsample path is not wired yet. It stays because the
+// mask is sampled from the original resolution in some paths, and deleting
+// it would mean writing it again later.
+#[allow(dead_code)]
 fn upscale_mask(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
     if sw == dw && sh == dh {
         return src.to_vec();
     }
     let mut out = vec![0u8; (dw as usize) * (dh as usize)];
-    let xr = sw as f32 / dw as f32;
-    let yr = sh as f32 / dh as f32;
     for dy in 0..dh {
         for dx in 0..dw {
             let sx = (dx as f32 + 0.5) * (sw as f32 / dw as f32) - 0.5;
@@ -243,8 +278,6 @@ fn upscale_rgb(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
         return src.to_vec();
     }
     let mut out = vec![0u8; (dw as usize) * (dh as usize) * 3];
-    let xr = sw as f32 / dw as f32;
-    let yr = sh as f32 / dh as f32;
     for dy in 0..dh {
         for dx in 0..dw {
             for c in 0..3 {
@@ -272,4 +305,4 @@ fn upscale_rgb(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
 // Note: bilinear_rgb is re-exported from background_removal module
 // to avoid code duplication. See background_removal.rs for implementations.
 
-use crate::background_removal::bilinear_rgb;
+pub use crate::background_removal::bilinear_rgb;

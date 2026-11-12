@@ -249,9 +249,7 @@ impl DoubleBufferPreview {
                     // `back` was just populated, so this branch is unreachable;
                     // recover the frame defensively so we always hand one back.
                     let mut frame_pair = self.frame_pair.lock().unwrap();
-                    SubmitOutcome::Stale(
-                        frame_pair.back.take().expect("buffered frame present"),
-                    )
+                    SubmitOutcome::Stale(frame_pair.back.take().expect("buffered frame present"))
                 }
             },
         }

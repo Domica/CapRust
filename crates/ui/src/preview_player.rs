@@ -158,13 +158,7 @@ impl PreviewPlayer {
     /// `texture` by hand and forgetting the pixels compiles fine and
     /// produces a preview that works on the desktop and is invisible
     /// over MCP -- which is exactly what happened.
-    pub fn publish_frame(
-        &mut self,
-        ctx: &egui::Context,
-        width: usize,
-        height: usize,
-        rgba: &[u8],
-    ) {
+    pub fn publish_frame(&mut self, ctx: &egui::Context, width: usize, height: usize, rgba: &[u8]) {
         let img = egui::ColorImage::from_rgba_unmultiplied([width, height], rgba);
         // Reuse one stable texture across frames. `load_texture` resolves the
         // name in the texture manager and updates the existing slot in place
@@ -178,7 +172,14 @@ impl PreviewPlayer {
 
     /// Set the mask texture for object removal preview.
     /// The mask should be a grayscale image where white = object, black = background.
-    pub fn set_mask(&mut self, ctx: &egui::Context, name: &str, width: usize, height: usize, gray: &[u8]) {
+    pub fn set_mask(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        width: usize,
+        height: usize,
+        gray: &[u8],
+    ) {
         // Convert grayscale to red-tinted RGBA for overlay
         let mut rgba = Vec::with_capacity(width * height * 4);
         for &g in gray {

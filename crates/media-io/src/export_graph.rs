@@ -3767,7 +3767,10 @@ pub fn plan_from_project(
                         blend_mode: c.blend_mode.clone(),
                         color_grade: c.color_grade,
                         anon_mask_path: resolve_anon_path(project, c),
-                        object_removal_mask_path: c.object_removal_mask.clone().map(std::path::PathBuf::from),
+                        object_removal_mask_path: c
+                            .object_removal_mask
+                            .clone()
+                            .map(std::path::PathBuf::from),
                         object_removal_enabled: c.object_removal_enabled,
                     });
                 }
@@ -3819,7 +3822,10 @@ pub fn plan_from_project(
                         blend_mode: c.blend_mode.clone(),
                         color_grade: c.color_grade,
                         anon_mask_path: resolve_anon_path(project, c),
-                        object_removal_mask_path: c.object_removal_mask.clone().map(std::path::PathBuf::from),
+                        object_removal_mask_path: c
+                            .object_removal_mask
+                            .clone()
+                            .map(std::path::PathBuf::from),
                         object_removal_enabled: c.object_removal_enabled,
                     });
                 }

@@ -1075,8 +1075,7 @@ fn run_bg_removal_inner(
 }
 
 /// MobileSAM segmentation (Phase K2 - Object Removal)
-/// ---------------------------------------------------------------------------
-
+///
 /// Progress events emitted by a MobileSAM segmentation job. Modeled on
 /// `BgRemovalEvent`: the worker sends these over an mpsc channel,
 /// the UI drains them per frame.
@@ -1213,7 +1212,13 @@ fn run_segment_inner(
     // 5. Per-frame inference + write.
     for (i, frame) in frames.iter().enumerate() {
         let mask = model
-            .segment_point(&frame.rgb, frame.width, frame.height, req.click_x, req.click_y)
+            .segment_point(
+                &frame.rgb,
+                frame.width,
+                frame.height,
+                req.click_x,
+                req.click_y,
+            )
             .map_err(|e| format!("infer frame {i}: {e}"))?;
         writer
             .write_frame(&mask)
@@ -1245,8 +1250,7 @@ fn run_segment_inner(
 }
 
 /// LaMa inpainting (Phase K2 - Object Removal)
-/// ---------------------------------------------------------------------------
-
+///
 /// Progress events emitted by a LaMa inpainting job. Modeled on
 /// `BgRemovalEvent`: the worker sends these over an mpsc channel,
 /// the UI drains them per frame.
@@ -1373,7 +1377,11 @@ fn run_inpaint_inner(
         return Err("no frames extracted".into());
     }
     if mask_frames.len() != total {
-        return Err(format!("frame count mismatch: {} video frames vs {} mask frames", total, mask_frames.len()));
+        return Err(format!(
+            "frame count mismatch: {} video frames vs {} mask frames",
+            total,
+            mask_frames.len()
+        ));
     }
     let _ = tx.send(InpaintEvent::Started {
         total_frames: total,
