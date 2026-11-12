@@ -109,15 +109,6 @@ pub fn extract_rgb_frames(
     args.push("-pix_fmt".into());
     args.push("rgb24".into());
     args.push("-".into());
-    args.push("-t".into());
-    args.push(format!("{duration_sec:.6}"));
-    args.push("-vf".into());
-    args.push(format!("fps={fps:.6},scale={out_w}:{out_h}:flags=bilinear"));
-    args.push("-f".into());
-    args.push("rawvideo".into());
-    args.push("-pix_fmt".into());
-    args.push("rgb24".into());
-    args.push("-".into());
 
     tracing::debug!(
         "frame_extract: ffmpeg args: {}",
