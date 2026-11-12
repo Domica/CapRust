@@ -432,6 +432,30 @@ pub enum EaseCurve {
     EaseInOut,
 }
 
+impl EaseCurve {
+    /// Map a linear interpolation factor through the curve.
+    ///
+    /// Shared by the render path (`trajectory_at`) and the keyframe curve
+    /// editor, so the drawn shape always matches the exported motion.
+    /// Input is clamped to 0..=1 (the editor samples beyond the range when
+    /// a keyframe sits outside the clip duration).
+    pub fn apply(self, f: f32) -> f32 {
+        let f = f.clamp(0.0, 1.0);
+        match self {
+            EaseCurve::Linear => f,
+            EaseCurve::EaseIn => f * f,
+            EaseCurve::EaseOut => 1.0 - (1.0 - f) * (1.0 - f),
+            EaseCurve::EaseInOut => {
+                if f < 0.5 {
+                    2.0 * f * f
+                } else {
+                    1.0 - (-2.0 * f + 2.0).powi(2) / 2.0
+                }
+            }
+        }
+    }
+}
+
 /// A generic keyframe with time, value, and easing for the segment starting at this keyframe.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct Keyframe {
@@ -561,19 +585,9 @@ pub fn trajectory_at(keys: &[MotionKeyframe], t_ms: u64) -> Option<(f32, f32)> {
                 return Some((b.centre_x, b.centre_y));
             }
             let f = (t - ta) / (tb - ta);
-            // Apply easing from the starting keyframe.
-            let eased = match a.ease {
-                EaseCurve::Linear => f,
-                EaseCurve::EaseIn => f * f,
-                EaseCurve::EaseOut => 1.0 - (1.0 - f) * (1.0 - f),
-                EaseCurve::EaseInOut => {
-                    if f < 0.5 {
-                        2.0 * f * f
-                    } else {
-                        1.0 - (-2.0 * f + 2.0).powi(2) / 2.0
-                    }
-                }
-            };
+            // Apply easing from the starting keyframe. The curve editor
+            // draws segments with the very same helper.
+            let eased = a.ease.apply(f);
             return Some((
                 a.centre_x + (b.centre_x - a.centre_x) * eased,
                 a.centre_y + (b.centre_y - a.centre_y) * eased,
@@ -2367,5 +2381,63 @@ mod cue_window_tests {
             1.0 - w2 < 0.4 || 1.0 - h2 < 0.4,
             "2.0 fits now ({w2} x {h2}), so the reason for this is gone"
         );
+    }
+}
+
+#[cfg(test)]
+mod ease_curve_tests {
+    use super::EaseCurve;
+
+    const ALL: [EaseCurve; 4] = [
+        EaseCurve::Linear,
+        EaseCurve::EaseIn,
+        EaseCurve::EaseOut,
+        EaseCurve::EaseInOut,
+    ];
+
+    #[test]
+    fn endpoints_are_pinned_and_output_stays_bounded() {
+        for ease in ALL {
+            assert_eq!(ease.apply(0.0), 0.0, "{ease:?} start");
+            assert!((ease.apply(1.0) - 1.0).abs() < 1e-6, "{ease:?} end");
+            for i in 0..=20 {
+                let f = i as f32 / 20.0;
+                let v = ease.apply(f);
+                assert!((0.0..=1.0).contains(&v), "{ease:?} at {f} -> {v}");
+                assert!(v + 1e-6 >= ease.apply((f - 0.05).max(0.0)), "monotonic");
+            }
+        }
+    }
+
+    #[test]
+    fn linear_is_identity_even_outside_the_unit_interval() {
+        assert_eq!(EaseCurve::Linear.apply(-3.0), 0.0);
+        assert_eq!(EaseCurve::Linear.apply(0.37), 0.37);
+        assert_eq!(EaseCurve::Linear.apply(4.0), 1.0);
+    }
+
+    #[test]
+    fn easing_shapes_differ_from_linear_at_the_midpoint() {
+        let mid = 0.5;
+        assert!(EaseCurve::EaseIn.apply(mid) < mid);
+        assert!(EaseCurve::EaseOut.apply(mid) > mid);
+        assert!((EaseCurve::EaseInOut.apply(mid) - mid).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trajectory_rendering_uses_the_shared_curve() {
+        use super::MotionKeyframe;
+        let keys = [
+            MotionKeyframe {
+                t_ms: 0,
+                centre_x: 0.0,
+                centre_y: 0.0,
+                ease: EaseCurve::EaseIn,
+            },
+            MotionKeyframe::new(1000, 1.0, 1.0),
+        ];
+        let (_, y) = super::trajectory_at(&keys, 500).expect("two keys");
+        // EaseIn at f=0.5 is 0.25, not the linear 0.5.
+        assert!((y - 0.25).abs() < 1e-6, "eased midpoint was {y}");
     }
 }

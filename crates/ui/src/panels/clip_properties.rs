@@ -7,8 +7,7 @@ use crate::widgets::chip;
 use crate::widgets::switch;
 use caprust_core::{
     models::{ModelRegistry, ModelStatus},
-    AppSettings,
-    Clip, ClipType, ProjectState,
+    AppSettings, Clip, ClipType, ProjectState,
 };
 use egui::Ui;
 use egui_phosphor::regular as ph;
@@ -239,6 +238,7 @@ pub enum PendingEdit {
     TransitionDuration(u64),
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut Ui,
     project: &mut ProjectState,
@@ -1191,11 +1191,19 @@ pub fn show(
                 if clip_is_audio {
                     show_sound(ui, clip, state);
                 } else {
-                    show_video(ui, clip, state, &mut project.models, &settings, segment_rx, inpaint_rx);
+                    show_video(
+                        ui,
+                        clip,
+                        state,
+                        &mut project.models,
+                        settings,
+                        segment_rx,
+                        inpaint_rx,
+                    );
                 }
             }
             PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui, clip, state, &mut project.models, &settings),
+            PropertiesTab::Effects => show_effects(ui, clip, state, &mut project.models, settings),
             PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
             PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
             PropertiesTab::KeyframeTracks => {
@@ -1516,7 +1524,8 @@ fn show_video(
         let encoder_path = models_dir.join("mobile-sam-encoder.onnx");
         let decoder_path = models_dir.join("mobile-sam-decoder.onnx");
         let inpainter_path = models_dir.join("lama-inpainter.onnx");
-        let files_exist = encoder_path.is_file() && decoder_path.is_file() && inpainter_path.is_file();
+        let files_exist =
+            encoder_path.is_file() && decoder_path.is_file() && inpainter_path.is_file();
 
         if (segmenter_ready && inpainter_ready) || files_exist {
             ui.add_space(space::M_PLUS);
@@ -1584,9 +1593,12 @@ fn show_video(
                         .color(egui::Color32::from_rgb(100, 200, 255)),
                 );
             } else if clip.object_removal_enabled
-            && clip.object_removal_video.is_none()
-            && matches!(clip.clip_type, ClipType::Video { .. } | ClipType::Image { .. })
-{
+                && clip.object_removal_video.is_none()
+                && matches!(
+                    clip.clip_type,
+                    ClipType::Video { .. } | ClipType::Image { .. }
+                )
+            {
                 ui.add_space(space::XS);
                 ui.label(
                     egui::RichText::new(tr("props-object-removal-click-hint"))
@@ -2442,7 +2454,13 @@ fn show_sound(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     }
 }
 
-fn show_effects(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState, models: &mut ModelRegistry, settings: &AppSettings) {
+fn show_effects(
+    ui: &mut Ui,
+    clip: &Clip,
+    state: &mut PropertiesState,
+    models: &mut ModelRegistry,
+    settings: &AppSettings,
+) {
     ui.label(egui::RichText::new(tr("props-tab-effects")).strong());
     ui.add_space(space::S);
 
@@ -2982,10 +3000,16 @@ fn show_keyframe_tracks(
             // point is never written back to the clip and the bullet
             // snaps back on the next frame (3.0.1).
             ui.add_space(space::XS);
+            // Keyframe times are relative to the clip, and the curve's
+            // time axis is the clip duration (not the first/last point).
+            // A per-track Id keeps drag state from leaking between the
+            // three open editors (3.0.3 / 3.1).
             let changed = crate::panels::keyframes::KeyframeEditor::show_keyframe_track(
                 ui,
                 track,
-                playhead_ms,
+                playhead_ms.saturating_sub(clip.start_time_ms),
+                clip.duration_ms,
+                egui::Id::new(("kf-track", clip.id.to_string(), track_idx)),
             );
             if changed {
                 dirty = true;

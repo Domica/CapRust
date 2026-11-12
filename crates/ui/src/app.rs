@@ -4548,7 +4548,7 @@ impl CapRustApp {
     /// Kick off an object removal job (MobileSAM + LaMa) for the given clip.
     /// Requires a saved project, MobileSAM encoder+decoder models, LaMa model,
     /// and ffmpeg + ffprobe. Video/image clips only, 1.0x non-reversed.
-    /// 
+    ///
     /// This is a two-phase job:
     /// 1. MobileSAM: generates mask from click point
     /// 2. LaMa: inpaints the masked region
@@ -4603,7 +4603,11 @@ impl CapRustApp {
             .as_ref()
             .and_then(|p| {
                 let path = std::path::PathBuf::from(p);
-                if path.is_file() { Some(path) } else { None }
+                if path.is_file() {
+                    Some(path)
+                } else {
+                    None
+                }
             })
             .or_else(|| {
                 self.project
@@ -4632,7 +4636,11 @@ impl CapRustApp {
             .as_ref()
             .and_then(|p| {
                 let path = std::path::PathBuf::from(p);
-                if path.is_file() { Some(path) } else { None }
+                if path.is_file() {
+                    Some(path)
+                } else {
+                    None
+                }
             })
             .or_else(|| {
                 self.project
@@ -4685,13 +4693,19 @@ impl CapRustApp {
 
         let fps = {
             let fr = &self.project.frame_rate;
-            if fr.den == 0 { 30.0 } else { fr.num as f64 / fr.den as f64 }
+            if fr.den == 0 {
+                30.0
+            } else {
+                fr.num as f64 / fr.den as f64
+            }
         };
 
         // Mask output path
-        let mask_output = caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
+        let mask_output =
+            caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
         // Inpainted video output path
-        let inpaint_output = caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
+        let inpaint_output =
+            caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
 
         // Phase 1: MobileSAM segment job
         let segment_req = crate::media_jobs::SegmentRequest {
@@ -5106,18 +5120,21 @@ impl CapRustApp {
                     // Store the mask path and click coordinates for later use in LaMa inpainting
                     self.segment_job_clip_id = Some(clip_id);
                     let click_coords = self.segment_job_click.take();
-                    
+
                     // Load the first mask frame for preview overlay
                     if let Some(ffmpeg) = &self.ffmpeg_status.ffmpeg {
-                        if let Ok(mask_frames) = caprust_media_io::frame_extract::extract_gray_frames(
-                            std::path::Path::new(ffmpeg),
-                            &mask_path,
-                            0, 0, // Will be probed
-                            0.0,
-                            f64::MAX,
-                            30.0,
-                            480,
-                        ) {
+                        if let Ok(mask_frames) =
+                            caprust_media_io::frame_extract::extract_gray_frames(
+                                std::path::Path::new(ffmpeg),
+                                &mask_path,
+                                0,
+                                0, // Will be probed
+                                0.0,
+                                f64::MAX,
+                                30.0,
+                                480,
+                            )
+                        {
                             if let Some(first_mask) = mask_frames.first() {
                                 // Store mask frame data for later texture creation in render loop
                                 self.segment_mask_frame = Some((
@@ -5128,7 +5145,7 @@ impl CapRustApp {
                             }
                         }
                     }
-                    
+
                     // Store the mask path relative to project
                     let project_path = self.project.project_path.clone();
                     let stored = project_path.and_then(|p| {
@@ -5149,7 +5166,7 @@ impl CapRustApp {
                                 clip_id
                             );
                             self.toast(tr("toast-object-removal-mask-ready"));
-                            
+
                             // Auto-start LaMa inpainting job if click coordinates are available
                             if let Some((click_x, click_y)) = click_coords {
                                 self.start_inpaint_job(clip_id, mask_path, click_x, click_y);
@@ -5193,7 +5210,13 @@ impl CapRustApp {
     }
 
     /// Start a LaMa inpainting job for the given clip using the mask from MobileSAM.
-    fn start_inpaint_job(&mut self, clip_id: uuid::Uuid, mask_path: std::path::PathBuf, _click_x: f32, _click_y: f32) {
+    fn start_inpaint_job(
+        &mut self,
+        clip_id: uuid::Uuid,
+        mask_path: std::path::PathBuf,
+        _click_x: f32,
+        _click_y: f32,
+    ) {
         if self.inpaint_rx.is_some() {
             self.toast(tr("toast-inpaint-busy"));
             return;
@@ -5232,12 +5255,20 @@ impl CapRustApp {
         let t_start_ms = clip.source_offset_ms;
 
         // Check if LaMa model is ready
-        let inpainter_ready = self.project.models.ready_inpainter().iter().any(|m| m.enabled);
+        let inpainter_ready = self
+            .project
+            .models
+            .ready_inpainter()
+            .iter()
+            .any(|m| m.enabled);
         if !inpainter_ready {
             self.toast(tr("toast-inpaint-needs-model"));
             return;
         }
-        let model_path = self.project.models.local_path(&self.settings.effective_models_dir(), "lama-inpainter");
+        let model_path = self
+            .project
+            .models
+            .local_path(&self.settings.effective_models_dir(), "lama-inpainter");
 
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
             self.toast(tr("toast-inpaint-needs-ffmpeg"));
@@ -5250,11 +5281,16 @@ impl CapRustApp {
 
         let fps = {
             let fr = &self.project.frame_rate;
-            if fr.den == 0 { 30.0 } else { fr.num as f64 / fr.den as f64 }
+            if fr.den == 0 {
+                30.0
+            } else {
+                fr.num as f64 / fr.den as f64
+            }
         };
 
         // Output path for inpainted video
-        let output_path = caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
+        let output_path =
+            caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
 
         let req = crate::media_jobs::InpaintRequest {
             clip_id,
@@ -7635,6 +7671,18 @@ impl CapRustApp {
                                 })
                                 .collect();
 
+                        // One O(n) index build per frame instead of a
+                        // linear `find` for every drawn clip (3.8). Store
+                        // indices, not references: helpers like
+                        // `envelope_for` need `&mut self` inside this loop.
+                        let clip_index: std::collections::HashMap<uuid::Uuid, usize> = self
+                            .project
+                            .clips
+                            .iter()
+                            .enumerate()
+                            .map(|(i, c)| (c.id, i))
+                            .collect();
+
                         for (clip_id, start_ms, dur_ms, ctype, is_dragged) in clips_here {
                             let x0 = lane_rect.left() - scroll_x + start_ms as f32 * px_per_ms;
                             let x1 = lane_rect.left() - scroll_x
@@ -8173,11 +8221,9 @@ impl CapRustApp {
                             // but under the text. See DIRECTIVES §14,
                             // issue #14.
                             if carries_audio {
-                                if let Some(clip_data) = self
-                                    .project
-                                    .clips
-                                    .iter()
-                                    .find(|c| c.id == clip_id)
+                                if let Some(clip_data) = clip_index
+                                    .get(&clip_id)
+                                    .and_then(|&i| self.project.clips.get(i))
                                     .cloned()
                                 {
                                     let (samples, zones) = self.envelope_for(&clip_data);
@@ -8266,8 +8312,9 @@ impl CapRustApp {
                             }
 
                             // Effect/transition badge (top-right of clip)
-                            if let Some(fx_clip) =
-                                self.project.clips.iter().find(|c| c.id == clip_id)
+                            if let Some(fx_clip) = clip_index
+                                .get(&clip_id)
+                                .and_then(|&i| self.project.clips.get(i))
                             {
                                 let has_fx = !fx_clip.effects.is_empty();
                                 let has_tr = fx_clip.transition_in.is_some()
@@ -8300,11 +8347,9 @@ impl CapRustApp {
                             // Properties panel. Non-text clips open
                             // the rename modal instead.
                             if resp.double_clicked() {
-                                let is_text = self
-                                    .project
-                                    .clips
-                                    .iter()
-                                    .find(|c| c.id == clip_id)
+                                let is_text = clip_index
+                                    .get(&clip_id)
+                                    .and_then(|&i| self.project.clips.get(i))
                                     .map(|c| {
                                         matches!(
                                             c.clip_type,
@@ -8550,11 +8595,9 @@ impl CapRustApp {
                                     }
                                 });
                                 // --- Mute clip ---
-                                let muted = self
-                                    .project
-                                    .clips
-                                    .iter()
-                                    .find(|c| c.id == clip_id)
+                                let muted = clip_index
+                                    .get(&clip_id)
+                                    .and_then(|&i| self.project.clips.get(i))
                                     .map(|c| c.volume_db <= -59.0)
                                     .unwrap_or(false);
                                 let mute_lbl = if muted {
@@ -8572,11 +8615,9 @@ impl CapRustApp {
                                 // the thumbnail strip on top and the
                                 // waveform band at the bottom).
                                 {
-                                    let is_video = self
-                                        .project
-                                        .clips
-                                        .iter()
-                                        .find(|c| c.id == clip_id)
+                                    let is_video = clip_index
+                                        .get(&clip_id)
+                                        .and_then(|&i| self.project.clips.get(i))
                                         .map(|c| {
                                             matches!(
                                                 c.clip_type,
@@ -8585,11 +8626,9 @@ impl CapRustApp {
                                         })
                                         .unwrap_or(false);
                                     if is_video {
-                                        let effective_split = self
-                                            .project
-                                            .clips
-                                            .iter()
-                                            .find(|c| c.id == clip_id)
+                                        let effective_split = clip_index
+                                            .get(&clip_id)
+                                            .and_then(|&i| self.project.clips.get(i))
                                             .and_then(|c| c.split_display)
                                             .unwrap_or(self.settings.waveform_bottom);
                                         ui.menu_button(tr("clip-ctx-display"), |ui| {
@@ -8633,11 +8672,9 @@ impl CapRustApp {
                                 }
                                 // Translate captions only makes sense on a
                                 // clip that already has segments.
-                                let has_captions = self
-                                    .project
-                                    .clips
-                                    .iter()
-                                    .find(|c| c.id == clip_id)
+                                let has_captions = clip_index
+                                    .get(&clip_id)
+                                    .and_then(|&i| self.project.clips.get(i))
                                     .map(|c| {
                                         matches!(
                                             &c.clip_type,
@@ -8662,8 +8699,10 @@ impl CapRustApp {
                                 //    from some video -> Reattach to
                                 //    that video (reverse lookup
                                 //    through the back-reference).
-                                let menu_clip =
-                                    self.project.clips.iter().find(|c| c.id == clip_id).cloned();
+                                let menu_clip = clip_index
+                                    .get(&clip_id)
+                                    .and_then(|&i| self.project.clips.get(i))
+                                    .cloned();
                                 if let Some(c) = menu_clip.as_ref() {
                                     let is_video =
                                         matches!(c.clip_type, caprust_core::ClipType::Video { .. });
@@ -12418,12 +12457,8 @@ impl CapRustApp {
                         // captured is invisible over MCP -- which is what
                         // made preview_frame answer null while the
                         // desktop played happily.
-                        self.preview_player.publish_frame(
-                            &ctx,
-                            w,
-                            h,
-                            &buf[..expected],
-                        );
+                        self.preview_player
+                            .publish_frame(&ctx, w, h, &buf[..expected]);
 
                         // Re-anchor wall clock to the first consumed
                         // frame of this session. Without this, wall_ms
@@ -12623,12 +12658,8 @@ impl CapRustApp {
                     let h = r.height as usize;
                     let expected = w * h * 4;
                     if buf.len() >= expected {
-                        self.preview_player.publish_frame(
-                            &ctx,
-                            w,
-                            h,
-                            &buf[..expected],
-                        );
+                        self.preview_player
+                            .publish_frame(&ctx, w, h, &buf[..expected]);
                         got_frame = true;
                     }
                 }
@@ -12707,19 +12738,23 @@ impl CapRustApp {
                 ui.id().with("preview_object_removal"),
                 egui::Sense::click(),
             );
-            
+
             if preview_response.clicked() {
                 if let Some(pointer_pos) = preview_response.interact_pointer_pos() {
                     // Convert click position to normalized coordinates [0, 1]
                     let rel_x = (pointer_pos.x - draw_rect.left()) / draw_rect.width();
                     let rel_y = (pointer_pos.y - draw_rect.top()) / draw_rect.height();
-                    
+
                     // Clamp to [0, 1]
                     let click_x = rel_x.clamp(0.0, 1.0);
                     let click_y = rel_y.clamp(0.0, 1.0);
-                    
-                    tracing::info!("Object removal click at normalized coordinates: ({:.3}, {:.3})", click_x, click_y);
-                    
+
+                    tracing::info!(
+                        "Object removal click at normalized coordinates: ({:.3}, {:.3})",
+                        click_x,
+                        click_y
+                    );
+
                     // Find the clip under the playhead
                     if let Some(clip_info) = clip_info {
                         // Extract clip data before mutable borrow
@@ -12738,7 +12773,7 @@ impl CapRustApp {
                             let clip_id = clip.id;
                             let start_time_ms = clip.source_offset_ms;
                             let duration_ms = clip.duration_ms;
-                            
+
                             // Check if object removal is enabled - check pending edits first (checkbox updates go through pending)
                             // Also check clip field as fallback (in case pending edit was already processed)
                             let is_enabled = self.properties.pending.iter().rev().find_map(|edit| {
@@ -12747,36 +12782,54 @@ impl CapRustApp {
                                     _ => None,
                                 }
                             }).unwrap_or(clip.object_removal_enabled);
-                            
+
                             // Also check clip field directly as fallback
                             let is_enabled = is_enabled || clip.object_removal_enabled;
 
                             if is_enabled {
                                 // Check if both MobileSAM encoder and decoder are downloaded
                                 let models_dir = self.settings.effective_models_dir();
-                                let encoder_path = self.project.models.local_path(&models_dir, "mobile-sam-encoder");
-                                let decoder_path = self.project.models.local_path(&models_dir, "mobile-sam-decoder");
-                                let segmenter_ready = encoder_path.is_file() && decoder_path.is_file();
-                                
+                                let encoder_path = self
+                                    .project
+                                    .models
+                                    .local_path(&models_dir, "mobile-sam-encoder");
+                                let decoder_path = self
+                                    .project
+                                    .models
+                                    .local_path(&models_dir, "mobile-sam-decoder");
+                                let segmenter_ready =
+                                    encoder_path.is_file() && decoder_path.is_file();
+
                                 // Check if LaMa inpainter is downloaded
-                                let inpainter_path = self.project.models.local_path(&models_dir, "lama-inpainter");
+                                let inpainter_path = self
+                                    .project
+                                    .models
+                                    .local_path(&models_dir, "lama-inpainter");
                                 let inpainter_ready = inpainter_path.is_file();
-                                
+
                                 if segmenter_ready && inpainter_ready {
-                                    let project_path = self.project.project_path.as_deref().unwrap_or(".");
-                                    let mask_output = caprust_core::cache::mask_path(std::path::Path::new(project_path), clip_id);
-                                    
+                                    let project_path =
+                                        self.project.project_path.as_deref().unwrap_or(".");
+                                    let mask_output = caprust_core::cache::mask_path(
+                                        std::path::Path::new(project_path),
+                                        clip_id,
+                                    );
+
                                     // Get fps from project frame rate
                                     let fps = {
                                         let fr = &self.project.frame_rate;
-                                        if fr.den == 0 { 30.0 } else { fr.num as f64 / fr.den as f64 }
+                                        if fr.den == 0 {
+                                            30.0
+                                        } else {
+                                            fr.num as f64 / fr.den as f64
+                                        }
                                     };
-                                    
+
                                     let req = crate::media_jobs::SegmentRequest {
                                         clip_id,
-                                        source_path: std::path::PathBuf::from(source_path),
+                                        source_path,
                                         t_start_ms: start_time_ms,
-                                        duration_ms: duration_ms,
+                                        duration_ms,
                                         fps,
                                         encoder_path,
                                         decoder_path,
@@ -12785,23 +12838,35 @@ impl CapRustApp {
                                         click_y,
                                         max_side: 480,
                                     };
-                                    
+
                                     let rx = crate::media_jobs::spawn_segment_job(
-                                        std::path::PathBuf::from(self.ffmpeg_status.ffmpeg.clone().unwrap()),
-                                        std::path::PathBuf::from(self.ffmpeg_status.ffprobe.clone().unwrap()),
+                                        std::path::PathBuf::from(
+                                            self.ffmpeg_status.ffmpeg.clone().unwrap(),
+                                        ),
+                                        std::path::PathBuf::from(
+                                            self.ffmpeg_status.ffprobe.clone().unwrap(),
+                                        ),
                                         req,
                                     );
-                                    
+
                                     // Store the receiver to poll for progress
                                     self.segment_rx = Some(rx);
                                     self.segment_job_clip_id = Some(clip_id);
                                     self.segment_job_click = Some((click_x, click_y));
-                                    let job_id = self.begin_job(JobKind::ObjectRemoval, tr("job-object-removal"));
+                                    let job_id = self.begin_job(
+                                        JobKind::ObjectRemoval,
+                                        tr("job-object-removal"),
+                                    );
                                     self.segment_job_id = Some(job_id);
-                                    
-                                    tracing::info!("Started MobileSAM segment job for clip {}", clip_id);
+
+                                    tracing::info!(
+                                        "Started MobileSAM segment job for clip {}",
+                                        clip_id
+                                    );
                                 } else {
-                                    tracing::warn!("MobileSAM or LaMa models not ready for object removal");
+                                    tracing::warn!(
+                                        "MobileSAM or LaMa models not ready for object removal"
+                                    );
                                     self.toast(tr("toast-object-removal-models-not-ready"));
                                 }
                             } else {
@@ -12828,7 +12893,11 @@ impl CapRustApp {
                     rgba.push(g);
                 }
                 let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-                self.preview_player.mask_texture = Some(ctx.load_texture("object_removal_mask", img, egui::TextureOptions::LINEAR));
+                self.preview_player.mask_texture = Some(ctx.load_texture(
+                    "object_removal_mask",
+                    img,
+                    egui::TextureOptions::LINEAR,
+                ));
             }
 
             // ---- Object Removal: Mask overlay ----
@@ -15036,7 +15105,6 @@ impl CapRustApp {
             self.settings_sync_prompt = None;
         }
     }
-
 }
 
 /// Wall-clock "14:05" for a Unix timestamp, in the user's local zone.
