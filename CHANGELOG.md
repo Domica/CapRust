@@ -2,6 +2,23 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [0.9.28] - 2026-11-14
+
+### Fixed
+
+- **Streamed playback dropped every frame after the first (6.2).** Each frame pulled from the live stream carried the same sequence number, so the double buffer rejected all but the first as stale and the preview stalled. Frames now carry a strictly increasing sequence.
+- **Pause tore down the stream every repaint (6.5).** The playing→paused teardown (`stop_stream` + `cancel_pending` + audio drop) ran on every frame while paused, repeatedly killing the stream and clearing the buffer. It now runs exactly once, on the transition.
+- **Paused one-shot seek snapped to a 100 ms grid (6.11).** The only caller of `request()` is the paused fallback, so the grid rounding produced stale/duplicate requests; it now seeks to the exact position.
+
+### Performance
+
+- **Remote-frame copy skipped unless a phone is connected (6.10).** The preview kept a full pixel copy for the MCP remote reader on every frame even during ordinary desktop editing (~1 MB/frame at 30 fps of wasted work). The copy now runs only while a remote bridge is actually listening.
+- **Double-buffer lock removed (6.3).** `DoubleBufferPreview` lived only on the UI thread inside `PreviewPlayer`, so the `Arc<Mutex>` wrapper was pure overhead and a poison-panic hazard that could never fire. It is now plain owned state.
+
+### Technical
+
+- `crates/ui/src/preview_player.rs`, `crates/ui/src/double_buffer_preview.rs`, `crates/ui/src/app.rs`: monotonic stream sequence, `prev_playing` transition gate, `remote_active` capture flag, exact one-shot seek, lock-free double buffer.
+
 ## [0.9.27] - 2026-11-11
 
 ### Fixed

@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.27-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.28-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.27-win64-setup.exe`.
+1. Run `CapRust-0.9.28-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -170,6 +170,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.28** | 2026-11-14 | Preview playback robustness: streamed frames no longer rejected as stale (6.2), playing→paused teardown runs once on the transition instead of every repaint (6.5), the per-frame copy for the remote/MCP phone preview is skipped unless a phone is actually connected (6.10), exact paused one-shot seek (6.11), removed the unused lock inside the double buffer (6.3) |
 | **0.9.27** | 2026-11-11 | Trajectory & keyframe graph now follows the dragged cursor (3.0.1), preview/export invalidated on trajectory or keyframe change (3.0.4), double-buffer preview no longer freezes on backwards seek (6.1), playback/scrub performance: stable preview texture + zero-copy frame upload (6.x) |
 | **0.9.26** | 2026-11-04 | Trajectory & keyframe drag visual feedback fixes (točka prati miš na grafu), drag persistence fix (thread-local storage), right-click delete on keyframes, trajectory Y coordinate bug fix (`centre_y`), CI passes on 3 platforms |
 | **0.9.25** | 2026-10-30 | Keyframe system: generic `KeyframeTrack` per property (scale, rotation, opacity, blur.amount, etc.), `EaseCurve` (Linear/EaseIn/EaseOut/EaseInOut), curve editor with draggable points, trajectory graph shows with 0/1 keyframes, no-flicker Add Track UX; Windows binary stripped (~10 MB); CI passes on 3 platforms |

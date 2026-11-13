@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CapRust v0.9.27 — Trajectory & keyframe graph now follows the dragged cursor, preview/export invalidated on trajectory/keyframe change, double-buffer no longer freezes on backwards seek, playback/scrub performance</title>
+  <title>CapRust v0.9.28 — Preview playback robustness: no dropped streamed frames, single pause teardown, remote copy only when a phone is connected, exact paused seek, lock-free double buffer</title>
   <meta name="description" content="A native Windows video editor for short-form creators. Built in Rust. AI captions, auto-reframe, background removal. Free and open source.">
   <link rel="icon" href="logo.png" type="image/png">
   <link rel="stylesheet" href="style.css">
@@ -28,7 +28,7 @@
 
 <header class="hero">
   <div class="container">
-    <div class="badge">v0.9.27 - Trajectory & keyframe graph now follows the dragged cursor, preview/export invalidated on trajectory/keyframe change, double-buffer no longer freezes on backwards seek, playback/scrub performance improvements
+    <div class="badge">v0.9.28 - Preview playback robustness: streamed frames no longer dropped as stale, single pause teardown, remote-frame copy only when a phone is connected, exact paused seek, lock-free double buffer
     <h1>Video editing.<br>Without the drag.</h1>
     <p class="tagline">
       A native Windows video editor for short-form creators.
@@ -265,9 +265,9 @@
 <section id="download" class="download">
   <div class="container">
     <h2>Download CapRust</h2>
-    <p>v0.9.27 makes the trajectory & keyframe graph follow the dragged cursor, invalidates preview/export on trajectory/keyframe change, stops the double-buffer preview from freezing on a backwards seek, and improves playback/scrub performance. CI passes on Ubuntu, Windows, and macOS.</p>
+    <p>v0.9.28 makes preview playback robust: streamed frames are no longer dropped as stale, pausing tears down the stream once instead of every frame, the per-frame copy for a connected phone is skipped during desktop editing, paused seeks are exact, and the double buffer is lock-free. CI passes on Ubuntu, Windows, and macOS.</p>
     <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
-      ↓&nbsp; Download v0.9.27 for Windows
+      ↓&nbsp; Download v0.9.28 for Windows
     </a>
     <p class="verify">
       SHA-256 for each release is on the
@@ -326,7 +326,7 @@
       <details>
         <summary>It says "beta" — is it stable?</summary>
         <div class="answer">
-          v0.9.27 makes the trajectory & keyframe graph follow the dragged cursor, invalidates preview/export on trajectory/keyframe change, stops the double-buffer preview from freezing on a backwards seek, and improves playback/scrub performance; v0.9.26 fixes trajectory & keyframe drag visual feedback, drag persistence, right-click delete on keyframes, and trajectory Y coordinate bug; v0.9.25 adds complete keyframe animation system with generic tracks, easing curves, and curve editor; v0.9.24 brought the editor to Android and auto-updates; v0.9.20 added a first-run welcome, guided tips and the Enhance effect; v0.9.19 added stickers and keyframed movement; v0.9.18 added the Modern editor, plugin-based importers and remote control. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
+          v0.9.28 makes preview playback robust: streamed frames are no longer dropped as stale, pausing tears down the stream once instead of every frame, the per-frame copy for a connected phone is skipped during desktop editing, paused seeks are exact, and the double buffer is lock-free; v0.9.27 makes the trajectory & keyframe graph follow the dragged cursor, invalidates preview/export on trajectory/keyframe change, stops the double-buffer preview from freezing on a backwards seek, and improves playback/scrub performance; v0.9.26 fixes trajectory & keyframe drag visual feedback, drag persistence, right-click delete on keyframes, and trajectory Y coordinate bug; v0.9.25 adds complete keyframe animation system with generic tracks, easing curves, and curve editor; v0.9.24 brought the editor to Android and auto-updates; v0.9.20 added a first-run welcome, guided tips and the Enhance effect; v0.9.19 added stickers and keyframed movement; v0.9.18 added the Modern editor, plugin-based importers and remote control. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
           audio effects, CLAP hosting and the MCP server are all in. Expect
           rough edges; a crash handler writes a report to
           <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and
