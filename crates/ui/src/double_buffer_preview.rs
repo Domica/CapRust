@@ -8,9 +8,14 @@
 //! - Frame queue for smooth scrubbing/playback
 //! - Atomic swap between front/back on frame completion
 //! - Frame cache for smooth scrubbing
+//!
+//! The engine is owned exclusively by `PreviewPlayer`, which lives on the
+//! UI thread. The worker communicates with it over a channel, never by
+//! sharing this struct, so the interior `Arc<Mutex<..>>` wrapping was
+//! pure overhead (and a panic-on-poisoned-mutex hazard that could never
+//! actually fire). It is now plain owned state mutated through `&mut`.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -169,60 +174,54 @@ impl Default for DoubleBufferConfig {
 /// Core double-buffer preview engine.
 pub struct DoubleBufferPreview {
     /// Double-buffered frame pair.
-    frame_pair: Arc<Mutex<DoubleBufferFrame>>,
+    frame_pair: DoubleBufferFrame,
     /// Frame queue for smooth scrubbing/playback.
-    frame_queue: Arc<Mutex<FrameQueue>>,
+    frame_queue: FrameQueue,
     /// Configuration.
     config: DoubleBufferConfig,
     /// Last frame time for FPS calculation.
-    last_frame_time: Arc<Mutex<Option<Instant>>>,
+    last_frame_time: Option<Instant>,
     /// Current FPS.
-    current_fps: Arc<Mutex<f64>>,
+    current_fps: f64,
 }
 
 impl DoubleBufferPreview {
     pub fn new(config: DoubleBufferConfig) -> Self {
         Self {
-            frame_pair: Arc::new(Mutex::new(DoubleBufferFrame::new())),
-            frame_queue: Arc::new(Mutex::new(FrameQueue::new(config.max_queue_size))),
+            frame_pair: DoubleBufferFrame::new(),
+            frame_queue: FrameQueue::new(config.max_queue_size),
             config,
-            last_frame_time: Arc::new(Mutex::new(None)),
-            current_fps: Arc::new(Mutex::new(30.0)),
+            last_frame_time: None,
+            current_fps: 30.0,
         }
     }
 
     /// Submit a new frame to the back buffer.
     /// Returns `Err(frame)` (the rejected frame) if it was not newer than the
     /// buffered one, or `Ok(())` if accepted.
-    pub fn submit_frame(&self, frame: PreviewFrame) -> Result<(), PreviewFrame> {
-        let mut frame_pair = self.frame_pair.lock().unwrap();
-
+    pub fn submit_frame(&mut self, frame: PreviewFrame) -> Result<(), PreviewFrame> {
         // Only accept if back buffer is free or we're overwriting stale data
-        if frame_pair.back.is_some() {
+        if let Some(existing) = &self.frame_pair.back {
             // Check if the existing back buffer is stale (older sequence)
-            if let Some(existing) = &frame_pair.back {
-                if existing.sequence >= frame.sequence {
-                    return Err(frame); // New frame is stale, reject and hand back
-                }
+            if existing.sequence >= frame.sequence {
+                return Err(frame); // New frame is stale, reject and hand back
             }
         }
 
-        frame_pair.back = Some(frame);
+        self.frame_pair.back = Some(frame);
         Ok(())
     }
 
     /// Complete rendering into back buffer and swap.
     /// Returns the front frame that is now ready for display.
-    pub fn commit_and_swap(&self) -> Option<PreviewFrame> {
-        let mut frame_pair = self.frame_pair.lock().unwrap();
-
-        let _ = frame_pair.back.as_ref()?;
+    pub fn commit_and_swap(&mut self) -> Option<PreviewFrame> {
+        let _ = self.frame_pair.back.as_ref()?;
 
         // Swap front and back
-        frame_pair.swap();
+        self.frame_pair.swap();
 
         // Return the new front frame
-        frame_pair.front.clone()
+        self.frame_pair.front.clone()
     }
 
     /// Submit a frame and commit the swap *only if it was accepted*.
@@ -235,7 +234,7 @@ impl DoubleBufferPreview {
     /// new frame key, and `request()` then refused to decode that frame
     /// again. On rejection we drop the buffered history instead so the
     /// caller can publish the frame it actually decoded.
-    pub fn submit_and_commit(&self, frame: PreviewFrame) -> SubmitOutcome {
+    pub fn submit_and_commit(&mut self, frame: PreviewFrame) -> SubmitOutcome {
         match self.submit_frame(frame) {
             Err(rejected) => {
                 self.clear();
@@ -248,26 +247,27 @@ impl DoubleBufferPreview {
                 None => {
                     // `back` was just populated, so this branch is unreachable;
                     // recover the frame defensively so we always hand one back.
-                    let mut frame_pair = self.frame_pair.lock().unwrap();
-                    SubmitOutcome::Stale(frame_pair.back.take().expect("buffered frame present"))
+                    SubmitOutcome::Stale(
+                        self.frame_pair.back.take().expect("buffered frame present"),
+                    )
                 }
             },
         }
     }
 
     /// Add frame to queue for smooth scrubbing/playback.
-    pub fn enqueue(&self, frame: PreviewFrame) {
-        self.frame_queue.lock().unwrap().push(frame);
+    pub fn enqueue(&mut self, frame: PreviewFrame) {
+        self.frame_queue.push(frame);
     }
 
     /// Get next frame from queue in sequence order.
-    pub fn dequeue(&self) -> Option<PreviewFrame> {
-        self.frame_queue.lock().unwrap().pop()
+    pub fn dequeue(&mut self) -> Option<PreviewFrame> {
+        self.frame_queue.pop()
     }
 
     /// Peek at next frame without removing.
     pub fn peek_queue(&self) -> Option<PreviewFrame> {
-        self.frame_queue.lock().unwrap().peek().cloned()
+        self.frame_queue.peek().cloned()
     }
 
     /// Get frames for interpolation around a target sequence.
@@ -276,8 +276,6 @@ impl DoubleBufferPreview {
         target_sequence: u64,
     ) -> Option<(PreviewFrame, PreviewFrame)> {
         self.frame_queue
-            .lock()
-            .unwrap()
             .get_around_sequence(target_sequence)
             .map(|(a, b)| (a.clone(), b.clone()))
     }
@@ -310,29 +308,27 @@ impl DoubleBufferPreview {
     }
 
     /// Update FPS counter.
-    pub fn update_fps(&self) {
+    pub fn update_fps(&mut self) {
         let now = Instant::now();
-        let mut last_time = self.last_frame_time.lock().unwrap();
-        let mut fps = self.current_fps.lock().unwrap();
-
-        if let Some(last) = *last_time {
-            let elapsed = last.elapsed().as_secs_f64();
-            if elapsed > 0.0 {
-                *fps = 1.0 / elapsed;
-            }
+        let elapsed = self
+            .last_frame_time
+            .map(|last| last.elapsed().as_secs_f64())
+            .filter(|e| *e > 0.0);
+        if let Some(elapsed) = elapsed {
+            self.current_fps = 1.0 / elapsed;
         }
-        *last_time = Some(now);
+        self.last_frame_time = Some(now);
     }
 
     pub fn current_fps(&self) -> f64 {
-        *self.current_fps.lock().unwrap()
+        self.current_fps
     }
 
-    pub fn frame_pair(&self) -> &Arc<Mutex<DoubleBufferFrame>> {
+    pub fn frame_pair(&self) -> &DoubleBufferFrame {
         &self.frame_pair
     }
 
-    pub fn frame_queue(&self) -> &Arc<Mutex<FrameQueue>> {
+    pub fn frame_queue(&self) -> &FrameQueue {
         &self.frame_queue
     }
 
@@ -353,7 +349,7 @@ impl DoubleBufferPreview {
             return None;
         }
 
-        let queue = self.frame_queue.lock().unwrap();
+        let queue = &self.frame_queue;
         let base_seq = base_frame.sequence;
         let _target_ms = base_frame.timestamp_ms;
 
@@ -368,28 +364,24 @@ impl DoubleBufferPreview {
 
     /// Get frame from queue by sequence.
     pub fn get_frame(&self, sequence: u64) -> Option<PreviewFrame> {
-        self.frame_queue
-            .lock()
-            .unwrap()
-            .find_by_sequence(sequence)
-            .cloned()
+        self.frame_queue.find_by_sequence(sequence).cloned()
     }
 
     /// Clear all buffers and queues.
-    pub fn clear(&self) {
-        self.frame_pair.lock().unwrap().front = None;
-        self.frame_pair.lock().unwrap().back = None;
-        self.frame_queue.lock().unwrap().clear();
+    pub fn clear(&mut self) {
+        self.frame_pair.front = None;
+        self.frame_pair.back = None;
+        self.frame_queue.clear();
     }
 
     /// Get queue depth.
     pub fn queue_depth(&self) -> usize {
-        self.frame_queue.lock().unwrap().len()
+        self.frame_queue.len()
     }
 
     /// Check if queue is ready for playback.
     pub fn is_ready(&self) -> bool {
-        self.frame_queue.lock().unwrap().len() >= self.config.av_delay_frames
+        self.frame_queue.len() >= self.config.av_delay_frames
     }
 }
 
@@ -400,7 +392,7 @@ mod tests {
     #[test]
     fn test_double_buffer_swap() {
         let config = DoubleBufferConfig::default();
-        let preview = DoubleBufferPreview::new(config);
+        let mut preview = DoubleBufferPreview::new(config);
 
         let frame1 = PreviewFrame {
             rgba: vec![255; 64 * 4],
@@ -423,7 +415,7 @@ mod tests {
     #[test]
     fn test_frame_queue() {
         let config = DoubleBufferConfig::default();
-        let preview = DoubleBufferPreview::new(config);
+        let mut preview = DoubleBufferPreview::new(config);
 
         let frame1 = PreviewFrame {
             rgba: vec![255; 64],
@@ -446,7 +438,7 @@ mod tests {
     /// that used to publish the previous frame while recording the new key.
     #[test]
     fn backwards_seek_never_commits_a_stale_frame() {
-        let preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
+        let mut preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
         let frame = |seq: u64| PreviewFrame {
             rgba: vec![seq as u8; 4],
             width: 1,
@@ -474,7 +466,7 @@ mod tests {
             SubmitOutcome::Stale(_)
         ));
         {
-            let pair = preview.frame_pair().lock().unwrap();
+            let pair = preview.frame_pair();
             assert!(pair.front.is_none(), "stale front buffer survived");
             assert!(pair.back.is_none(), "stale back buffer survived");
         }
@@ -490,7 +482,7 @@ mod tests {
     /// case must not be committed either.
     #[test]
     fn equal_sequence_is_rejected_not_swapped() {
-        let preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
+        let mut preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
         let frame = |seq: u64| PreviewFrame {
             rgba: vec![seq as u8; 4],
             width: 1,

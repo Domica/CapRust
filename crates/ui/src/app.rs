@@ -595,6 +595,10 @@ pub struct CapRustApp {
     pub timeline_scroll_x: f32,
     pub clip_textures: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     pub preview_player: PreviewPlayer,
+    /// Remembers whether playback was running on the previous UI frame, so
+    /// the paused branch can tear down the streaming/audio exactly once on
+    /// the playing→paused transition instead of on every repaint (6.5).
+    pub prev_playing: bool,
     /// Audio playback for the current preview session. None = no audio.
     pub audio_player: Option<AudioPlayer>,
     /// Deferred audio start. Preview with a transition takes 1-3 s
@@ -1707,6 +1711,7 @@ impl CapRustApp {
             timeline_scroll_x: 0.0,
             clip_textures: std::collections::HashMap::new(),
             preview_player: PreviewPlayer::new(),
+            prev_playing: false,
             audio_player: None,
             pending_audio_start: None,
             play_anchor_set: false,
@@ -1926,6 +1931,13 @@ impl CapRustApp {
     fn tick_remote_control(&mut self) {
         self.pending_remote_open = None;
         self.pending_remote_export = None;
+        // 6.10: the preview keeps a pixel copy for the MCP remote reader only
+        // while a remote session is actually listening, so ordinary desktop
+        // editing never pays for the ~1 MB/frame copy. The bridge exists only
+        // when remote control is enabled and listening, so this is the precise
+        // signal that someone may call preview_frame.
+        self.preview_player
+            .set_remote_active(self.remote_bridge.is_some());
         // Reconcile the listener with the setting first. Done here rather
         // than on the toggle click so a settings change that arrives any
         // other way (settings file, sync, undo) still takes effect.
@@ -12267,6 +12279,7 @@ impl CapRustApp {
 
         // ---- Playing vs paused ----
         let playing = self.preview.playing;
+        let was_playing = self.prev_playing;
 
         if playing {
             // Ensure the timeline renderer is running.
@@ -12558,18 +12571,23 @@ impl CapRustApp {
 
             ctx.request_repaint();
         } else {
-            // Paused: stop audio/streaming, keep a one-shot renderer
-            // alive across frames so the UI thread never blocks.
-            self.preview_player.stop_stream();
-            self.preview_player.cancel_pending();
+            // Paused: on the transition from playing to paused, tear down the
+            // audio/streaming that playback started. Running this on every
+            // repaint (the old behaviour) repeatedly killed the stream and
+            // cleared the double buffer every frame, and was pure wasted work
+            // once already stopped (6.5).
+            if was_playing {
+                self.preview_player.stop_stream();
+                self.preview_player.cancel_pending();
 
-            // The comment above said "stop audio" and the code did not.
-            // `stop_stream` only ends the video decoder; the cpal
-            // player keeps pulling from its own PCM file on its own
-            // thread, so pausing left the audio running against a frozen
-            // frame. Dropping it signals the reader and joins it.
-            // Recreated on the next play, so nothing is lost.
-            self.audio_player = None;
+                // The comment above said "stop audio" and the code did not.
+                // `stop_stream` only ends the video decoder; the cpal
+                // player keeps pulling from its own PCM file on its own
+                // thread, so pausing left the audio running against a frozen
+                // frame. Dropping it signals the reader and joins it.
+                // Recreated on the next play, so nothing is lost.
+                self.audio_player = None;
+            }
 
             // K1c: fire a new one-shot when the render hash changed.
             // The renderer is left running until it produces its first
@@ -12712,6 +12730,9 @@ impl CapRustApp {
                 }
             }
         }
+        // Record playback state for the next frame so the paused branch can
+        // detect the playing→paused transition (6.5).
+        self.prev_playing = playing;
 
         // ---- Render frame or placeholder ----
         // Capture the draw_rect / tex_size so the overlay below can
@@ -16129,7 +16150,9 @@ mod preview_encoding_tests {
         // showing a frame and keeping it are the same act and cannot
         // come apart. This is the invariant that was missing: three
         // rendering sites assigned `texture` directly and left `frame`
-        // as None.
+        // as None. The capture only runs while a remote reader is
+        // watching (6.10), which is exactly the path under test here.
+        player.set_remote_active(true);
         player.publish_frame(&egui::Context::default(), w, h, &rgba);
 
         let held = player.raw_frame().expect("frame kept for the reader");

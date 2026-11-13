@@ -100,6 +100,9 @@ pub struct PreviewPlayer {
     pub has_frame: bool,
     pub last_error: Option<String>,
     pub decoded: u64,
+    /// Monotonic counter for frames pulled from the active stream, so each
+    /// streamed frame carries a strictly increasing sequence (see 6.2).
+    stream_seq: u64,
     slot: Option<Arc<Slot>>,
     /// Active streaming decoder (only while playing).
     pub stream: Option<FrameStream>,
@@ -116,6 +119,12 @@ pub struct PreviewPlayer {
     /// Straight RGBA, not egui's premultiplied storage, so it can go
     /// straight into an image encoder.
     frame: Option<RawFrame>,
+    /// When true a remote (phone) MCP session is actively pulling preview
+    /// frames, so `publish_frame` keeps a copy of the pixels for it. The
+    /// copy is skipped otherwise -- during ordinary desktop editing there
+    /// is no remote reader, and copying ~1 MB per frame at 30 fps is pure
+    /// waste. The MCP layer raises/lowers this around its command drain.
+    remote_active: bool,
     /// Double-buffer preview system for seamless playback and scrubbing.
     double_buffer: Option<DoubleBufferPreview>,
 }
@@ -132,6 +141,13 @@ impl PreviewPlayer {
     /// The last decoded frame, if there is one.
     pub fn raw_frame(&self) -> Option<&RawFrame> {
         self.frame.as_ref()
+    }
+
+    /// Tell the player whether a remote (phone) session is currently
+    /// pulling preview frames. While false, `publish_frame` skips the
+    /// per-frame pixel copy it only needs for that remote reader (6.10).
+    pub fn set_remote_active(&mut self, active: bool) {
+        self.remote_active = active;
     }
 
     /// Keep the pixels behind a frame that is already on screen.
@@ -167,7 +183,12 @@ impl PreviewPlayer {
         self.texture =
             Some(ctx.load_texture(PREVIEW_TEXTURE_NAME, img, egui::TextureOptions::LINEAR));
         self.has_frame = true;
-        self.capture_frame(width, height, rgba);
+        // Keep a copy of the pixels only when a remote session is watching
+        // (6.10). The desktop preview never needs them; copying ~1 MB every
+        // frame at 30 fps for nobody is wasted work.
+        if self.remote_active {
+            self.capture_frame(width, height, rgba);
+        }
     }
 
     /// Set the mask texture for object removal preview.
@@ -258,10 +279,12 @@ impl PreviewPlayer {
             has_frame: false,
             last_error: None,
             decoded: 0,
+            stream_seq: 0,
             slot: Some(slot),
             rx: Some(rx),
             stream: None,
             frame: None,
+            remote_active: false,
             double_buffer: Some(DoubleBufferPreview::new(DoubleBufferConfig::default())),
         }
     }
@@ -277,11 +300,13 @@ impl PreviewPlayer {
         width: u32,
         height: u32,
     ) {
-        // Round to 100 ms grid to avoid requesting near-duplicate frames.
-        let rounded = (at_ms / 100) * 100;
+        // This is the one-shot paused fallback (the only caller of
+        // `request`), so seek to the exact position instead of snapping to a
+        // 100 ms grid. Rounding here produced stale/duplicate requests and
+        // fed the backwards-seek rejection in `poll` (6.11).
         let key = FrameKey {
             clip_id,
-            at_ms: rounded,
+            at_ms,
             width,
             height,
         };
@@ -303,7 +328,7 @@ impl PreviewPlayer {
             key,
             ffmpeg: ffmpeg.to_path_buf(),
             input: input.to_path_buf(),
-            at_sec: rounded as f64 / 1000.0,
+            at_sec: at_ms as f64 / 1000.0,
         });
         self.pending = Some(key);
         self.last_error = None;
@@ -346,7 +371,7 @@ impl PreviewPlayer {
 
             // Submit to double-buffer system. Move the decoded pixels into the
             // frame instead of cloning them (was a full-frame copy per frame).
-            if let Some(db) = &self.double_buffer {
+            if let Some(db) = &mut self.double_buffer {
                 let mut rgba = res.rgba;
                 rgba.truncate(expected);
                 let frame = PreviewFrame {
@@ -357,21 +382,9 @@ impl PreviewPlayer {
                     clip_id: res.key.clip_id,
                     sequence: res.key.at_ms / 100, // Use rounded ms as sequence
                 };
-
                 match db.submit_and_commit(frame) {
-                    SubmitOutcome::Committed(front_frame) => {
-                        self.publish_frame(
-                            ctx,
-                            front_frame.width as usize,
-                            front_frame.height as usize,
-                            &front_frame.rgba,
-                        );
-                    }
-                    SubmitOutcome::Stale(front_frame) => {
-                        // Backwards seek: submit_and_commit dropped the buffered
-                        // history and handed the decoded frame back. Publish it
-                        // so the preview shows the right picture and the player
-                        // does not get stuck refusing to re-request.
+                    SubmitOutcome::Committed(front_frame)
+                    | SubmitOutcome::Stale(front_frame) => {
                         self.publish_frame(
                             ctx,
                             front_frame.width as usize,
@@ -383,7 +396,7 @@ impl PreviewPlayer {
                 self.last_key = Some(res.key);
                 self.decoded += 1;
             } else {
-                // Fallback to direct publish
+                // Fallback: double buffer absent, publish directly.
                 self.publish_frame(ctx, w, h, &res.rgba[..expected]);
                 self.last_key = Some(res.key);
                 self.decoded += 1;
@@ -397,7 +410,7 @@ impl PreviewPlayer {
             s.kill();
         }
         // Clear double-buffer when stopping stream
-        if let Some(db) = &self.double_buffer {
+        if let Some(db) = &mut self.double_buffer {
             db.clear();
         }
     }
@@ -447,66 +460,68 @@ impl PreviewPlayer {
     /// Pull one frame from the active stream (if any) and upload it.
     /// Returns true if a new frame was drawn.
     pub fn poll_stream(&mut self, ctx: &egui::Context) -> bool {
-        let Some(s) = self.stream.as_ref() else {
-            return false;
+        // Read everything we need from the stream and drop the borrow before
+        // we touch other `self` fields (the partial borrow of `self.stream`
+        // would otherwise conflict with `self.stream_seq`).
+        let pulled = {
+            let Some(s) = self.stream.as_ref() else {
+                return false;
+            };
+            let Some(buf) = s.try_next() else {
+                return false;
+            };
+            let w = s.width as usize;
+            let h = s.height as usize;
+            let expected = w * h * 4;
+            if buf.len() < expected {
+                return false;
+            }
+            (buf, w, h, s.started_at_sec, s.fps, s.clip_id)
         };
-        let Some(buf) = s.try_next() else {
-            return false;
-        };
-        let w = s.width as usize;
-        let h = s.height as usize;
-        let expected = w * h * 4;
-        if buf.len() < expected {
-            return false;
-        }
 
-        // Submit to double-buffer system. Move the decoded pixels in instead
-        // of cloning them.
-        if let Some(db) = &self.double_buffer {
+        let (buf, w, h, started_at_sec, fps, clip_id) = pulled;
+
+        // 6.2: the old code used `started_at_sec * 1000` as both the
+        // timestamp and the sequence, so every frame after the first carried
+        // the same sequence and `submit_and_commit` rejected it as stale
+        // (and only the defensive hand-back published it). Give each pulled
+        // frame a strictly increasing sequence.
+        self.stream_seq = self.stream_seq.wrapping_add(1);
+        let frame_dur_ms = (1000.0 / fps.max(1.0)).round() as u64;
+        let ts = (started_at_sec * 1000.0) as u64 + self.stream_seq * frame_dur_ms;
+
+        let expected = w * h * 4;
+        if let Some(db) = &mut self.double_buffer {
             let mut rgba = buf;
             rgba.truncate(expected);
             let frame = PreviewFrame {
                 rgba,
-                width: s.width,
-                height: s.height,
-                timestamp_ms: (s.started_at_sec * 1000.0) as u64,
-                clip_id: s.clip_id,
-                sequence: (s.started_at_sec * 1000.0) as u64,
+                width: w as u32,
+                height: h as u32,
+                timestamp_ms: ts,
+                clip_id,
+                sequence: ts,
             };
-
-            // `sequence` here is the stream's start time, so every frame after
-            // the first carries the same number and is rejected (Stale). On
-            // Stale the decoded frame is handed back; publish it directly.
             match db.submit_and_commit(frame) {
-                SubmitOutcome::Committed(front_frame) => {
+                SubmitOutcome::Committed(front_frame)
+                | SubmitOutcome::Stale(front_frame) => {
                     self.publish_frame(
                         ctx,
                         front_frame.width as usize,
                         front_frame.height as usize,
                         &front_frame.rgba,
                     );
-                    self.decoded += 1;
-                    return true;
-                }
-                SubmitOutcome::Stale(front_frame) => {
-                    self.publish_frame(
-                        ctx,
-                        front_frame.width as usize,
-                        front_frame.height as usize,
-                        &front_frame.rgba,
-                    );
-                    self.decoded += 1;
-                    return true;
                 }
             }
+            self.decoded += 1;
+            true
+        } else {
+            let mut rgba = buf;
+            rgba.truncate(expected);
+            self.publish_frame(ctx, w, h, &rgba);
+            self.decoded += 1;
+            true
         }
-
-        // Fallback to direct publish (double buffer absent).
-        let mut rgba = buf;
-        rgba.truncate(expected);
-        self.publish_frame(ctx, w, h, &rgba);
-        self.decoded += 1;
-        true
     }
 
     /// If a stream is active, returns (started_at_sec, 1/fps seconds per frame).
@@ -535,7 +550,7 @@ impl PreviewPlayer {
         self.has_frame = false;
 
         // Clear double-buffer state
-        if let Some(db) = &self.double_buffer {
+        if let Some(db) = &mut self.double_buffer {
             db.clear();
         }
     }
@@ -561,6 +576,9 @@ mod tests {
         let w = 64usize;
         let h = 32usize;
         let rgba = vec![200u8; w * h * 4];
+        // The capture only runs while a remote reader is watching; that is the
+        // path this test exercises, so simulate it.
+        player.set_remote_active(true);
         player.publish_frame(&egui::Context::default(), w, h, &rgba);
 
         let held = player.raw_frame().expect("frame kept for the reader");
