@@ -383,8 +383,7 @@ impl PreviewPlayer {
                     sequence: res.key.at_ms / 100, // Use rounded ms as sequence
                 };
                 match db.submit_and_commit(frame) {
-                    SubmitOutcome::Committed(front_frame)
-                    | SubmitOutcome::Stale(front_frame) => {
+                    SubmitOutcome::Committed(front_frame) | SubmitOutcome::Stale(front_frame) => {
                         self.publish_frame(
                             ctx,
                             front_frame.width as usize,
@@ -503,8 +502,7 @@ impl PreviewPlayer {
                 sequence: ts,
             };
             match db.submit_and_commit(frame) {
-                SubmitOutcome::Committed(front_frame)
-                | SubmitOutcome::Stale(front_frame) => {
+                SubmitOutcome::Committed(front_frame) | SubmitOutcome::Stale(front_frame) => {
                     self.publish_frame(
                         ctx,
                         front_frame.width as usize,
