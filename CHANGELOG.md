@@ -2,6 +2,12 @@
 
 All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+
+- **Save panel state (View → Modern zones).** A checkbox next to *Remember custom resize* that remembers which panels were open in each Modern zone (Effects, Transitions, Properties, ...) and restores them on the next launch. Off by default, so a fresh session still opens with the built-in arrangement; turning it off clears the saved snapshot. Sizes and panel contents are now two independent choices.
+
 ## [0.9.28] - 2026-11-14
 
 ### Fixed

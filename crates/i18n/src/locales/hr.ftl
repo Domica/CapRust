@@ -1174,6 +1174,8 @@ settings-show-tips = Prikaži savjete ponovno
 settings-show-tips-hint = Vođeni savjeti vode kroz uvoz, rezanje i izvoz.
 menu-zone-remember-resize = Zapamti vlastnu veličinu
 menu-zone-remember-resize-hint = Zadrži veličine panela koje si povukao. Odabir S, M ili L vraća timeline na njegovu veličinu.
+menu-zone-save-panel-state = Zapamti stanje panela
+menu-zone-save-panel-state-hint = Zapamti koji su paneli (Efekti, Prijelazi, ...) otvoreni u svakoj zoni i vrati ih pri sljedećem pokretanju.
 
 welcome-point-timeline = Režite ih na vremenskoj liniji i dodajte tekst, naljepnice i efekte.
 

@@ -1174,6 +1174,8 @@ settings-show-tips = Mostrar los consejos otra vez
 settings-show-tips-hint = Los consejos guiados te llevan por la importación, el corte y la exportación.
 menu-zone-remember-resize = Recordar el tamaño personalizado
 menu-zone-remember-resize-hint = Conserva el tamaño de los paneles que arrastraste. Elegir S, M o L devuelve la línea de tiempo a su tamaño.
+menu-zone-save-panel-state = Guardar estado de los paneles
+menu-zone-save-panel-state-hint = Recuerda qué paneles (Efectos, Transiciones, ...) hay abiertos en cada zona y los restaura al iniciar de nuevo.
 
 welcome-point-timeline = Recórtalos en la línea de tiempo y añade texto, stickers y efectos.
 

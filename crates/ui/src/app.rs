@@ -1632,7 +1632,7 @@ impl CapRustApp {
             #[cfg(windows)]
             screen_record_open: false,
             dock_state: starting_dock_state(&settings),
-            modern: ModernState::default(),
+            modern: starting_modern_state(&settings),
             preview: PreviewState::default(),
             selected_clips: Vec::new(),
             clip_drag: None,
@@ -3404,6 +3404,28 @@ impl CapRustApp {
                                 tr("menu-zone-remember-resize"),
                             )
                             .on_hover_text(tr("menu-zone-remember-resize-hint"));
+                            // The second thing worth keeping across a
+                            // restart is which panels were open in each
+                            // zone (Effects, Transitions, ...). Snapshot
+                            // on the toggle itself so the choice is not
+                            // lost if the app is closed before the next
+                            // autosave tick; save() keeps it current
+                            // afterwards.
+                            if ui
+                                .checkbox(
+                                    &mut self.settings.remember_panel_state,
+                                    tr("menu-zone-save-panel-state"),
+                                )
+                                .on_hover_text(tr("menu-zone-save-panel-state-hint"))
+                                .changed()
+                            {
+                                self.settings.modern_panel_state =
+                                    if self.settings.remember_panel_state {
+                                        serde_json::to_string(&self.modern).ok()
+                                    } else {
+                                        None
+                                    };
+                            }
                             ui.separator();
                             // Add container, then which side. Both menus go
                             // through `Zone::set`, which inserts at the front
@@ -15570,6 +15592,17 @@ impl eframe::App for CapRustApp {
         if let Ok(json) = serde_json::to_string(&self.dock_state) {
             self.settings.dock_layout = Some(json);
         }
+        // "Save panel state" keeps the Modern editor's zone stacks for
+        // the next launch. When off, drop the snapshot so turning the
+        // option off really forgets the arrangement instead of leaving
+        // stale data that a later re-enable would resurrect.
+        if self.settings.remember_panel_state {
+            if let Ok(json) = serde_json::to_string(&self.modern) {
+                self.settings.modern_panel_state = Some(json);
+            }
+        } else {
+            self.settings.modern_panel_state = None;
+        }
 
         // Cloud-folder sync. Hash-guarded so identical settings do
         // not spam the cloud client with writes on every save tick.
@@ -15846,7 +15879,8 @@ impl Zone {
 /// dragging between zones here: this is the editor for someone who wants
 /// to say what goes where once and have it stay, and the dock editor is
 /// where the moving happens. Two editors, two different jobs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ModernState {
     /// Top-left: stacked up to 3 tabs (like poker cards).
     pub left_top: Vec<crate::dock::Tab>,
@@ -15912,6 +15946,48 @@ fn starting_dock_state(
     }
 
     saved().unwrap_or_else(crate::dock::default_dock_state)
+}
+
+/// The Modern editor's zone stacks the app opens with.
+///
+/// `ModernState` lives in the UI crate, so core settings keep it as an
+/// opaque JSON string, the same trick `dock_layout` uses. "Save panel
+/// state" (View -> Modern zones) decides whether that snapshot is read
+/// at all: with it off every launch gets the built-in arrangement.
+fn starting_modern_state(settings: &caprust_core::AppSettings) -> ModernState {
+    if !settings.remember_panel_state {
+        return ModernState::default();
+    }
+    let Some(json) = settings.modern_panel_state.as_deref() else {
+        return ModernState::default();
+    };
+    let Ok(mut state) = serde_json::from_str::<ModernState>(json) else {
+        // A tab removed in a later release, or a hand-edited settings
+        // file. The built-in arrangement is a better opening than an
+        // empty editor or a startup error.
+        tracing::warn!("saved Modern panel state is unreadable; using the built-in arrangement");
+        return ModernState::default();
+    };
+    // A hand-edited file (or an older build) can hold more than the
+    // three cards the picker allows, or repeat one. Clamp to the same
+    // invariants `Zone::set` keeps in memory.
+    fn tidy(stack: &mut Vec<crate::dock::Tab>) {
+        let mut seen: Vec<crate::dock::Tab> = Vec::new();
+        stack.retain(|t| {
+            if seen.contains(t) {
+                false
+            } else {
+                seen.push(*t);
+                true
+            }
+        });
+        stack.truncate(3);
+    }
+    tidy(&mut state.left_top);
+    tidy(&mut state.left_bottom);
+    tidy(&mut state.right_top);
+    tidy(&mut state.right_bottom);
+    state
 }
 
 /// Register the Phosphor icon font family.
@@ -16550,6 +16626,109 @@ mod app_layout_tests {
                 "{p:?} did not come back as itself"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod modern_panel_state_tests {
+    use super::{starting_modern_state, ModernState};
+    use crate::dock::Tab;
+    use caprust_core::AppSettings;
+
+    fn custom() -> ModernState {
+        ModernState {
+            left_top: vec![Tab::AssetEffects, Tab::AssetTransitions],
+            left_bottom: vec![Tab::AssetText],
+            right_top: vec![Tab::Properties, Tab::MasterChain],
+            right_bottom: vec![Tab::AssetStickers],
+        }
+    }
+
+    fn settings(enabled: bool, state: Option<&ModernState>) -> AppSettings {
+        AppSettings {
+            remember_panel_state: enabled,
+            modern_panel_state: state.map(|s| serde_json::to_string(s).unwrap()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn off_opens_the_built_in_arrangement_even_with_a_saved_snapshot() {
+        // The checkbox is the whole switch. A stale snapshot from a
+        // session where it was on must not leak back in.
+        let s = settings(false, Some(&custom()));
+        assert_eq!(starting_modern_state(&s), ModernState::default());
+    }
+
+    #[test]
+    fn on_restores_every_zone_stack() {
+        let s = settings(true, Some(&custom()));
+        assert_eq!(starting_modern_state(&s), custom());
+    }
+
+    #[test]
+    fn on_with_no_snapshot_uses_the_built_in_arrangement() {
+        let s = settings(true, None);
+        assert_eq!(starting_modern_state(&s), ModernState::default());
+    }
+
+    #[test]
+    fn unparseable_snapshot_falls_back_instead_of_failing_startup() {
+        let mut s = settings(true, None);
+        s.modern_panel_state = Some("{ not json".into());
+        assert_eq!(starting_modern_state(&s), ModernState::default());
+    }
+
+    #[test]
+    fn an_unknown_tab_from_a_future_build_falls_back() {
+        let mut s = settings(true, None);
+        s.modern_panel_state = Some(r#"{"left_top":["SomeFuturePanel"]}"#.into());
+        assert_eq!(starting_modern_state(&s), ModernState::default());
+    }
+
+    #[test]
+    fn hand_edited_stacks_are_deduplicated_and_capped_at_three() {
+        let mut s = settings(true, None);
+        s.modern_panel_state = Some(
+            r#"{"left_top":["AssetEffects","AssetEffects","AssetText","AssetFilters","AssetSfx"],"left_bottom":[],"right_top":[],"right_bottom":[]}"#
+                .into(),
+        );
+        let opened = starting_modern_state(&s);
+        assert_eq!(
+            opened.left_top,
+            vec![Tab::AssetEffects, Tab::AssetText, Tab::AssetFilters]
+        );
+        assert!(opened.left_bottom.is_empty());
+        assert!(opened.right_top.is_empty());
+        assert!(opened.right_bottom.is_empty());
+    }
+
+    /// A snapshot missing a zone (older build, hand-edited file) fills
+    /// that zone from the built-in arrangement rather than leaving an
+    /// empty editor behind.
+    #[test]
+    fn a_partial_snapshot_fills_missing_zones_from_the_defaults() {
+        let mut s = settings(true, None);
+        s.modern_panel_state = Some(r#"{"left_top":["AssetEffects"]}"#.into());
+        let opened = starting_modern_state(&s);
+        assert_eq!(opened.left_top, vec![Tab::AssetEffects]);
+        let built_in = ModernState::default();
+        assert_eq!(opened.left_bottom, built_in.left_bottom);
+        assert_eq!(opened.right_top, built_in.right_top);
+        assert_eq!(opened.right_bottom, built_in.right_bottom);
+    }
+
+    /// The snapshot save() writes must be exactly what new() reads.
+    #[test]
+    fn snapshot_round_trips_through_settings() {
+        let state = custom();
+        let json = serde_json::to_string(&state).unwrap();
+        let s = AppSettings {
+            remember_panel_state: true,
+            modern_panel_state: Some(json),
+            ..Default::default()
+        };
+        assert_eq!(starting_modern_state(&s), state);
     }
 }
 

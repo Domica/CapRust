@@ -1174,6 +1174,8 @@ settings-show-tips = Mostra i consigli di nuovo
 settings-show-tips-hint = I suggerimenti guidati ti portano dall'importazione al montaggio e all'esportazione.
 menu-zone-remember-resize = Ricorda la dimensione personalizzata
 menu-zone-remember-resize-hint = Mantiene la dimensione dei pannelli che hai trascinato. Scegliere S, M o L riporta la timeline alla sua dimensione.
+menu-zone-save-panel-state = Salva lo stato dei pannelli
+menu-zone-save-panel-state-hint = Ricorda quali pannelli (Effetti, Transizioni, ...) sono aperti in ogni zona e li ripristina al prossimo avvio.
 
 welcome-point-timeline = Montali sulla timeline e aggiungi testo, sticker ed effetti.
 

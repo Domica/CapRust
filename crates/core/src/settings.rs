@@ -220,6 +220,18 @@ pub struct AppSettings {
     /// panels, and they win.
     #[serde(default)]
     pub remember_custom_resize: bool,
+    /// When true, the Modern editor remembers which panels (Effects,
+    /// Transitions, ...) were stacked in each zone and restores them on
+    /// the next launch. Off by default: every session opens with the
+    /// built-in arrangement. View -> Modern zones -> Save panel state.
+    #[serde(default)]
+    pub remember_panel_state: bool,
+    /// Serialized `ModernState` (the four zone tab stacks). Stored as
+    /// JSON so the core crate does not depend on the UI crate's `Tab`
+    /// enum, the same trick `dock_layout` uses. `None` or an
+    /// unparseable value falls back to the built-in arrangement.
+    #[serde(default)]
+    pub modern_panel_state: Option<String>,
 }
 
 /// Autosave cadence in minutes. Every 5 minutes is short enough that
@@ -382,6 +394,8 @@ impl Default for AppSettings {
             modern_right_split: None,
             modern_timeline_height: None,
             remember_custom_resize: false,
+            remember_panel_state: false,
+            modern_panel_state: None,
             mobile_sam_encoder_path: None,
             mobile_sam_decoder_path: None,
         }
@@ -856,6 +870,8 @@ mod tests {
             modern_right_split: Some(0.61),
             modern_timeline_height: Some(310.0),
             remember_custom_resize: true,
+            remember_panel_state: true,
+            modern_panel_state: Some(r#"{"left_top":["AssetEffects"]}"#.into()),
             ..Default::default()
         };
 
@@ -878,6 +894,10 @@ mod tests {
         assert_eq!(a.modern_right_split, b.modern_right_split);
         assert_eq!(a.modern_timeline_height, b.modern_timeline_height);
         assert_eq!(a.remember_custom_resize, b.remember_custom_resize);
+        // The panels the user left open in each Modern zone have to
+        // survive an export/import too.
+        assert_eq!(a.remember_panel_state, b.remember_panel_state);
+        assert_eq!(a.modern_panel_state, b.modern_panel_state);
 
         let _ = fs::remove_file(&p);
     }
@@ -900,6 +920,22 @@ mod tests {
         assert_eq!(back.modern_right_split, None);
         assert_eq!(back.modern_timeline_height, None);
         assert!(!back.remember_custom_resize);
+    }
+
+    /// An install from before "Save panel state" existed has neither
+    /// key. It must open with the built-in Modern arrangement, not an
+    /// empty editor or a deserialization error.
+    #[test]
+    fn settings_without_panel_state_open_with_the_defaults() {
+        let old = AppSettings::default();
+        let mut json = serde_json::to_value(&old).unwrap();
+        let map = json.as_object_mut().unwrap();
+        map.remove("remember_panel_state");
+        map.remove("modern_panel_state");
+
+        let back: AppSettings = serde_json::from_value(json).unwrap();
+        assert!(!back.remember_panel_state);
+        assert_eq!(back.modern_panel_state, None);
     }
 
     /// An install that predates these fields must open on exactly the
