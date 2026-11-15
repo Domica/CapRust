@@ -371,11 +371,13 @@ impl PreviewPlayer {
 
             // Submit to double-buffer system. Move the decoded pixels into the
             // frame instead of cloning them (was a full-frame copy per frame).
+            // 6.9: wrap in Arc<[u8]> so the buffer's retention for stale
+            // detection and the publish are refcount bumps, not memcpys.
             if let Some(db) = &mut self.double_buffer {
                 let mut rgba = res.rgba;
                 rgba.truncate(expected);
                 let frame = PreviewFrame {
-                    rgba,
+                    rgba: Arc::from(rgba),
                     width: res.key.width,
                     height: res.key.height,
                     timestamp_ms: res.key.at_ms,
@@ -388,7 +390,7 @@ impl PreviewPlayer {
                             ctx,
                             front_frame.width as usize,
                             front_frame.height as usize,
-                            &front_frame.rgba,
+                            &front_frame.rgba[..],
                         );
                     }
                 }
@@ -494,7 +496,7 @@ impl PreviewPlayer {
             let mut rgba = buf;
             rgba.truncate(expected);
             let frame = PreviewFrame {
-                rgba,
+                rgba: Arc::from(rgba),
                 width: w as u32,
                 height: h as u32,
                 timestamp_ms: ts,
@@ -507,7 +509,7 @@ impl PreviewPlayer {
                         ctx,
                         front_frame.width as usize,
                         front_frame.height as usize,
-                        &front_frame.rgba,
+                        &front_frame.rgba[..],
                     );
                 }
             }

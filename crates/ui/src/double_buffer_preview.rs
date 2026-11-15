@@ -16,13 +16,19 @@
 //! actually fire). It is now plain owned state mutated through `&mut`.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
 /// A single frame in the preview pipeline.
+///
+/// Pixels live behind an `Arc` so the buffer can keep its copy for stale
+/// detection while the caller publishes the very same pixels, without a
+/// full RGBA memcpy per frame (6.9). `Arc::from(Vec<u8>)` adopts the
+/// decoder's allocation, so building a frame is still zero-copy.
 #[derive(Debug, Clone)]
 pub struct PreviewFrame {
-    pub rgba: Vec<u8>,
+    pub rgba: Arc<[u8]>,
     pub width: u32,
     pub height: u32,
     pub timestamp_ms: u64,
@@ -296,7 +302,7 @@ impl DoubleBufferPreview {
         }
 
         PreviewFrame {
-            rgba,
+            rgba: Arc::from(rgba),
             width: a.width,
             height: a.height,
             timestamp_ms: ((a.timestamp_ms as f32
@@ -395,7 +401,7 @@ mod tests {
         let mut preview = DoubleBufferPreview::new(config);
 
         let frame1 = PreviewFrame {
-            rgba: vec![255; 64 * 4],
+            rgba: Arc::from(vec![255; 64 * 4]),
             width: 64,
             height: 64,
             timestamp_ms: 0,
@@ -418,7 +424,7 @@ mod tests {
         let mut preview = DoubleBufferPreview::new(config);
 
         let frame1 = PreviewFrame {
-            rgba: vec![255; 64],
+            rgba: Arc::from(vec![255; 64]),
             width: 8,
             height: 8,
             timestamp_ms: 0,
@@ -440,7 +446,7 @@ mod tests {
     fn backwards_seek_never_commits_a_stale_frame() {
         let mut preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
         let frame = |seq: u64| PreviewFrame {
-            rgba: vec![seq as u8; 4],
+            rgba: Arc::from(vec![seq as u8; 4]),
             width: 1,
             height: 1,
             timestamp_ms: seq * 100,
@@ -484,7 +490,7 @@ mod tests {
     fn equal_sequence_is_rejected_not_swapped() {
         let mut preview = DoubleBufferPreview::new(DoubleBufferConfig::default());
         let frame = |seq: u64| PreviewFrame {
-            rgba: vec![seq as u8; 4],
+            rgba: Arc::from(vec![seq as u8; 4]),
             width: 1,
             height: 1,
             timestamp_ms: seq * 100,
@@ -510,7 +516,7 @@ mod tests {
         let preview = DoubleBufferPreview::new(config);
 
         let frame_a = PreviewFrame {
-            rgba: (0..16).flat_map(|_| [0u8, 0, 0, 255]).collect(), // Black
+            rgba: Arc::from((0..16).flat_map(|_| [0u8, 0, 0, 255]).collect::<Vec<u8>>()),
             width: 4,
             height: 4,
             timestamp_ms: 0,
@@ -519,7 +525,11 @@ mod tests {
         };
 
         let frame_b = PreviewFrame {
-            rgba: (0..16).flat_map(|_| [255u8, 255, 255, 255]).collect(), // White
+            rgba: Arc::from(
+                (0..16)
+                    .flat_map(|_| [255u8, 255, 255, 255])
+                    .collect::<Vec<u8>>(),
+            ),
             width: 4,
             height: 4,
             timestamp_ms: 100,

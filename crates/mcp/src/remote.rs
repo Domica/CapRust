@@ -29,7 +29,9 @@
 //! which unblocks its threads immediately.
 
 use anyhow::{Context, Result};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
+
+use crate::transport::{read_limited_line, MAX_REQUEST_LINE_BYTES};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -339,13 +341,15 @@ fn read_loop(
     generation: usize,
 ) {
     let mut reader = BufReader::new(read_half);
-    let mut line = String::new();
     loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {
-                if incoming.send(line.clone()).is_err() {
+        // Bounded read: a peer that streams bytes without a newline must
+        // not grow this buffer until the app is out of memory. This is
+        // the LAN-facing reader (the app's remote bridge), so the cap
+        // matters more here than on the stdio path.
+        match read_limited_line(&mut reader, MAX_REQUEST_LINE_BYTES) {
+            Ok(None) | Err(_) => break,
+            Ok(Some(line)) => {
+                if incoming.send(line).is_err() {
                     // The bridge was dropped: the app is shutting down.
                     break;
                 }
@@ -399,7 +403,7 @@ fn write_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::BufReader;
+    use std::io::{BufRead, BufReader};
 
     #[test]
     fn a_new_connection_preempts_the_previous_client() {

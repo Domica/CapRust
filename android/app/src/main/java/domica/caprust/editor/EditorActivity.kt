@@ -351,10 +351,18 @@ class EditorActivity : Activity() {
             ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
             ?.takeIf { it.isNotBlank() }
         val dot = clean?.lastIndexOf('.') ?: -1
-        val stem = if (dot > 0) clean!!.take(dot) else clean ?: "import-${System.currentTimeMillis()}"
-        val ext = when {
-            dot > 0 -> clean!!.substring(dot)
-            else -> extensionFor(uri)
+        // Kotlin cannot smart-cast a nullable val captured from a
+        // nullable chain, so split on the non-null case instead of
+        // asserting with `!!`. `dot > 0` already implies `clean != null`,
+        // but spelling it out keeps the invariant checkable.
+        val stem: String
+        val ext: String
+        if (clean != null && dot > 0) {
+            stem = clean.take(dot)
+            ext = clean.substring(dot)
+        } else {
+            stem = clean ?: "import-${System.currentTimeMillis()}"
+            ext = extensionFor(uri)
         }
         return "${System.currentTimeMillis()}-$stem$ext"
     }

@@ -989,7 +989,7 @@ private var logOn: Boolean
         // pushed: the phone does not know when the playhead moves on
         // the desktop, and a push would need the desktop to track which
         // phone asked.
-        previewView = ImageView(this).apply {
+        val preview = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(0xFF141414.toInt())
             contentDescription = getString(R.string.preview_desc)
@@ -1003,19 +1003,21 @@ private var logOn: Boolean
                 true
             }
         }
-        root.addView(previewView, LinearLayout.LayoutParams(
+        previewView = preview
+        root.addView(preview, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
 
         // Says so when there is nothing to show. An empty black box is
         // indistinguishable from a broken app, and the reason is
         // almost always "the preview has not decoded yet".
-        previewNote = TextView(this).apply {
+        val note = TextView(this).apply {
             text = getString(R.string.preview_none)
             textSize = 12f
         }
-        root.addView(previewNote)
-        movable.add(previewView!!)
-        movable.add(previewNote!!)
+        previewNote = note
+        root.addView(note)
+        movable.add(preview)
+        movable.add(note)
 
         // ---- transport ----
         // Two rows, not one. A LinearLayout does not wrap: four chips
@@ -1042,9 +1044,10 @@ private var logOn: Boolean
         root.addView(previewBtnRow)
         movable.add(previewBtnRow)
 
-        playheadView = TextView(this).apply { textSize = 12f }
-        root.addView(playheadView)
-        movable.add(playheadView!!)
+        val playhead = TextView(this).apply { textSize = 12f }
+        playheadView = playhead
+        root.addView(playhead)
+        movable.add(playhead)
 
         val exportRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         exportButton = btn(getString(R.string.btn_export)) { askExport() }
@@ -1129,9 +1132,10 @@ private var logOn: Boolean
         root.addView(presets)
         movable.add(presets)
 
-        lengthHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(lengthHost)
-        movable.add(lengthHost!!)
+        val length = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        lengthHost = length
+        root.addView(length)
+        movable.add(length)
 
         root.addView(sectionTitle(getString(R.string.title_clips)))
 
@@ -1650,12 +1654,13 @@ private var logOn: Boolean
     /** Detail panel for the selected clip. Only shown in landscape;
      *  portrait has no room and the bottom sheet carries this. */
     private fun selectedInfo(): TextView {
-        selectedView = TextView(this).apply {
+        val view = TextView(this).apply {
             textSize = 12f
             setTypeface(android.graphics.Typeface.MONOSPACE)
             setPadding(0, dp(4), 0, dp(4))
         }
-        return selectedView!!
+        selectedView = view
+        return view
     }
 
     private fun btn(label: String, onClick: () -> Unit) = Button(this).apply {

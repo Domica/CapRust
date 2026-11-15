@@ -29,17 +29,60 @@ pub const AUDIO_CHANNELS: u16 = 2;
 /// Path for the cached PCM file for a given `audio_render_hash`.
 /// Lives in `%TEMP%` and embeds the process id + hash so multiple
 /// hashes never collide and a stray file does not fool a later run.
-///
-/// TODO(alpha): old cache files are not deleted when a new hash
-/// replaces them. OS-level temp cleanup handles it eventually; a
-/// follow-up commit should delete them on project close or when a
-/// new render completes.
+/// Superseded files are removed by [`cleanup_stale_cache`].
 pub fn cache_path(hash: u64) -> PathBuf {
     std::env::temp_dir().join(format!(
         "caprust-audio-cache-{}-{:016x}.pcm",
         std::process::id(),
         hash
     ))
+}
+
+/// Remove this process's finished cache files except `keep`, returning
+/// how many were deleted.
+///
+/// Every successful render used to leave the previous hash's PCM file
+/// behind: a long editing session with many undo/redo steps wrote one
+/// multi-megabyte file per hash and never removed any of them, growing
+/// `%TEMP%` without bound. Call this when a new render is promoted so
+/// only the file actually being played survives.
+///
+/// Scoped to the current process on purpose -- another CapRust instance
+/// may still be playing its own cache. Incomplete `.part` files are left
+/// alone; [`AudioRenderJob::drop`] owns those.
+pub fn cleanup_stale_cache(keep: Option<&Path>) -> usize {
+    cleanup_cache_in(&std::env::temp_dir(), std::process::id(), keep)
+}
+
+/// Directory-scanning half, separate so the behaviour can be tested
+/// against a throwaway directory rather than the real `%TEMP%`.
+fn cleanup_cache_in(dir: &Path, pid: u32, keep: Option<&Path>) -> usize {
+    let prefix = format!("caprust-audio-cache-{pid}-");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // Only finished `.pcm` files for this pid. Never a `.part`, and
+        // never another process's cache.
+        if !name.starts_with(&prefix) || !name.ends_with(".pcm") {
+            continue;
+        }
+        let path = entry.path();
+        if keep.is_some_and(|k| k == path) {
+            continue;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed += 1,
+            Err(e) => tracing::debug!(
+                "audio_render: could not remove stale cache {}: {e}",
+                path.display()
+            ),
+        }
+    }
+    removed
 }
 
 /// Progress and completion events emitted by `spawn_audio_render`.
@@ -229,5 +272,55 @@ mod tests {
         // AudioPlayer::play_pcm_file hard-codes 48 kHz stereo s16le.
         assert_eq!(AUDIO_SAMPLE_RATE, 48_000);
         assert_eq!(AUDIO_CHANNELS, 2);
+    }
+
+    #[test]
+    fn stale_cache_cleanup_keeps_the_active_file_only() {
+        let dir = std::env::temp_dir().join(format!(
+            "caprust-audio-cleanup-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid = 4242;
+        let name = |hash: u64| format!("caprust-audio-cache-{pid}-{hash:016x}.pcm");
+        let keep = dir.join(name(2));
+        for h in [1u64, 2, 3] {
+            std::fs::write(dir.join(name(h)), b"pcm").unwrap();
+        }
+        // Noise that must survive: another process, a .part, unrelated.
+        let other = dir.join("caprust-audio-cache-9999-0000000000000001.pcm");
+        let part = dir.join(format!(
+            "caprust-audio-cache-{pid}-0000000000000004.pcm.part"
+        ));
+        let unrelated = dir.join("notes.txt");
+        for p in [&other, &part, &unrelated] {
+            std::fs::write(p, b"x").unwrap();
+        }
+
+        assert_eq!(cleanup_cache_in(&dir, pid, Some(&keep)), 2);
+        assert!(keep.exists(), "the active cache file was deleted");
+        assert!(!dir.join(name(1)).exists());
+        assert!(!dir.join(name(3)).exists());
+        assert!(other.exists(), "another process's cache was deleted");
+        assert!(part.exists(), "an in-flight .part was deleted");
+        assert!(unrelated.exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cleanup_without_a_keep_removes_every_finished_cache() {
+        let dir = std::env::temp_dir().join(format!(
+            "caprust-audio-cleanup-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid = 4243;
+        let f = dir.join(format!("caprust-audio-cache-{pid}-0000000000000001.pcm"));
+        std::fs::write(&f, b"pcm").unwrap();
+
+        assert_eq!(cleanup_cache_in(&dir, pid, None), 1);
+        assert!(!f.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -233,6 +233,35 @@ mod tests {
         }
     }
 
+    /// Fluent does not interpret `\uXXXX` -- it renders the six
+    /// characters literally. A translated string containing one shows
+    /// the user `pomi\u010de` instead of `pomiće`. Keeps every locale on
+    /// real UTF-8 characters (as the rest of the files already are).
+    #[test]
+    fn no_locale_contains_literal_unicode_escapes() {
+        for (lang, ftl) in [
+            ("en", include_str!("locales/en.ftl")),
+            ("hr", include_str!("locales/hr.ftl")),
+            ("es", include_str!("locales/es.ftl")),
+            ("it", include_str!("locales/it.ftl")),
+            ("de", include_str!("locales/de.ftl")),
+        ] {
+            for (i, line) in ftl.lines().enumerate() {
+                let mut rest = line;
+                while let Some(pos) = rest.find("\\u") {
+                    let tail = &rest[pos + 2..];
+                    let hex: String = tail.chars().take(4).collect();
+                    assert!(
+                        !(hex.len() == 4 && hex.chars().all(|c| c.is_ascii_hexdigit())),
+                        "{lang} line {}: literal unicode escape in {line:?}",
+                        i + 1
+                    );
+                    rest = tail;
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_language_resolves_every_english_key() {
         let en = include_str!("locales/en.ftl");

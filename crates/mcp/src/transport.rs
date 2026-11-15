@@ -16,6 +16,44 @@ use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
+/// Maximum bytes in one request line (16 MiB). A JSON-RPC request is a
+/// tool name plus arguments, so this is far above any real call, while
+/// still bounding what a single peer can make us allocate. Without a
+/// cap, a client that never sends a newline grows the `String` until
+/// the process is out of memory -- a trivial remote DoS once `--bind`
+/// puts the listener on the LAN.
+pub const MAX_REQUEST_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read one newline-terminated line, refusing to buffer more than
+/// `max_bytes`.
+///
+/// `BufRead::read_line` is unbounded. `Take` caps `fill_buf`, so a line
+/// that fills the cap without a terminating newline is oversized; the
+/// caller drops that peer instead of parsing a truncated request. A
+/// short unterminated line at EOF is still a valid final line and is
+/// returned as-is, matching what `read_line` did before.
+pub(crate) fn read_limited_line<R: BufRead>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> std::io::Result<Option<String>> {
+    let mut line = String::new();
+    // `Read::take` consumes its receiver, so pass the `&mut R` by value
+    // via UFCS (method syntax auto-derefs to `R`, which cannot move out
+    // of the borrow). `&mut R: Read`, and the `Take` is dropped here.
+    let mut limited = std::io::Read::take(reader, max_bytes as u64);
+    let n = limited.read_line(&mut line)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if !line.ends_with('\n') && line.len() >= max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("request line exceeds {max_bytes} bytes"),
+        ));
+    }
+    Ok(Some(line))
+}
+
 /// A bidirectional stream of newline-delimited JSON.
 pub trait Transport {
     /// The next request line, or `None` once the peer closes.
@@ -42,15 +80,7 @@ impl<R: BufRead, W: Write> StdioTransport<R, W> {
 
 impl<R: BufRead, W: Write> Transport for StdioTransport<R, W> {
     fn next_request(&mut self) -> Result<Option<String>> {
-        let mut line = String::new();
-        let n = self
-            .reader
-            .read_line(&mut line)
-            .context("read request line")?;
-        if n == 0 {
-            return Ok(None);
-        }
-        Ok(Some(line))
+        read_limited_line(&mut self.reader, MAX_REQUEST_LINE_BYTES).context("read request line")
     }
 
     fn send(&mut self, line: &str) -> Result<()> {
@@ -109,18 +139,19 @@ impl Transport for TcpTransport {
                 self.current = Some((stream, reader));
             }
             let (_, reader) = self.current.as_mut().expect("just assigned");
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
+            match read_limited_line(reader, MAX_REQUEST_LINE_BYTES) {
+                Ok(None) => {
                     tracing::info!("mcp: client {} disconnected", self.peer);
                     self.current = None;
                     // Peer closed. Loop and wait for the next one
                     // instead of ending the server.
                     continue;
                 }
-                Ok(_) => return Ok(Some(line)),
-                // A broken pipe is a client that vanished mid-line, not
-                // a reason to take the server down.
+                Ok(Some(line)) => return Ok(Some(line)),
+                // A broken pipe, or a line past the cap, is a client we
+                // drop rather than a reason to take the server down. The
+                // cap is what stops a peer that never sends a newline
+                // from growing the buffer until the process is OOM.
                 Err(e) => {
                     tracing::warn!("mcp: read from {} failed: {e}", self.peer);
                     self.current = None;
@@ -158,6 +189,35 @@ pub fn bind_loopback(port: u16) -> Result<TcpTransport> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn a_line_within_the_cap_is_returned() {
+        // Newline included, exactly at the cap: still one valid line.
+        let input = "abcde\n";
+        let mut r = Cursor::new(input.as_bytes().to_vec());
+        let line = read_limited_line(&mut r, 6).unwrap().unwrap();
+        assert_eq!(line, "abcde\n");
+    }
+
+    #[test]
+    fn an_oversized_line_without_a_newline_is_refused() {
+        // The DoS shape: a peer streams bytes forever and never ends the
+        // line. Must fail with InvalidData so the caller drops the peer
+        // instead of growing a String without bound.
+        let input = vec![b'x'; 32];
+        let mut r = Cursor::new(input);
+        let err = read_limited_line(&mut r, 16).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_short_unterminated_line_at_eof_is_still_a_line() {
+        // A final line with no trailing newline is valid input, not an
+        // oversized one -- this is what `read_line` did before the cap.
+        let mut r = Cursor::new(b"tail".to_vec());
+        assert_eq!(read_limited_line(&mut r, 16).unwrap().unwrap(), "tail");
+        assert!(read_limited_line(&mut r, 16).unwrap().is_none());
+    }
 
     #[test]
     fn stdio_round_trips_lines() {

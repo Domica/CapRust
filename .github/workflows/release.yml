@@ -69,20 +69,41 @@ jobs:
           # parentheses in it. Without them it reads $env:ProgramFiles and
           # then treats (x86) as an expression, and the path never
           # resolves.
-          $candidates = @(
-            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-            "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
-          )
+          #
+          # Prefer the known Inno Setup 6 locations. A broad -Recurse over
+          # all of Program Files used to "find" an old v5 ISCC left by an
+          # unrelated product and silently built the installer with it.
+          # The fallback therefore scans only Inno Setup* folders, and the
+          # version is checked before anything is compiled.
+          $roots = @(
+            "${env:ProgramFiles(x86)}",
+            "${env:ProgramFiles}",
+            "${env:LOCALAPPDATA}\Programs"
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          $candidates = foreach ($root in $roots) {
+            Join-Path $root "Inno Setup 6\ISCC.exe"
+          }
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) {
-            # The package has moved before; look for it.
-            $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}", "${env:ProgramFiles}" `
-              -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -First 1 -ExpandProperty FullName
+            # The package has moved before; look inside Inno Setup* dirs.
+            $found = @()
+            foreach ($root in $roots) {
+              $found += Get-ChildItem -Path $root -Directory -Filter 'Inno Setup*' `
+                -ErrorAction SilentlyContinue | ForEach-Object {
+                  Join-Path $_.FullName 'ISCC.exe'
+                } | Where-Object { Test-Path $_ }
+            }
+            $iscc = $found | Select-Object -First 1
           }
-          if (-not $iscc) { throw "ISCC.exe not found after installing Inno Setup" }
-          Write-Host ("  using " + $iscc)
+          if (-not $iscc) {
+            throw ("ISCC.exe not found after installing Inno Setup. " +
+                   "Searched: " + ($roots -join '; '))
+          }
+          $isccVersion = (Get-Item $iscc).VersionInfo.FileVersion
+          if (-not $isccVersion -or -not $isccVersion.StartsWith('6.')) {
+            throw "Expected Inno Setup 6 ISCC.exe, found $iscc (version $isccVersion)"
+          }
+          Write-Host ("  using $iscc (v$isccVersion)")
           & $iscc "/DMyAppVersion=$v" installer\caprust.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           Copy-Item "installer\dist\CapRust-$v-win64-setup.exe" release\ -Force

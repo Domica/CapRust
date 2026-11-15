@@ -14587,6 +14587,10 @@ impl CapRustApp {
             self.audio_cache.pending = None;
             if ok {
                 tracing::info!("audio cache: ready hash {hash:016x} at {}", path.display());
+                // The previous hash's PCM file is no longer playable.
+                // Remove it now instead of letting one file per edit
+                // accumulate in %TEMP% for the whole session.
+                caprust_media_io::audio_render::cleanup_stale_cache(Some(&path));
                 self.audio_cache.active_hash = hash;
                 self.audio_cache.active_path = Some(path);
                 self.audio_cache.last_failed_hash = 0;

@@ -98,9 +98,15 @@ pub trait SessionControl {
 
 /// Protocol state only. Everything with the project arrives per call,
 /// so one `Server` serves either host without duplicating logic.
+///
+/// There is deliberately no `initialized` flag. The MCP `initialize`
+/// handshake is unauthenticated and optional here: the phone client
+/// goes straight to `auth` then `tools/call`, and gating project calls
+/// on `initialize` would both break every shipped client and add no
+/// security (an attacker can send `initialize` for free). The token
+/// gate in [`Server::handle_line`] is the real boundary.
 #[derive(Default)]
 pub struct Server {
-    initialized: bool,
     /// Pairing and token state. The token itself is persisted by the
     /// host in settings; the server holds it for the session.
     auth: Auth,
@@ -195,17 +201,14 @@ impl Server {
 
     fn dispatch(&mut self, req: &Request, ctx: &mut Ctx) -> Result<Value, RpcError> {
         match req.method.as_str() {
-            "initialize" => {
-                self.initialized = true;
-                Ok(json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": { "tools": {} },
-                    "serverInfo": {
-                        "name": "caprust-mcp",
-                        "version": env!("CARGO_PKG_VERSION")
-                    }
-                }))
-            }
+            "initialize" => Ok(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": {
+                    "name": "caprust-mcp",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })),
             "notifications/initialized" => Ok(Value::Null),
             "ping" => Ok(json!({})),
             // The one call that needs no token, because it is the one
@@ -789,6 +792,31 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["result"]["serverInfo"]["name"], "caprust-mcp");
         assert_eq!(v["result"]["protocolVersion"], "2024-11-05");
+    }
+
+    /// `initialize` is unauthenticated and the phone never sends it.
+    /// It must therefore grant no project access on its own: the token
+    /// gate is the only boundary. If a future change gated project
+    /// methods on an `initialized` flag, this test fails because the
+    /// uninitialized-but-unauthenticated call would start succeeding.
+    #[test]
+    fn initialize_grants_no_project_access() {
+        let mut s = Server::new();
+        let mut f = Fixture::new();
+        s.auth_mut().rotate_token();
+
+        // Client performs the MCP handshake, with no auth.
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+        assert!(s.handle_line(init, &mut f.ctx()).is_some());
+        let note = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        assert!(s.handle_line(note, &mut f.ctx()).is_none());
+
+        // A project call still has no token and must be refused.
+        let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_project_summary","arguments":{}}}"#;
+        let out = s.handle_line(call, &mut f.ctx()).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["error"]["code"], crate::auth::UNAUTHORIZED);
+        assert_eq!(f.project.clips.len(), 0);
     }
 
     #[test]
