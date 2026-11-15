@@ -4,11 +4,32 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.29] - 2026-11-15
+
 ### Added
 
 - **Save panel state (View → Modern zones).** A checkbox next to *Remember custom resize* that remembers which panels were open in each Modern zone (Effects, Transitions, Properties, ...) and restores them on the next launch. Off by default, so a fresh session still opens with the built-in arrangement; turning it off clears the saved snapshot. Sizes and panel contents are now two independent choices.
 
-## [0.9.28] - 2026-11-14
+### Fixed
+
+- **Phase 0 repo hygiene:** removed tracked `crates/core/src/clip.rs.bak`.
+- **Phase 0 MCP hardening:** bounded request-line reads (16 MiB cap) across StdioTransport, TcpTransport, and the phone bridge to prevent remote DoS via unbounded line buffering.
+- **Phase 0 dead code:** removed the write-only `initialized` field from MCP `Server`; added regression test proving `initialize` alone grants no project access (token is the real gate).
+- **Phase 0 Kotlin:** replaced all `!!` non-null assertions in `EditorActivity.kt` and `MainActivity.kt` with safe local `val`s.
+- **Phase 4 i18n:** normalized `\uXXXX` escapes in `hr.ftl` to UTF-8 characters; added regression test blocking re-entry.
+- **Phase 4 release infra:** hardened Inno Setup 6 lookup in `release.yml` (targeted v6 paths, fail-fast with clear error).
+- **Phase 4 media:** stale PCM cache cleanup — previous hash's `.pcm` file removed on cache promotion instead of accumulating in %TEMP%.
+- **Phase 6.9 zero-copy preview:** `PreviewFrame.rgba` is now `Arc<[u8]>` so buffer retention for stale detection and the remote-frame publish are refcount bumps instead of full ~1 MB RGBA memcpy per frame.
+
+### Technical
+
+- `crates/ui/src/preview_player.rs`, `crates/ui/src/double_buffer_preview.rs`, `crates/ui/src/app.rs`: Arc<[u8]> frame pixels, deref at publish boundary.
+- `crates/mcp/src/transport.rs`, `crates/mcp/src/remote.rs`: `read_limited_line` wired into all three readers.
+- `crates/mcp/src/server.rs`: `initialized` field removed.
+- `android/app/src/main/java/domica/caprust/editor/EditorActivity.kt`, `MainActivity.kt`: `!!` removed.
+- `crates/i18n/src/locales/hr.ftl`, `crates/i18n/src/lib.rs`: escapes normalized, regression test added.
+- `.github/workflows/release.yml`: ISCC lookup hardened.
+- `crates/media-io/src/audio_render.rs`: `cleanup_stale_cache()` added, wired on promotion.
 
 ### Fixed
 
