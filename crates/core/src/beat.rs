@@ -145,7 +145,9 @@ pub fn detect_beats(samples: &[i16], sample_rate: u32) -> BeatGrid {
         e.0 += 1;
         e.1 += gap_sec;
     }
-    let (_, &(n, sum)) = votes.iter().max_by_key(|(_, (n, _))| *n).unwrap();
+    let Some((_, &(n, sum))) = votes.iter().max_by_key(|(_, (n, _))| *n) else {
+        return empty;
+    };
     if n < 2 {
         return empty;
     }
