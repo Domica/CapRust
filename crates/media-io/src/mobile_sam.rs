@@ -14,7 +14,10 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
-use crate::onnx_common::{bilinear_rgb, first_output, upscale_mask, MEAN, STD};
+use crate::onnx_common::{
+    bilinear_rgb, first_output, load_typed, upscale_mask, TypedRunnableModel as RunnableModel,
+    MEAN, STD,
+};
 
 /// Fixed input resolution of the MobileSAM ONNX model (image encoder).
 pub const MOBILE_SAM_INPUT_SIZE: u32 = 1024;
@@ -36,9 +39,6 @@ pub struct MobileSam {
     decoder: RunnableModel, // Mask decoder
 }
 
-type RunnableModel =
-    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
-
 impl MobileSam {
     /// Load and optimize MobileSAM ONNX model from disk.
     /// Expects two files: mobile_sam_encoder.onnx and mobile_sam_decoder.onnx
@@ -56,27 +56,13 @@ impl MobileSam {
             ));
         }
 
-        let encoder = tract_onnx::onnx()
-            .model_for_path(encoder_path)
-            .map_err(|e| anyhow!("load encoder ONNX {}: {:?}", encoder_path.display(), e))?
-            .into_typed()
-            .map_err(|e| anyhow!(
-                "type inference encoder {}: {:?}\n  NOTE: This MobileSAM ONNX export uses dynamic symbolic\n  dimensions (image_width/image_height) that tract-onnx 0.23\n  cannot resolve. Re-export the model with fixed dimensions:\n    torch.onnx.export(model, dummy, \"model.onnx\",\n      dynamic_axes=None, opset_version=17)\n  Or set a custom encoder path in Settings → Paths → MobileSAM Encoder.",
-                encoder_path.display(), e
-            ))?
-            .into_runnable()
-            .map_err(|e| anyhow!("build encoder runnable: {:?}", e))?;
+        // Keep the dynamic-dimension recovery note on the encoder,
+        // where tract most often rejects symbolic image_width/height.
+        const ENCODER_HINT: &str = "\n  NOTE: This MobileSAM ONNX export uses dynamic symbolic\n  dimensions (image_width/image_height) that tract-onnx 0.23\n  cannot resolve. Re-export the model with fixed dimensions:\n    torch.onnx.export(model, dummy, \"model.onnx\",\n      dynamic_axes=None, opset_version=17)\n  Or set a custom encoder path in Settings → Paths → MobileSAM Encoder.";
+        const DECODER_HINT: &str = "\n  NOTE: This MobileSAM ONNX export may use dynamic symbolic\n  dimensions. Re-export with fixed dimensions (dynamic_axes=None)\n  Or set a custom decoder path in Settings → Paths → MobileSAM Decoder.";
 
-        let decoder = tract_onnx::onnx()
-            .model_for_path(decoder_path)
-            .map_err(|e| anyhow!("load decoder ONNX {}: {:?}", decoder_path.display(), e))?
-            .into_typed()
-            .map_err(|e| anyhow!(
-                "type inference decoder {}: {:?}\n  NOTE: This MobileSAM ONNX export may use dynamic symbolic\n  dimensions. Re-export with fixed dimensions (dynamic_axes=None)\n  Or set a custom decoder path in Settings → Paths → MobileSAM Decoder.",
-                decoder_path.display(), e
-            ))?
-            .into_runnable()
-            .map_err(|e| anyhow!("build decoder runnable: {:?}", e))?;
+        let encoder = load_typed(encoder_path, "MobileSAM encoder", ENCODER_HINT)?;
+        let decoder = load_typed(decoder_path, "MobileSAM decoder", DECODER_HINT)?;
 
         tracing::info!(
             "MobileSAM: loaded encoder {}, decoder {}",

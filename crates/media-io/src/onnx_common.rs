@@ -5,14 +5,88 @@
 //! and the bilinear sampling routines. The copies were byte-identical;
 //! keeping one definition means a sampling fix reaches every model.
 //!
-//! Deliberately NOT here: the `RunnableModel` type aliases. tract 0.23
-//! exposes two genuinely different runnable plan types -- `InferenceFact`
-//! based (background_removal) and `TypedFact` based (the other four) --
-//! and collapsing them would require rewriting every `.run()` call.
-//! Unifying the loaders themselves is a separate, higher-risk step.
+//! Deliberately NOT unified here: the *conversion pipeline* each loader
+//! applies after parsing. tract 0.23 exposes two genuinely different
+//! runnable plan types -- `InferenceFact` based (`InferenceSimplePlan`,
+//! used by background_removal) and `TypedFact` based (the other four) --
+//! and the typed loaders further split between pinned+optimized (YuNet,
+//! SCRFD, whose Resize nodes need a fixed shape) and plain typed (LaMa,
+//! MobileSAM, whose exports already have concrete dims). The shared
+//! helpers below remove the duplicated file-check / parse / error
+//! boilerplate without changing any loader's pipeline. Forcing one
+//! pipeline on all five needs the real model files to validate (they
+//! are downloaded on demand, never bundled) and is deferred.
 
 use anyhow::{anyhow, Result};
-use tract_onnx::prelude::TValue;
+use std::path::Path;
+use tract_onnx::prelude::*;
+
+/// Runnable plan shared by the four TypedFact loaders (face_detect,
+/// scrfd, lama, mobile_sam). tract 0.23 wraps the plan in an `Arc` and
+/// `run()` borrows it, so the alias carries the `Arc`.
+pub type TypedRunnableModel =
+    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
+
+/// Runnable plan for the one InferenceFact loader (background_removal).
+pub type InferenceRunnableModel = std::sync::Arc<tract_onnx::prelude::InferenceSimplePlan>;
+
+/// Parse an ONNX file into an inference model, with the file check and
+/// the descriptive load error shared by all five loaders. Each loader
+/// supplies a `label` used in messages ("face", "SCRFD", "LaMa", ...).
+fn parse_model(path: &Path, label: &str) -> Result<InferenceModel> {
+    if !path.is_file() {
+        return Err(anyhow!("{label} model not found: {}", path.display()));
+    }
+    tract_onnx::onnx()
+        .model_for_path(path)
+        .map_err(|e| {
+            anyhow!(
+                "load {label} ONNX model {}: {e:?}\n  (if this is an operator tract-onnx 0.23 does not support, check DIRECTIVES section 30 for known model issues)",
+                path.display()
+            )
+        })
+}
+
+/// Load a typed model whose input must be pinned to a fixed `f32` NCHW
+/// shape before optimization. Used by face_detect and scrfd: their
+/// exports contain Resize nodes with a computed `size` input that tract
+/// cannot resolve without the pin.
+pub fn load_typed_pinned(path: &Path, label: &str, shape: [i64; 4]) -> Result<TypedRunnableModel> {
+    parse_model(path, label)?
+        .with_input_fact(
+            0,
+            InferenceFact::dt_shape(
+                f32::datum_type(),
+                tvec!(shape[0], shape[1], shape[2], shape[3]),
+            ),
+        )
+        .map_err(|e| anyhow!("pin {label} input shape: {e:?}"))?
+        .into_optimized()
+        .map_err(|e| anyhow!("optimize {label} ONNX model: {e:?}"))?
+        .into_runnable()
+        .map_err(|e| anyhow!("build {label} runnable plan: {e:?}"))
+}
+
+/// Load a typed model with concrete exported dims (no shape pin).
+/// Used by lama and mobile_sam. `typed_hint` is appended verbatim to a
+/// type-inference failure so loaders can keep model-specific recovery
+/// guidance (e.g. MobileSAM's dynamic-dimension re-export note).
+pub fn load_typed(path: &Path, label: &str, typed_hint: &str) -> Result<TypedRunnableModel> {
+    parse_model(path, label)?
+        .into_typed()
+        .map_err(|e| anyhow!("type inference {label}: {e:?}{typed_hint}"))?
+        .into_runnable()
+        .map_err(|e| anyhow!("build {label} runnable plan: {e:?}"))
+}
+
+/// Load an inference-fact plan (no type conversion). Used by
+/// background_removal's u2netp export, which runs as an
+/// `InferenceSimplePlan`.
+pub fn load_inference(path: &Path, label: &str) -> Result<InferenceRunnableModel> {
+    parse_model(path, label)?
+        .into_runnable()
+        .map_err(|e| anyhow!("build {label} runnable plan: {e:?}"))
+}
 
 /// ImageNet normalization constants used by u2netp / LaMa / MobileSAM.
 pub const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
@@ -139,5 +213,40 @@ mod tests {
         let err = first_output(Vec::new(), "LaMa").unwrap_err().to_string();
         assert!(err.contains("LaMa"), "error must name the model: {err}");
         assert!(err.contains("no outputs"), "error must explain: {err}");
+    }
+
+    #[test]
+    fn load_typed_pinned_missing_file_names_model_and_label() {
+        let path = Path::new("definitely-not-a-real-model.onnx");
+        let err = load_typed_pinned(path, "face", [1, 3, 4, 4])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("face"), "error must name label: {err}");
+        assert!(err.contains("not found"), "error must explain: {err}");
+        assert!(
+            err.contains(path.to_str().unwrap()),
+            "error must show path: {err}"
+        );
+    }
+
+    #[test]
+    fn load_typed_missing_file_names_model_and_label() {
+        let path = Path::new("definitely-not-a-real-model.onnx");
+        let err = load_typed(path, "MobileSAM encoder", "")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("MobileSAM encoder"),
+            "error must name label: {err}"
+        );
+        assert!(err.contains("not found"), "error must explain: {err}");
+    }
+
+    #[test]
+    fn load_inference_missing_file_names_model_and_label() {
+        let path = Path::new("definitely-not-a-real-model.onnx");
+        let err = load_inference(path, "u2netp").unwrap_err().to_string();
+        assert!(err.contains("u2netp"), "error must name label: {err}");
+        assert!(err.contains("not found"), "error must explain: {err}");
     }
 }

@@ -24,7 +24,7 @@
 //!
 //! Confidence: raw cls output (the model applies sigmoid internally).
 
-use crate::onnx_common::bilinear_rgb;
+use crate::onnx_common::{bilinear_rgb, load_typed_pinned, TypedRunnableModel as RunnableModel};
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
@@ -54,33 +54,17 @@ impl ScrfdFace {
     }
 }
 
-type RunnableModel =
-    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
-
 pub struct ScrfdDetector {
     model: RunnableModel,
 }
 
 impl ScrfdDetector {
     pub fn load(model_path: &Path) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(anyhow!("SCRFD model not found: {}", model_path.display()));
-        }
-        let model = tract_onnx::onnx()
-            .model_for_path(model_path)
-            .map_err(|e| anyhow!("load SCRFD ONNX: {e:?}"))?
-            .with_input_fact(
-                0,
-                InferenceFact::dt_shape(
-                    f32::datum_type(),
-                    tvec!(1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64),
-                ),
-            )
-            .map_err(|e| anyhow!("pin SCRFD input shape: {e:?}"))?
-            .into_optimized()
-            .map_err(|e| anyhow!("optimize SCRFD: {e:?}"))?
-            .into_runnable()
-            .map_err(|e| anyhow!("build SCRFD plan: {e:?}"))?;
+        let model = load_typed_pinned(
+            model_path,
+            "SCRFD",
+            [1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64],
+        )?;
         tracing::info!("scrfd: loaded {}", model_path.display());
         Ok(Self { model })
     }

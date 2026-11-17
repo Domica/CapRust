@@ -19,7 +19,9 @@
 //! this into the render graph as a mask for `alphamerge` /
 //! `alphaextract`.
 
-use crate::onnx_common::{bilinear_rgb, upscale_mask, MEAN, STD};
+use crate::onnx_common::{
+    bilinear_rgb, load_inference, upscale_mask, InferenceRunnableModel as RunnableModel, MEAN, STD,
+};
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
@@ -34,32 +36,10 @@ pub struct BackgroundRemover {
     model: RunnableModel,
 }
 
-// tract 0.23 renamed the runnable plan type; the prelude alias
-// `RunnableModel` is the stable name going forward.
-// tract 0.23 wraps the runnable plan in an Arc; `run()` takes
-// `self: &Arc<Self>` so the alias carries the Arc.
-type RunnableModel = std::sync::Arc<tract_onnx::prelude::InferenceSimplePlan>;
-
 impl BackgroundRemover {
     /// Load and optimize a u2netp ONNX model from disk.
     pub fn load(model_path: &Path) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(anyhow!("u2netp model not found: {}", model_path.display()));
-        }
-        let model = tract_onnx::onnx()
-            .model_for_path(model_path)
-            .map_err(|e| {
-                // tract wraps its parse errors in an opaque Display
-                // that hides the real reason (missing op, bad attr,
-                // unsupported type). Log the Debug form so the user
-                // can see what tract actually choked on.
-                anyhow!(
-                    "load ONNX model {}: {e:?}\n  (this usually means tract-onnx 0.22 does not support an operator in the file; try --log-level debug for the full chain)",
-                    model_path.display()
-                )
-            })?
-            .into_runnable()
-            .map_err(|e| anyhow!("build runnable plan: {e:?}"))?;
+        let model = load_inference(model_path, "u2netp")?;
         tracing::info!("background_removal: loaded {}", model_path.display());
         if cfg!(debug_assertions) {
             tracing::warn!(

@@ -18,7 +18,7 @@
 //! frame, so downstream code can crop without knowing the source
 //! resolution.
 
-use crate::onnx_common::bilinear_rgb;
+use crate::onnx_common::{bilinear_rgb, load_typed_pinned, TypedRunnableModel as RunnableModel};
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
@@ -68,44 +68,19 @@ pub struct FaceDetector {
     model: RunnableModel,
 }
 
-// tract 0.23 renamed the runnable plan type; the prelude alias
-// `RunnableModel` is the stable name going forward.
-// tract 0.23 wraps the runnable plan in an Arc; `run()` takes
-// `self: &Arc<Self>` so the alias carries the Arc.
-type RunnableModel =
-    std::sync::Arc<tract_onnx::prelude::RunnableModel<TypedFact, Box<dyn TypedOp>>>;
-
 impl FaceDetector {
     /// Load and optimize a YuNet ONNX model from disk.
     pub fn load(model_path: &Path) -> Result<Self> {
-        if !model_path.is_file() {
-            return Err(anyhow!("face model not found: {}", model_path.display()));
-        }
         // Pin the input shape so tract can resolve Resize nodes that
         // were exported with a computed 'size' input. Without this,
         // tract's symbolic evaluator leaves the size unresolved and
         // fails at graph optimization with
         // 'Clashing resolution for expression. N != 320'.
-        let model = tract_onnx::onnx()
-            .model_for_path(model_path)
-            .map_err(|e| {
-                anyhow!(
-                    "load ONNX model {}: {e:?}\n  (if this is an operator tract-onnx 0.23 does not support, check DIRECTIVES section 30 for known model issues)",
-                    model_path.display()
-                )
-            })?
-            .with_input_fact(
-                0,
-                InferenceFact::dt_shape(
-                    f32::datum_type(),
-                    tvec!(1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64),
-                ),
-            )
-            .map_err(|e| anyhow!("pin YuNet input shape: {e:?}"))?
-            .into_optimized()
-            .map_err(|e| anyhow!("optimize ONNX model: {e:?}"))?
-            .into_runnable()
-            .map_err(|e| anyhow!("build runnable plan: {e:?}"))?;
+        let model = load_typed_pinned(
+            model_path,
+            "YuNet face",
+            [1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64],
+        )?;
         tracing::info!("face_detect: loaded {}", model_path.display());
         Ok(Self { model })
     }
