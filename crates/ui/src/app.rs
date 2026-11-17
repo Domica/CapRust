@@ -6290,23 +6290,15 @@ impl CapRustApp {
         let url = m.url.clone();
         let sha = m.sha256.clone();
         let dir = self.settings.effective_models_dir();
-        let (filename, aux_url) = match m.kind {
-            // Caption = Whisper GGML .bin; everything else on the
-            // registry is ONNX.
-            caprust_core::ModelKind::Caption => (format!("{model_id}.bin"), None),
-            caprust_core::ModelKind::Narration => (
-                format!("{model_id}.onnx"),
-                // Piper voices need the sibling .onnx.json config at
-                // <url>.json. The runtime (piper.rs) looks for
-                // <voice>.onnx.json next to <voice>.onnx.
-                Some(format!("{url}.json")),
-            ),
-            caprust_core::ModelKind::FaceDetector => (format!("{model_id}.onnx"), None),
-            caprust_core::ModelKind::ScrfdDetector => (format!("{model_id}.onnx"), None),
-            caprust_core::ModelKind::BackgroundRemover => (format!("{model_id}.onnx"), None),
-            caprust_core::ModelKind::Enhancer => (format!("{model_id}.onnx"), None),
-            caprust_core::ModelKind::Segmenter => (format!("{model_id}.onnx"), None),
-            caprust_core::ModelKind::Inpainter => (format!("{model_id}.onnx"), None),
+        // Single source of truth: the registry entry carries its own
+        // filename, so download and local_path_static cannot drift.
+        let filename = m.filename_for();
+        let aux_url = match m.kind {
+            // Piper voices need the sibling .onnx.json config at
+            // <url>.json. The runtime (piper.rs) looks for
+            // <voice>.onnx.json next to <voice>.onnx.
+            caprust_core::ModelKind::Narration => Some(format!("{url}.json")),
+            _ => None,
         };
         let target = dir.join(filename);
         tracing::info!(

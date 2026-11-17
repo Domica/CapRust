@@ -33,6 +33,19 @@ pub enum ModelKind {
     Inpainter,
 }
 
+impl ModelKind {
+    /// Historical filename rule: Whisper GGML weights are `.bin`,
+    /// every other model is ONNX. Used only when a `ModelInfo` has no
+    /// explicit filename (older saved registries, or a freshly built
+    /// `ModelInfo::new`).
+    pub fn default_filename(self, id: &str) -> String {
+        match self {
+            ModelKind::Caption => format!("{id}.bin"),
+            _ => format!("{id}.onnx"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelStatus {
     NotDownloaded,
@@ -67,9 +80,24 @@ pub struct ModelInfo {
     /// `.part` to the final name. Empty = skip verification.
     #[serde(default)]
     pub sha256: String,
+    /// Expected on-disk filename. Empty (the default for older saved
+    /// registries) derives it from `kind` via `ModelKind::default_filename`.
+    /// Set explicitly for models whose filename is not just `<id>.onnx`.
+    #[serde(default)]
+    pub filename: String,
 }
 
 impl ModelInfo {
+    /// Filename this model is stored under. An explicit `filename`
+    /// wins; otherwise the legacy kind-based rule applies (1.9).
+    pub fn filename_for(&self) -> String {
+        if self.filename.is_empty() {
+            self.kind.default_filename(&self.id)
+        } else {
+            self.filename.clone()
+        }
+    }
+
     /// Basic entry without a download URL. Use `with_url` to attach one.
     pub fn new(
         id: &str,
@@ -91,6 +119,7 @@ impl ModelInfo {
             enabled: false,
             url: String::new(),
             sha256: String::new(),
+            filename: String::new(),
         }
     }
 
@@ -102,6 +131,11 @@ impl ModelInfo {
 
     pub fn with_sha256(mut self, sha: &str) -> Self {
         self.sha256 = sha.into();
+        self
+    }
+
+    pub fn with_filename(mut self, filename: &str) -> Self {
+        self.filename = filename.into();
         self
     }
 }
@@ -344,7 +378,11 @@ impl Default for ModelRegistry {
                 )
                 .with_sha256(
                     "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749",
-                ),
+                )
+                // Explicit: both this and the decoder are ModelKind::Segmenter.
+                // Keeping the filename on the entry means a future second
+                // segmenter cannot silently collide on the kind-based rule.
+                .with_filename("mobile-sam-encoder.onnx"),
                 // Alternative encoder URL (uncomment and update sha256 if using a
                 // different export with fixed input dimensions):
                 // ModelInfo::new(
@@ -370,7 +408,8 @@ impl Default for ModelRegistry {
                 )
                 .with_sha256(
                     "93915fc7c993ab9d59ab8c9ccd3bce37f7509c81ab4150a74abd4d2abbd8570d",
-                ),
+                )
+                .with_filename("mobile-sam-decoder.onnx"),
                 // Alternative decoder URL (uncomment and update sha256 if using a
                 // different export with fixed input dimensions):
                 // ModelInfo::new(
@@ -652,15 +691,12 @@ impl ModelRegistry {
         models_dir: &std::path::Path,
         id: &str,
     ) -> std::path::PathBuf {
-        let kind = models.iter().find(|m| m.id == id).map(|m| m.kind);
-        let filename = match kind {
-            // Whisper GGML weights are the only .bin files. Unknown ids keep
-            // the legacy .bin name.
-            Some(ModelKind::Caption) | None => format!("{id}.bin"),
-            // Every other model (narration, face/SCRFD, background removal,
-            // segmenter, inpainter, upscaler, ...) is ONNX.
-            Some(_) => format!("{id}.onnx"),
-        };
+        let filename = models
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| m.filename_for())
+            // Unknown ids keep the legacy .bin name.
+            .unwrap_or_else(|| ModelKind::Caption.default_filename(id));
         models_dir.join(filename)
     }
 
@@ -689,5 +725,55 @@ impl ModelRegistry {
     /// background download.
     pub fn get_mut(&mut self, id: &str) -> Option<&mut ModelInfo> {
         self.models.iter_mut().find(|m| m.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn explicit_filename_wins_over_kind_rule() {
+        let mut m = ModelInfo::new(
+            "custom-segmenter",
+            "Custom",
+            ModelKind::Segmenter,
+            "multi",
+            1,
+            "test",
+        );
+        assert_eq!(m.filename_for(), "custom-segmenter.onnx");
+        m.filename = "custom-name.bin".into();
+        assert_eq!(m.filename_for(), "custom-name.bin");
+    }
+
+    #[test]
+    fn both_mobile_sam_entries_resolve_to_distinct_paths() {
+        let reg = ModelRegistry::default();
+        let dir = Path::new("models");
+        let enc = ModelRegistry::local_path_static(&reg.models, dir, "mobile-sam-encoder");
+        let dec = ModelRegistry::local_path_static(&reg.models, dir, "mobile-sam-decoder");
+        assert_eq!(enc, dir.join("mobile-sam-encoder.onnx"));
+        assert_eq!(dec, dir.join("mobile-sam-decoder.onnx"));
+        assert_ne!(enc, dec, "the two Segmenter entries must not collide");
+    }
+
+    #[test]
+    fn legacy_registry_without_filename_still_resolves() {
+        let mut m = ModelInfo::new("whisper", "Whisper", ModelKind::Caption, "en", 1, "test");
+        m.filename.clear();
+        assert_eq!(m.filename_for(), "whisper.bin");
+
+        let mut n = ModelInfo::new(
+            "scrfd",
+            "SCRFD",
+            ModelKind::ScrfdDetector,
+            "multi",
+            1,
+            "test",
+        );
+        n.filename.clear();
+        assert_eq!(n.filename_for(), "scrfd.onnx");
     }
 }
