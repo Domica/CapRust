@@ -145,13 +145,10 @@ own.
 | | Issue | What it is |
 |---|---|---|
 | 👁 | [#81](https://github.com/Domica/CapRust/issues/81) | Google Photos: watch a local folder for new imports |
-| 📈 | [#84](https://github.com/Domica/CapRust/issues/84) | The keyframe curve editor |
-| 📈 | [#85](https://github.com/Domica/CapRust/issues/85) | Easing between keyframes |
-| 🎛 | [#86](https://github.com/Domica/CapRust/issues/86) | One keyframe track per property |
-| ✨ | [#87](https://github.com/Domica/CapRust/issues/87) | Keyframing a clip's size and an effect's amount |
+| 🧽 | [#94](https://github.com/Domica/CapRust/issues/94) | Object removal / video inpainting (MVP: MobileSAM + ffmpeg) |
+| 🧽 | [#95](https://github.com/Domica/CapRust/issues/95) | Object removal Phase 2: ONNX inference (MobileSAM + LaMa) |
 | 🔏 | [#39](https://github.com/Domica/CapRust/issues/39) | AI Enhance (Real-ESRGAN): needs a runtime that can run it |
 | 🔐 | [#78](https://github.com/Domica/CapRust/issues/78) | Code signing, so SmartScreen stops saying "unknown publisher" |
-| 🤖 | [#91](https://github.com/Domica/CapRust/issues/91) | Model apply bug: AI mask / sticker / preview issues |
 
 **The binary is 26.1 MB, and that is the number.** The AI runtime -- the
 face detection and the background removal -- is 7.8 MB of it, and it
@@ -171,6 +168,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 | Version | Date | Highlights |
 |---|---|---|
 | **0.9.29** | 2026-11-15 | Phase 0 repo hygiene + MCP hardening (clip.rs.bak removed, bounded request-line reads, dead `initialized` removed, Kotlin `!!` replaced), Phase 4 (hr.ftl `\u` escapes normalized, ISCC hardening, PCM cache cleanup), Phase 6.9 (zero-copy RGBA via Arc<[u8]>) |
+| **0.9.28** | 2026-11-14 | Preview playback robustness: streamed frames no longer rejected as stale (6.2), playing→paused teardown runs once on the transition instead of every repaint (6.5), the per-frame copy for the remote/MCP phone preview is skipped unless a phone is actually connected (6.10), exact paused one-shot seek (6.11), removed the unused lock inside the double buffer (6.3) |
 | **0.9.27** | 2026-11-11 | Trajectory & keyframe graph now follows the dragged cursor (3.0.1), preview/export invalidated on trajectory or keyframe change (3.0.4), double-buffer preview no longer freezes on backwards seek (6.1), playback/scrub performance: stable preview texture + zero-copy frame upload (6.x) |
 | **0.9.26** | 2026-11-04 | Trajectory & keyframe drag visual feedback fixes (točka prati miš na grafu), drag persistence fix (thread-local storage), right-click delete on keyframes, trajectory Y coordinate bug fix (`centre_y`), CI passes on 3 platforms |
 | **0.9.25** | 2026-10-30 | Keyframe system: generic `KeyframeTrack` per property (scale, rotation, opacity, blur.amount, etc.), `EaseCurve` (Linear/EaseIn/EaseOut/EaseInOut), curve editor with draggable points, trajectory graph shows with 0/1 keyframes, no-flicker Add Track UX; Windows binary stripped (~10 MB); CI passes on 3 platforms |
