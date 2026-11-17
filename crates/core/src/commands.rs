@@ -57,6 +57,23 @@ impl UndoStack {
         Ok(())
     }
 
+    /// Execute multiple commands as a single atomic undo step.
+    ///
+    /// All commands run in order; if any fails, previously executed ones
+    /// are rolled back (via `MacroCommand`). The whole batch becomes one
+    /// entry on the undo stack, so Ctrl+Z reverts the entire batch at once.
+    pub fn execute_batch(
+        &mut self,
+        commands: Vec<Box<dyn Command>>,
+        state: &mut ProjectState,
+    ) -> Result<()> {
+        if commands.is_empty() {
+            return Ok(());
+        }
+        let macro_cmd = crate::commands::macro_command::MacroCommand::new("batch", commands);
+        self.execute(Box::new(macro_cmd), state)
+    }
+
     pub fn undo(&mut self, state: &mut ProjectState) -> Result<()> {
         if let Some(mut cmd) = self.undo.pop() {
             cmd.undo(state)?;
@@ -84,5 +101,78 @@ impl UndoStack {
 impl Default for UndoStack {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod undo_stack_tests {
+    use super::*;
+    use crate::clip::Clip;
+    use crate::commands::ripple::RippleInsertCommand;
+
+    #[test]
+    fn execute_batch_is_single_undo_step() {
+        let mut state = ProjectState::default();
+        let mut stack = UndoStack::new();
+
+        stack
+            .execute_batch(
+                vec![
+                    Box::new(RippleInsertCommand::new(Clip::new_text(
+                        "A", 0, 0, 1000, false,
+                    ))),
+                    Box::new(RippleInsertCommand::new(Clip::new_text(
+                        "B", 0, 1000, 1000, false,
+                    ))),
+                ],
+                &mut state,
+            )
+            .unwrap();
+
+        assert_eq!(state.clips.len(), 2);
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+
+        // One undo reverts the whole batch.
+        stack.undo(&mut state).unwrap();
+        assert!(state.clips.is_empty(), "batch undo removes both clips");
+        assert!(!stack.can_undo());
+        assert!(stack.can_redo());
+    }
+
+    #[test]
+    fn execute_batch_empty_is_noop() {
+        let mut state = ProjectState::default();
+        let mut stack = UndoStack::new();
+
+        stack.execute_batch(vec![], &mut state).unwrap();
+        assert!(state.clips.is_empty());
+        assert!(!stack.can_undo());
+    }
+
+    #[test]
+    fn execute_batch_rollback_on_failure() {
+        // Use a command that always fails to verify atomicity.
+        struct FailingCmd;
+        impl Command for FailingCmd {
+            fn execute(&mut self, _: &mut ProjectState) -> Result<()> {
+                Err(anyhow::anyhow!("boom"))
+            }
+            fn undo(&mut self, _: &mut ProjectState) -> Result<()> {
+                Ok(())
+            }
+            fn description(&self) -> String {
+                "failing".into()
+            }
+        }
+
+        let mut state = ProjectState::default();
+        let mut stack = UndoStack::new();
+
+        let err = stack
+            .execute_batch(vec![Box::new(FailingCmd), Box::new(FailingCmd)], &mut state)
+            .unwrap_err();
+        assert!(err.to_string().contains("boom"));
+        assert!(!stack.can_undo(), "failed batch leaves no undo entry");
     }
 }
