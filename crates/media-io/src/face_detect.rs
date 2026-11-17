@@ -235,9 +235,11 @@ impl FaceDetector {
 /// Coordinates already in 320x320 input space (absolute, not anchor
 /// offsets).
 ///
-/// Currently logs shape and the first few rows so we can verify the
-/// exact field order before committing a full decoder. Returns an
-/// empty vec until that verification lands.
+/// The 2022mar export is NOT decoded yet. This routine logs the
+/// observed shapes/rows so the exact field order can be verified, then
+/// fails loudly. Returning an empty Vec here used to look like
+/// "success, no faces" and silently disabled auto-reframe for every
+/// 2022mar user (1.3) -- an error is surfaced to the caller instead.
 fn decode_3_output(
     outputs: &[TValue],
     _scale: f32,
@@ -284,7 +286,13 @@ fn decode_3_output(
             }
         }
     }
-    Ok(Vec::new())
+    let msg = format!(
+        "YuNet 2022mar 3-output layout is not decoded ({} outputs, shapes logged above); \
+         use the 2023mar 12-output model or implement the 2022mar decoder",
+        outputs.len()
+    );
+    tracing::warn!("{msg}");
+    Err(anyhow!(msg))
 }
 
 fn letterbox_params(width: u32, height: u32) -> (f32, u32, u32) {
@@ -463,6 +471,23 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert!((out[0].confidence - 0.9).abs() < 1e-6);
         assert!((out[1].confidence - 0.7).abs() < 1e-6);
+    }
+
+    /// The 2022mar 3-output path must fail loudly instead of returning
+    /// an empty Vec that looks like "no faces found" (1.3).
+    #[test]
+    fn decode_3_output_reports_unsupported_layout() {
+        let mk = || -> TValue {
+            let arr = tract_ndarray::Array2::<f32>::zeros((2, 15));
+            let tensor: Tensor = arr.into();
+            tensor.into()
+        };
+        let outputs = vec![mk(), mk(), mk()];
+        let err = decode_3_output(&outputs, 1.0, 0, 0, 320, 320)
+            .expect_err("3-output layout is not supported yet");
+        let text = err.to_string();
+        assert!(text.contains("not decoded"), "unexpected error: {text}");
+        assert!(text.contains("3 outputs"), "unexpected error: {text}");
     }
 
     /// Integration test that requires a real YuNet model on disk.
