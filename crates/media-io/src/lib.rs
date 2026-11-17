@@ -16,6 +16,7 @@ pub mod frame_extract;
 pub mod lama;
 pub mod mask_gen;
 pub mod mobile_sam;
+pub mod onnx_common;
 pub mod piper;
 pub mod player;
 pub mod preview_render;

@@ -14,12 +14,10 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
+use crate::onnx_common::{bilinear_rgb, MEAN, STD};
+
 /// Fixed input resolution of the LaMa ONNX model.
 pub const LAMA_INPUT_SIZE: u32 = 512;
-
-/// ImageNet normalization constants used by LaMa's training pipeline.
-const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
-const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
 /// Loaded LaMa model. Construct once and reuse.
 pub struct Lama {
@@ -185,8 +183,7 @@ impl Lama {
             for dx in 0..LAMA_INPUT_SIZE {
                 let src_x = (dx as f32 + 0.5) * sx - 0.5;
                 let src_y = (dy as f32 + 0.5) * sy - 0.5;
-                let (r, g, b) =
-                    crate::background_removal::bilinear_rgb(rgb, width, height, src_x, src_y);
+                let (r, g, b) = bilinear_rgb(rgb, width, height, src_x, src_y);
                 let m = bilinear_mask(mask, width, height, src_x, src_y);
 
                 let dy_usize = dy as usize;
@@ -238,40 +235,6 @@ fn bilinear_mask(mask: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> f32 
     lerp(m00, m10, m01, m11)
 }
 
-// Reuse upscale_mask from background_removal for single-channel masks
-//
-// Nothing calls it yet: the LaMa mask is fed to the model at model
-// resolution, so the upsample path is not wired yet. It stays because the
-// mask is sampled from the original resolution in some paths, and deleting
-// it would mean writing it again later.
-#[allow(dead_code)]
-fn upscale_mask(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
-    if sw == dw && sh == dh {
-        return src.to_vec();
-    }
-    let mut out = vec![0u8; (dw as usize) * (dh as usize)];
-    for dy in 0..dh {
-        for dx in 0..dw {
-            let sx = (dx as f32 + 0.5) * (sw as f32 / dw as f32) - 0.5;
-            let sy = (dy as f32 + 0.5) * (sh as f32 / dh as f32) - 0.5;
-            let x0 = sx.floor() as i32;
-            let y0 = sy.floor() as i32;
-            let fx = sx - x0 as f32;
-            let fy = sy - y0 as f32;
-            let get = |x: i32, y: i32| -> f32 {
-                let xc = x.clamp(0, sw as i32 - 1) as usize;
-                let yc = y.clamp(0, sh as i32 - 1) as usize;
-                src[yc * sw as usize + xc] as f32
-            };
-            let top = get(x0, y0) * (1.0 - fx) + get(x0 + 1, y0) * fx;
-            let bot = get(x0, y0 + 1) * (1.0 - fx) + get(x0 + 1, y0 + 1) * fx;
-            let v = top * (1.0 - fy) + bot * fy;
-            out[dy as usize * dw as usize + dx as usize] = v.clamp(0.0, 255.0) as u8;
-        }
-    }
-    out
-}
-
 /// Upscale RGB image (HWC format).
 fn upscale_rgb(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
     if sw == dw && sh == dh {
@@ -301,8 +264,3 @@ fn upscale_rgb(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
     }
     out
 }
-
-// Note: bilinear_rgb is re-exported from background_removal module
-// to avoid code duplication. See background_removal.rs for implementations.
-
-pub use crate::background_removal::bilinear_rgb;

@@ -14,14 +14,12 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
+use crate::onnx_common::{bilinear_rgb, upscale_mask, MEAN, STD};
+
 /// Fixed input resolution of the MobileSAM ONNX model (image encoder).
 pub const MOBILE_SAM_INPUT_SIZE: u32 = 1024;
 /// Mask decoder output size.
 pub const MOBILE_SAM_MASK_SIZE: u32 = 256;
-
-/// ImageNet normalization constants used by MobileSAM's training pipeline.
-const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
-const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
 /// Prompt types for MobileSAM.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -247,8 +245,7 @@ impl MobileSam {
             for dx in 0..MOBILE_SAM_INPUT_SIZE {
                 let src_x = (dx as f32 + 0.5) * sx - 0.5;
                 let src_y = (dy as f32 + 0.5) * sy - 0.5;
-                let (r, g, b) =
-                    crate::background_removal::bilinear_rgb(rgb, width, height, src_x, src_y);
+                let (r, g, b) = bilinear_rgb(rgb, width, height, src_x, src_y);
                 // ImageNet normalization. Channel order is RGB.
                 let dy_usize = dy as usize;
                 let dx_usize = dx as usize;
@@ -261,8 +258,3 @@ impl MobileSam {
         Ok(arr)
     }
 }
-
-// Note: bilinear_rgb and upscale_mask are re-exported from background_removal module
-// to avoid code duplication. See background_removal.rs for implementations.
-
-use crate::background_removal::upscale_mask;

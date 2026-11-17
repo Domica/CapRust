@@ -18,6 +18,7 @@
 //! frame, so downstream code can crop without knowing the source
 //! resolution.
 
+use crate::onnx_common::bilinear_rgb;
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
@@ -293,43 +294,6 @@ fn letterbox_params(width: u32, height: u32) -> (f32, u32, u32) {
     let pad_x = (INPUT_SIZE.saturating_sub(new_w)) / 2;
     let pad_y = (INPUT_SIZE.saturating_sub(new_h)) / 2;
     (scale, pad_x, pad_y)
-}
-
-/// Bilinear sample of the RGB source at fractional coordinates
-/// `(sx, sy)`. Coordinates may fall outside the source; those samples
-/// clamp to the nearest edge pixel.
-fn bilinear_rgb(rgb: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> (f32, f32, f32) {
-    let w = width as i32;
-    let h = height as i32;
-    let x0 = sx.floor() as i32;
-    let y0 = sy.floor() as i32;
-    let fx = sx - x0 as f32;
-    let fy = sy - y0 as f32;
-
-    let clamp = |v: i32, hi: i32| v.clamp(0, hi - 1);
-    let at = |x: i32, y: i32| -> (f32, f32, f32) {
-        let xc = clamp(x, w);
-        let yc = clamp(y, h);
-        let i = ((yc as usize) * (width as usize) + (xc as usize)) * 3;
-        (rgb[i] as f32, rgb[i + 1] as f32, rgb[i + 2] as f32)
-    };
-
-    let (r00, g00, b00) = at(x0, y0);
-    let (r10, g10, b10) = at(x0 + 1, y0);
-    let (r01, g01, b01) = at(x0, y0 + 1);
-    let (r11, g11, b11) = at(x0 + 1, y0 + 1);
-
-    let lerp = |a: f32, b: f32, c: f32, d: f32| -> f32 {
-        let top = a * (1.0 - fx) + b * fx;
-        let bot = c * (1.0 - fx) + d * fx;
-        top * (1.0 - fy) + bot * fy
-    };
-
-    (
-        lerp(r00, r10, r01, r11),
-        lerp(g00, g10, g01, g11),
-        lerp(b00, b10, b01, b11),
-    )
 }
 
 /// Decode one YuNet stride head into normalized boxes.

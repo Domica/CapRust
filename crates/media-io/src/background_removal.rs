@@ -19,16 +19,13 @@
 //! this into the render graph as a mask for `alphamerge` /
 //! `alphaextract`.
 
+use crate::onnx_common::{bilinear_rgb, upscale_mask, MEAN, STD};
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
 /// Fixed input resolution of the u2netp ONNX model.
 pub const INPUT_SIZE: u32 = 320;
-
-/// ImageNet normalization constants used by u2netp's training pipeline.
-const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
-const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
 /// Loaded u2netp model. Construct once and reuse across frames --
 /// `load` parses and optimizes the ONNX graph, which is slow relative
@@ -172,96 +169,9 @@ fn find_d0(outputs: &[TValue]) -> Result<&TValue> {
     ))
 }
 
-/// Bilinear sample of the RGB source at fractional coordinates
-/// `(sx, sy)`. Coordinates may fall outside the source; those samples
-/// clamp to the nearest edge pixel. Same algorithm as face_detect.rs;
-/// duplicated here to avoid a shared util module for two callers.
-pub fn bilinear_rgb(rgb: &[u8], width: u32, height: u32, sx: f32, sy: f32) -> (f32, f32, f32) {
-    let w = width as i32;
-    let h = height as i32;
-    let x0 = sx.floor() as i32;
-    let y0 = sy.floor() as i32;
-    let fx = sx - x0 as f32;
-    let fy = sy - y0 as f32;
-
-    let clamp = |v: i32, hi: i32| v.clamp(0, hi - 1);
-    let at = |x: i32, y: i32| -> (f32, f32, f32) {
-        let xc = clamp(x, w);
-        let yc = clamp(y, h);
-        let i = ((yc as usize) * (width as usize) + (xc as usize)) * 3;
-        (rgb[i] as f32, rgb[i + 1] as f32, rgb[i + 2] as f32)
-    };
-
-    let (r00, g00, b00) = at(x0, y0);
-    let (r10, g10, b10) = at(x0 + 1, y0);
-    let (r01, g01, b01) = at(x0, y0 + 1);
-    let (r11, g11, b11) = at(x0 + 1, y0 + 1);
-
-    let lerp = |a: f32, b: f32, c: f32, d: f32| -> f32 {
-        let top = a * (1.0 - fx) + b * fx;
-        let bot = c * (1.0 - fx) + d * fx;
-        top * (1.0 - fy) + bot * fy
-    };
-
-    (
-        lerp(r00, r10, r01, r11),
-        lerp(g00, g10, g01, g11),
-        lerp(b00, b10, b01, b11),
-    )
-}
-
-/// Bilinear upscale of a single-channel u8 mask.
-pub fn upscale_mask(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
-    if sw == dw && sh == dh {
-        return src.to_vec();
-    }
-    let mut out = vec![0u8; (dw as usize) * (dh as usize)];
-    let xr = sw as f32 / dw as f32;
-    let yr = sh as f32 / dh as f32;
-    for dy in 0..dh {
-        for dx in 0..dw {
-            let sx = (dx as f32 + 0.5) * xr - 0.5;
-            let sy = (dy as f32 + 0.5) * yr - 0.5;
-            let x0 = sx.floor() as i32;
-            let y0 = sy.floor() as i32;
-            let fx = sx - x0 as f32;
-            let fy = sy - y0 as f32;
-            let get = |x: i32, y: i32| -> f32 {
-                let xc = x.clamp(0, sw as i32 - 1) as usize;
-                let yc = y.clamp(0, sh as i32 - 1) as usize;
-                src[yc * sw as usize + xc] as f32
-            };
-            let top = get(x0, y0) * (1.0 - fx) + get(x0 + 1, y0) * fx;
-            let bot = get(x0, y0 + 1) * (1.0 - fx) + get(x0 + 1, y0 + 1) * fx;
-            let v = top * (1.0 - fy) + bot * fy;
-            out[dy as usize * dw as usize + dx as usize] = v.clamp(0.0, 255.0) as u8;
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn upscale_mask_identity_is_noop() {
-        let src = vec![1u8, 2, 3, 4];
-        let out = upscale_mask(&src, 2, 2, 2, 2);
-        assert_eq!(out, src);
-    }
-
-    #[test]
-    fn upscale_mask_doubles_dimensions() {
-        let src = vec![0u8, 255, 128, 64];
-        let out = upscale_mask(&src, 2, 2, 4, 4);
-        assert_eq!(out.len(), 16);
-        // Corners should land on corner values.
-        assert_eq!(out[0], 0);
-        assert_eq!(out[3], 255);
-        assert_eq!(out[12], 128);
-        assert_eq!(out[15], 64);
-    }
 
     /// Requires a real u2netp model on disk. Skipped by default --
     /// the model is downloaded on demand (DIRECTIVES §11: never
