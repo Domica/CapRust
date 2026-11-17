@@ -15,7 +15,7 @@ fn auto_reframe_sets_keypoints_and_undo_restores() {
     let mut p = ProjectState::default();
     let clip = Clip::new_video("test.mp4", 0, 0, 1000);
     let id = clip.id;
-    p.add_clip(clip);
+    p.add_clip_for_test(clip);
 
     let kps = vec![
         ReframeKeypoint {
@@ -32,11 +32,11 @@ fn auto_reframe_sets_keypoints_and_undo_restores() {
 
     let mut cmd = SetClipCommand::new(id).auto_reframe(kps.clone());
     cmd.execute(&mut p).expect("execute");
-    let c = p.clips.iter().find(|c| c.id == id).expect("clip");
+    let c = p.clips().iter().find(|c| c.id == id).expect("clip");
     assert_eq!(c.auto_reframe, kps, "keypoints written");
 
     cmd.undo(&mut p).expect("undo");
-    let c = p.clips.iter().find(|c| c.id == id).expect("clip");
+    let c = p.clips().iter().find(|c| c.id == id).expect("clip");
     assert!(
         c.auto_reframe.is_empty(),
         "undo restores the pre-command empty state, got {:?}",
@@ -61,11 +61,11 @@ fn auto_reframe_empty_vec_clears_existing_keypoints() {
         },
     ];
     let id = clip.id;
-    p.add_clip(clip);
+    p.add_clip_for_test(clip);
 
     let mut cmd = SetClipCommand::new(id).auto_reframe(Vec::new());
     cmd.execute(&mut p).expect("execute");
-    let c = p.clips.iter().find(|c| c.id == id).expect("clip");
+    let c = p.clips().iter().find(|c| c.id == id).expect("clip");
     assert!(
         c.auto_reframe.is_empty(),
         "empty Vec must clear the keypoints"

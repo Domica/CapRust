@@ -578,7 +578,8 @@ mod text_motion_cmd_tests {
     }
 
     fn motion_of(p: &ProjectState, id: Uuid) -> TextMotion {
-        let c = p.clips.iter().find(|c| c.id == id).unwrap();
+        let c = p.clips.iter().find(|c| c.id == id)
+            .expect("clip not found in project");
         match &c.clip_type {
             ClipType::TextOverlay { motion, .. } => *motion,
             _ => panic!("not a TextOverlay"),
@@ -586,7 +587,8 @@ mod text_motion_cmd_tests {
     }
 
     fn effect_of(p: &ProjectState, id: Uuid) -> Option<TextEffect> {
-        let c = p.clips.iter().find(|c| c.id == id).unwrap();
+        let c = p.clips.iter().find(|c| c.id == id)
+            .expect("clip not found in project");
         match &c.clip_type {
             ClipType::TextOverlay { effect, .. } => *effect,
             _ => panic!("not a TextOverlay"),
@@ -602,7 +604,8 @@ mod text_motion_cmd_tests {
         p.add_clip(clip);
 
         // Before: Linear (default).
-        let before = p.clips.iter().find(|c| c.id == id).unwrap().clone();
+        let before = p.clips.iter().find(|c| c.id == id)
+            .expect("clip exists after add_clip").clone();
         assert_eq!(before.transition_in_easing, EaseCurve::Linear);
         assert_eq!(before.transition_out_easing, EaseCurve::Linear);
 
@@ -610,14 +613,16 @@ mod text_motion_cmd_tests {
         let cmd = SetClipCommand::new(id)
             .transition_in_easing(EaseCurve::EaseIn)
             .transition_out_easing(EaseCurve::EaseInOut);
-        stack.execute(Box::new(cmd), &mut p).unwrap();
+        stack.execute(Box::new(cmd), &mut p)
+            .expect("execute SetClipCommand");
 
-        let after = p.clips.iter().find(|c| c.id == id).unwrap();
+        let after = p.clips.iter().find(|c| c.id == id)
+            .expect("clip exists after execute");
         assert_eq!(after.transition_in_easing, EaseCurve::EaseIn);
         assert_eq!(after.transition_out_easing, EaseCurve::EaseInOut);
 
-        stack.undo(&mut p).unwrap();
-        let back = p.clips.iter().find(|c| c.id == id).unwrap();
+        stack.undo(&mut p).expect("undo SetClipCommand");
+        let back = p.clips.iter().find(|c| c.id == id).expect("test unwrap");
         assert_eq!(back.transition_in_easing, EaseCurve::Linear);
         assert_eq!(back.transition_out_easing, EaseCurve::Linear);
     }
@@ -634,7 +639,7 @@ mod text_motion_cmd_tests {
             .clips
             .iter()
             .find(|c| c.id == id)
-            .unwrap()
+            .expect("clip exists")
             .transition_duration_ms;
         assert_eq!(before, 500, "default is 500 ms");
 
@@ -644,22 +649,22 @@ mod text_motion_cmd_tests {
                 Box::new(SetClipCommand::new(id).transition_duration_ms(1500)),
                 &mut p,
             )
-            .unwrap();
+            .expect("test unwrap");
         assert_eq!(
             p.clips
                 .iter()
                 .find(|c| c.id == id)
-                .unwrap()
+                .expect("clip exists")
                 .transition_duration_ms,
             1500
         );
 
-        stack.undo(&mut p).unwrap();
+        stack.undo(&mut p).expect("undo SetClipCommand");
         assert_eq!(
             p.clips
                 .iter()
                 .find(|c| c.id == id)
-                .unwrap()
+                .expect("clip exists")
                 .transition_duration_ms,
             500
         );
@@ -679,9 +684,10 @@ mod text_motion_cmd_tests {
         let mut stack = crate::commands::UndoStack::default();
         stack
             .execute(Box::new(SetClipCommand::new(id)), &mut p)
-            .unwrap();
+            .expect("execute SetClipCommand");
 
-        let after = p.clips.iter().find(|c| c.id == id).unwrap();
+        let after = p.clips.iter().find(|c| c.id == id)
+            .expect("clip exists after execute");
         assert_eq!(after.transition_in_easing, EaseCurve::EaseIn);
         assert_eq!(after.transition_out_easing, EaseCurve::EaseOut);
     }
@@ -699,10 +705,11 @@ mod text_motion_cmd_tests {
             scale: 1.5,
         };
         let cmd = SetClipCommand::new(id).text_motion(new_motion);
-        stack.execute(Box::new(cmd), &mut p).unwrap();
+        stack.execute(Box::new(cmd), &mut p)
+            .expect("execute SetClipCommand");
         assert_eq!(motion_of(&p, id), new_motion);
 
-        stack.undo(&mut p).unwrap();
+        stack.undo(&mut p).expect("undo SetClipCommand");
         assert_eq!(motion_of(&p, id), before);
     }
 
@@ -721,15 +728,15 @@ mod text_motion_cmd_tests {
                 Box::new(SetClipCommand::new(id).text_effect(Some(e))),
                 &mut p,
             )
-            .unwrap();
+            .expect("execute SetClipCommand");
         assert_eq!(effect_of(&p, id), Some(e));
 
         stack
             .execute(Box::new(SetClipCommand::new(id).text_effect(None)), &mut p)
-            .unwrap();
+            .expect("execute SetClipCommand");
         assert_eq!(effect_of(&p, id), None);
 
-        stack.undo(&mut p).unwrap();
+        stack.undo(&mut p).expect("undo SetClipCommand");
         assert_eq!(effect_of(&p, id), Some(e));
     }
 
@@ -748,7 +755,8 @@ mod text_motion_cmd_tests {
             rotation: 0.0,
             scale: 2.0,
         });
-        stack.execute(Box::new(cmd), &mut p).unwrap();
+        stack.execute(Box::new(cmd), &mut p)
+            .expect("execute SetClipCommand");
         assert_eq!(p.clips[0].clip_type, before.clip_type);
     }
 }
@@ -773,24 +781,28 @@ mod chroma_key_cmd_tests {
                 Box::new(SetClipCommand::new(id).chroma_key(Some(spec))),
                 &mut p,
             )
-            .unwrap();
+            .expect("execute SetClipCommand");
         assert_eq!(
-            p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
+            p.clips.iter().find(|c| c.id == id)
+            .expect("clip exists")
+            .chroma_key,
             Some(spec)
         );
         stack
             .execute(Box::new(SetClipCommand::new(id).chroma_key(None)), &mut p)
-            .unwrap();
+            .expect("execute SetClipCommand");
         assert!(p
             .clips
             .iter()
             .find(|c| c.id == id)
-            .unwrap()
+            .expect("clip exists")
             .chroma_key
             .is_none());
-        stack.undo(&mut p).unwrap();
+        stack.undo(&mut p).expect("undo SetClipCommand");
         assert_eq!(
-            p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
+            p.clips.iter().find(|c| c.id == id)
+            .expect("clip exists")
+            .chroma_key,
             Some(spec)
         );
     }
@@ -806,9 +818,11 @@ mod chroma_key_cmd_tests {
         let mut stack = UndoStack::default();
         stack
             .execute(Box::new(SetClipCommand::new(id)), &mut p)
-            .unwrap();
+            .expect("execute SetClipCommand");
         assert_eq!(
-            p.clips.iter().find(|c| c.id == id).unwrap().chroma_key,
+            p.clips.iter().find(|c| c.id == id)
+            .expect("clip exists")
+            .chroma_key,
             Some(spec)
         );
     }
@@ -834,27 +848,27 @@ mod stab_trf_cmd_tests {
                 Box::new(SetClipCommand::new(id).stab_trf(Some(rel.clone()))),
                 &mut p,
             )
-            .unwrap();
+            .expect("test unwrap");
         assert_eq!(
-            p.clips.iter().find(|c| c.id == id).unwrap().stab_trf,
+            p.clips.iter().find(|c| c.id == id).expect("test unwrap").stab_trf,
             Some(rel)
         );
         stack
             .execute(Box::new(SetClipCommand::new(id).stab_trf(None)), &mut p)
-            .unwrap();
+            .expect("test unwrap");
         assert!(p
             .clips
             .iter()
             .find(|c| c.id == id)
-            .unwrap()
+            .expect("test unwrap")
             .stab_trf
             .is_none());
-        stack.undo(&mut p).unwrap();
+        stack.undo(&mut p).expect("undo SetClipCommand");
         assert!(p
             .clips
             .iter()
             .find(|c| c.id == id)
-            .unwrap()
+            .expect("test unwrap")
             .stab_trf
             .is_some());
     }
@@ -870,23 +884,23 @@ mod stab_trf_cmd_tests {
         // Timeline move: source window unchanged, transforms stay.
         stack
             .execute(Box::new(SetClipCommand::new(id).start_time_ms(500)), &mut p)
-            .unwrap();
+            .expect("test unwrap");
         assert!(p
             .clips
             .iter()
             .find(|c| c.id == id)
-            .unwrap()
+            .expect("test unwrap")
             .stab_trf
             .is_some());
         // Trim: source window moved, transforms are stale.
         stack
             .execute(Box::new(SetClipCommand::new(id).duration_ms(800)), &mut p)
-            .unwrap();
+            .expect("test unwrap");
         assert!(p
             .clips
             .iter()
             .find(|c| c.id == id)
-            .unwrap()
+            .expect("test unwrap")
             .stab_trf
             .is_none());
     }

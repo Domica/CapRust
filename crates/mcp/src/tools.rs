@@ -365,7 +365,7 @@ fn clip_kind_str(t: &ClipType) -> String {
 }
 
 fn clip_exists(project: &ProjectState, id: Uuid) -> Result<()> {
-    if project.clips.iter().any(|c| c.id == id) {
+    if project.clips().iter().any(|c| c.id == id) {
         Ok(())
     } else {
         bail!("no clip with id {id}")
@@ -617,7 +617,7 @@ fn export_status<'a, 's>(
 
 fn get_project_summary(p: &ProjectState) -> Result<String> {
     let total_duration_ms: u64 = p
-        .clips
+        .clips()
         .iter()
         .map(|c| c.start_time_ms.saturating_add(c.duration_ms))
         .max()
@@ -630,7 +630,7 @@ fn get_project_summary(p: &ProjectState) -> Result<String> {
         "frame_rate": format!("{:?}", p.frame_rate),
         "locale": p.locale,
         "total_duration_ms": total_duration_ms,
-        "clip_count": p.clips.len(),
+        "clip_count": p.clips().len(),
         "track_count": p.tracks.len(),
         "media_count": p.media.items.len(),
     });
@@ -666,7 +666,7 @@ fn list_clips(p: &ProjectState, args: &Value) -> Result<String> {
         .map(|n| n as usize);
 
     let arr: Vec<Value> = p
-        .clips
+        .clips()
         .iter()
         .filter(|c| track_filter.is_none_or(|t| c.track_index == t))
         .map(|c| {
@@ -869,7 +869,7 @@ fn set_transition(
     // request for 3000 on a 2s clip is honoured as 1000 and a client
     // that trusted its own input would draw the wrong overlap.
     let (stored_id, stored_dur, stored_shift, stored_start) = project
-        .clips
+        .clips()
         .iter()
         .find(|c| c.id == clip_id)
         .map(|c| {
@@ -910,7 +910,7 @@ fn remove_effect(args: &Value, project: &mut ProjectState, undo: &mut UndoStack)
     // leaves the client showing an effect the project does not have,
     // and the user has no way to tell which side is wrong.
     let present = project
-        .clips
+        .clips()
         .iter()
         .find(|c| c.id == clip_id)
         .is_some_and(|c| c.effects.iter().any(|e| e.effect_id == effect_id));
@@ -1106,7 +1106,7 @@ mod tests {
     fn empty_project() -> ProjectState {
         let mut p = ProjectState::default();
         p.tracks.clear();
-        p.clips.clear();
+        p.clear_clips_for_test();
         p.media.items.clear();
         p
     }
@@ -1115,7 +1115,7 @@ mod tests {
         let mut p = ProjectState::default();
         let c = Clip::new_video("x.mp4", 0, 0, 1000);
         let id = c.id;
-        p.clips.push(c);
+        p.add_clip_for_test(c);
         (p, id)
     }
 
@@ -1171,10 +1171,10 @@ mod tests {
         let mut u = UndoStack::new();
 
         move_clip(&json!({ "clip_id": id, "to_ms": 5000 }), &mut p, &mut u).unwrap();
-        assert_eq!(p.clips[0].start_time_ms, 5000);
+        assert_eq!(p.clips()[0].start_time_ms, 5000);
 
         u.undo(&mut p).unwrap();
-        assert_eq!(p.clips[0].start_time_ms, 0);
+        assert_eq!(p.clips()[0].start_time_ms, 0);
     }
 
     #[test]
@@ -1188,8 +1188,8 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert_eq!(p.clips[0].start_time_ms, 100);
-        assert_eq!(p.clips[0].track_index, 2);
+        assert_eq!(p.clips()[0].start_time_ms, 100);
+        assert_eq!(p.clips()[0].track_index, 2);
     }
 
     #[test]
@@ -1216,10 +1216,10 @@ mod tests {
         let mut u = UndoStack::new();
 
         split_clip(&json!({ "clip_id": id, "at_ms": 500 }), &mut p, &mut u).unwrap();
-        assert_eq!(p.clips.len(), 2);
+        assert_eq!(p.clips().len(), 2);
 
         u.undo(&mut p).unwrap();
-        assert_eq!(p.clips.len(), 1);
+        assert_eq!(p.clips().len(), 1);
     }
 
     #[test]
@@ -1235,13 +1235,13 @@ mod tests {
     fn set_volume_changes_db_and_undo() {
         let (mut p, id) = project_with_one_clip();
         let mut u = UndoStack::new();
-        let before = p.clips[0].volume_db;
+        let before = p.clips()[0].volume_db;
 
         set_clip_volume(&json!({ "clip_id": id, "db": -6.0 }), &mut p, &mut u).unwrap();
-        assert_eq!(p.clips[0].volume_db, -6.0);
+        assert_eq!(p.clips()[0].volume_db, -6.0);
 
         u.undo(&mut p).unwrap();
-        assert_eq!(p.clips[0].volume_db, before);
+        assert_eq!(p.clips()[0].volume_db, before);
     }
 
     #[test]
@@ -1258,7 +1258,7 @@ mod tests {
         let (mut p, id) = project_with_one_clip();
         let mut u = UndoStack::new();
         set_clip_speed(&json!({ "clip_id": id, "speed": 2.0 }), &mut p, &mut u).unwrap();
-        assert_eq!(p.clips[0].speed, 2.0);
+        assert_eq!(p.clips()[0].speed, 2.0);
     }
 
     #[test]
@@ -1292,8 +1292,8 @@ mod tests {
         let a = Clip::new_video("a.mp4", 0, 0, 8000);
         let b = Clip::new_video("b.mp4", 0, 8000, 8000);
         let id = b.id;
-        p.clips.push(a);
-        p.clips.push(b);
+        p.add_clip_for_test(a);
+        p.add_clip_for_test(b);
         let mut u = UndoStack::new();
 
         let out = set_transition(
@@ -1309,7 +1309,7 @@ mod tests {
         .unwrap();
 
         let v: Value = serde_json::from_str(&out).unwrap();
-        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        let clip = p.clips().iter().find(|c| c.id == id).unwrap();
         assert_eq!(clip.transition_duration_ms, 1000);
         // 8s clips: half of either is 4000, so 1000 is honoured whole.
         assert_eq!(clip.applied_xfade_shift_ms, 1000);
@@ -1332,8 +1332,8 @@ mod tests {
         let a = Clip::new_video("a.mp4", 0, 0, 2000);
         let b = Clip::new_video("b.mp4", 0, 2000, 2000);
         let id = b.id;
-        p.clips.push(a);
-        p.clips.push(b);
+        p.add_clip_for_test(a);
+        p.add_clip_for_test(b);
         let mut u = UndoStack::new();
 
         let out = set_transition(
@@ -1351,7 +1351,7 @@ mod tests {
             v["applied_shift_ms"], 1000,
             "but the overlap is clamped to half the clip"
         );
-        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        let clip = p.clips().iter().find(|c| c.id == id).unwrap();
         assert_eq!(clip.start_time_ms, 1000);
     }
 
@@ -1380,7 +1380,7 @@ mod tests {
         )
         .unwrap();
 
-        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        let clip = p.clips().iter().find(|c| c.id == id).unwrap();
         assert!(clip.transition_in.is_none());
         assert_eq!(
             clip.transition_duration_ms, 1200,
@@ -1430,7 +1430,7 @@ mod tests {
         )
         .unwrap();
 
-        let clip = p.clips.iter().find(|c| c.id == id).unwrap();
+        let clip = p.clips().iter().find(|c| c.id == id).unwrap();
         let ids: Vec<&str> = clip.effects.iter().map(|e| e.effect_id.as_str()).collect();
         assert_eq!(ids, vec!["zoom_pulse"]);
     }
@@ -1458,14 +1458,14 @@ mod tests {
     fn undo_on_empty_stack_is_noop() {
         let mut p = ProjectState::default();
         let mut u = UndoStack::new();
-        let clips_before = p.clips.len();
+        let clips_before = p.clips().len();
         let tracks_before = p.tracks.len();
         // UndoStack::undo on an empty stack is a silent no-op, not an error.
         // Mutating tools are the only producers of stack entries, so this
         // path is only reachable when a client calls undo() before any
         // mutating call.
         let _ = do_undo(&mut p, &mut u);
-        assert_eq!(p.clips.len(), clips_before);
+        assert_eq!(p.clips().len(), clips_before);
         assert_eq!(p.tracks.len(), tracks_before);
     }
 
@@ -1476,10 +1476,10 @@ mod tests {
 
         move_clip(&json!({ "clip_id": id, "to_ms": 900 }), &mut p, &mut u).unwrap();
         u.undo(&mut p).unwrap();
-        assert_eq!(p.clips[0].start_time_ms, 0);
+        assert_eq!(p.clips()[0].start_time_ms, 0);
 
         do_redo(&mut p, &mut u).unwrap();
-        assert_eq!(p.clips[0].start_time_ms, 900);
+        assert_eq!(p.clips()[0].start_time_ms, 900);
     }
 
     #[test]
@@ -1674,7 +1674,7 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert_eq!(p.clips[0].transition_in.as_deref(), Some("fade"));
+        assert_eq!(p.clips()[0].transition_in.as_deref(), Some("fade"));
 
         apply_preset(
             &json!({ "clip_id": clip, "kind": "transition", "preset_id": "none" }),
@@ -1682,7 +1682,7 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert_eq!(p.clips[0].transition_in, None);
+        assert_eq!(p.clips()[0].transition_in, None);
     }
 
     #[test]
@@ -1695,7 +1695,10 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert!(p.clips[0].effects.iter().any(|e| e.effect_id == "vignette"));
+        assert!(p.clips()[0]
+            .effects
+            .iter()
+            .any(|e| e.effect_id == "vignette"));
     }
 
     #[test]
@@ -1710,7 +1713,7 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert!(p.clips[0]
+        assert!(p.clips()[0]
             .effects
             .iter()
             .any(|e| e.effect_id == "cinematic"));
@@ -1729,8 +1732,8 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert_eq!(p.clips[0].transition_out.as_deref(), Some("wipe_l"));
-        assert_eq!(p.clips[0].transition_in, None);
+        assert_eq!(p.clips()[0].transition_out.as_deref(), Some("wipe_l"));
+        assert_eq!(p.clips()[0].transition_in, None);
     }
 
     #[test]
@@ -1758,9 +1761,12 @@ mod tests {
             &mut u,
         )
         .unwrap();
-        assert!(p.clips[0].effects.iter().any(|e| e.effect_id == "vignette"));
+        assert!(p.clips()[0]
+            .effects
+            .iter()
+            .any(|e| e.effect_id == "vignette"));
         do_undo(&mut p, &mut u).unwrap();
-        assert!(p.clips[0].effects.is_empty());
+        assert!(p.clips()[0].effects.is_empty());
     }
 
     // â”€â”€ session / project switching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

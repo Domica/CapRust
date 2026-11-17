@@ -1788,14 +1788,13 @@ impl CapRustApp {
         project_folder.push(&safe_name);
         std::fs::create_dir_all(&project_folder).ok();
 
-        self.project = ProjectState {
-            name: self.draft.name.clone(),
-            aspect_ratio: self.draft.aspect_ratio.clone(),
-            base_resolution: self.draft.base_resolution,
-            frame_rate: self.draft.frame_rate,
-            project_path: Some(project_folder.to_string_lossy().to_string()),
-            ..ProjectState::default()
-        };
+        let mut project = ProjectState::default();
+        project.name = self.draft.name.clone();
+        project.aspect_ratio = self.draft.aspect_ratio.clone();
+        project.base_resolution = self.draft.base_resolution;
+        project.frame_rate = self.draft.frame_rate;
+        project.project_path = Some(project_folder.to_string_lossy().to_string());
+        self.project = project;
         // Fresh registry from Default is all NotDownloaded; rescan so
         // Settings shows the on-disk truth (same reason as new()).
         self.project.models.merge_missing_defaults();
@@ -2127,7 +2126,7 @@ impl CapRustApp {
         // every delete site it owns; a remote delete bypasses all of them,
         // which would leave Clip Properties indexing a clip that is gone.
         let live: std::collections::HashSet<uuid::Uuid> =
-            self.project.clips.iter().map(|c| c.id).collect();
+            self.project.clips().iter().map(|c| c.id).collect();
         let before = self.selected_clips.len();
         self.selected_clips.retain(|id| live.contains(id));
         if self.selected_clips.len() != before {
@@ -2387,7 +2386,7 @@ impl CapRustApp {
 
     fn total_duration_ms(&self) -> u64 {
         self.project
-            .clips
+            .clips()
             .iter()
             .map(|c| c.start_time_ms + c.duration_ms)
             .max()
@@ -3101,16 +3100,27 @@ impl CapRustApp {
                     .iter()
                     .map(|m| (m.path.clone(), m.id))
                     .collect();
-                for clip in &mut self.project.clips {
-                    let path = match &clip.clip_type {
-                        caprust_core::ClipType::Video { path, .. }
-                        | caprust_core::ClipType::Audio { path, .. }
-                        | caprust_core::ClipType::Image { path, .. } => path.clone(),
-                        _ => continue,
-                    };
-                    if let Some(mid) = media_by_path.get(&path) {
-                        clip.media_id = Some(*mid);
-                    }
+                // Collect (id, media_id) pairs during the immutable borrow,
+                // then apply in a separate loop to avoid borrow conflicts.
+                let updates: Vec<(uuid::Uuid, uuid::Uuid)> = self
+                    .project
+                    .clips()
+                    .iter()
+                    .filter_map(|clip| {
+                        let path = match &clip.clip_type {
+                            caprust_core::ClipType::Video { path, .. }
+                            | caprust_core::ClipType::Audio { path, .. }
+                            | caprust_core::ClipType::Image { path, .. } => path.clone(),
+                            _ => return None,
+                        };
+                        let mid = media_by_path.get(&path)?;
+                        Some((clip.id, *mid))
+                    })
+                    .collect();
+                for (id, mid) in updates {
+                    self.project.modify_clip_by_id(id, |c| {
+                        c.media_id = Some(mid);
+                    });
                 }
                 self.selected_clips.clear();
                 self.mode = AppMode::Editor;
@@ -3228,7 +3238,7 @@ impl CapRustApp {
                             if p.extension().is_none() {
                                 p.set_extension("srt");
                             }
-                            match Self::write_srt_file(&self.project.clips, &p) {
+                            match Self::write_srt_file(self.project.clips(), &p) {
                                 Ok(n) => self.toast(format!("{} ({n})", tr("exp-srt-done"))),
                                 Err(e) => {
                                     tracing::error!("srt export failed: {e}");
@@ -3549,7 +3559,7 @@ impl CapRustApp {
             ui.horizontal(|ui| {
                 ui.label(format!(
                     "Clips: {} | Media: {} | Tracks: {} | {} | {}",
-                    self.project.clips.len(),
+                    self.project.clips().len(),
                     self.project.media.items.len(),
                     self.project.tracks.len(),
                     self.project.aspect_ratio.label(),
@@ -3619,7 +3629,7 @@ impl CapRustApp {
         let mut best_start = cand_start;
         let mut best_dist = threshold_ms + 1;
 
-        for c in &self.project.clips {
+        for c in self.project.clips() {
             if c.id == clip_id {
                 continue;
             }
@@ -3651,7 +3661,7 @@ impl CapRustApp {
 
         // Beat markers from analysed audio clips. Same timeline mapping
         // as the ruler markers; speed-ramped clips contribute nothing.
-        for clip in &self.project.clips {
+        for clip in self.project.clips() {
             let mid = match clip.media_id {
                 Some(id) => id,
                 None => continue,
@@ -3705,7 +3715,7 @@ impl CapRustApp {
         // Snapshot: old start of every clip, keyed by id.
         let old_starts: HashMap<uuid::Uuid, u64> = self
             .project
-            .clips
+            .clips()
             .iter()
             .map(|c| (c.id, c.start_time_ms))
             .collect();
@@ -3729,7 +3739,7 @@ impl CapRustApp {
         for t in video_tracks {
             let mut indices: Vec<usize> = self
                 .project
-                .clips
+                .clips()
                 .iter()
                 .enumerate()
                 .filter(|(_, c)| {
@@ -3745,22 +3755,24 @@ impl CapRustApp {
             if indices.is_empty() {
                 continue;
             }
-            indices.sort_by_key(|&i| self.project.clips[i].start_time_ms);
+            indices.sort_by_key(|&i| self.project.clips()[i].start_time_ms);
             // Pack in place: the earliest clip on the track anchors the
             // sequence, gaps between later clips close. Anchoring at 0
             // would slide every clip to the timeline start, which is
             // not what "remove gaps" means (DIRECTIVES 7.4).
-            let mut cursor: u64 = self.project.clips[indices[0]].start_time_ms;
+            let mut cursor: u64 = self.project.clips()[indices[0]].start_time_ms;
             for &i in &indices {
-                self.project.clips[i].start_time_ms = cursor;
-                cursor += self.project.clips[i].duration_ms;
+                self.project.modify_clip_by_index(i, |c| {
+                    c.start_time_ms = cursor;
+                });
+                cursor += self.project.clips()[i].duration_ms;
             }
         }
 
         // Delta per video clip: new_start - old_start (signed).
         let deltas: HashMap<uuid::Uuid, i64> = self
             .project
-            .clips
+            .clips()
             .iter()
             .filter(|c| {
                 self.project
@@ -3789,7 +3801,7 @@ impl CapRustApp {
         // the ORIGINAL timeline.
         let video_clip_ids: Vec<uuid::Uuid> = self
             .project
-            .clips
+            .clips()
             .iter()
             .filter(|c| {
                 self.project
@@ -3815,7 +3827,7 @@ impl CapRustApp {
         // to compute overlap without holding a borrow.
         let follower_ids: Vec<uuid::Uuid> = self
             .project
-            .clips
+            .clips()
             .iter()
             .filter(|c| {
                 // Follower = anything that is not an anchor. Includes
@@ -3846,7 +3858,7 @@ impl CapRustApp {
         // (id, old_start, old_end) for follower and video clips.
         let old_spans: HashMap<uuid::Uuid, (u64, u64)> = self
             .project
-            .clips
+            .clips()
             .iter()
             .map(|c| {
                 let s = *old_starts.get(&c.id).unwrap_or(&c.start_time_ms);
@@ -3889,15 +3901,21 @@ impl CapRustApp {
         }
 
         // Apply the parent's delta to each follower.
-        for c in self.project.clips.iter_mut() {
-            let Some(parent) = parent_of.get(&c.id) else {
-                continue;
-            };
-            let Some(&delta) = deltas.get(parent) else {
-                continue;
-            };
-            let new_start = (c.start_time_ms as i64 + delta).max(0) as u64;
-            c.start_time_ms = new_start;
+        let updates: Vec<(uuid::Uuid, u64)> = self
+            .project
+            .clips()
+            .iter()
+            .filter_map(|c| {
+                let parent = parent_of.get(&c.id)?;
+                let &delta = deltas.get(parent)?;
+                let new_start = (c.start_time_ms as i64 + delta).max(0) as u64;
+                Some((c.id, new_start))
+            })
+            .collect();
+        for (id, new_start) in updates {
+            self.project.modify_clip_by_id(id, |c| {
+                c.start_time_ms = new_start;
+            });
         }
     }
 
@@ -3992,14 +4010,14 @@ impl CapRustApp {
             let track_idx = self
                 .selected_clips
                 .first()
-                .and_then(|id| self.project.clips.iter().find(|c| c.id == *id))
+                .and_then(|id| self.project.clips().iter().find(|c| c.id == *id))
                 .map(|c| c.track_index)
                 .or_else(|| {
                     self.project
                         .tracks
                         .iter()
                         .position(|t| t.kind == caprust_core::TrackKind::Video)
-                        .filter(|idx| self.project.clips.iter().any(|c| c.track_index == *idx))
+                        .filter(|idx| self.project.clips().iter().any(|c| c.track_index == *idx))
                 });
             match track_idx {
                 Some(t) => self.start_caption_jobs_for_track(t),
@@ -4104,7 +4122,7 @@ impl CapRustApp {
     /// 150 ms of a clip edge are skipped (they would leave slivers).
     /// Toasts and no-ops when the clip has no analysed grid yet.
     fn auto_cut_to_beats(&mut self, clip_id: uuid::Uuid) {
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let mid = match clip.media_id {
@@ -4143,7 +4161,7 @@ impl CapRustApp {
             // beat because previous splits changed the list.
             let targets: Vec<uuid::Uuid> = self
                 .project
-                .clips
+                .clips()
                 .iter()
                 .filter(|c| {
                     matches!(
@@ -4180,7 +4198,7 @@ impl CapRustApp {
             self.toast(tr("toast-beat-busy"));
             return;
         }
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -4216,7 +4234,7 @@ impl CapRustApp {
             self.toast(tr("toast-reframe-busy"));
             return;
         }
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -4517,7 +4535,7 @@ impl CapRustApp {
             self.toast(tr("toast-bg-removal-needs-project"));
             return;
         };
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -4634,7 +4652,7 @@ impl CapRustApp {
             self.toast(tr("toast-object-removal-needs-project"));
             return;
         };
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -4847,7 +4865,7 @@ impl CapRustApp {
             self.toast(tr("toast-anon-needs-project"));
             return;
         };
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -4982,7 +5000,7 @@ impl CapRustApp {
             self.toast(tr("toast-stab-needs-project"));
             return;
         };
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -5320,7 +5338,7 @@ impl CapRustApp {
             self.toast(tr("toast-inpaint-needs-project"));
             return;
         };
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let source_path_raw = match &clip.clip_type {
@@ -5835,14 +5853,14 @@ impl CapRustApp {
     /// was picked in the prompt, and would otherwise accumulate every
     /// time the project is opened and re-saved.
     fn cleanup_phantom_captions(&mut self) {
-        let before = self.project.clips.len();
-        self.project.clips.retain(|c| {
+        let before = self.project.clips().len();
+        self.project.retain_clips(|c| {
             !matches!(
                 &c.clip_type,
                 caprust_core::ClipType::Captions { segments, .. } if segments.is_empty()
             )
         });
-        let removed = before - self.project.clips.len();
+        let removed = before - self.project.clips().len();
         if removed > 0 {
             tracing::info!("caption: pruned {removed} empty captions clip(s) on load");
         }
@@ -5854,7 +5872,7 @@ impl CapRustApp {
     fn start_caption_jobs_for_track(&mut self, track_index: usize) {
         let mut sources: Vec<(uuid::Uuid, u64)> = self
             .project
-            .clips
+            .clips()
             .iter()
             .filter(|c| c.track_index == track_index)
             .filter(|c| c.duration_ms > 0)
@@ -6006,7 +6024,7 @@ impl CapRustApp {
         // instead of silently doing nothing.
         let Some(source_clip) = self
             .project
-            .clips
+            .clips()
             .iter()
             .find(|c| Some(c.id) == resolved_source)
             .cloned()
@@ -6169,7 +6187,7 @@ impl CapRustApp {
             self.toast(tr("translate-toast-busy"));
             return;
         }
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             return;
         };
         let caprust_core::ClipType::Captions { segments, .. } = &clip.clip_type else {
@@ -7668,7 +7686,7 @@ impl CapRustApp {
                     // no markers.
                     {
                         let accent = theme_snapshot.accent_color();
-                        for clip in &self.project.clips {
+                        for clip in self.project.clips() {
                             let mid = match clip.media_id {
                                 Some(id) => id,
                                 None => continue,
@@ -7768,7 +7786,7 @@ impl CapRustApp {
 
                         let clips_here: Vec<(uuid::Uuid, u64, u64, caprust_core::ClipType, bool)> =
                             self.project
-                                .clips
+                                .clips()
                                 .iter()
                                 .filter(|c| {
                                     let dt = clip_drag_snapshot
@@ -7835,7 +7853,7 @@ impl CapRustApp {
                         // `envelope_for` need `&mut self` inside this loop.
                         let clip_index: std::collections::HashMap<uuid::Uuid, usize> = self
                             .project
-                            .clips
+                            .clips()
                             .iter()
                             .enumerate()
                             .map(|(i, c)| (c.id, i))
@@ -7952,7 +7970,7 @@ impl CapRustApp {
                                 );
                                 let enabled = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|cc| cc.id == clip_id)
                                     .and_then(|cc| cc.split_display)
@@ -7975,7 +7993,7 @@ impl CapRustApp {
                                 // Same pattern as `waveform_peaks_for`.
                                 let mid_opt = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|cc| cc.id == clip_id)
                                     .and_then(|cc| cc.media_id);
@@ -8028,7 +8046,7 @@ impl CapRustApp {
                             // reads as selected.
                             let overlap_ms = self
                                 .project
-                                .clips
+                                .clips()
                                 .iter()
                                 .find(|cc| cc.id == clip_id)
                                 .map(|cc| cc.applied_xfade_shift_ms)
@@ -8098,7 +8116,7 @@ impl CapRustApp {
                                 | caprust_core::ClipType::Narration { .. } => true,
                                 caprust_core::ClipType::Video { .. } => self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|cc| cc.id == clip_id)
                                     .map(|cc| !cc.audio_detached)
@@ -8125,7 +8143,7 @@ impl CapRustApp {
                                 {
                                     let has_audio_wave = self
                                         .project
-                                        .clips
+                                        .clips()
                                         .iter()
                                         .find(|cc| cc.id == clip_id)
                                         .and_then(|cc| cc.media_id)
@@ -8141,7 +8159,7 @@ impl CapRustApp {
                                 }
                                 if let Some(media_id) = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|cc| cc.id == clip_id)
                                     .and_then(|cc| cc.media_id)
@@ -8209,7 +8227,7 @@ impl CapRustApp {
                                 }
                                 let (fi_ms, fo_ms) = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|cc| cc.id == clip_id)
                                     .map(|cc| (cc.fade_in_ms, cc.fade_out_ms))
@@ -8381,7 +8399,7 @@ impl CapRustApp {
                             if carries_audio {
                                 if let Some(clip_data) = clip_index
                                     .get(&clip_id)
-                                    .and_then(|&i| self.project.clips.get(i))
+                                    .and_then(|&i| self.project.clips().get(i))
                                     .cloned()
                                 {
                                     let (samples, zones) = self.envelope_for(&clip_data);
@@ -8406,7 +8424,7 @@ impl CapRustApp {
                             let (label_full, label_short) = {
                                 let full = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|cc| cc.id == clip_id)
                                     .and_then(|cc| cc.name.clone())
@@ -8472,7 +8490,7 @@ impl CapRustApp {
                             // Effect/transition badge (top-right of clip)
                             if let Some(fx_clip) = clip_index
                                 .get(&clip_id)
-                                .and_then(|&i| self.project.clips.get(i))
+                                .and_then(|&i| self.project.clips().get(i))
                             {
                                 let has_fx = !fx_clip.effects.is_empty();
                                 let has_tr = fx_clip.transition_in.is_some()
@@ -8507,7 +8525,7 @@ impl CapRustApp {
                             if resp.double_clicked() {
                                 let is_text = clip_index
                                     .get(&clip_id)
-                                    .and_then(|&i| self.project.clips.get(i))
+                                    .and_then(|&i| self.project.clips().get(i))
                                     .map(|c| {
                                         matches!(
                                             c.clip_type,
@@ -8755,7 +8773,7 @@ impl CapRustApp {
                                 // --- Mute clip ---
                                 let muted = clip_index
                                     .get(&clip_id)
-                                    .and_then(|&i| self.project.clips.get(i))
+                                    .and_then(|&i| self.project.clips().get(i))
                                     .map(|c| c.volume_db <= -59.0)
                                     .unwrap_or(false);
                                 let mute_lbl = if muted {
@@ -8775,7 +8793,7 @@ impl CapRustApp {
                                 {
                                     let is_video = clip_index
                                         .get(&clip_id)
-                                        .and_then(|&i| self.project.clips.get(i))
+                                        .and_then(|&i| self.project.clips().get(i))
                                         .map(|c| {
                                             matches!(
                                                 c.clip_type,
@@ -8786,7 +8804,7 @@ impl CapRustApp {
                                     if is_video {
                                         let effective_split = clip_index
                                             .get(&clip_id)
-                                            .and_then(|&i| self.project.clips.get(i))
+                                            .and_then(|&i| self.project.clips().get(i))
                                             .and_then(|c| c.split_display)
                                             .unwrap_or(self.settings.waveform_bottom);
                                         ui.menu_button(tr("clip-ctx-display"), |ui| {
@@ -8832,7 +8850,7 @@ impl CapRustApp {
                                 // clip that already has segments.
                                 let has_captions = clip_index
                                     .get(&clip_id)
-                                    .and_then(|&i| self.project.clips.get(i))
+                                    .and_then(|&i| self.project.clips().get(i))
                                     .map(|c| {
                                         matches!(
                                             &c.clip_type,
@@ -8859,7 +8877,7 @@ impl CapRustApp {
                                 //    through the back-reference).
                                 let menu_clip = clip_index
                                     .get(&clip_id)
-                                    .and_then(|&i| self.project.clips.get(i))
+                                    .and_then(|&i| self.project.clips().get(i))
                                     .cloned();
                                 if let Some(c) = menu_clip.as_ref() {
                                     let is_video =
@@ -8885,7 +8903,7 @@ impl CapRustApp {
                                         // points at this audio clip.
                                         let parent_video = self
                                             .project
-                                            .clips
+                                            .clips()
                                             .iter()
                                             .find(|cc| cc.detached_audio_clip_id == Some(clip_id))
                                             .map(|cc| cc.id);
@@ -9171,11 +9189,18 @@ impl CapRustApp {
         if let Some(idx) = pending_delete_track {
             if idx < self.project.tracks.len() {
                 self.project.tracks.remove(idx);
-                self.project.clips.retain(|c| c.track_index != idx);
-                for c in self.project.clips.iter_mut() {
-                    if c.track_index > idx {
-                        c.track_index -= 1;
-                    }
+                self.project.retain_clips(|c| c.track_index != idx);
+                let updates: Vec<(uuid::Uuid, usize)> = self
+                    .project
+                    .clips()
+                    .iter()
+                    .filter(|c| c.track_index > idx)
+                    .map(|c| (c.id, c.track_index - 1))
+                    .collect();
+                for (id, new_track_index) in updates {
+                    self.project.modify_clip_by_id(id, |c| {
+                        c.track_index = new_track_index;
+                    });
                 }
             }
         }
@@ -9231,7 +9256,7 @@ impl CapRustApp {
                     self.selected_clips = vec![id];
                     let buf = self
                         .project
-                        .clips
+                        .clips()
                         .iter()
                         .find(|c| c.id == id)
                         .and_then(|c| c.name.clone())
@@ -9266,7 +9291,7 @@ impl CapRustApp {
                 ClipAction::DragStart(id, ti, o) => {
                     let (dur, sdr) = self
                         .project
-                        .clips
+                        .clips()
                         .iter()
                         .find(|c| c.id == id)
                         .map(|c| (c.duration_ms, c.source_duration_ms))
@@ -9281,7 +9306,7 @@ impl CapRustApp {
                                 .iter()
                                 .filter_map(|cid| {
                                     self.project
-                                        .clips
+                                        .clips()
                                         .iter()
                                         .find(|c| c.id == *cid)
                                         .map(|c| (*cid, c.start_time_ms, c.track_index))
@@ -9334,8 +9359,7 @@ impl CapRustApp {
                             // SetClipCommand so undo captures the
                             // pre-drag state.
                             if let Some(edge) = d.trim_edge {
-                                if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id)
-                                {
+                                if let Some(c) = self.project.clip_by_id_mut(id) {
                                     match edge {
                                         TrimEdge::Left => {
                                             let ns = (d.origin_ms as i64 + raw_delta).max(0) as u64;
@@ -9406,8 +9430,7 @@ impl CapRustApp {
                                 // whatever intermediate value the
                                 // live mutation left behind on the
                                 // last frame.
-                                if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id)
-                                {
+                                if let Some(c) = self.project.clip_by_id_mut(id) {
                                     c.start_time_ms = d.origin_ms;
                                     c.duration_ms = d.origin_duration_ms;
                                 }
@@ -9463,7 +9486,7 @@ impl CapRustApp {
                                 let time_changed = nm != d.origin_ms;
                                 let track_changed = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|c| c.id == id)
                                     .map(|c| c.track_index)
@@ -9484,7 +9507,7 @@ impl CapRustApp {
                                 // snapping back.
                                 let had_xfade = self
                                     .project
-                                    .clips
+                                    .clips()
                                     .iter()
                                     .find(|c| c.id == id)
                                     .map(|c| c.applied_xfade_shift_ms > 0)
@@ -9499,7 +9522,7 @@ impl CapRustApp {
                                     // d.origin_ms, or undo drifts.
                                     let (visual_start, pre_shift) = self
                                         .project
-                                        .clips
+                                        .clips()
                                         .iter()
                                         .find(|c| c.id == id)
                                         .map(|c| (c.start_time_ms, c.applied_xfade_shift_ms))
@@ -9643,9 +9666,7 @@ impl CapRustApp {
                                             .undo_stack
                                             .execute(Box::new(cmd), &mut self.project);
                                     }
-                                    if let Some(c) =
-                                        self.project.clips.iter_mut().find(|c| c.id == id)
-                                    {
+                                    if let Some(c) = self.project.clip_by_id_mut(id) {
                                         c.track_index = nt;
                                     }
                                 }
@@ -9664,17 +9685,17 @@ impl CapRustApp {
                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                 }
                 ClipAction::ToggleReverse(id) => {
-                    if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
+                    if let Some(c) = self.project.clip_by_id_mut(id) {
                         c.reversed = !c.reversed;
                     }
                 }
                 ClipAction::ToggleFlipH(id) => {
-                    if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
+                    if let Some(c) = self.project.clip_by_id_mut(id) {
                         c.flip_h = !c.flip_h;
                     }
                 }
                 ClipAction::ToggleFlipV(id) => {
-                    if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id) {
+                    if let Some(c) = self.project.clip_by_id_mut(id) {
                         c.flip_v = !c.flip_v;
                     }
                 }
@@ -9713,13 +9734,13 @@ impl CapRustApp {
                     // `id` is either a video whose audio was detached,
                     // or an audio clip that was detached from some
                     // video. Resolve to the video id first.
-                    let video_id = if self.project.clips.iter().any(|c| {
+                    let video_id = if self.project.clips().iter().any(|c| {
                         c.id == id && matches!(c.clip_type, caprust_core::ClipType::Video { .. })
                     }) {
                         Some(id)
                     } else {
                         self.project
-                            .clips
+                            .clips()
                             .iter()
                             .find(|c| c.detached_audio_clip_id == Some(id))
                             .map(|c| c.id)
@@ -9736,7 +9757,7 @@ impl CapRustApp {
                     }
                 }
                 ClipAction::Copy(id) => {
-                    if let Some(c) = self.project.clips.iter().find(|c| c.id == id) {
+                    if let Some(c) = self.project.clips().iter().find(|c| c.id == id) {
                         self.clip_clipboard = Some(c.clone());
                         tracing::info!("copy: {id}");
                         self.toast(tr("toast-clip-copied"));
@@ -9758,7 +9779,7 @@ impl CapRustApp {
                     }
                 }
                 ClipAction::Duplicate(id) => {
-                    if let Some(orig) = self.project.clips.iter().find(|c| c.id == id).cloned() {
+                    if let Some(orig) = self.project.clips().iter().find(|c| c.id == id).cloned() {
                         let mut c = orig;
                         c.id = uuid::Uuid::new_v4();
                         c.start_time_ms += c.duration_ms;
@@ -9787,7 +9808,7 @@ impl CapRustApp {
                 ClipAction::MuteClip(id) => {
                     let cur = self
                         .project
-                        .clips
+                        .clips()
                         .iter()
                         .find(|c| c.id == id)
                         .map(|c| c.volume_db)
@@ -9809,7 +9830,7 @@ impl CapRustApp {
                 ClipAction::FadeDragStart(id, edge, current_ms) => {
                     let (dur, fi, fo, ptr_x) = self
                         .project
-                        .clips
+                        .clips()
                         .iter()
                         .find(|c| c.id == id)
                         .map(|c| {
@@ -11056,7 +11077,7 @@ impl CapRustApp {
         // Collect source paths in angle order.
         let mut paths: Vec<std::path::PathBuf> = Vec::new();
         for cid in &group.angle_clip_ids {
-            let Some(clip) = self.project.clips.iter().find(|c| c.id == *cid) else {
+            let Some(clip) = self.project.clips().iter().find(|c| c.id == *cid) else {
                 tracing::warn!("sync: angle clip {cid} missing from project");
                 return;
             };
@@ -11511,7 +11532,7 @@ impl CapRustApp {
         for id in out.media.remove_requested {
             let clip_ids: Vec<uuid::Uuid> = self
                 .project
-                .clips
+                .clips()
                 .iter()
                 .filter(|c| c.media_id == Some(id))
                 .map(|c| c.id)
@@ -11565,7 +11586,7 @@ impl CapRustApp {
                         //     sensible placeholder text.
                         let is_text = self
                             .project
-                            .clips
+                            .clips()
                             .iter()
                             .find(|c| c.id == clip_id)
                             .map(|c| {
@@ -11770,7 +11791,7 @@ impl CapRustApp {
 
         let ph = self.playhead_ms;
         let mut why: Vec<String> = Vec::new();
-        for c in self.project.clips.iter().filter(|c| c.overlay.is_some()) {
+        for c in self.project.clips().iter().filter(|c| c.overlay.is_some()) {
             let on = ph >= c.start_time_ms && ph < c.start_time_ms + c.duration_ms;
             let vis = self
                 .project
@@ -11820,7 +11841,7 @@ impl CapRustApp {
             self.sticker_drag = None;
             return;
         };
-        let Some(clip) = self.project.clips.iter().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clips().iter().find(|c| c.id == clip_id) else {
             self.sticker_drag = None;
             return;
         };
@@ -12197,7 +12218,7 @@ impl CapRustApp {
         next[idx].centre_y = cy;
         next.sort_by_key(|k| k.t_ms);
 
-        let Some(clip) = self.project.clips.iter_mut().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clip_by_id_mut(clip_id) else {
             return;
         };
         clip.trajectory = next.clone();
@@ -12237,7 +12258,7 @@ impl CapRustApp {
             rotation,
         } = g;
         let origin = self.sticker_drag_origin(clip_id, centre);
-        let Some(clip) = self.project.clips.iter_mut().find(|c| c.id == clip_id) else {
+        let Some(clip) = self.project.clip_by_id_mut(clip_id) else {
             return;
         };
         let Some(current) = clip.overlay.clone() else {
@@ -12318,7 +12339,7 @@ impl CapRustApp {
         let playhead = self.playhead_ms;
         let clip_info: Option<(uuid::Uuid, String, u64, f32)> = self
             .project
-            .clips
+            .clips()
             .iter()
             .find(|c| {
                 let on_playhead =
@@ -12362,7 +12383,7 @@ impl CapRustApp {
                     "preview state: playhead={}ms playing={} clips={} clip_info={} ffmpeg={} audio_ms={:?} delta={:?}",
                     playhead,
                     self.preview.playing,
-                    self.project.clips.len(),
+                    self.project.clips().len(),
                     clip_info.is_some(),
                     self.ffmpeg_status.ffmpeg.is_some(),
                     self.audio_player
@@ -12935,7 +12956,7 @@ impl CapRustApp {
                         } else {
                             std::path::PathBuf::from(source_path_raw)
                         };
-                        let clip_data = self.project.clips.iter().find(|c| c.id == clip_id);
+                        let clip_data = self.project.clips().iter().find(|c| c.id == clip_id);
                         if let Some(clip) = clip_data {
                             let clip_id = clip.id;
                             let start_time_ms = clip.source_offset_ms;
@@ -13093,7 +13114,7 @@ impl CapRustApp {
             let msg = if self.ffmpeg_status.ffmpeg.is_none() {
                 "FFmpeg not detected — set it in Settings → Paths".to_string()
             } else if clip_info.is_none() {
-                if self.project.clips.is_empty() {
+                if self.project.clips().is_empty() {
                     "No clips on timeline".to_string()
                 } else {
                     "Playhead is not over a video clip".to_string()
@@ -13151,7 +13172,7 @@ impl CapRustApp {
             let active_id = self.selected_clips.first().copied();
             let info = active_id.and_then(|id| {
                 self.project
-                    .clips
+                    .clips()
                     .iter()
                     .find(|c| c.id == id)
                     .and_then(|c| match &c.clip_type {
@@ -13337,9 +13358,7 @@ impl CapRustApp {
                                         (drag.origin_x + dx_frame / drag.rw).clamp(-1.0, 1.0);
                                     let new_my =
                                         (drag.origin_y + dy_frame / drag.rh).clamp(-1.0, 1.0);
-                                    if let Some(c) =
-                                        self.project.clips.iter_mut().find(|c| c.id == id)
-                                    {
+                                    if let Some(c) = self.project.clip_by_id_mut(id) {
                                         if let ClipType::TextOverlay { motion, .. } =
                                             &mut c.clip_type
                                         {
@@ -13352,9 +13371,7 @@ impl CapRustApp {
                                     let dist = (ptr - drag.anchor_screen).length();
                                     let ratio = dist / drag.origin_dist;
                                     let new_scale = (drag.origin_scale * ratio).clamp(0.3, 3.0);
-                                    if let Some(c) =
-                                        self.project.clips.iter_mut().find(|c| c.id == id)
-                                    {
+                                    if let Some(c) = self.project.clip_by_id_mut(id) {
                                         if let ClipType::TextOverlay { motion, .. } =
                                             &mut c.clip_type
                                         {
@@ -13371,19 +13388,20 @@ impl CapRustApp {
                         };
                         if stopped {
                             let drag = self.text_overlay_drag.take().unwrap();
-                            let final_motion =
-                                self.project.clips.iter().find(|c| c.id == id).and_then(
-                                    |c| match &c.clip_type {
-                                        ClipType::TextOverlay { motion, .. } => Some(*motion),
-                                        _ => None,
-                                    },
-                                );
+                            let final_motion = self
+                                .project
+                                .clips()
+                                .iter()
+                                .find(|c| c.id == id)
+                                .and_then(|c| match &c.clip_type {
+                                    ClipType::TextOverlay { motion, .. } => Some(*motion),
+                                    _ => None,
+                                });
                             if let Some(final_motion) = final_motion {
                                 // Restore origin in-place so the
                                 // command's `before` snapshot is the
                                 // pre-drag state.
-                                if let Some(c) = self.project.clips.iter_mut().find(|c| c.id == id)
-                                {
+                                if let Some(c) = self.project.clip_by_id_mut(id) {
                                     if let ClipType::TextOverlay { motion, .. } = &mut c.clip_type {
                                         motion.x = drag.origin_x;
                                         motion.y = drag.origin_y;
@@ -13523,7 +13541,7 @@ impl CapRustApp {
             .default_width(440.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                let clip_count = self.project.clips.len();
+                let clip_count = self.project.clips().len();
                 let project_dims = self.project.project_dimensions();
                 // Encoder detection spawns ffmpeg once per candidate.
                 // Doing that inline froze the UI for the whole probe and
@@ -14594,7 +14612,7 @@ impl CapRustApp {
                     self.export_finished_path = Some(output.to_string_lossy().to_string());
                     if self.export_state.subtitles_srt {
                         let srt_path = std::path::PathBuf::from(&output).with_extension("srt");
-                        match Self::write_srt_file(&self.project.clips, &srt_path) {
+                        match Self::write_srt_file(self.project.clips(), &srt_path) {
                             Ok(n) => self.toast(format!("{} ({n})", tr("exp-srt-done"))),
                             Err(e) => {
                                 tracing::error!("srt sidecar failed: {e}");
@@ -15013,7 +15031,7 @@ impl CapRustApp {
 
         let done = match self.tour_step {
             TourStep::Import => !self.project.media.items.is_empty(),
-            TourStep::Timeline => !self.project.clips.is_empty(),
+            TourStep::Timeline => !self.project.clips().is_empty(),
             TourStep::Export => self.export_open,
         };
 
@@ -15511,7 +15529,7 @@ impl eframe::App for CapRustApp {
                         for id in self.selected_clips.clone() {
                             let cur = self
                                 .project
-                                .clips
+                                .clips()
                                 .iter()
                                 .find(|c| c.id == id)
                                 .map(|c| c.reversed)
@@ -15525,7 +15543,7 @@ impl eframe::App for CapRustApp {
                         for id in self.selected_clips.clone() {
                             let cur = self
                                 .project
-                                .clips
+                                .clips()
                                 .iter()
                                 .find(|c| c.id == id)
                                 .map(|c| c.flip_h)
@@ -15539,7 +15557,7 @@ impl eframe::App for CapRustApp {
                         for id in self.selected_clips.clone() {
                             let cur = self
                                 .project
-                                .clips
+                                .clips()
                                 .iter()
                                 .find(|c| c.id == id)
                                 .map(|c| c.flip_v)
@@ -15576,7 +15594,7 @@ impl eframe::App for CapRustApp {
                         }
                     }
                     egui::Key::A if ctrl => {
-                        self.selected_clips = self.project.clips.iter().map(|c| c.id).collect();
+                        self.selected_clips = self.project.clips().iter().map(|c| c.id).collect();
                     }
                     // Undo / redo. Windows convention is Ctrl+Z / Ctrl+Y;
                     // macOS and some editors also accept Ctrl+Shift+Z for
@@ -17212,12 +17230,12 @@ mod sticker_overlay_tests {
             c.overlay = Some(OverlayPlacement::default_sticker());
             c
         };
-        p.clips.push(sticker(1, 0, 0)); // on screen, visible
-        p.clips.push(sticker(2, 1, 0)); // on screen, hidden track
-        p.clips.push(sticker(3, 0, 8000)); // off screen for now
+        p.add_clip_for_test(sticker(1, 0, 0)); // on screen, visible
+        p.add_clip_for_test(sticker(2, 1, 0)); // on screen, hidden track
+        p.add_clip_for_test(sticker(3, 0, 8000)); // off screen for now
         let mut footage = Clip::new_video("a.mp4", 0, 0, 4000);
         footage.id = uuid::Uuid::from_u128(4);
-        p.clips.push(footage);
+        p.add_clip_for_test(footage);
 
         let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
         let quads = super::sticker_quads(&p, 1000, frame);
@@ -17256,7 +17274,7 @@ mod sticker_overlay_tests {
             rotation: 0.0,
             animation: None,
         });
-        p.clips.push(c);
+        p.add_clip_for_test(c);
 
         let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 180.0));
         let quads = super::sticker_quads(&p, 0, frame);
@@ -17309,7 +17327,7 @@ mod sticker_overlay_tests {
             rotation: 30.0,
             animation: None,
         });
-        p.clips.push(c);
+        p.add_clip_for_test(c);
 
         let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 180.0));
         let q = &super::sticker_quads(&p, 0, frame)[0];
@@ -18168,8 +18186,8 @@ mod sticker_overlay_tests {
         // The normalisation lives in the properties panel.
         let panel = include_str!("../src/panels/clip_properties.rs").replace('\r', "");
         let seg = panel
-            .split_once("let clip_is_audio = matches!")
-            .expect("no clip_is_audio")
+            .split_once("let (clip_is_sticker,")
+            .expect("no clip_is_sticker")
             .1;
         let seg = &seg[..seg.find("egui::ScrollArea").unwrap_or(seg.len())];
 
@@ -18214,7 +18232,7 @@ mod sticker_overlay_tests {
                 rotation: 0.0,
                 animation: anim.map(str::to_string),
             });
-            p.clips.push(c);
+            p.add_clip_for_test(c);
         }
 
         let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
@@ -18277,7 +18295,7 @@ mod sticker_overlay_tests {
             duration_ms: 4000,
         };
         c.overlay = Some(place.clone());
-        p.clips.push(c);
+        p.add_clip_for_test(c);
 
         let frame = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 360.0));
         let quads = super::sticker_quads(&p, 0, frame);

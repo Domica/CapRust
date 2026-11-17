@@ -303,7 +303,7 @@ mod tests {
                 new_path: "D:/new/b.mp4".into(),
             },
         ]);
-        cmd.execute(&mut state).unwrap();
+        cmd.execute(&mut state).expect("test unwrap");
 
         assert_eq!(state.media.items[0].path, "D:/new/a.mp4");
         assert_eq!(state.media.items[1].path, "D:/new/b.mp4");
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(inline_path(&state.clips[1]), "D:/new/b.mp4");
         assert_eq!(inline_path(&state.clips[2]), "D:/new/b.mp4");
 
-        cmd.undo(&mut state).unwrap();
+        cmd.undo(&mut state).expect("test unwrap");
 
         assert_eq!(state.media.items[0].path, "C:/old/a.mp4");
         assert_eq!(state.media.items[1].path, "C:/old/b.mp4");
@@ -332,7 +332,7 @@ mod tests {
             old_path: "C:/old/a.mp4".into(),
             new_path: "D:/new/a.mp4".into(),
         }]);
-        cmd.execute(&mut state).unwrap();
+        cmd.execute(&mut state).expect("test unwrap");
 
         assert_eq!(state.media.items[0].path, "D:/new/a.mp4");
         assert_eq!(inline_path(&state.clips[0]), "D:/new/a.mp4");
@@ -354,10 +354,10 @@ mod tests {
         }]);
 
         for _ in 0..2 {
-            cmd.execute(&mut state).unwrap();
+            cmd.execute(&mut state).expect("test unwrap");
             assert_eq!(state.media.items[0].path, "D:/new/a.mp4");
             assert_eq!(inline_path(&state.clips[0]), "D:/new/a.mp4");
-            cmd.undo(&mut state).unwrap();
+            cmd.undo(&mut state).expect("test unwrap");
             assert_eq!(state.media.items[0].path, "C:/old/a.mp4");
             assert_eq!(inline_path(&state.clips[0]), "C:/old/a.mp4");
         }
@@ -373,10 +373,10 @@ mod tests {
             .push(make_video_clip("C:/old/a.mp4", Some(a.id)));
 
         let mut cmd = RelinkManyCommand::new(vec![]);
-        cmd.execute(&mut state).unwrap();
+        cmd.execute(&mut state).expect("test unwrap");
         assert_eq!(state.media.items[0].path, "C:/old/a.mp4");
         assert_eq!(inline_path(&state.clips[0]), "C:/old/a.mp4");
-        cmd.undo(&mut state).unwrap();
+        cmd.undo(&mut state).expect("test unwrap");
         assert_eq!(state.media.items[0].path, "C:/old/a.mp4");
     }
 
@@ -411,9 +411,9 @@ mod tests {
     #[test]
     fn scan_folder_matches_basename_case_insensitive() {
         let tmp = std::env::temp_dir().join(format!("caprust-scan-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::create_dir_all(&tmp).expect("test unwrap");
         let file = tmp.join("Photo.MP4");
-        std::fs::write(&file, b"x").unwrap();
+        std::fs::write(&file, b"x").expect("test unwrap");
 
         let missing = vec![MissingRef {
             media_id: Uuid::new_v4(),
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn scan_folder_respects_depth_cap() {
         let tmp = std::env::temp_dir().join(format!("caprust-scan-depth-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::create_dir_all(&tmp).expect("test unwrap");
         // depth 3 -- inside cap
         let shallow = tmp.join("a").join("b").join("target.mp4");
         // depth 6 -- beyond cap
@@ -442,10 +442,10 @@ mod tests {
             .join("d")
             .join("e")
             .join("deep.mp4");
-        std::fs::create_dir_all(shallow.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
-        std::fs::write(&shallow, b"x").unwrap();
-        std::fs::write(&deep, b"x").unwrap();
+        std::fs::create_dir_all(shallow.parent().expect("test unwrap")).expect("test unwrap");
+        std::fs::create_dir_all(deep.parent().expect("test unwrap")).expect("test unwrap");
+        std::fs::write(&shallow, b"x").expect("test unwrap");
+        std::fs::write(&deep, b"x").expect("test unwrap");
 
         let missing = vec![
             MissingRef {
@@ -467,7 +467,7 @@ mod tests {
             .map(|m| {
                 std::path::Path::new(&m.new_path)
                     .file_name()
-                    .unwrap()
+                    .expect("test unwrap")
                     .to_string_lossy()
                     .to_string()
             })

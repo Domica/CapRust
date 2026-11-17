@@ -250,7 +250,7 @@ pub fn show(
     inpaint_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
 ) {
     state.last_playhead_ms = playhead_ms;
-    state.last_project_clips = project.clips.clone();
+    state.last_project_clips = project.clips().to_vec();
     let Some(id) = selected else {
         ui.label(
             egui::RichText::new(tr("props-empty"))
@@ -259,7 +259,7 @@ pub fn show(
         );
         return;
     };
-    let Some(clip) = project.clips.iter_mut().find(|c| c.id == id) else {
+    let Some(clip) = project.clip_by_id_mut(id) else {
         ui.label(
             egui::RichText::new(tr("props-empty"))
                 .italics()
@@ -1086,39 +1086,50 @@ pub fn show(
     // from a previously selected clip into show_sound, so audio clips
     // never surface video-only controls. Do NOT force state.tab every
     // frame: the user must still be able to click Efekti.
-    let clip_is_audio = matches!(
-        clip.clip_type,
-        ClipType::Audio { .. } | ClipType::Narration { .. }
-    );
 
     let dims = project.project_dimensions();
 
-    let Some(clip) = project.clips.iter_mut().find(|c| c.id == id) else {
-        ui.label(
-            egui::RichText::new(tr("props-empty"))
-                .italics()
-                .color(egui::Color32::from_gray(140)),
-        );
-        return;
+    // Borrow clip read-only for the pre-match UI logic. The borrow ends
+    // at the close of this block, so `project` is free again for the
+    // match arms below (which may need `&mut project.models`).
+    let (clip_is_sticker, _clip_is_text, clip_can_trajectory, clip_is_audio, clip_id) = {
+        let Some(clip) = project.clips().iter().find(|c| c.id == id) else {
+            ui.label(
+                egui::RichText::new(tr("props-empty"))
+                    .italics()
+                    .color(egui::Color32::from_gray(140)),
+            );
+            return;
+        };
+        (
+            clip.overlay.is_some(),
+            matches!(
+                clip.clip_type,
+                ClipType::TextOverlay { .. } | ClipType::Captions { .. }
+            ),
+            clip.overlay.is_some()
+                || matches!(
+                    clip.clip_type,
+                    ClipType::TextOverlay { .. } | ClipType::Captions { .. }
+                ),
+            matches!(
+                clip.clip_type,
+                ClipType::Audio { .. } | ClipType::Narration { .. }
+            ),
+            clip.id,
+        )
     };
-
     // A sticker is a still on the frame: no speed, no transitions, no
     // audio. The video tab's controls are meaningless on it and the sound
     // tab has nothing to show, so it gets its own.
-    let clip_is_sticker = clip.overlay.is_some();
     // Text and stickers are the two things that move on their own. A
     // piece of footage does not get a trajectory.
-    let clip_is_text = matches!(
-        clip.clip_type,
-        ClipType::TextOverlay { .. } | ClipType::Captions { .. }
-    );
-    let clip_can_trajectory = clip_is_sticker || clip_is_text;
     // Once per clip, not every frame. As a per-frame rule it undid the
     // user's click on the very next frame: `state.tab` was set to Sticker
     // on selection, the click on Efekti set it to Effects, and the next
     // frame put it back -- which reads as a tab that is not clickable.
-    if state.tab_normalised_for != Some(clip.id) {
-        state.tab_normalised_for = Some(clip.id);
+    if state.tab_normalised_for != Some(clip_id) {
+        state.tab_normalised_for = Some(clip_id);
         if clip_is_sticker && state.tab != PropertiesTab::Sticker {
             state.tab = PropertiesTab::Sticker;
         } else if !clip_is_sticker && state.tab == PropertiesTab::Sticker {
@@ -1189,25 +1200,39 @@ pub fn show(
         .show(ui, |ui| match state.tab {
             PropertiesTab::Video => {
                 if clip_is_audio {
-                    show_sound(ui, clip, state);
+                    if let Some(clip) = project.clips().iter().find(|c| c.id == clip_id) {
+                        show_sound(ui, clip, state);
+                    }
                 } else {
-                    show_video(
-                        ui,
-                        clip,
-                        state,
-                        &mut project.models,
-                        settings,
-                        segment_rx,
-                        inpaint_rx,
-                    );
+                    project.with_clip_and_models_mut(clip_id, |clip, models| {
+                        show_video(ui, clip, state, models, settings, segment_rx, inpaint_rx);
+                    });
                 }
             }
-            PropertiesTab::Sound => show_sound(ui, clip, state),
-            PropertiesTab::Effects => show_effects(ui, clip, state, &mut project.models, settings),
-            PropertiesTab::Sticker => show_sticker(ui, clip, state, dims),
-            PropertiesTab::Trajectory => show_trajectory(ui, clip, state, playhead_ms, dims),
+            PropertiesTab::Sound => {
+                if let Some(clip) = project.clips().iter().find(|c| c.id == clip_id) {
+                    show_sound(ui, clip, state);
+                }
+            }
+            PropertiesTab::Effects => {
+                project.with_clip_and_models_mut(clip_id, |clip, models| {
+                    show_effects(ui, clip, state, models, settings);
+                });
+            }
+            PropertiesTab::Sticker => {
+                if let Some(clip) = project.clips().iter().find(|c| c.id == clip_id) {
+                    show_sticker(ui, clip, state, dims);
+                }
+            }
+            PropertiesTab::Trajectory => {
+                if let Some(clip) = project.clip_by_id_mut(clip_id) {
+                    show_trajectory(ui, clip, state, playhead_ms, dims);
+                }
+            }
             PropertiesTab::KeyframeTracks => {
-                show_keyframe_tracks(ui, clip, state, playhead_ms, dims)
+                if let Some(clip) = project.clips().iter().find(|c| c.id == clip_id) {
+                    show_keyframe_tracks(ui, clip, state, playhead_ms, dims)
+                }
             }
         });
 }

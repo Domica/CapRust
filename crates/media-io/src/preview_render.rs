@@ -612,7 +612,7 @@ mod tests {
         let source = dir.join("source.mp4");
         std::fs::write(&source, b"").unwrap();
         let mut project = caprust_core::ProjectState::default();
-        project.clips.push(caprust_core::Clip::new_video(
+        project.add_clip_for_test(caprust_core::Clip::new_video(
             source.to_string_lossy().as_ref(),
             0,
             0,

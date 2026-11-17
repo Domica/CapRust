@@ -193,11 +193,11 @@ mod tests {
         let mut stack = UndoStack::default();
 
         let cmd = TranslateCaptionsCommand::new(src_id, "hr", vec!["Bok".into(), "Svijete".into()]);
-        stack.execute(Box::new(cmd), &mut p).unwrap();
+        stack.execute(Box::new(cmd), &mut p).expect("execute TranslateCaptionsCommand");
 
         assert_eq!(p.tracks.len(), tracks_before + 1);
         assert_eq!(p.clips.len(), clips_before + 1);
-        let new_clip = p.clips.last().unwrap();
+        let new_clip = p.clips.last().expect("clip was added");
         match &new_clip.clip_type {
             ClipType::Captions {
                 language, segments, ..
@@ -228,8 +228,8 @@ mod tests {
                 )),
                 &mut p,
             )
-            .unwrap();
-        stack.undo(&mut p).unwrap();
+            .expect("execute TranslateCaptionsCommand");
+        stack.undo(&mut p).expect("undo TranslateCaptionsCommand");
 
         assert_eq!(p.tracks.len(), tracks_before);
         assert_eq!(p.clips.len(), clips_before);
@@ -249,7 +249,7 @@ mod tests {
                 )),
                 &mut p,
             )
-            .unwrap();
+            .expect("execute TranslateCaptionsCommand");
         assert_eq!(p.clips.len(), clips_before);
     }
 

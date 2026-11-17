@@ -61,7 +61,7 @@ pub fn compute_duck_zones(
     let Some(control_id) = clip.duck_against else {
         return Vec::new();
     };
-    let Some(control) = project.clips.iter().find(|c| c.id == control_id) else {
+    let Some(control) = project.clips().iter().find(|c| c.id == control_id) else {
         return Vec::new();
     };
     if control.id == clip.id
@@ -467,7 +467,7 @@ mod overlay_tests {
             while p.tracks.len() <= c.track_index {
                 p.tracks.push(Track::new("t", TrackKind::Audio));
             }
-            p.add_clip(c.clone());
+            p.add_clip_for_test(c.clone());
         }
         p
     }
@@ -708,13 +708,13 @@ mod overlay_tests {
             let mut project = ProjectState::default();
             project.tracks.push(Track::new("A2", TrackKind::Audio));
             // Keeps the planner happy (it wants a video or text clip).
-            project.add_clip(Clip::new_text("x", 0, 0, 10_000, false));
+            project.add_clip_for_test(Clip::new_text("x", 0, 0, 10_000, false));
             let mut music = Clip::new_audio(&file("music.wav"), 3, 0, 4000);
             let mut ctrl = Clip::new_audio(&file("ctrl.wav"), 5, 1000, 2000);
             music.duck_against = Some(ctrl.id);
             tweak(&mut project, &mut music, &mut ctrl, &file("ctrl.mp4"));
-            project.add_clip(music.clone());
-            project.add_clip(ctrl);
+            project.add_clip_for_test(music.clone());
+            project.add_clip_for_test(ctrl);
 
             let zone = !compute_duck_zones(&music, &project).is_empty();
             let ducks = export_ducks(&project, &dir);

@@ -157,7 +157,7 @@ impl Session {
 
     /// The clips on the timeline.
     pub fn clips(&self) -> &[Clip] {
-        &self.project.clips
+        self.project.clips()
     }
 
     /// The tracks.

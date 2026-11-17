@@ -3028,7 +3028,7 @@ fn compute_xfade_audio_shifts(
     // Pass 1: per-track xfade chains.
     let mut by_track: std::collections::BTreeMap<usize, Vec<&caprust_core::Clip>> =
         std::collections::BTreeMap::new();
-    for c in &project.clips {
+    for c in project.clips() {
         by_track.entry(c.track_index).or_default().push(c);
     }
 
@@ -3075,7 +3075,7 @@ fn compute_xfade_audio_shifts(
     // Pass 2: follower tracks inherit their parent video's shift.
     // Snapshot video shifts for overlap lookup.
     let video_shifts: Vec<(u64, u64, f64)> = project
-        .clips
+        .clips()
         .iter()
         .filter(|c| shifts.contains_key(&c.id))
         .map(|c| {
@@ -3092,7 +3092,7 @@ fn compute_xfade_audio_shifts(
     }
 
     let followers: Vec<uuid::Uuid> = project
-        .clips
+        .clips()
         .iter()
         .filter(|c| !shifts.contains_key(&c.id))
         .filter(|c| {
@@ -3111,7 +3111,7 @@ fn compute_xfade_audio_shifts(
         .collect();
 
     for fid in followers {
-        let Some(fc) = project.clips.iter().find(|c| c.id == fid) else {
+        let Some(fc) = project.clips().iter().find(|c| c.id == fid) else {
             continue;
         };
         let fs = fc.start_time_ms;
@@ -3606,7 +3606,7 @@ pub fn plan_from_project(
     // Those projects fall back to the caller-side output `-ss`.
     let seek_sec = seek_ms as f64 / 1000.0;
     let has_any_transition = project
-        .clips
+        .clips()
         .iter()
         .any(|c| c.transition_in.is_some() || c.transition_out.is_some());
     let do_input_seek = seek_ms > 0 && !has_any_transition;
@@ -3677,14 +3677,14 @@ pub fn plan_from_project(
         // composites above every lane whether it lives on V1 or V2. Without
         // this a sticker dropped on V1 is painted over by whatever is on
         // V2, which is the opposite of what it is for.
-        let z = if project.clips.iter().any(|c| c.overlay.is_some()) {
+        let z = if project.clips().iter().any(|c| c.overlay.is_some()) {
             z as u32 + OVERLAY_Z
         } else {
             z as u32
         };
         let track_kind = project.tracks[t_idx].kind;
         let mut clips: Vec<&caprust_core::Clip> = project
-            .clips
+            .clips()
             .iter()
             .filter(|c| c.track_index == t_idx)
             .collect();
@@ -4070,7 +4070,7 @@ pub fn plan_from_project(
     let mut audio_from_video = false;
     let mut audio_track_clip_count: usize = 0;
 
-    for c in project.clips.iter() {
+    for c in project.clips().iter() {
         let Some(track) = project.tracks.get(c.track_index) else {
             continue;
         };

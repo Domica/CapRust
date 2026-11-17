@@ -348,17 +348,22 @@ impl JobRunner {
                     // (either this probe set it, or the user trimmed),
                     // we leave duration_ms alone.
                     if duration_ms > 0 {
-                        for c in project.clips.iter_mut() {
-                            if c.media_id != Some(media_id) {
-                                continue;
-                            }
-                            let was_placeholder = c.source_duration_ms == 0;
-                            if c.source_duration_ms < duration_ms {
-                                c.source_duration_ms = duration_ms;
-                            }
-                            if was_placeholder && c.duration_ms < duration_ms {
-                                c.duration_ms = duration_ms;
-                            }
+                        let target_ids: Vec<uuid::Uuid> = project
+                            .clips()
+                            .iter()
+                            .filter(|c| c.media_id == Some(media_id))
+                            .map(|c| c.id)
+                            .collect();
+                        for id in target_ids {
+                            project.modify_clip_by_id(id, |c| {
+                                let was_placeholder = c.source_duration_ms == 0;
+                                if c.source_duration_ms < duration_ms {
+                                    c.source_duration_ms = duration_ms;
+                                }
+                                if was_placeholder && c.duration_ms < duration_ms {
+                                    c.duration_ms = duration_ms;
+                                }
+                            });
                         }
                     }
                 }

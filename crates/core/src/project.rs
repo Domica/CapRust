@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectState {
     pub name: String,
-    pub clips: Vec<Clip>,
+    pub(crate) clips: Vec<Clip>,
     pub aspect_ratio: AspectRatio,
     pub base_resolution: u32,
     pub export_settings: ExportSettings,
@@ -54,15 +54,79 @@ impl Default for ProjectState {
 }
 
 impl ProjectState {
-    pub fn add_clip(&mut self, clip: Clip) {
+    pub(crate) fn add_clip(&mut self, clip: Clip) {
         self.clips.push(clip);
     }
 
-    pub fn remove_clip(&mut self, id: uuid::Uuid) -> Option<Clip> {
+    pub(crate) fn remove_clip(&mut self, id: uuid::Uuid) -> Option<Clip> {
         self.clips
             .iter()
             .position(|c| c.id == id)
             .map(|pos| self.clips.remove(pos))
+    }
+
+    /// Read-only access to the clip list. External crates must use this
+    /// instead of accessing the `clips` field directly (it is `pub(crate)`).
+    pub fn clips(&self) -> &[Clip] {
+        &self.clips
+    }
+
+    /// Mutate a single clip by id through a closure. All clip mutations
+    /// from outside the core crate should go through this or similar
+    /// controlled accessors so they can be wrapped in undoable Commands.
+    pub fn modify_clip_by_id<F>(&mut self, id: uuid::Uuid, f: F)
+    where
+        F: FnOnce(&mut Clip),
+    {
+        if let Some(c) = self.clips.iter_mut().find(|c| c.id == id) {
+            f(c);
+        }
+    }
+
+    /// Mutate a single clip by index through a closure.
+    pub fn modify_clip_by_index<F>(&mut self, index: usize, f: F)
+    where
+        F: FnOnce(&mut Clip),
+    {
+        if let Some(c) = self.clips.get_mut(index) {
+            f(c);
+        }
+    }
+
+    /// Filter clips by a keep predicate, removing those that return false.
+    pub fn retain_clips<F>(&mut self, keep: F)
+    where
+        F: FnMut(&Clip) -> bool,
+    {
+        self.clips.retain(keep);
+    }
+
+    /// Mutable borrow of a single clip by id, or None if not found.
+    pub fn clip_by_id_mut(&mut self, id: uuid::Uuid) -> Option<&mut Clip> {
+        self.clips.iter_mut().find(|c| c.id == id)
+    }
+
+    /// Calls `f` with a mutable reference to the clip with the given id
+    /// and a mutable reference to the model registry. Both borrows are
+    /// disjoint (clip borrows `clips`, models borrows `models`), so this
+    /// allows simultaneous access even though both come from `&mut self`.
+    pub fn with_clip_and_models_mut<F, R>(&mut self, id: uuid::Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Clip, &mut crate::models::ModelRegistry) -> R,
+    {
+        let clip = self.clips.iter_mut().find(|c| c.id == id)?;
+        let models = &mut self.models;
+        Some(f(clip, models))
+    }
+
+    /// Test-only: directly push a clip without going through a Command.
+    pub fn add_clip_for_test(&mut self, clip: Clip) {
+        self.clips.push(clip);
+    }
+
+    /// Test-only: clear all clips without going through a Command.
+    pub fn clear_clips_for_test(&mut self) {
+        self.clips.clear();
     }
 
     pub fn project_dimensions(&self) -> (u32, u32) {

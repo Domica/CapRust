@@ -816,7 +816,7 @@ mod tests {
         let out = s.handle_line(call, &mut f.ctx()).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["error"]["code"], crate::auth::UNAUTHORIZED);
-        assert_eq!(f.project.clips.len(), 0);
+        assert_eq!(f.project.clips().len(), 0);
     }
 
     #[test]
@@ -871,7 +871,7 @@ mod tests {
             );
         }
         // And the project is untouched by the refused calls.
-        assert_eq!(f.project.clips.len(), 0);
+        assert_eq!(f.project.clips().len(), 0);
     }
 
     #[test]

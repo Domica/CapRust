@@ -1677,7 +1677,7 @@ mod text_motion_tests {
                 }
             }
         }"#;
-        let ct: ClipType = serde_json::from_str(raw).unwrap();
+        let ct: ClipType = serde_json::from_str(raw).expect("test unwrap");
         match ct {
             ClipType::Captions { motion, effect, .. } => {
                 assert_eq!(motion, TextMotion::default());
@@ -1700,13 +1700,13 @@ mod text_motion_tests {
                 amount: 0.5,
             });
         }
-        let j = serde_json::to_string(&c).unwrap();
-        let back: Clip = serde_json::from_str(&j).unwrap();
+        let j = serde_json::to_string(&c).expect("test unwrap");
+        let back: Clip = serde_json::from_str(&j).expect("test unwrap");
         match back.clip_type {
             ClipType::Captions { motion, effect, .. } => {
                 assert_eq!(motion.x, 0.25);
                 assert_eq!(motion.scale, 1.5);
-                let e = effect.unwrap();
+                let e = effect.expect("test unwrap");
                 assert_eq!(e.kind, TextEffectKind::Pulse);
             }
             _ => panic!("expected Captions"),
@@ -1751,15 +1751,15 @@ mod text_motion_tests {
     #[test]
     fn text_effect_kind_serde_is_snake_case() {
         assert_eq!(
-            serde_json::to_string(&TextEffectKind::Blink).unwrap(),
+            serde_json::to_string(&TextEffectKind::Blink).expect("test unwrap"),
             "\"blink\""
         );
         assert_eq!(
-            serde_json::to_string(&TextEffectKind::Pulse).unwrap(),
+            serde_json::to_string(&TextEffectKind::Pulse).expect("test unwrap"),
             "\"pulse\""
         );
         assert_eq!(
-            serde_json::to_string(&TextEffectKind::ColorCycle).unwrap(),
+            serde_json::to_string(&TextEffectKind::ColorCycle).expect("test unwrap"),
             "\"color_cycle\""
         );
     }
@@ -1783,8 +1783,8 @@ mod text_motion_tests {
                 amount: 0.5,
             }),
         };
-        let s = serde_json::to_string(&ct).unwrap();
-        let back: ClipType = serde_json::from_str(&s).unwrap();
+        let s = serde_json::to_string(&ct).expect("test unwrap");
+        let back: ClipType = serde_json::from_str(&s).expect("test unwrap");
         assert_eq!(back, ct);
     }
 }
@@ -1809,14 +1809,14 @@ mod chroma_key_tests {
             blend: 0.05,
             spill_suppression: false,
         };
-        let j = serde_json::to_string(&s).unwrap();
-        let back: ChromaKeySpec = serde_json::from_str(&j).unwrap();
+        let j = serde_json::to_string(&s).expect("test unwrap");
+        let back: ChromaKeySpec = serde_json::from_str(&j).expect("test unwrap");
         assert_eq!(s, back);
     }
 
     #[test]
     fn empty_object_is_defaults() {
-        let back: ChromaKeySpec = serde_json::from_str("{}").unwrap();
+        let back: ChromaKeySpec = serde_json::from_str("{}").expect("test unwrap");
         assert_eq!(back.key_color, [0, 255, 0]);
     }
 }
