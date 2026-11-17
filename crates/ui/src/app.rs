@@ -481,6 +481,8 @@ pub struct CapRustApp {
     pub bg_removal_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::BgRemovalEvent>>,
     /// Job id for the background-removal bar entry.
     pub bg_removal_job_id: Option<u64>,
+    /// Cooperative cancellation token for the bg-removal job (1.5).
+    pub bg_removal_cancel: Option<crate::media_jobs::CancellationToken>,
     /// Receiver for an in-flight beat analysis. Single result message.
     pub beat_rx: Option<std::sync::mpsc::Receiver<Result<crate::media_jobs::BeatResult, String>>>,
     /// Job id for the beat bar entry.
@@ -495,6 +497,8 @@ pub struct CapRustApp {
     pub anon_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::AnonEvent>>,
     /// Job id for the anonymize bar entry.
     pub anon_job_id: Option<u64>,
+    /// Cooperative cancellation token for the anon job (1.5).
+    pub anon_cancel: Option<crate::media_jobs::CancellationToken>,
     /// Relative mask path (e.g. "cache/anon/<clip>.mkv") for the
     /// in-flight anonymize job.
     pub anon_rel_path: Option<String>,
@@ -515,6 +519,8 @@ pub struct CapRustApp {
     pub segment_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
     /// Job id for the segment bar entry.
     pub segment_job_id: Option<u64>,
+    /// Cooperative cancellation token for the segment job (1.5).
+    pub segment_cancel: Option<crate::media_jobs::CancellationToken>,
     /// The clip ID currently being processed by the segment job.
     pub segment_job_clip_id: Option<uuid::Uuid>,
     /// The click coordinates (click_x, click_y) that triggered the segment job.
@@ -527,6 +533,8 @@ pub struct CapRustApp {
     pub inpaint_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
     /// Job id for the inpaint bar entry.
     pub inpaint_job_id: Option<u64>,
+    /// Cooperative cancellation token for the inpaint job (1.5).
+    pub inpaint_cancel: Option<crate::media_jobs::CancellationToken>,
     /// The clip ID currently being processed by the inpaint job.
     pub inpaint_clip_id: Option<uuid::Uuid>,
     /// Modal state for entering narration text.
@@ -1669,11 +1677,13 @@ impl CapRustApp {
             reframe_job_id: None,
             bg_removal_rx: None,
             bg_removal_job_id: None,
+            bg_removal_cancel: None,
             beat_rx: None,
             beat_job_id: None,
             bg_removal_rel_path: None,
             anon_rx: None,
             anon_job_id: None,
+            anon_cancel: None,
             anon_rel_path: None,
             stab_rx: None,
             stab_job_id: None,
@@ -1681,11 +1691,13 @@ impl CapRustApp {
             save_frame_rx: None,
             segment_rx: None,
             segment_job_id: None,
+            segment_cancel: None,
             segment_job_clip_id: None,
             segment_job_click: None,
             segment_mask_frame: None,
             inpaint_rx: None,
             inpaint_job_id: None,
+            inpaint_cancel: None,
             inpaint_clip_id: None,
             narration_input: Default::default(),
             update_available: None,
@@ -4351,6 +4363,7 @@ impl CapRustApp {
                     if let Some(id) = self.bg_removal_job_id.take() {
                         self.finish_job(id);
                     }
+                    self.bg_removal_cancel = None;
                     still_live = false;
                 }
                 Ok(crate::media_jobs::BgRemovalEvent::Failed(msg)) => {
@@ -4360,6 +4373,17 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.bg_removal_rel_path = None;
+                    self.bg_removal_cancel = None;
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::BgRemovalEvent::Cancelled { clip_id }) => {
+                    tracing::info!("bg-removal: job cancelled for clip {clip_id}");
+                    self.toast(tr("toast-bg-removal-cancelled"));
+                    if let Some(id) = self.bg_removal_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.bg_removal_rel_path = None;
+                    self.bg_removal_cancel = None;
                     still_live = false;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -4440,6 +4464,7 @@ impl CapRustApp {
                     if let Some(id) = self.anon_job_id.take() {
                         self.finish_job(id);
                     }
+                    self.anon_cancel = None;
                     still_live = false;
                 }
                 Ok(crate::media_jobs::AnonEvent::Failed(msg)) => {
@@ -4449,6 +4474,17 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.anon_rel_path = None;
+                    self.anon_cancel = None;
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::AnonEvent::Cancelled { clip_id }) => {
+                    tracing::info!("anon: job cancelled for clip {clip_id}");
+                    self.toast(tr("toast-anon-cancelled"));
+                    if let Some(id) = self.anon_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.anon_rel_path = None;
+                    self.anon_cancel = None;
                     still_live = false;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -4553,6 +4589,7 @@ impl CapRustApp {
         let rel = format!("cache/masks/{clip_id}.mkv");
         let abs = caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
 
+        let cancel = crate::media_jobs::CancellationToken::new();
         let req = crate::media_jobs::BgRemovalRequest {
             clip_id,
             source_path,
@@ -4562,6 +4599,7 @@ impl CapRustApp {
             model_path,
             mask_output: abs,
             max_side: 480,
+            cancel: cancel.clone(),
         };
         let rx = crate::media_jobs::spawn_bg_removal_job(
             std::path::PathBuf::from(ffmpeg),
@@ -4570,6 +4608,7 @@ impl CapRustApp {
         );
         let job_id = self.begin_job(JobKind::BgRemoval, tr("job-bg-removal"));
         self.bg_removal_job_id = Some(job_id);
+        self.bg_removal_cancel = Some(cancel);
         self.bg_removal_rx = Some(rx);
         // Remember the relative path so drain can store it in the clip
         // without recomputing. Keyed on the job id because at most one
@@ -4742,6 +4781,7 @@ impl CapRustApp {
             caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
 
         // Phase 1: MobileSAM segment job
+        let segment_cancel = crate::media_jobs::CancellationToken::new();
         let segment_req = crate::media_jobs::SegmentRequest {
             clip_id,
             source_path: source_path.clone(),
@@ -4754,6 +4794,7 @@ impl CapRustApp {
             click_x: 0.5, // Will be updated from preview click
             click_y: 0.5,
             max_side: 480,
+            cancel: segment_cancel.clone(),
         };
         let segment_rx = crate::media_jobs::spawn_segment_job(
             std::path::PathBuf::from(ffmpeg.clone()),
@@ -4762,6 +4803,7 @@ impl CapRustApp {
         );
 
         // Phase 2: LaMa inpaint job (will be started after segment job completes)
+        let inpaint_cancel = crate::media_jobs::CancellationToken::new();
         let inpaint_req = crate::media_jobs::InpaintRequest {
             clip_id,
             source_path,
@@ -4772,6 +4814,7 @@ impl CapRustApp {
             mask_path: mask_output,
             output_path: inpaint_output,
             max_side: 512,
+            cancel: inpaint_cancel.clone(),
         };
         let inpaint_rx = crate::media_jobs::spawn_inpaint_job(
             std::path::PathBuf::from(ffmpeg),
@@ -4782,8 +4825,10 @@ impl CapRustApp {
         let job_id = self.begin_job(JobKind::ObjectRemoval, tr("job-object-removal"));
         self.segment_job_id = Some(job_id);
         self.segment_rx = Some(segment_rx);
+        self.segment_cancel = Some(segment_cancel);
         self.inpaint_job_id = Some(job_id);
         self.inpaint_rx = Some(inpaint_rx);
+        self.inpaint_cancel = Some(inpaint_cancel);
         self.toast(tr("toast-object-removal-started"));
         tracing::info!("object-removal: job spawned for clip {clip_id}");
     }
@@ -4896,6 +4941,7 @@ impl CapRustApp {
         }
         let abs = caprust_core::cache::anon_path(std::path::Path::new(&project_path), clip_id);
 
+        let cancel = crate::media_jobs::CancellationToken::new();
         let req = crate::media_jobs::AnonRequest {
             clip_id,
             source_path,
@@ -4906,6 +4952,7 @@ impl CapRustApp {
             use_scrfd,
             mask_output: abs,
             max_side: 480,
+            cancel: cancel.clone(),
         };
         let rx = crate::media_jobs::spawn_anon_job(
             std::path::PathBuf::from(ffmpeg),
@@ -4915,6 +4962,7 @@ impl CapRustApp {
         let job_id = self.begin_job(JobKind::Anon, tr("job-anon"));
         self.anon_job_id = Some(job_id);
         self.anon_rx = Some(rx);
+        self.anon_cancel = Some(cancel);
         self.anon_rel_path = Some(rel);
         self.toast(tr("toast-anon-started"));
     }
@@ -5213,6 +5261,7 @@ impl CapRustApp {
                     if let Some(id) = self.segment_job_id.take() {
                         self.finish_job(id);
                     }
+                    self.segment_cancel = None;
                     still_live = false;
                 }
                 Ok(crate::media_jobs::SegmentEvent::Failed(msg)) => {
@@ -5223,6 +5272,18 @@ impl CapRustApp {
                     }
                     self.segment_job_clip_id = None;
                     self.segment_job_click = None;
+                    self.segment_cancel = None;
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::SegmentEvent::Cancelled { clip_id }) => {
+                    tracing::info!("segment: job cancelled for clip {clip_id}");
+                    self.toast(tr("toast-bg-removal-cancelled"));
+                    if let Some(id) = self.segment_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.segment_job_clip_id = None;
+                    self.segment_job_click = None;
+                    self.segment_cancel = None;
                     still_live = false;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -5326,6 +5387,7 @@ impl CapRustApp {
         let output_path =
             caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
 
+        let cancel = crate::media_jobs::CancellationToken::new();
         let req = crate::media_jobs::InpaintRequest {
             clip_id,
             source_path,
@@ -5336,6 +5398,7 @@ impl CapRustApp {
             mask_path,
             output_path,
             max_side: 512, // LaMa runs at 512x512 internally
+            cancel: cancel.clone(),
         };
         let rx = crate::media_jobs::spawn_inpaint_job(
             std::path::PathBuf::from(ffmpeg),
@@ -5345,6 +5408,7 @@ impl CapRustApp {
         let job_id = self.begin_job(JobKind::ObjectRemoval, tr("job-object-removal-inpaint"));
         self.inpaint_job_id = Some(job_id);
         self.inpaint_rx = Some(rx);
+        self.inpaint_cancel = Some(cancel);
         self.inpaint_clip_id = Some(clip_id);
         self.toast(tr("toast-inpaint-started"));
         tracing::info!("Started LaMa inpainting job for clip {}", clip_id);
@@ -5408,6 +5472,7 @@ impl CapRustApp {
                     if let Some(id) = self.inpaint_job_id.take() {
                         self.finish_job(id);
                     }
+                    self.inpaint_cancel = None;
                     // Clear mask overlay
                     self.preview_player.clear_mask();
                     self.segment_mask_frame = None;
@@ -5420,7 +5485,20 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.inpaint_clip_id = None;
+                    self.inpaint_cancel = None;
                     // Clear mask overlay on failure too
+                    self.preview_player.clear_mask();
+                    self.segment_mask_frame = None;
+                    still_live = false;
+                }
+                Ok(crate::media_jobs::InpaintEvent::Cancelled { clip_id }) => {
+                    tracing::info!("inpaint: job cancelled for clip {clip_id}");
+                    self.toast(tr("toast-inpaint-cancelled"));
+                    if let Some(id) = self.inpaint_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.inpaint_clip_id = None;
+                    self.inpaint_cancel = None;
                     self.preview_player.clear_mask();
                     self.segment_mask_frame = None;
                     still_live = false;
@@ -6468,6 +6546,47 @@ impl CapRustApp {
         self.jobs.retain(|j| j.id != id);
     }
 
+    /// Cooperatively cancel a running job by kind. Looks up the job's
+    /// `JobKind` and calls `cancel()` on the matching `CancellationToken`.
+    /// No-op if the job or token is already gone (1.5).
+    fn cancel_job_by_id(&mut self, id: u64) {
+        let kind = self.jobs.iter().find(|j| j.id == id).map(|j| j.kind);
+        let Some(kind) = kind else {
+            return;
+        };
+        match kind {
+            JobKind::BgRemoval => {
+                if let Some(cancel) = &self.bg_removal_cancel {
+                    cancel.cancel();
+                    tracing::info!("bg-removal: cancel requested for job {id}");
+                }
+            }
+            JobKind::ObjectRemoval => {
+                if let Some(cancel) = &self.segment_cancel {
+                    cancel.cancel();
+                }
+                if let Some(cancel) = &self.inpaint_cancel {
+                    cancel.cancel();
+                }
+                tracing::info!("object-removal: cancel requested for job {id}");
+            }
+            JobKind::Anon => {
+                if let Some(cancel) = &self.anon_cancel {
+                    cancel.cancel();
+                    tracing::info!("anon: cancel requested for job {id}");
+                }
+            }
+            JobKind::Caption
+            | JobKind::Narration
+            | JobKind::Export
+            | JobKind::Reframe
+            | JobKind::Beat
+            | JobKind::Stab => {
+                // No cancellation token for these job kinds.
+            }
+        }
+    }
+
     /// Thin bar above the timeline listing live background jobs.
     /// Auto-hides when the list is empty.
     fn show_jobs_bar(&mut self, ctx: &egui::Context) {
@@ -6494,6 +6613,7 @@ impl CapRustApp {
                     );
                     ui.separator();
 
+                    let mut cancel_ids: Vec<u64> = Vec::new();
                     for j in &self.jobs {
                         ui.label(
                             egui::RichText::new(&j.label)
@@ -6526,7 +6646,19 @@ impl CapRustApp {
                                 .monospace()
                                 .color(egui::Color32::from_gray(150)),
                         );
+                        // Cancel button for job kinds that support
+                        // cooperative cancellation (1.5).
+                        let can_cancel = matches!(
+                            j.kind,
+                            JobKind::BgRemoval | JobKind::ObjectRemoval | JobKind::Anon
+                        );
+                        if can_cancel && ui.button("✕").on_hover_text(tr("cancel")).clicked() {
+                            cancel_ids.push(j.id);
+                        }
                         ui.add_space(space::L);
+                    }
+                    for id in cancel_ids {
+                        self.cancel_job_by_id(id);
                     }
                     ctx.request_repaint();
                 });
@@ -12860,6 +12992,8 @@ impl CapRustApp {
                                         }
                                     };
 
+                                    let segment_cancel =
+                                        crate::media_jobs::CancellationToken::new();
                                     let req = crate::media_jobs::SegmentRequest {
                                         clip_id,
                                         source_path,
@@ -12872,6 +13006,7 @@ impl CapRustApp {
                                         click_x,
                                         click_y,
                                         max_side: 480,
+                                        cancel: segment_cancel.clone(),
                                     };
 
                                     let rx = crate::media_jobs::spawn_segment_job(
@@ -12886,6 +13021,7 @@ impl CapRustApp {
 
                                     // Store the receiver to poll for progress
                                     self.segment_rx = Some(rx);
+                                    self.segment_cancel = Some(segment_cancel);
                                     self.segment_job_clip_id = Some(clip_id);
                                     self.segment_job_click = Some((click_x, click_y));
                                     let job_id = self.begin_job(

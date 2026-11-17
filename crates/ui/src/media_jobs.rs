@@ -3,9 +3,53 @@
 use caprust_core::media::{MediaItem, MediaKind};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
+
+/// Cooperative cancellation flag shared between the UI thread (which
+/// calls [`cancel`](CancellationToken::cancel)) and a worker loop (which
+/// calls [`is_cancelled`](CancellationToken::is_cancelled) before each
+/// frame). Cheap `Relaxed` atomics are sufficient: the flag is a hint,
+/// never a synchronization point for other data.
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Run `body` once per frame index `0..total`, stopping early (and
+/// returning the number of frames actually processed) when `cancel` is
+/// set. A `body` error aborts immediately and is propagated. Pulling
+/// the loop into one helper makes the mid-loop cancellation behaviour
+/// directly unit-testable without a real model or ffmpeg process.
+#[allow(dead_code)]
+fn run_cancellable_frames<E, F>(
+    total: usize,
+    cancel: &CancellationToken,
+    mut body: F,
+) -> Result<usize, E>
+where
+    F: FnMut(usize) -> Result<(), E>,
+{
+    for i in 0..total {
+        if cancel.is_cancelled() {
+            return Ok(i);
+        }
+        body(i)?;
+    }
+    Ok(total)
+}
 
 // --- 1.6: process-wide ONNX model cache ---------------------------------
 //
@@ -981,6 +1025,8 @@ pub enum BgRemovalEvent {
     },
     /// Terminal failure. `reason` is a user-readable string.
     Failed(String),
+    /// Terminal cancellation: the user stopped the job mid-way.
+    Cancelled { clip_id: uuid::Uuid },
 }
 
 /// Progress event stride: emit every Nth frame. A 30s / 30fps clip is
@@ -1012,6 +1058,9 @@ pub struct BgRemovalRequest {
     /// than a bare 320 without dominating memory (30 s / 30 fps at
     /// 480p is ~350 MB of frame buffers).
     pub max_side: u32,
+    /// Cooperative cancellation flag. The UI keeps a clone and can stop
+    /// the frame loop early (1.5).
+    pub cancel: CancellationToken,
 }
 
 /// Spawn a background thread that runs the full background-removal
@@ -1118,6 +1167,12 @@ fn run_bg_removal_inner(
 
     // 5. Per-frame inference + write.
     for (i, frame) in frames.iter().enumerate() {
+        if req.cancel.is_cancelled() {
+            let _ = tx.send(BgRemovalEvent::Cancelled {
+                clip_id: req.clip_id,
+            });
+            return Ok(());
+        }
         let mask = model
             .infer_mask(&frame.rgb, frame.width, frame.height)
             .map_err(|e| format!("infer frame {i}: {e}"))?;
@@ -1169,6 +1224,8 @@ pub enum SegmentEvent {
     },
     /// Terminal failure. `reason` is a user-readable string.
     Failed(String),
+    /// Terminal cancellation: the user stopped the job mid-way.
+    Cancelled { clip_id: uuid::Uuid },
 }
 
 /// Request for a MobileSAM segmentation job. Everything the worker needs
@@ -1198,6 +1255,8 @@ pub struct SegmentRequest {
     /// Downscale the longer side of each extracted frame to at most
     /// this before running inference.
     pub max_side: u32,
+    /// Cooperative cancellation flag (1.5).
+    pub cancel: CancellationToken,
 }
 
 /// Spawn a background thread that runs the full MobileSAM segmentation
@@ -1301,6 +1360,12 @@ fn run_segment_inner(
 
     // 5. Per-frame inference + write.
     for (i, frame) in frames.iter().enumerate() {
+        if req.cancel.is_cancelled() {
+            let _ = tx.send(SegmentEvent::Cancelled {
+                clip_id: req.clip_id,
+            });
+            return Ok(());
+        }
         let mask = model
             .segment_point(
                 &frame.rgb,
@@ -1358,6 +1423,8 @@ pub enum InpaintEvent {
     },
     /// Terminal failure. `reason` is a user-readable string.
     Failed(String),
+    /// Terminal cancellation: the user stopped the job mid-way.
+    Cancelled { clip_id: uuid::Uuid },
 }
 
 /// Request for a LaMa inpainting job. Everything the worker needs
@@ -1383,6 +1450,8 @@ pub struct InpaintRequest {
     /// this before running inference. LaMa runs at 512x512
     /// internally.
     pub max_side: u32,
+    /// Cooperative cancellation flag (1.5).
+    pub cancel: CancellationToken,
 }
 
 /// Spawn a background thread that runs the full LaMa inpainting
@@ -1493,6 +1562,12 @@ fn run_inpaint_inner(
 
     // 6. Per-frame inpainting + write.
     for (i, (frame, mask)) in frames.iter().zip(mask_frames.iter()).enumerate() {
+        if req.cancel.is_cancelled() {
+            let _ = tx.send(InpaintEvent::Cancelled {
+                clip_id: req.clip_id,
+            });
+            return Ok(());
+        }
         let inpainted = model
             .inpaint(&frame.rgb, &mask.gray, frame.width, frame.height)
             .map_err(|e| format!("inpaint frame {i}: {e}"))?;
@@ -1555,6 +1630,8 @@ pub struct AnonRequest {
     /// internally, so 480 keeps box precision without dominating
     /// memory.
     pub max_side: u32,
+    /// Cooperative cancellation flag (1.5).
+    pub cancel: CancellationToken,
 }
 
 /// Progress events emitted by a face-anonymize job. Same shape as
@@ -1573,6 +1650,8 @@ pub enum AnonEvent {
     },
     /// Terminal failure. `reason` is a user-readable string.
     Failed(String),
+    /// Terminal cancellation: the user stopped the job mid-way.
+    Cancelled { clip_id: uuid::Uuid },
 }
 
 /// Spawn a background thread that runs the full anonymize pipeline.
@@ -1671,6 +1750,12 @@ fn run_anon_inner(
 
     // 5. Per-frame detection + box paint.
     for (i, frame) in frames.iter().enumerate() {
+        if req.cancel.is_cancelled() {
+            let _ = tx.send(AnonEvent::Cancelled {
+                clip_id: req.clip_id,
+            });
+            return Ok(());
+        }
         let boxes: Vec<(f32, f32, f32, f32)> = match &detector {
             Detector::Scrfd(d) => d
                 .detect(&frame.rgb, frame.width, frame.height)
@@ -2208,6 +2293,91 @@ mod model_cache_tests {
         })
         .unwrap();
         assert_eq!(*v, "s");
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::{run_cancellable_frames, CancellationToken};
+    use std::sync::Arc;
+
+    #[test]
+    fn cancel_token_starts_false_and_flips_to_true() {
+        let t = CancellationToken::new();
+        assert!(!t.is_cancelled());
+        t.cancel();
+        assert!(t.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_token_clones_share_state() {
+        let a = CancellationToken::new();
+        let b = a.clone();
+        assert!(!b.is_cancelled());
+        a.cancel();
+        assert!(b.is_cancelled());
+    }
+
+    #[test]
+    fn cancellable_frames_stops_early_on_cancel() {
+        let total = 100;
+        let cancel = CancellationToken::new();
+        let processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let p = processed.clone();
+
+        let result = run_cancellable_frames(total, &cancel, |i| {
+            p.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // Cancel after processing frame 5 (i == 5)
+            if i == 5 {
+                cancel.cancel();
+            }
+            Ok::<(), ()>(())
+        });
+
+        assert_eq!(result, Ok(6), "should process frames 0..=5 then stop");
+        assert_eq!(processed.load(std::sync::atomic::Ordering::SeqCst), 6);
+    }
+
+    #[test]
+    fn cancellable_frames_completes_all_when_not_cancelled() {
+        let total = 10;
+        let cancel = CancellationToken::new();
+        let processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let p = processed.clone();
+
+        let result = run_cancellable_frames(total, &cancel, |i| {
+            let _ = i;
+            p.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok::<(), ()>(())
+        });
+
+        assert_eq!(result, Ok(10));
+        assert_eq!(processed.load(std::sync::atomic::Ordering::SeqCst), 10);
+    }
+
+    #[test]
+    fn cancellable_frames_stops_immediately_when_already_cancelled() {
+        let total = 100;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let p = processed.clone();
+
+        let result = run_cancellable_frames(total, &cancel, |_| {
+            p.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok::<(), ()>(())
+        });
+
+        assert_eq!(result, Ok(0));
+        assert_eq!(processed.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn cancellable_frames_propagates_body_error() {
+        let total = 100;
+        let cancel = CancellationToken::new();
+        let result: Result<usize, &str> = run_cancellable_frames(total, &cancel, |_| Err("boom"));
+        assert_eq!(result, Err("boom"));
     }
 }
 
