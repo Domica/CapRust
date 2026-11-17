@@ -12656,7 +12656,7 @@ impl CapRustApp {
                     ) {
                         Ok(plan) => {
                             self.report_skipped(plan.skipped.missing_source);
-                            match PreviewRenderer::spawn(
+                            match PreviewRenderer::spawn_still(
                                 std::path::Path::new(&ffmpeg),
                                 &plan,
                                 playhead,
@@ -12666,7 +12666,7 @@ impl CapRustApp {
                             ) {
                                 Ok(r) => {
                                     tracing::info!(
-                                        "preview: paused one-shot render from {}ms",
+                                        "preview: paused one-shot still render from {}ms",
                                         playhead
                                     );
                                     self.preview_renderer = Some(r);

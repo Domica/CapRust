@@ -253,6 +253,42 @@ impl PreviewRenderer {
         height: u32,
         fps: f64,
     ) -> Result<Self> {
+        Self::spawn_inner(ffmpeg, plan, start_ms, width, height, fps, false)
+    }
+
+    /// Render exactly one frame through the full *video* filtergraph.
+    ///
+    /// A paused edit used to go through `spawn` — a continuous playback
+    /// renderer with an audio chain, a PCM file, an A/V delay queue
+    /// (up to `av_delay_ms()`) and fps throttling — only to kill it
+    /// after the first frame arrived. All of that is pure latency for
+    /// a single still (6.6): on a non-seek-optimized plan the delay
+    /// queue alone held the one frame back for ~650 ms.
+    ///
+    /// `one_shot` keeps the identical video filtergraph (same pixels)
+    /// but drops the audio output, uses `-frames:v 1` so ffmpeg exits
+    /// on its own, and forwards the single frame immediately with no
+    /// delay and no throttle.
+    pub fn spawn_still(
+        ffmpeg: &Path,
+        plan: &RenderPlan,
+        start_ms: u64,
+        width: u32,
+        height: u32,
+        fps: f64,
+    ) -> Result<Self> {
+        Self::spawn_inner(ffmpeg, plan, start_ms, width, height, fps, true)
+    }
+
+    fn spawn_inner(
+        ffmpeg: &Path,
+        plan: &RenderPlan,
+        start_ms: u64,
+        width: u32,
+        height: u32,
+        fps: f64,
+        one_shot: bool,
+    ) -> Result<Self> {
         if matches!(
             crate::disk::free_bytes(&std::env::temp_dir()),
             Some(free) if free < crate::disk::PREVIEW_MIN_FREE_BYTES
@@ -263,7 +299,17 @@ impl PreviewRenderer {
         let h = height.max(2) & !1;
         let fps = if fps > 1.0 { fps } else { 30.0 };
 
-        let (fg, v_label, a_label) = plan.build_filtergraph()?;
+        // A still maps only the video chain. The full filtergraph also
+        // emits `[a_final]`; leaving it unbound makes ffmpeg fail with
+        // EINVAL, so the audio chain must not be built at all here.
+        // build_video_only_filtergraph uses the same build_video_chain,
+        // hence identical pixels to playback.
+        let (fg, v_label, a_label) = if one_shot {
+            let (fg, v_label) = plan.build_video_only_filtergraph()?;
+            (fg, v_label, None)
+        } else {
+            plan.build_filtergraph()?
+        };
 
         let mut args: Vec<String> = vec![
             "-y".into(),
@@ -307,9 +353,17 @@ impl PreviewRenderer {
         args.push(format!("{w}x{h}"));
         args.push("-r".into());
         args.push(format!("{fps:.6}"));
+        if one_shot {
+            // Stop after a single frame so ffmpeg exits on its own. The
+            // UI can then drop the renderer without `kill()`/wait and
+            // without waiting for an 8 s deadline to expire.
+            args.push("-frames:v".into());
+            args.push("1".into());
+        }
         args.push("-".into());
 
         // ---- OUTPUT 2: audio PCM file (optional) ----
+        // A one-shot still never has an audio label, so this is skipped.
         let mut pcm_path: Option<PathBuf> = None;
         if let Some(a) = &a_label {
             let path = std::env::temp_dir().join(format!(
@@ -398,7 +452,8 @@ impl PreviewRenderer {
         // offset 0) has no cpal startup to compensate for, and the
         // video is already seeked at the input level. Applying the
         // fixed delay here just pushes video 650 ms behind audio.
-        let av_delay = if plan.seek_optimized {
+        // A one-shot still has no audio at all, so it never delays.
+        let av_delay = if one_shot || plan.seek_optimized {
             0
         } else {
             av_delay_ms()
@@ -410,6 +465,17 @@ impl PreviewRenderer {
 
         std::thread::spawn(move || {
             let mut buf = vec![0u8; frame_size];
+
+            if one_shot {
+                // Exactly one frame, no A/V pairing, no fps pacing.
+                // Move it out instead of cloning -- this is the whole
+                // point of the still path (6.6).
+                if stdout.read_exact(&mut buf).is_ok() {
+                    let _ = tx.send(buf);
+                }
+                return;
+            }
+
             // Delayed forward queue. See AV_OUTPUT_DELAY_MS docs above.
             // During the first `av_delay` ms after the first decoded frame
             // we accumulate frames here without forwarding; after that we
@@ -469,8 +535,13 @@ impl PreviewRenderer {
         });
 
         tracing::info!(
-            "preview: renderer spawn from {start_ms}ms ({} inputs @ {fps:.2}fps)",
-            plan.inputs.len()
+            "preview: renderer spawn from {start_ms}ms ({} inputs @ {fps:.2}fps, {})",
+            plan.inputs.len(),
+            if one_shot {
+                "one-shot still"
+            } else {
+                "continuous"
+            }
         );
 
         // Take ownership of every ASS guard the filtergraph references so the
@@ -519,5 +590,61 @@ impl Drop for PreviewRenderer {
         if let Some(p) = &self.pcm_path {
             let _ = std::fs::remove_file(p);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::export::RateMode;
+    use crate::export_graph::plan_from_project;
+    use caprust_core::project::VideoEncoder;
+
+    /// 6.6: the paused one-shot renders through `build_video_only_filtergraph`
+    /// instead of the full playback graph. Both must produce the *same*
+    /// video chain -- only the audio chain may differ. If they diverge,
+    /// a paused edit would show different pixels from playback.
+    #[test]
+    fn one_shot_video_graph_matches_playback_video_graph() {
+        let dir = std::env::temp_dir().join(format!("caprust-graph-parity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The planner skips video clips whose source is not a file, so
+        // give it a real (empty is fine -- no ffmpeg is run here) path.
+        let source = dir.join("source.mp4");
+        std::fs::write(&source, b"").unwrap();
+        let mut project = caprust_core::ProjectState::default();
+        project.clips.push(caprust_core::Clip::new_video(
+            source.to_string_lossy().as_ref(),
+            0,
+            0,
+            2000,
+        ));
+        let plan = plan_from_project(
+            &project,
+            64,
+            64,
+            24,
+            1,
+            18,
+            RateMode::Vbr,
+            8000,
+            "veryfast",
+            &dir,
+            0,
+            VideoEncoder::H264Cpu,
+        )
+        .expect("plan builds with an empty project");
+
+        let (still_fg, still_label) = plan.build_video_only_filtergraph().expect("video graph");
+        let (full_fg, full_label, _audio) = plan.build_filtergraph().expect("full graph");
+
+        assert_eq!(still_label, full_label, "video output label diverged");
+        // The full graph is the video chain followed by the audio chain;
+        // the still graph is that same video chain with its trailing ';'
+        // removed. So it must be a prefix of the full graph.
+        assert!(
+            full_fg.starts_with(&still_fg),
+            "still graph is not the playback video chain:\nstill={still_fg}\nfull={full_fg}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
