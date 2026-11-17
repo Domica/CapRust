@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
-use crate::onnx_common::{bilinear_rgb, MEAN, STD};
+use crate::onnx_common::{bilinear_rgb, first_output, MEAN, STD};
 
 /// Fixed input resolution of the LaMa ONNX model.
 pub const LAMA_INPUT_SIZE: u32 = 512;
@@ -107,7 +107,7 @@ impl Lama {
             .map_err(|e| anyhow!("LaMa inference: {:?}", e))?;
 
         // First output is inpainted image [1, 3, 512, 512]
-        let output = outputs[0].clone().into_tensor();
+        let output = first_output(outputs, "LaMa")?.into_tensor();
         Ok(output)
     }
 

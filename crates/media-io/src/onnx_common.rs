@@ -11,9 +11,26 @@
 //! and collapsing them would require rewriting every `.run()` call.
 //! Unifying the loaders themselves is a separate, higher-risk step.
 
+use anyhow::{anyhow, Result};
+use tract_onnx::prelude::TValue;
+
 /// ImageNet normalization constants used by u2netp / LaMa / MobileSAM.
 pub const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 pub const STD: [f32; 3] = [0.229, 0.224, 0.225];
+
+/// Return the first model output, or a descriptive error if the model
+/// produced none. Several loaders index `outputs[0]` unguarded; a model
+/// file with an unexpected output signature otherwise panics on the UI
+/// thread (1.4).
+pub fn first_output<I>(outputs: I, model: &str) -> Result<TValue>
+where
+    I: IntoIterator<Item = TValue>,
+{
+    outputs
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("{model} produced no outputs; check the model file"))
+}
 
 /// Bilinear sample an RGB image at floating-point `(sx, sy)`.
 ///
@@ -115,5 +132,12 @@ mod tests {
         // including samples just outside the nominal range.
         let rgb = [10u8, 20, 30];
         assert_eq!(bilinear_rgb(&rgb, 1, 1, -1.0, 2.0), (10.0, 20.0, 30.0));
+    }
+
+    #[test]
+    fn first_output_rejects_empty_model_output() {
+        let err = first_output(Vec::new(), "LaMa").unwrap_err().to_string();
+        assert!(err.contains("LaMa"), "error must name the model: {err}");
+        assert!(err.contains("no outputs"), "error must explain: {err}");
     }
 }

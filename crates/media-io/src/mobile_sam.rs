@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use tract_onnx::prelude::*;
 
-use crate::onnx_common::{bilinear_rgb, upscale_mask, MEAN, STD};
+use crate::onnx_common::{bilinear_rgb, first_output, upscale_mask, MEAN, STD};
 
 /// Fixed input resolution of the MobileSAM ONNX model (image encoder).
 pub const MOBILE_SAM_INPUT_SIZE: u32 = 1024;
@@ -142,7 +142,7 @@ impl MobileSam {
             .map_err(|e| anyhow!("encoder inference: {:?}", e))?;
 
         // Get image embedding (first output) - return TValue directly
-        Ok(outputs[0].clone())
+        first_output(outputs, "MobileSAM encoder")
     }
 
     /// Prepare point prompt for decoder.
@@ -190,7 +190,7 @@ impl MobileSam {
             .map_err(|e| anyhow!("decoder inference: {:?}", e))?;
 
         // First output is mask logits [1, 1, 256, 256]
-        Ok(outputs[0].clone())
+        first_output(outputs, "MobileSAM decoder")
     }
 
     /// Post-process mask logits to binary mask at original resolution.
