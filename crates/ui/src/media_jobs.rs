@@ -1,8 +1,74 @@
 //! Background jobs: ffprobe + thumbnail extraction after import.
 
 use caprust_core::media::{MediaItem, MediaKind};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
+
+// --- 1.6: process-wide ONNX model cache ---------------------------------
+//
+// Parsing + optimizing an ONNX graph takes far longer than a single
+// inference, and AI jobs used to reload the same model from disk on
+// every invocation. tract's `SimplePlan::run(self: &Arc<Self>)` spawns a
+// fresh per-call state, so one loaded model can safely serve concurrent
+// inference. Cache entries are keyed by path and invalidated when the
+// file's mtime changes (e.g. the user re-downloads a model).
+
+type ModelSlot<T> = OnceLock<Mutex<HashMap<String, (Option<SystemTime>, Arc<T>)>>>;
+
+/// Last-modified time of `path`, or `None` if unreadable. Used as the
+/// cache invalidation token.
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
+}
+
+/// Return the cached model for `key` when its recorded mtime still
+/// matches `mtime`, otherwise call `load` once and store the result.
+/// Generic over the model type so each loader gets its own static slot.
+fn model_get_or_load<T>(
+    slot: &ModelSlot<T>,
+    key: String,
+    mtime: Option<SystemTime>,
+    load: impl FnOnce() -> Result<T, String>,
+) -> Result<Arc<T>, String> {
+    let cache = slot.get_or_init(|| Mutex::new(HashMap::new()));
+    match cache.lock() {
+        Ok(guard) => {
+            if let Some((cached_mtime, model)) = guard.get(&key) {
+                if *cached_mtime == mtime {
+                    return Ok(Arc::clone(model));
+                }
+            }
+        }
+        Err(poisoned) => {
+            // A loader panic must not permanently break every future
+            // job; use the inner map and overwrite the stale entry.
+            tracing::warn!("model cache mutex poisoned; recovering");
+            let guard = poisoned.into_inner();
+            if let Some((cached_mtime, model)) = guard.get(&key) {
+                if *cached_mtime == mtime {
+                    return Ok(Arc::clone(model));
+                }
+            }
+        }
+    }
+    let fresh = Arc::new(load()?);
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, (mtime, Arc::clone(&fresh)));
+    }
+    Ok(fresh)
+}
+
+// One slot per model type. `OnceLock` keeps them lazily initialized and
+// `Mutex` guards the map against concurrent job threads.
+static SCRFD_CACHE: ModelSlot<caprust_media_io::scrfd::ScrfdDetector> = OnceLock::new();
+static YUNET_CACHE: ModelSlot<caprust_media_io::face_detect::FaceDetector> = OnceLock::new();
+static BG_CACHE: ModelSlot<caprust_media_io::background_removal::BackgroundRemover> =
+    OnceLock::new();
+static SAM_CACHE: ModelSlot<caprust_media_io::mobile_sam::MobileSam> = OnceLock::new();
+static LAMA_CACHE: ModelSlot<caprust_media_io::lama::Lama> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum Job {
@@ -840,10 +906,14 @@ fn run_reframe_job(
         });
     }
 
-    // 3. Load the detector and run it.
+    // 3. Load the detector and run it. Models are cached across jobs by
+    //    path + mtime so repeated reframes don't reparse the ONNX graph.
     let samples = if req.model_is_scrfd {
-        let detector = caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
-            .map_err(|e| format!("load SCRFD: {e}"))?;
+        let key = req.model_path.to_string_lossy().into_owned();
+        let detector = model_get_or_load(&SCRFD_CACHE, key, file_mtime(&req.model_path), || {
+            caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
+                .map_err(|e| format!("load SCRFD: {e}"))
+        })?;
         let mut out = Vec::with_capacity(frames.len());
         for f in &frames {
             let best = detector
@@ -853,8 +923,11 @@ fn run_reframe_job(
         }
         out
     } else {
-        let detector = caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
-            .map_err(|e| format!("load YuNet: {e}"))?;
+        let key = req.model_path.to_string_lossy().into_owned();
+        let detector = model_get_or_load(&YUNET_CACHE, key, file_mtime(&req.model_path), || {
+            caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+                .map_err(|e| format!("load YuNet: {e}"))
+        })?;
         caprust_media_io::auto_reframe::detect_face_centers(&frames, &detector)
             .map_err(|e| format!("face detection: {e}"))?
     };
@@ -1033,9 +1106,12 @@ fn run_bg_removal_inner(
         total
     );
 
-    // 3. Load the model once.
-    let model = caprust_media_io::background_removal::BackgroundRemover::load(&req.model_path)
-        .map_err(|e| format!("load u2netp: {e}"))?;
+    // 3. Load the model once, cached across jobs by path + mtime.
+    let key = req.model_path.to_string_lossy().into_owned();
+    let model = model_get_or_load(&BG_CACHE, key, file_mtime(&req.model_path), || {
+        caprust_media_io::background_removal::BackgroundRemover::load(&req.model_path)
+            .map_err(|e| format!("load u2netp: {e}"))
+    })?;
 
     // 4. Open the FFV1 writer on the output path.
     let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
@@ -1202,9 +1278,23 @@ fn run_segment_inner(
         total
     );
 
-    // 3. Load the MobileSAM model once.
-    let model = caprust_media_io::mobile_sam::MobileSam::load(&req.encoder_path, &req.decoder_path)
-        .map_err(|e| format!("load MobileSAM: {e}"))?;
+    // 3. Load the MobileSAM model once, cached across jobs. The key and
+    //    invalidation token cover both encoder and decoder files.
+    let sam_key = format!(
+        "{}|{}",
+        req.encoder_path.to_string_lossy(),
+        req.decoder_path.to_string_lossy()
+    );
+    let sam_mtime = match (file_mtime(&req.encoder_path), file_mtime(&req.decoder_path)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    let encoder_path = req.encoder_path.clone();
+    let decoder_path = req.decoder_path.clone();
+    let model = model_get_or_load(&SAM_CACHE, sam_key, sam_mtime, || {
+        caprust_media_io::mobile_sam::MobileSam::load(&encoder_path, &decoder_path)
+            .map_err(|e| format!("load MobileSAM: {e}"))
+    })?;
 
     // 4. Open the FFV1 writer on the output path.
     let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
@@ -1392,9 +1482,11 @@ fn run_inpaint_inner(
         total
     );
 
-    // 4. Load the LaMa model once.
-    let model = caprust_media_io::lama::Lama::load(&req.model_path)
-        .map_err(|e| format!("load LaMa: {e}"))?;
+    // 4. Load the LaMa model once, cached across jobs by path + mtime.
+    let key = req.model_path.to_string_lossy().into_owned();
+    let model = model_get_or_load(&LAMA_CACHE, key, file_mtime(&req.model_path), || {
+        caprust_media_io::lama::Lama::load(&req.model_path).map_err(|e| format!("load LaMa: {e}"))
+    })?;
 
     // 5. Open the video writer for inpainted output.
     let mut writer = spawn_video_writer(ffmpeg, &req.output_path, &frames[0], req.fps)?;
@@ -1555,19 +1647,23 @@ fn run_anon_inner(
     // is preferred (same preference as auto-reframe); YuNet 2022mar
     // decode is still a stub returning no boxes, kept as fallback.
     enum Detector {
-        Scrfd(caprust_media_io::scrfd::ScrfdDetector),
-        YuNet(caprust_media_io::face_detect::FaceDetector),
+        Scrfd(Arc<caprust_media_io::scrfd::ScrfdDetector>),
+        YuNet(Arc<caprust_media_io::face_detect::FaceDetector>),
     }
+    let key = req.model_path.to_string_lossy().into_owned();
+    let mtime = file_mtime(&req.model_path);
     let detector = if req.use_scrfd {
-        Detector::Scrfd(
+        let d = model_get_or_load(&SCRFD_CACHE, key, mtime, || {
             caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
-                .map_err(|e| format!("load SCRFD: {e}"))?,
-        )
+                .map_err(|e| format!("load SCRFD: {e}"))
+        })?;
+        Detector::Scrfd(d)
     } else {
-        Detector::YuNet(
+        let d = model_get_or_load(&YUNET_CACHE, key, mtime, || {
             caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
-                .map_err(|e| format!("load YuNet: {e}"))?,
-        )
+                .map_err(|e| format!("load YuNet: {e}"))
+        })?;
+        Detector::YuNet(d)
     };
 
     // 4. Open the FFV1 writer on the output path.
@@ -2005,6 +2101,114 @@ fn run_stab_inner(
         frame_count: done.max(1),
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod model_cache_tests {
+    use super::{file_mtime, model_get_or_load, ModelSlot};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, SystemTime};
+
+    static TEST_CACHE: ModelSlot<String> = OnceLock::new();
+
+    #[test]
+    fn model_structs_are_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<caprust_media_io::background_removal::BackgroundRemover>();
+        assert_send_sync::<caprust_media_io::mobile_sam::MobileSam>();
+        assert_send_sync::<caprust_media_io::lama::Lama>();
+        assert_send_sync::<caprust_media_io::face_detect::FaceDetector>();
+        assert_send_sync::<caprust_media_io::scrfd::ScrfdDetector>();
+    }
+
+    #[test]
+    fn same_key_and_mtime_loads_once() {
+        // Reset the shared slot so this test is independent of order.
+        let fresh: ModelSlot<String> = OnceLock::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mtime = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1000));
+
+        let load = || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<String, String>("model-v1".to_string())
+        };
+        let a = model_get_or_load(&fresh, "k".into(), mtime, load).unwrap();
+        let b = model_get_or_load(&fresh, "k".into(), mtime, load).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "loader must run once");
+        assert_eq!(*a, "model-v1");
+        assert!(Arc::ptr_eq(&a, &b), "second call returns the same Arc");
+    }
+
+    #[test]
+    fn changed_mtime_reloads() {
+        let fresh: ModelSlot<String> = OnceLock::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let t1 = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1000));
+        let t2 = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(2000));
+
+        let v1 = model_get_or_load(&fresh, "k".into(), t1, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<String, String>("v1".into())
+        })
+        .unwrap();
+        let v2 = model_get_or_load(&fresh, "k".into(), t2, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<String, String>("v2".into())
+        })
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "mtime change reloads");
+        assert_eq!(*v1, "v1");
+        assert_eq!(*v2, "v2");
+    }
+
+    #[test]
+    fn failed_load_is_not_cached() {
+        let fresh: ModelSlot<String> = OnceLock::new();
+        let mtime = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1000));
+        let first = model_get_or_load(&fresh, "k".into(), mtime, || {
+            Err::<String, String>("boom".into())
+        });
+        assert!(first.is_err());
+        let second = model_get_or_load(&fresh, "k".into(), mtime, || {
+            Ok::<String, String>("ok".into())
+        });
+        assert_eq!(
+            *second.unwrap(),
+            "ok",
+            "a failed load must not poison the cache"
+        );
+    }
+
+    #[test]
+    fn different_keys_are_independent() {
+        let fresh: ModelSlot<String> = OnceLock::new();
+        let mtime = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1000));
+        let a = model_get_or_load(&fresh, "a".into(), mtime, || {
+            Ok::<String, String>("A".into())
+        })
+        .unwrap();
+        let b = model_get_or_load(&fresh, "b".into(), mtime, || {
+            Ok::<String, String>("B".into())
+        })
+        .unwrap();
+        assert_eq!((a.as_str(), b.as_str()), ("A", "B"));
+    }
+
+    #[test]
+    fn file_mtime_none_for_missing_path() {
+        assert_eq!(file_mtime(std::path::Path::new("no-such-file.onnx")), None);
+    }
+
+    // Keep the module-level static referenced so it is type-checked too.
+    #[test]
+    fn static_slot_is_usable() {
+        let v = model_get_or_load(&TEST_CACHE, "static".into(), None, || {
+            Ok::<String, String>("s".into())
+        })
+        .unwrap();
+        assert_eq!(*v, "s");
+    }
 }
 
 #[cfg(test)]
