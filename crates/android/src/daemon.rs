@@ -173,10 +173,9 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(config: DaemonConfig) -> Result<Self> {
-        let project = ProjectState {
-            aspect_ratio: caprust_core::aspect_ratio::AspectRatio::Portrait9x16,
-            ..Default::default()
-        };
+        let mut project = ProjectState::default();
+        project.aspect_ratio = caprust_core::aspect_ratio::AspectRatio::Portrait9x16;
+        let project = project;
         let token = uuid::Uuid::new_v4().to_string();
         let mut server = Server::new();
         server.load_token(Some(token.clone()));

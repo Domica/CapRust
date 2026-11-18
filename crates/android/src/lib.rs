@@ -75,11 +75,10 @@ impl Session {
 
     /// A fresh project in the given shape.
     pub fn with_aspect(paths: Paths, aspect: AspectRatio) -> Self {
-        let project = ProjectState {
-            aspect_ratio: aspect,
-            frame_rate: caprust_core::frame_rate::FrameRate::default(),
-            ..Default::default()
-        };
+        let mut project = ProjectState::default();
+        project.aspect_ratio = aspect;
+        project.frame_rate = caprust_core::frame_rate::FrameRate::default();
+        let project = project;
         let (w, h) = project.project_dimensions();
         Self {
             project,
@@ -224,7 +223,7 @@ impl Session {
         // stream, and a clip that does not say leaves it guessing.
         clip.media_id = Some(media_id);
         let id = clip.id;
-        self.project.add_clip(clip);
+        self.project.add_clip_for_test(clip);
         Ok(id)
     }
 
