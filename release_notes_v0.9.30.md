@@ -1,19 +1,39 @@
-Release 0.9.30: Phase 1 AI subsystem stabilization — ONNX loader unification, model cache, cooperative cancellation.
+Release 0.9.30: Faza 2.1–2.5 — UndoStack batching, clips privatization, production .unwrap() cleanup.
 
 ### What's new
 
-- **AI cancellation (1.5):** Jobs bar shows a ✕ cancel button for background-removal, object-removal, and face-anonymize jobs. Cancel is cooperative — the worker thread checks a `CancellationToken` before each frame and emits a `Cancelled` event so the UI can stop cleanly without killing the process.
-- **AI model cache (1.6):** Loaded ONNX models are cached across jobs by path + file mtime. Re-running background removal, segmentation, inpainting, or anonymize on the same model avoids re-parsing and re-optimizing the graph each time.
-- **Shared ONNX loaders (1.1, 1.2):** All five model loaders (YuNet, SCRFD, LaMa, MobileSAM, u2netp) now share `onnx_common` helpers — `load_typed_pinned`, `load_typed`, `load_inference` — removing duplicated boilerplate while keeping the two tract-onnx type families intentional.
-- **Loud decoder failure (1.3):** YuNet 2022mar 3-output layout now fails loudly instead of silently returning empty boxes, so auto-reframe errors surface rather than degrading invisibly.
+- **Faza 2.1 UndoStack atomic batch execution.** `UndoStack::execute_batch(Vec<Box<dyn Command>>)` wraps multiple commands in a `MacroCommand` for a single undo step with atomic rollback on mid-batch failure. Ctrl+Z reverts an entire batch at once instead of per-command.
 
-### Under the hood
+### Fixes
 
-- `ModelSlot<T>` static cache with `Send + Sync` compile-time proof for all five model types.
-- `CancellationToken` (Relaxed `AtomicBool`) wired into `BgRemovalRequest`, `SegmentRequest`, `InpaintRequest`, `AnonRequest` and all six app.rs spawn call sites.
-- `Cancelled` variants added to all four event enums; app.rs drain functions handle them and clear state/toast accordingly.
-- `CancellationToken`/`cancel` already existed in all five locales (en, hr, de, es, it); no `.ftl` edits needed for the UI itself — only new `toast-*-cancelled` keys were added.
+- **Faza 2.2 clips privatization.** `ProjectState.clips` field changed from `pub` to `pub(crate)`; all clip mutations go through controlled accessor/mutator methods (`clips()`, `modify_clip_by_id`, `modify_clip_by_index`, `retain_clips`, `clip_by_id_mut`, `with_clip_and_models_mut`, `add_clip_for_test`, `clear_clips_for_test`) so every mutation is undoable via `UndoStack`. Updated `caprust-ui`, `caprust-media-io`, `caprust-mcp`, and `caprust-android` crates accordingly.
+- **Faza 2.3 Panics → bail!.** Replaced bare `.unwrap()` calls in core test code with `.expect("descriptive message")` so failures carry context instead of silent panics. Fixed integration test `set_clip_auto_reframe.rs` to use the public `add_clip_for_test()` / `clips()` API for `pub(crate)` access.
+- **Faza 2.5 Production .unwrap() → error handling.** `detect_beats()` in `crates/core/src/beat.rs` no longer panics when no BPM candidates fall in the 60–240 BPM range; returns an empty `BeatGrid` instead, consistent with existing early-return behavior.
 
-### Version
+### Downloads
 
-Bumped from `0.9.29` to `0.9.30` (minor, user-facing cancellation feature).
+| Platform | Artifact |
+|----------|----------|
+| Windows | `CapRust-0.9.30-win64-setup.exe` (Inno Setup installer) |
+| Linux (Debian/Ubuntu) | `caprust_0.9.30_amd64.deb` |
+| Android | `caprust-0.9.30.apk` (debug build, sideloadable) |
+
+### Installation
+
+- **Windows**: Run the `.exe` installer
+- **Linux**: `sudo dpkg -i caprust_0.9.30_amd64.deb`
+- **Android**: Enable "Install unknown apps", then tap the `.apk` to install
+
+### Notes
+
+- Android APK is a debug build (signed with debug key), suitable for testing
+- Linux .deb requires `libgtk-3-0` and `libasound2` (auto-installed by apt)
+- Windows installer creates Start Menu shortcut and desktop icon
+
+### Known limitations
+
+- Keyframe easing curves on export: ffmpeg filtergraph easing works for trajectory, per-property track easing on export is not yet wired.
+- AI Enhance (Real-ESRGAN): blocked by tract-onnx runtime speed; the settings download prepares the model file but does not run it.
+- Android editor: feature parity with desktop is partial (no keyframe tracks tab, no plugin UI).
+
+Full Changelog: https://github.com/Domica/CapRust/compare/v0.9.29...v0.9.30
