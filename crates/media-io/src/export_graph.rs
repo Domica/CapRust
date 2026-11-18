@@ -4764,7 +4764,7 @@ mod tests {
             .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
             .expect("captions track exists in default_tracks()");
         clip.track_index = captions_track;
-        project.add_clip(clip);
+        project.add_clip_for_test(clip);
 
         let video_track = project
             .tracks
@@ -4776,7 +4776,7 @@ mod tests {
             path: "placeholder.mp4".into(),
             duration_ms: 2000,
         };
-        project.add_clip(placeholder);
+        project.add_clip_for_test(placeholder);
 
         let plan = plan_from_project(
             &project,
@@ -4880,14 +4880,14 @@ mod tests {
                 effect: None,
                 segments: vec![mk(n)],
             };
-            project.add_clip(clip);
+            project.add_clip_for_test(clip);
             let mut placeholder =
                 caprust_core::Clip::new_video("placeholder.mp4", vid_track, 0, n * 400);
             placeholder.clip_type = ClipType::Video {
                 path: "placeholder.mp4".into(),
                 duration_ms: n * 400,
             };
-            project.add_clip(placeholder);
+            project.add_clip_for_test(placeholder);
             let plan = plan_from_project(
                 &project,
                 320,
@@ -5054,14 +5054,14 @@ mod tests {
             effect: None,
             segments,
         };
-        project.add_clip(clip);
+        project.add_clip_for_test(clip);
         let mut placeholder =
             caprust_core::Clip::new_video("placeholder.mp4", vid_track, 0, 40_000);
         placeholder.clip_type = ClipType::Video {
             path: "placeholder.mp4".into(),
             duration_ms: 40_000,
         };
-        project.add_clip(placeholder);
+        project.add_clip_for_test(placeholder);
         plan_from_project(
             &project,
             320,
@@ -5113,7 +5113,7 @@ mod tests {
             effect: None,
             segments,
         };
-        project.add_clip(clip);
+        project.add_clip_for_test(clip);
 
         let video_track = project
             .tracks
@@ -5125,7 +5125,7 @@ mod tests {
             path: "placeholder.mp4".into(),
             duration_ms: 40_000 + start_ms,
         };
-        project.add_clip(placeholder);
+        project.add_clip_for_test(placeholder);
 
         plan_from_project(
             &project,
@@ -6074,10 +6074,8 @@ mod tests {
     fn bg_test_project() -> (caprust_core::ProjectState, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!("caprust-bg-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("cache").join("masks")).expect("create temp masks dir");
-        let project = caprust_core::ProjectState {
-            project_path: Some(root.to_string_lossy().into_owned()),
-            ..Default::default()
-        };
+        let mut project = caprust_core::ProjectState::default();
+        project.project_path = Some(root.to_string_lossy().into_owned());
         (project, root)
     }
 
@@ -6709,8 +6707,8 @@ mod multicam_plan_tests {
         let b = Clip::new_video("b.mp4", 1, 0, 1000);
         let aid = a.id;
         let bid = b.id;
-        p.add_clip(a);
-        p.add_clip(b);
+        p.add_clip_for_test(a);
+        p.add_clip_for_test(b);
         let cmd = CreateMultiCamGroupCommand::new("cam", vec![aid, bid]);
         let gid = cmd.group_id();
         let mut stack = UndoStack::default();
@@ -6814,7 +6812,7 @@ mod source_offset_tests {
         let mut p = caprust_core::ProjectState::default();
         let mut clip = Clip::new_audio(&path.to_string_lossy(), 0, 0, 5000);
         clip.source_offset_ms = 2500;
-        p.add_clip(clip);
+        p.add_clip_for_test(clip);
 
         // Need a video track to satisfy plan_from_project's
         // guard against empty video/text.
@@ -6822,7 +6820,7 @@ mod source_offset_tests {
         std::fs::write(&vpath, b"x").unwrap();
         let mut v = Clip::new_video(&vpath.to_string_lossy(), 1, 0, 1000);
         v.media_id = None;
-        p.add_clip(v);
+        p.add_clip_for_test(v);
 
         let plan = plan_from_project(
             &p,
@@ -6872,19 +6870,19 @@ mod ducking_sidechain_tests {
         let mut p = caprust_core::ProjectState::default();
         let ctrl = Clip::new_audio(&voice.to_string_lossy(), 0, 0, 2000);
         let ctrl_id = ctrl.id;
-        p.add_clip(ctrl);
+        p.add_clip_for_test(ctrl);
         for i in 0..n_ducked {
             let mut m = Clip::new_audio(&music.to_string_lossy(), 0, (i as u64 + 1) * 3000, 2000);
             m.duck_against = Some(ctrl_id);
             m.duck_reduction_db = -12.0;
-            p.add_clip(m);
+            p.add_clip_for_test(m);
         }
         // The planner requires at least one video or text clip.
         let vpath = tmp.join("v.mp4");
         std::fs::write(&vpath, b"x").unwrap();
         let mut v = Clip::new_video(&vpath.to_string_lossy(), 1, 0, 1000);
         v.media_id = None;
-        p.add_clip(v);
+        p.add_clip_for_test(v);
 
         let plan = plan_from_project(
             &p,
@@ -7330,7 +7328,7 @@ mod reverse_filtergraph_tests {
             let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 1000);
             b.id = uuid::Uuid::from_u128(1);
             b.track_index = 0;
-            p.clips.push(b);
+            p.add_clip_for_test(b);
 
             let mut m = Clip::new_video(mark.to_str().unwrap(), 0, 0, 1000);
             m.id = uuid::Uuid::from_u128(2);
@@ -7340,7 +7338,7 @@ mod reverse_filtergraph_tests {
                 path: mark.to_string_lossy().into_owned(),
                 duration_ms: 1000,
             };
-            p.clips.push(m);
+            p.add_clip_for_test(m);
 
             let plan = plan_from_project(
                 &p,
@@ -7623,7 +7621,7 @@ mod reverse_filtergraph_tests {
         let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 4000);
         b.id = uuid::Uuid::from_u128(1);
         b.track_index = 0;
-        p.clips.push(b);
+        p.add_clip_for_test(b);
         let mut m = Clip::new_video(mark.to_str().unwrap(), 0, CLIP_START_MS, 3000);
         m.id = uuid::Uuid::from_u128(2);
         m.track_index = 1;
@@ -7633,7 +7631,7 @@ mod reverse_filtergraph_tests {
         };
         m.overlay = Some(place.clone());
         m.trajectory = traj.clone();
-        p.clips.push(m);
+        p.add_clip_for_test(m);
 
         let plan = plan_from_project(
             &p,
@@ -7779,7 +7777,7 @@ mod reverse_filtergraph_tests {
         let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 4000);
         b.id = uuid::Uuid::from_u128(1);
         b.track_index = 0;
-        p.clips.push(b);
+        p.add_clip_for_test(b);
 
         let mut t = Clip::new_video("x", 1, 0, 4000);
         t.id = uuid::Uuid::from_u128(2);
@@ -7801,7 +7799,7 @@ mod reverse_filtergraph_tests {
             MotionKeyframe::new(0, 0.2, 0.5),
             MotionKeyframe::new(2000, 0.8, 0.5),
         ];
-        p.clips.push(t);
+        p.add_clip_for_test(t);
 
         let plan = plan_from_project(
             &p,
@@ -7960,7 +7958,7 @@ mod reverse_filtergraph_tests {
             let mut v = Clip::new_video(black.to_str().unwrap(), 0, 0, 2000);
             v.id = uuid::Uuid::from_u128(9);
             v.track_index = 0;
-            p.clips.push(v);
+            p.add_clip_for_test(v);
 
             let mut c = Clip::new_video(tone.to_str().unwrap(), 1, 0, 2000);
             c.id = uuid::Uuid::from_u128(1);
@@ -7969,7 +7967,7 @@ mod reverse_filtergraph_tests {
                 path: tone.to_string_lossy().into_owned(),
                 duration_ms: 2000,
             };
-            p.clips.push(c);
+            p.add_clip_for_test(c);
 
             let plan = plan_from_project(
                 &p,
