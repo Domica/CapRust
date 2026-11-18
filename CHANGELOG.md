@@ -4,6 +4,8 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.30] - 2026-11-18
+
 ### Added
 
 - **Faza 2.1 UndoStack atomic batch execution.** `UndoStack::execute_batch(Vec<Box<dyn Command>>)` wraps multiple commands in a `MacroCommand` for a single undo step with atomic rollback on mid-batch failure. Ctrl+Z reverts an entire batch at once instead of per-command.
