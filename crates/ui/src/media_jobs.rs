@@ -546,12 +546,16 @@ pub fn spawn_caption_job(
         // Rust default 2 MB thread stack overflows on
         // Windows during inference. 32 MB is comfortable.
         .stack_size(32 * 1024 * 1024)
-        // Whisper.cpp and tract are stack-hungry; the
-        // Rust default 2 MB thread stack overflows on
-        // Windows during inference. 32 MB is comfortable.
-        .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            let result = run_caption_job(&ffmpeg, &req);
+            // catch_unwind turns a Rust panic in the whisper/ffmpeg
+            // worker into a reported error instead of killing the
+            // thread silently. Native (C++) segfaults still terminate
+            // the process and cannot be caught from Rust.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_caption_job(&ffmpeg, &req)
+            }))
+            .map_err(|_| "caption job thread panicked".to_string())
+            .and_then(|inner| inner);
             let _ = tx.send(result);
         })
         .expect("spawn caption thread");
