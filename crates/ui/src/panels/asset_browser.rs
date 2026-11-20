@@ -977,6 +977,41 @@ const EFFECTS: &[Preset] = &[
         color: [160, 150, 170],
         coming_soon: false,
     },
+    Preset {
+        id: "ai_enhance",
+        label_key: "asset-effect-ai_enhance",
+        icon: ph::MAGNET,
+        color: [120, 200, 180],
+        coming_soon: false,
+    },
+    Preset {
+        id: "gfpgan",
+        label_key: "asset-effect-gfpgan",
+        icon: ph::MAGNET,
+        color: [120, 200, 180],
+        coming_soon: false,
+    },
+    Preset {
+        id: "halftone",
+        label_key: "asset-effect-halftone",
+        icon: ph::DOTS_THREE,
+        color: [150, 120, 160],
+        coming_soon: false,
+    },
+    Preset {
+        id: "solarize",
+        label_key: "asset-effect-solarize",
+        icon: ph::CIRCLE_HALF_TILT,
+        color: [200, 90, 140],
+        coming_soon: false,
+    },
+    Preset {
+        id: "emboss",
+        label_key: "asset-effect-emboss",
+        icon: ph::STAMP,
+        color: [140, 140, 150],
+        coming_soon: false,
+    },
 ];
 
 const FILTERS: &[Preset] = &[
@@ -1314,6 +1349,11 @@ fn preset_category(id: &str) -> &'static str {
         "scanlines" => "texture",
         "edge_glow" => "style",
         "teal_orange" | "cross_process" | "bleach_bypass" | "moonlight" => "color",
+        "ai_enhance" => "adjust",
+        "gfpgan" => "adjust",
+        "halftone" => "texture",
+        "solarize" => "color",
+        "emboss" => "style",
         // Filters
         "warm" | "cool" | "sunset" | "gold" | "ocean" | "cinematic" | "vivid" => "color",
         "bw" | "noir" | "sepia" | "vintage" | "matte" | "pastel" | "neon" => "style",

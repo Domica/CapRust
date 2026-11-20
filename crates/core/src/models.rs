@@ -349,6 +349,26 @@ impl Default for ModelRegistry {
                 .with_sha256(
                     "4ed6a45a8185bde6c8d7c7790a6e80e3c5b9f608946f634021068dd0fd0473c8",
                 ),
+                // --- Face Restore (GFPGAN v1.4) ---
+                // GFPGAN v1.4, Apache 2.0. Blind face restoration: takes a
+                // low-quality / distorted face and restores fine detail
+                // while preserving identity, expression and mouth motion.
+                // Runs during export (too slow for real-time preview).
+                // Ideal for AI-generated clips where the face model
+                // produced garbled features (e.g. distant talking heads).
+                ModelInfo::new(
+                    "gfpgan-v1.4",
+                    "GFPGAN v1.4 Face Restore",
+                    ModelKind::Enhancer,
+                    "multi",
+                    350,
+                    "Face restoration — sharpens blurry/distorted AI-generated faces while keeping expression and speech motion. Runs during export.",
+                )
+                .with_url(
+                    "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.onnx",
+                )
+                // TODO: fill in real sha256 before release; empty skips verification.
+                .with_sha256(""),
                 // --- Object Segmentation (MobileSAM) ---
                 // MobileSAM, Apache 2.0. Input 1024x1024 RGB + point/box prompt,
                 // output 256x256 mask logits. Lightweight SAM variant (~40 MB).

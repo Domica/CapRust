@@ -681,11 +681,13 @@ pub fn show(
                 }
                 changed |= if cs.font_size_pct.is_some() {
                     ui.add(
-                        egui::DragValue::new(cs.font_size_pct.as_mut().unwrap())
-                            .speed(0.1)
-                            .range(0.5..=20.0)
-                            .fixed_decimals(1)
-                            .suffix(" %"),
+                        egui::DragValue::new(
+                            cs.font_size_pct.as_mut().expect("font_size_pct is Some"),
+                        )
+                        .speed(0.1)
+                        .range(0.5..=20.0)
+                        .fixed_decimals(1)
+                        .suffix(" %"),
                     )
                     .changed()
                 } else {
@@ -2779,6 +2781,44 @@ fn show_effects(
             }
         }
     }
+
+    // --- Face Restore (GFPGAN v1.4) ---
+    // Ensure models are scanned first
+    models.scan_local(&settings.effective_models_dir());
+
+    // Check if GFPGAN model is ready and enabled
+    let gfpgan_model = models.models.iter().find(|m| m.id == "gfpgan-v1.4");
+    if let Some(model) = gfpgan_model {
+        if model.status == ModelStatus::Ready && model.enabled {
+            ui.add_space(space::M);
+            ui.separator();
+            ui.add_space(space::S);
+            ui.label(egui::RichText::new(tr("props-face-restore")).strong());
+            ui.add_space(space::XS);
+            ui.label(
+                egui::RichText::new(tr("props-face-restore-hint"))
+                    .small()
+                    .color(egui::Color32::from_gray(160)),
+            );
+            let has_gfpgan = clip.effects.iter().any(|fx| fx.effect_id == "gfpgan");
+            let mut gfpgan_enabled = has_gfpgan;
+            if ui
+                .checkbox(&mut gfpgan_enabled, tr("props-face-restore-enable"))
+                .on_hover_text(tr("props-face-restore-enable-hint"))
+                .changed()
+            {
+                if gfpgan_enabled {
+                    state
+                        .pending
+                        .push(PendingEdit::AddEffect("gfpgan".to_string()));
+                } else {
+                    state
+                        .pending
+                        .push(PendingEdit::RemoveEffect("gfpgan".to_string()));
+                }
+            }
+        }
+    }
 }
 
 fn clip_kind_label(clip: &Clip) -> &'static str {
@@ -3276,7 +3316,7 @@ fn show_sticker_placement(
         });
 }
 
-/// The four animations the render path knows. Anything else is stored but
+/// The animations the render path knows. Anything else is stored but
 /// emits nothing, so the list here is the contract with
 /// `sticker_animation_fragment`.
 fn sticker_anim_name(id: &str) -> String {
@@ -3285,6 +3325,8 @@ fn sticker_anim_name(id: &str) -> String {
         "bounce" => tr("props-sticker-anim-bounce").to_string(),
         "spin" => tr("props-sticker-anim-spin").to_string(),
         "drift" => tr("props-sticker-anim-drift").to_string(),
+        "float" => tr("props-sticker-anim-float").to_string(),
+        "pulse" => tr("props-sticker-anim-pulse").to_string(),
         other => other.to_string(),
     }
 }

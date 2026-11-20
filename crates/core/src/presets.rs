@@ -165,6 +165,11 @@ presets!(
     "stutter",
     "ripple",
     "pixel_shuffle",
+    "ai_enhance",
+    "halftone",
+    "solarize",
+    "emboss",
+    "gfpgan",
 );
 
 presets!(

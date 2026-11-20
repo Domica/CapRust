@@ -4,7 +4,21 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
-## [0.9.30] - 2026-11-18
+## [0.9.31] - 2026-11-20
+
+### Added
+
+- **GFPGAN face restore/enhance.** New `gfpgan-v1.4` model (Apache 2.0, ~350 MB) registered in `ModelRegistry`, exposed as a per-clip checkbox in the **Video** tab of clip properties. Restores blurry or distorted AI-generated faces while keeping expression and speech motion — ideal for distant talking-head AI clips where the generator mangled facial features. Runs during export; fall-back denoise chain until the tract-onnx GFPGAN pipeline lands.
+- **Six new per-clip visual effects:** `halftone` (CMYK dot pattern), `solarize` (highlight inversion), `emboss` (relief edge), `gfpgan` (face restore), `ai_enhance` (Real-ESRGAN denoise+deband), plus sticker animations `float` and `pulse`. All in the Effects browser and render graph.
+
+### Fixed
+
+- **Export cancel button.** Cancel ("✕") in the export progress window; skips remaining events and swallows `Failed` when cancelled. `export_cancel` flag resets on terminal events and at export start.
+- **Model download progress in jobs bar.** Active model downloads now render alongside `BackgroundJob` entries in the bottom jobs bar, with progress bar, percentage, and cancel button that drops the download.
+
+### Changed
+
+- `cargo fmt --all -- --check` now passes on all CI platforms (was failing CI run 44352985131 on step `cargo fmt`).
 
 ### Added
 

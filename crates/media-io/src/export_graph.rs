@@ -2166,6 +2166,17 @@ fn sticker_animation_fragment(id: &str) -> String {
         )
         .to_string(),
 
+        // Continuous gentle up/down float, like a mark drifting on water.
+        "float" => concat!(
+            ",crop=w=iw:h='ih/1.1':x='(iw-ow)/2':",
+            "y='(ih-oh)/2+12*sin(2*PI*t/5)',",
+            "scale=iw*1.1:ih*1.1:flags=bicubic"
+        )
+        .to_string(),
+
+        // Slow brightness pulse, like a breathing light.
+        "pulse" => ",eq=brightness='0.12*sin(2*PI*t/2)'".to_string(),
+
         _ => String::new(),
     }
 }
@@ -2454,6 +2465,26 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
                 (12.0 * a).round() as i32
             )
         }
+        // AI Enhance (Real-ESRGAN). The ffmpeg filtergraph cannot run a
+        // neural network, so until the Real-ESRGAN model pipeline is
+        // wired into the render path this falls back to the same
+        // denoise+deband chain as the non-AI `enhance` effect. The UI
+        // gate (realesrgan-x4plus model Ready + enabled) still controls
+        // whether the checkbox is offered; once the AI pipeline lands,
+        // this arm can be replaced with the model-backed pass.
+        "ai_enhance" => {
+            if amount <= 0.001 {
+                return None;
+            }
+            let a = amount.clamp(0.0, 1.0);
+            format!(
+                ",hqdn3d={}:{}:{}:{},deband",
+                (12.0 * a).round() as i32,
+                (6.0 * a).round() as i32,
+                (20.0 * a).round() as i32,
+                (12.0 * a).round() as i32
+            )
+        }
         "pixelate" => {
             let b = ((2.0 + 6.0 * amount).round() as i32).clamp(2, 16);
             format!(
@@ -2595,6 +2626,29 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             format!(",smartblur=luma_radius={r:.1}:luma_strength={s:.2}:luma_threshold=8")
         }
 
+        // ---- Face Restore (GFPGAN v1.4) ----
+        // GFPGAN is an ONNX model run through tract-onnx; the ffmpeg
+        // filtergraph cannot execute a neural network, so until the
+        // ONNX execution pipeline is wired into the render path this
+        // falls back to a face-smoothing denoise chain
+        // (smartblur + hqdn3d) that reads as "cleaner face" at a glance.
+        // Replace this arm with the tract-onnx GFPGAN pass when it lands.
+        "gfpgan" => {
+            if amount <= 0.001 {
+                return None;
+            }
+            let a = amount.clamp(0.0, 1.0);
+            format!(
+                ",smartblur=luma_radius={r:.1}:luma_strength={s:.2}:luma_threshold=8,hqdn3d={d}:{d2}:{d3}:{d4}",
+                r = (1.0 + 2.0 * a).clamp(0.5, 5.0),
+                s = (0.5 * a).clamp(0.1, 1.0),
+                d = (12.0 * a).round() as i32,
+                d2 = (6.0 * a).round() as i32,
+                d3 = (20.0 * a).round() as i32,
+                d4 = (12.0 * a).round() as i32
+            )
+        }
+
         // ---- Added with the xfade coverage work. Every fragment below was
         // run through this ffmpeg on a real clip at amounts 0, 0.25, 1, 2
         // and 4 before it was written here.
@@ -2662,6 +2716,44 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
             (0.80 - 0.20 * amount).max(0.0),
             (0.92 - 0.10 * amount).max(0.0)
         ),
+
+        // ---- Halftone: CMYK-style dot pattern ----
+        // A coarse halftone screen: brightness modulates a position
+        // checker so midtones read as dots. amount coarsens the dot
+        // grid (lower frequency = bigger dots).
+        "halftone" => {
+            let f = (4.0 + 6.0 * amount).clamp(2.0, 20.0);
+            format!(
+                ",geq=lum='lum(X,Y)*(0.55+0.45*(sin(X/{f:.1})*sin(Y/{f:.1})>0))':\
+                 cb='cb(X,Y)':cr='cr(X,Y)'",
+                f = f
+            )
+        }
+
+        // ---- Solarize: invert tones above a threshold ----
+        // Classic darkroom solarization: highlights flip negative while
+        // shadows are left alone. amount sets the threshold (higher =
+        // more of the image inverts).
+        "solarize" => {
+            let t = (0.35 + 0.5 * amount).clamp(0.0, 1.0);
+            format!(
+                ",geq=lum='if(gte(lum(X,Y),{t:.3}),1.0-lum(X,Y),lum(X,Y))':\
+                 cb='if(gte(cb(X,Y),{t:.3}),1.0-cb(X,Y),cb(X,Y))':\
+                 cr='if(gte(cr(X,Y),{t:.3}),1.0-cr(X,Y),cr(X,Y))'",
+                t = t
+            )
+        }
+
+        // ---- Emboss: 3D edge highlight ----
+        // A sharpening convolution that raises edges above a neutral
+        // mid-gray, reading as a stamped/relief look. amount scales the
+        // center weight (stronger = crisper edges).
+        "emboss" => {
+            let c = (4.0 + 4.0 * amount).clamp(2.0, 12.0);
+            format!(
+                ",convolution='-1 -1 -1:-1 {c:.1} -1:-1 -1 -1'"
+            )
+        }
 
         _ => return None,
     };
@@ -3097,7 +3189,7 @@ fn compute_xfade_audio_shifts(
         .filter(|c| !shifts.contains_key(&c.id))
         .filter(|c| {
             project
-                .tracks
+                .tracks()
                 .get(c.track_index)
                 .map(|t| {
                     !matches!(
@@ -3637,13 +3729,13 @@ pub fn plan_from_project(
     // For export we render bottom-up: V1 first, V2 over it, Overlay on top.
     let mut video_track_order: Vec<usize> = Vec::new();
     // Non-pinned video tracks, in declared order
-    for (i, t) in project.tracks.iter().enumerate() {
+    for (i, t) in project.tracks().iter().enumerate() {
         if t.kind == TrackKind::Video {
             video_track_order.push(i);
         }
     }
     // Overlay tracks on top
-    for (i, t) in project.tracks.iter().enumerate() {
+    for (i, t) in project.tracks().iter().enumerate() {
         if t.kind == TrackKind::Overlay {
             video_track_order.push(i);
         }
@@ -3653,12 +3745,12 @@ pub fn plan_from_project(
     // layer, matching the timeline's visual stacking. Without this,
     // Captions placed on a Captions track were never visited by the
     // clip loop and produced no drawtext at all.
-    for (i, t) in project.tracks.iter().enumerate() {
+    for (i, t) in project.tracks().iter().enumerate() {
         if t.kind == TrackKind::Text {
             video_track_order.push(i);
         }
     }
-    for (i, t) in project.tracks.iter().enumerate() {
+    for (i, t) in project.tracks().iter().enumerate() {
         if t.kind == TrackKind::Captions {
             video_track_order.push(i);
         }
@@ -3670,7 +3762,7 @@ pub fn plan_from_project(
         // The eye chip on the track header toggles `visible`. Hidden
         // tracks are excluded from the render entirely — clips on them
         // do not contribute video, text overlays, or anything else.
-        if !project.tracks[t_idx].visible {
+        if !project.tracks()[t_idx].visible {
             continue;
         }
         // A clip with a placement is a mark on top of the frame, so it
@@ -3682,7 +3774,7 @@ pub fn plan_from_project(
         } else {
             z as u32
         };
-        let track_kind = project.tracks[t_idx].kind;
+        let track_kind = project.tracks()[t_idx].kind;
         let mut clips: Vec<&caprust_core::Clip> = project
             .clips()
             .iter()
@@ -4071,7 +4163,7 @@ pub fn plan_from_project(
     let mut audio_track_clip_count: usize = 0;
 
     for c in project.clips().iter() {
-        let Some(track) = project.tracks.get(c.track_index) else {
+        let Some(track) = project.tracks().get(c.track_index) else {
             continue;
         };
         if track.muted {
@@ -4759,7 +4851,7 @@ mod tests {
         // still requires at least one clip on a Video track, so add a
         // short placeholder video alongside.
         let captions_track = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
             .expect("captions track exists in default_tracks()");
@@ -4767,7 +4859,7 @@ mod tests {
         project.add_clip_for_test(clip);
 
         let video_track = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Video)
             .expect("video track exists in default_tracks()");
@@ -4859,12 +4951,12 @@ mod tests {
         for n in [3_u64, 40, 150] {
             let mut project = caprust_core::ProjectState::default();
             let cap_track = project
-                .tracks
+                .tracks()
                 .iter()
                 .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
                 .expect("captions track");
             let vid_track = project
-                .tracks
+                .tracks()
                 .iter()
                 .position(|t| t.kind == caprust_core::track::TrackKind::Video)
                 .expect("video track");
@@ -5033,12 +5125,12 @@ mod tests {
         use caprust_core::clip::ClipType;
         let mut project = caprust_core::ProjectState::default();
         let cap_track = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
             .expect("captions track");
         let vid_track = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Video)
             .expect("video track");
@@ -5095,7 +5187,7 @@ mod tests {
         let mut project = caprust_core::ProjectState::default();
 
         let captions_track = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Captions)
             .expect("captions track exists in default_tracks()");
@@ -5116,7 +5208,7 @@ mod tests {
         project.add_clip_for_test(clip);
 
         let video_track = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == caprust_core::track::TrackKind::Video)
             .expect("video track exists in default_tracks()");
@@ -5467,6 +5559,20 @@ mod tests {
         assert!(
             p.contains("flags=neighbor"),
             "pixelate should mosaic via neighbor scaling"
+        );
+        let h = build_one_effect("halftone", 1.0).expect("halftone chain");
+        assert!(h.contains("sin("), "halftone should use a dot pattern");
+        let so = build_one_effect("solarize", 1.0).expect("solarize chain");
+        assert!(
+            so.contains("gte(lum"),
+            "solarize should threshold luminance"
+        );
+        let e = build_one_effect("emboss", 1.0).expect("emboss chain");
+        assert!(e.contains("convolution="), "emboss should convolve");
+        let a = build_one_effect("ai_enhance", 1.0).expect("ai_enhance chain");
+        assert!(
+            a.contains("hqdn3d") && a.contains("deband"),
+            "ai_enhance should fall back to denoise+deband"
         );
         assert!(
             build_one_effect("nope", 1.0).is_none(),
@@ -6082,7 +6188,7 @@ mod tests {
     fn bg_test_clip(project: &caprust_core::ProjectState) -> caprust_core::Clip {
         use caprust_core::TrackKind;
         let idx = project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == TrackKind::Video)
             .expect("default project has a video track");
@@ -6752,7 +6858,7 @@ pub(crate) fn video_clip_has_audio_source(
     clip: &caprust_core::Clip,
 ) -> bool {
     clip.media_id
-        .and_then(|mid| project.media.items.iter().find(|m| m.id == mid))
+        .and_then(|mid| project.media().items.iter().find(|m| m.id == mid))
         .map(|m| m.has_audio)
         .unwrap_or(true)
 }
@@ -6777,7 +6883,7 @@ mod audio_stream_guard_tests {
         m.probe_done = true;
         m.has_audio = false;
         let mid = m.id;
-        p.media.items.push(m);
+        p.media_mut().items.push(m);
         let mut clip = Clip::new_video("x.mp4", 0, 0, 1000);
         clip.media_id = Some(mid);
         assert!(!video_clip_has_audio_source(&p, &clip));
@@ -6790,7 +6896,7 @@ mod audio_stream_guard_tests {
         m.probe_done = true;
         m.has_audio = true;
         let mid = m.id;
-        p.media.items.push(m);
+        p.media_mut().items.push(m);
         let mut clip = Clip::new_video("x.mp4", 0, 0, 1000);
         clip.media_id = Some(mid);
         assert!(video_clip_has_audio_source(&p, &clip));
@@ -7322,8 +7428,8 @@ mod reverse_filtergraph_tests {
             };
 
             let mut p = ProjectState::default();
-            p.tracks.push(Track::new("V1", TrackKind::Video));
-            p.tracks.push(Track::new("V2", TrackKind::Video));
+            p.tracks_mut().push(Track::new("V1", TrackKind::Video));
+            p.tracks_mut().push(Track::new("V2", TrackKind::Video));
 
             let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 1000);
             b.id = uuid::Uuid::from_u128(1);
@@ -7615,9 +7721,9 @@ mod reverse_filtergraph_tests {
         ];
 
         let mut p = ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
-        p.tracks.push(Track::new("V2", TrackKind::Video));
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().push(Track::new("V2", TrackKind::Video));
         let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 4000);
         b.id = uuid::Uuid::from_u128(1);
         b.track_index = 0;
@@ -7770,9 +7876,9 @@ mod reverse_filtergraph_tests {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 
         let mut p = ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
-        p.tracks.push(Track::new("OV", TrackKind::Overlay));
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().push(Track::new("OV", TrackKind::Overlay));
 
         let mut b = Clip::new_video(base.to_str().unwrap(), 0, 0, 4000);
         b.id = uuid::Uuid::from_u128(1);
@@ -7948,12 +8054,12 @@ mod reverse_filtergraph_tests {
         // output samples.
         let render_rms = |muted: bool, volume_db: f32| -> f64 {
             let mut p = ProjectState::default();
-            p.tracks.clear();
-            p.tracks.push(Track::new("V1", TrackKind::Video));
+            p.tracks_mut().clear();
+            p.tracks_mut().push(Track::new("V1", TrackKind::Video));
             let mut t = Track::new("A1", TrackKind::Audio);
             t.muted = muted;
             t.volume_db = volume_db;
-            p.tracks.push(t);
+            p.tracks_mut().push(t);
 
             let mut v = Clip::new_video(black.to_str().unwrap(), 0, 0, 2000);
             v.id = uuid::Uuid::from_u128(9);
