@@ -365,11 +365,12 @@ impl Default for ModelRegistry {
                     "Face restoration — sharpens blurry/distorted AI-generated faces while keeping expression and speech motion. Runs during export.",
                 )
                 .with_url(
-                    "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.onnx",
+                    "https://huggingface.co/hacksider/deep-live-cam/resolve/main/GFPGANv1.4.onnx",
                 )
                 .with_sha256(
-                    "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5",
-                ),
+                    "8da8739d5aa38e015dfaf687d7ce0ca8c0d3e9ca295a43401432c7ce527dfa57",
+                )
+                .with_filename("GFPGANv1.4.onnx"),
                 // --- Object Segmentation (MobileSAM) ---
                 // MobileSAM, Apache 2.0. Input 1024x1024 RGB + point/box prompt,
                 // output 256x256 mask logits. Lightweight SAM variant (~40 MB).
