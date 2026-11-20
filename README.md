@@ -9,7 +9,7 @@
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.31-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.32-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -29,7 +29,7 @@
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.31-win64-setup.exe`.
+1. Run `CapRust-0.9.32-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -167,6 +167,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.9.32** | 2026-11-20 | Bug fixes: downloaded file no longer vanishes on SHA-256 mismatch (.part kept for inspection, error toast reports actual vs expected hash); stranded Downloading status self-heals on restart when neither .onnx nor .part exists; Cancel/Retry buttons in Settings → AI Models |
 | **0.9.31** | 2026-11-20 | GFPGAN face restore/enhance (new `gfpgan-v1.4` model), export cancel button, model download progress in jobs bar, six new visual effects (halftone, solarize, emboss, gfpgan, ai_enhance, sticker float/pulse), cargo fmt CI fix |
 | **0.9.30** | 2026-11-18 | Faza 2.1 UndoStack atomic batch execution, Faza 2.2 clips privatization (pub → pub(crate) with controlled accessors), Faza 2.3 panics → bail!, Faza 2.5 production .unwrap() → error handling |
 | **0.9.29** | 2026-11-15 | Phase 0 repo hygiene + MCP hardening (clip.rs.bak removed, bounded request-line reads, dead `initialized` removed, Kotlin `!!` replaced), Phase 4 (hr.ftl `\u` escapes normalized, ISCC hardening, PCM cache cleanup), Phase 6.9 (zero-copy RGBA via Arc<[u8]>) |

@@ -4,6 +4,13 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.32] - 2026-11-20
+
+### Fixed
+
+- **Downloaded file no longer vanishes on SHA-256 mismatch.** `download_impl` reached 100 %, failed SHA verification, deleted the `.part` file, and never created the `.onnx` — user saw "dođe do kraja i onda nestane file". Now `.part` is kept for inspection and the error toast reports the actual vs. expected hash plus the partial file path. Combined with Cancel (Downloading) / Retry (Error) buttons in Settings → AI Models, failed downloads can be retried or inspected instead of disappearing silently.
+- **Stranded model download self-heals.** `scan_local()` resets a `Downloading` model back to `NotDownloaded` (progress → 0.0) when neither the final `.onnx` file nor the `.part` file exists — covers manual `.part` deletion or a dead download thread. `drain_model_download()` also resets on `Disconnected` (thread vanished without Done/Failed). Restarting the app brings back the Download button instead of leaving it stuck forever.
+
 ## [0.9.31] - 2026-11-20
 
 ### Added
