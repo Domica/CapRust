@@ -734,6 +734,12 @@ impl ModelRegistry {
             .collect();
         for (m, path) in self.models.iter_mut().zip(paths) {
             let exists = path.is_file() && path.metadata().map(|md| md.len() > 0).unwrap_or(false);
+            // Don't clobber an in-flight download: the .part file exists
+            // while downloading but the final target doesn't yet, so a
+            // naive exists-check would reset progress to 0 every frame.
+            if m.status == ModelStatus::Downloading {
+                continue;
+            }
             m.status = if exists {
                 ModelStatus::Ready
             } else {
