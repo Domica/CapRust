@@ -14,10 +14,11 @@
 //! Output is a single ffmpeg invocation; no intermediate files.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::export::RateMode;
 use caprust_core::clip::{EaseCurve, Keyframe};
+use caprust_core::models::ModelRegistry;
 
 /// One input file we'll hand to ffmpeg with `-ss` / `-t`.
 #[derive(Debug, Clone)]
@@ -403,6 +404,10 @@ pub struct RenderPlan {
     /// output-side `-ss`. False means the caller must fall back to
     /// output-side `-ss`.
     pub seek_optimized: bool,
+    /// Resolved path to the GFPGAN v1.4 ONNX model, if present on disk.
+    /// `None` when the model is not downloaded or not enabled; the
+    /// gfpgan effect arm then falls back to smartblur+hqdn3d.
+    pub gfpgan_model_path: Option<PathBuf>,
 }
 
 impl RenderPlan {
@@ -637,7 +642,7 @@ impl RenderPlan {
             if let Some(g) = &c.color_grade {
                 fg.push_str(&build_color_grade_chain(g));
             }
-            let effects_chain = build_effects_chain(&c.effects);
+            let effects_chain = build_effects_chain(&c.effects, self.gfpgan_model_path.as_deref());
             fg.push_str(&effects_chain);
             // Effects like zoom_pulse and shake use
             // `crop=w=iw*0.9:h=ih*0.9,...,scale=iw*1.111111:ih*1.111111`
@@ -1115,7 +1120,7 @@ impl RenderPlan {
             // Dimension-changing effects (shake crop, pixelate scale)
             // are normalized back to the exact project size, mirroring
             // the video-clip path. Empty = byte-identical output.
-            let fx_chain = build_effects_chain(&t.effects);
+            let fx_chain = build_effects_chain(&t.effects, self.gfpgan_model_path.as_deref());
             let fx_suffix = if fx_chain.is_empty() {
                 String::new()
             } else {
@@ -1906,7 +1911,10 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
 ///
 /// `enabled == false` skips the effect entirely; the UI can toggle a
 /// stage without removing it from the stack.
-fn build_effects_chain(effects: &[caprust_core::clip::EffectInstance]) -> String {
+fn build_effects_chain(
+    effects: &[caprust_core::clip::EffectInstance],
+    gfpgan_path: Option<&Path>,
+) -> String {
     let mut out = String::new();
     for inst in effects {
         if !inst.enabled {
@@ -1915,7 +1923,7 @@ fn build_effects_chain(effects: &[caprust_core::clip::EffectInstance]) -> String
         // Clamp amount to a well-behaved range; UI slider is 0..=2 but
         // serialized projects might carry values from older builds.
         let amount = inst.amount.clamp(0.0, 4.0);
-        let frag = build_one_effect(&inst.effect_id, amount);
+        let frag = build_one_effect(&inst.effect_id, amount, gfpgan_path);
         if let Some(f) = frag {
             out.push_str(&f);
         }
@@ -2181,7 +2189,7 @@ fn sticker_animation_fragment(id: &str) -> String {
     }
 }
 
-fn build_one_effect(id: &str, amount: f32) -> Option<String> {
+fn build_one_effect(id: &str, amount: f32, gfpgan_path: Option<&Path>) -> Option<String> {
     let frag: String = match id {
         // ---- Static effects: amount scales magnitude ----
         "blur" => format!(",boxblur={:.2}:2", 4.0 * amount),
@@ -2628,14 +2636,24 @@ fn build_one_effect(id: &str, amount: f32) -> Option<String> {
 
         // ---- Face Restore (GFPGAN v1.4) ----
         // GFPGAN is an ONNX model run through tract-onnx; the ffmpeg
-        // filtergraph cannot execute a neural network, so until the
-        // ONNX execution pipeline is wired into the render path this
-        // falls back to a face-smoothing denoise chain
-        // (smartblur + hqdn3d) that reads as "cleaner face" at a glance.
-        // Replace this arm with the tract-onnx GFPGAN pass when it lands.
+        // filtergraph cannot execute a neural network, so when the
+        // GFPGANv1.4.onnx model is on disk we return None here and
+        // defer to the external GfpganRestorer pipeline (see gfpgan.rs).
+        // When the model is missing, fall back to a face-smoothing
+        // denoise chain (smartblur + hqdn3d) that reads as "cleaner
+        // face" at a glance.
         "gfpgan" => {
             if amount <= 0.001 {
                 return None;
+            }
+            // When the GFPGAN ONNX model is on disk, skip the ffmpeg
+            // filter fragment entirely -- the tract-onnx restorer
+            // handles face restoration externally. Only fall back to
+            // the smartblur denoise when the model is missing.
+            if let Some(path) = gfpgan_path {
+                if path.is_file() {
+                    return None;
+                }
             }
             let a = amount.clamp(0.0, 1.0);
             format!(
@@ -4417,6 +4435,19 @@ pub fn plan_from_project(
         audio_from_video,
     );
 
+    // Resolve the GFPGAN v1.4 model path from the registry. The gfpgan
+    // effect arm checks this path at filtergraph build time: when the
+    // ONNX file exists on disk it defers to the tract-onnx restorer
+    // (see gfpgan.rs); otherwise it falls back to smartblur+hqdn3d.
+    let default_registry = ModelRegistry::default();
+    let resolved_gfpgan_path =
+        ModelRegistry::local_path_static(&default_registry.models, models_dir, "gfpgan-v1.4");
+    let gfpgan_model_path = if resolved_gfpgan_path.is_file() {
+        Some(resolved_gfpgan_path)
+    } else {
+        None
+    };
+
     Ok(RenderPlan {
         inputs,
         video_clips,
@@ -4435,6 +4466,7 @@ pub fn plan_from_project(
         encoder,
         seek_ms,
         seek_optimized: do_input_seek,
+        gfpgan_model_path,
         // `total_duration_sec` was derived from `video_clips` above,
         // whose timeline_start_sec / duration_sec were ALREADY shifted
         // by the seek when do_input_seek is true. Subtracting seek_sec
@@ -4628,14 +4660,14 @@ mod tests {
 
     #[test]
     fn grain_and_glow_produce_single_chain_fragments() {
-        let grain = build_one_effect("grain", 1.0).expect("grain chain");
+        let grain = build_one_effect("grain", 1.0, None).expect("grain chain");
         assert!(
             grain.contains("noise=alls="),
             "grain should emit noise: {grain}"
         );
         assert!(grain.contains("allf=t"), "grain should animate: {grain}");
 
-        let glow = build_one_effect("glow", 1.0).expect("glow chain");
+        let glow = build_one_effect("glow", 1.0, None).expect("glow chain");
         assert!(
             glow.contains("gblur=sigma="),
             "glow should bleed highlights: {glow}"
@@ -4648,11 +4680,11 @@ mod tests {
 
     #[test]
     fn ghost_and_sparkle_produce_chain() {
-        let g = build_one_effect("ghost", 1.0).expect("ghost chain");
+        let g = build_one_effect("ghost", 1.0, None).expect("ghost chain");
         assert!(g.contains("tmix="), "ghost should emit tmix");
         assert!(g.contains("frames="), "ghost should specify frame count");
 
-        let s = build_one_effect("sparkle", 1.0).expect("sparkle chain");
+        let s = build_one_effect("sparkle", 1.0, None).expect("sparkle chain");
         assert!(s.contains("noise="), "sparkle should emit noise");
         assert!(s.contains("eq="), "sparkle should brighten via eq");
     }
@@ -4806,6 +4838,7 @@ mod tests {
             preset: "veryfast".to_string(),
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         };
         // Overwrite the video clip's type via the plan-construction
         // path: rather than reimplement plan_from_project here, we
@@ -5335,6 +5368,7 @@ mod tests {
             preset: "veryfast".to_string(),
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         }
     }
 
@@ -5530,7 +5564,7 @@ mod tests {
 
     #[test]
     fn particle_produces_atmospheric_chain() {
-        let p = build_one_effect("particle", 1.0).expect("particle chain");
+        let p = build_one_effect("particle", 1.0, None).expect("particle chain");
         assert!(p.contains("noise="), "particle should emit noise");
         assert!(p.contains("boxblur="), "particle should soften via boxblur");
         assert!(p.contains("tmix="), "particle should trail via tmix");
@@ -5538,7 +5572,7 @@ mod tests {
 
     #[test]
     fn lens_flare_produces_warm_bloom_chain() {
-        let lf = build_one_effect("lens_flare", 1.0).expect("lens_flare chain");
+        let lf = build_one_effect("lens_flare", 1.0, None).expect("lens_flare chain");
         assert!(
             lf.contains("colorbalance="),
             "lens_flare should warm via colorbalance"
@@ -5549,33 +5583,33 @@ mod tests {
 
     #[test]
     fn new_static_effects_emit_expected_filters() {
-        let n = build_one_effect("negative", 1.0).expect("negative chain");
+        let n = build_one_effect("negative", 1.0, None).expect("negative chain");
         assert!(n.contains("negate"), "negative should invert via negate");
-        let s = build_one_effect("sketch", 1.0).expect("sketch chain");
+        let s = build_one_effect("sketch", 1.0, None).expect("sketch chain");
         assert!(s.contains("edgedetect"), "sketch should detect edges");
-        let sh = build_one_effect("sharpen", 1.0).expect("sharpen chain");
+        let sh = build_one_effect("sharpen", 1.0, None).expect("sharpen chain");
         assert!(sh.contains("unsharp="), "sharpen should use unsharp");
-        let p = build_one_effect("pixelate", 1.0).expect("pixelate chain");
+        let p = build_one_effect("pixelate", 1.0, None).expect("pixelate chain");
         assert!(
             p.contains("flags=neighbor"),
             "pixelate should mosaic via neighbor scaling"
         );
-        let h = build_one_effect("halftone", 1.0).expect("halftone chain");
+        let h = build_one_effect("halftone", 1.0, None).expect("halftone chain");
         assert!(h.contains("sin("), "halftone should use a dot pattern");
-        let so = build_one_effect("solarize", 1.0).expect("solarize chain");
+        let so = build_one_effect("solarize", 1.0, None).expect("solarize chain");
         assert!(
             so.contains("gte(lum"),
             "solarize should threshold luminance"
         );
-        let e = build_one_effect("emboss", 1.0).expect("emboss chain");
+        let e = build_one_effect("emboss", 1.0, None).expect("emboss chain");
         assert!(e.contains("convolution="), "emboss should convolve");
-        let a = build_one_effect("ai_enhance", 1.0).expect("ai_enhance chain");
+        let a = build_one_effect("ai_enhance", 1.0, None).expect("ai_enhance chain");
         assert!(
             a.contains("hqdn3d") && a.contains("deband"),
             "ai_enhance should fall back to denoise+deband"
         );
         assert!(
-            build_one_effect("nope", 1.0).is_none(),
+            build_one_effect("nope", 1.0, None).is_none(),
             "unknown id stays None"
         );
     }
@@ -5583,24 +5617,24 @@ mod tests {
     #[test]
     fn new_effects_emit_expected_filters() {
         assert!(
-            build_one_effect("cinematic_bars", 1.0)
+            build_one_effect("cinematic_bars", 1.0, None)
                 .unwrap()
                 .contains("drawbox="),
             "cinematic_bars should letterbox via drawbox"
         );
         assert!(
-            build_one_effect("teal_orange", 1.0)
+            build_one_effect("teal_orange", 1.0, None)
                 .unwrap()
                 .contains("colorbalance="),
             "teal_orange should grade via colorbalance"
         );
         assert!(
-            build_one_effect("cross_process", 1.0)
+            build_one_effect("cross_process", 1.0, None)
                 .unwrap()
                 .contains("colorbalance="),
             "cross_process should shift via colorbalance"
         );
-        let bb = build_one_effect("bleach_bypass", 1.0).unwrap();
+        let bb = build_one_effect("bleach_bypass", 1.0, None).unwrap();
         assert!(
             bb.contains("saturation="),
             "bleach_bypass should desaturate"
@@ -5610,25 +5644,29 @@ mod tests {
             "bleach_bypass should boost contrast"
         );
         assert!(
-            build_one_effect("moonlight", 1.0)
+            build_one_effect("moonlight", 1.0, None)
                 .unwrap()
                 .contains("colorbalance="),
             "moonlight should tint via colorbalance"
         );
-        let dh = build_one_effect("dreamy_haze", 1.0).unwrap();
+        let dh = build_one_effect("dreamy_haze", 1.0, None).unwrap();
         assert!(dh.contains("gblur="), "dreamy_haze should soften via gblur");
         assert!(
-            build_one_effect("flip3d", 1.0).unwrap().contains("rotate="),
+            build_one_effect("flip3d", 1.0, None)
+                .unwrap()
+                .contains("rotate="),
             "flip3d should rotate"
         );
         assert!(
-            build_one_effect("freezeframe", 1.0)
+            build_one_effect("freezeframe", 1.0, None)
                 .unwrap()
                 .contains("loop=loop=-1"),
             "freezeframe should freeze via loop"
         );
         assert!(
-            build_one_effect("echo", 1.0).unwrap().contains("tmix="),
+            build_one_effect("echo", 1.0, None)
+                .unwrap()
+                .contains("tmix="),
             "echo should trail via tmix"
         );
     }
@@ -5637,17 +5675,17 @@ mod tests {
     fn fixed_effects_emit_working_fragments() {
         // cinematic_bars: drawbox bands (pad's option is `color`, not
         // `c` — the old fragment errored and stalled the preview).
-        let bars = build_one_effect("cinematic_bars", 1.0).expect("bars chain");
+        let bars = build_one_effect("cinematic_bars", 1.0, None).expect("bars chain");
         assert!(bars.contains("drawbox="), "bars must draw boxes: {bars}");
         assert!(bars.contains("t=fill"), "bars must be filled: {bars}");
         assert!(!bars.contains("pad="), "bars must not use pad: {bars}");
         // freezeframe: infinite loop of frame 0 (select emitted one
         // frame then EOF -> black clip).
-        let fr = build_one_effect("freezeframe", 1.0).expect("freeze chain");
+        let fr = build_one_effect("freezeframe", 1.0, None).expect("freeze chain");
         assert!(fr.contains("loop=loop=-1"), "freeze must loop: {fr}");
         assert!(!fr.contains("select="), "freeze must not use select: {fr}");
         // grain: visible strength (alls=6 was imperceptible).
-        let g = build_one_effect("grain", 1.0).expect("grain chain");
+        let g = build_one_effect("grain", 1.0, None).expect("grain chain");
         let s: f32 = g
             .split("alls=")
             .nth(1)
@@ -5656,19 +5694,19 @@ mod tests {
             .expect("grain strength");
         assert!(s >= 10.0, "grain too subtle at amount 1: {s}");
         // kaleido: fisheye + hue rotation, not a plain 180 flip.
-        let k = build_one_effect("kaleido", 1.0).expect("kaleido chain");
+        let k = build_one_effect("kaleido", 1.0, None).expect("kaleido chain");
         assert!(k.contains("lenscorrection="), "kaleido must warp: {k}");
         assert!(k.contains("hue="), "kaleido must shift hue: {k}");
         // fade filter: faded-film look over the whole clip, not a
         // temporal fade-in (which blacked out the clip start).
-        let f = build_one_effect("fade", 1.0).expect("fade chain");
+        let f = build_one_effect("fade", 1.0, None).expect("fade chain");
         assert!(f.contains("brightness="), "fade must lift blacks: {f}");
         assert!(!f.contains("fade=t=in"), "fade must not fade in: {f}");
     }
 
     #[test]
     fn beauty_emits_edge_preserving_smooth() {
-        let b = build_one_effect("beauty", 1.0).expect("beauty chain");
+        let b = build_one_effect("beauty", 1.0, None).expect("beauty chain");
         assert!(
             b.contains("smartblur="),
             "beauty must smooth via smartblur: {b}"
@@ -5678,7 +5716,7 @@ mod tests {
             "beauty must protect edges via threshold: {b}"
         );
         // Strength scales with amount; radius stays in smartblur's 0.1..=5 range.
-        let hi = build_one_effect("beauty", 4.0).expect("beauty max chain");
+        let hi = build_one_effect("beauty", 4.0, None).expect("beauty max chain");
         assert!(
             hi.contains("luma_strength=1.00"),
             "strength clamps at 1: {hi}"
@@ -5688,7 +5726,7 @@ mod tests {
 
     #[test]
     fn ghost_frame_count_clamps_between_2_and_12() {
-        let g = build_one_effect("ghost", 4.0).unwrap();
+        let g = build_one_effect("ghost", 4.0, None).unwrap();
         let n: i32 = g
             .split("frames=")
             .nth(1)
@@ -5949,6 +5987,7 @@ mod tests {
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         }
     }
 
@@ -6107,6 +6146,7 @@ mod tests {
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         }
     }
 
@@ -6170,6 +6210,7 @@ mod tests {
             encoder: enc,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         };
         plan.build_command(
             std::path::Path::new("ffmpeg"),
@@ -6398,6 +6439,7 @@ mod tests {
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         };
         let (fg, _, _) = plan.build_filtergraph().unwrap();
         assert!(fg.contains("scale=1920:1080"));
@@ -6455,6 +6497,7 @@ mod text_motion_render_tests {
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         }
     }
 
@@ -7126,6 +7169,7 @@ mod flip_filtergraph_tests {
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         }
     }
 
@@ -7229,6 +7273,7 @@ mod reverse_filtergraph_tests {
             encoder: caprust_core::project::VideoEncoder::H264Cpu,
             seek_ms: 0,
             seek_optimized: false,
+            gfpgan_model_path: None,
         }
     }
 
@@ -8303,9 +8348,9 @@ mod reverse_filtergraph_tests {
     fn enhance_emits_a_denoise_that_scales_with_the_amount() {
         // At zero the effect is off: no chain at all, so an unused
         // Enhance costs nothing.
-        assert!(build_one_effect("enhance", 0.0).is_none());
+        assert!(build_one_effect("enhance", 0.0, None).is_none());
 
-        let full = build_one_effect("enhance", 1.0).expect("full amount emits a chain");
+        let full = build_one_effect("enhance", 1.0, None).expect("full amount emits a chain");
         assert!(
             full.contains("hqdn3d=12:6:20:12"),
             "the full-strength chain is {full}"
@@ -8313,7 +8358,7 @@ mod reverse_filtergraph_tests {
         assert!(full.contains("deband"), "the chain is {full}");
 
         // Half the amount is half the denoise.
-        let half = build_one_effect("enhance", 0.5).expect("half amount emits a chain");
+        let half = build_one_effect("enhance", 0.5, None).expect("half amount emits a chain");
         assert!(
             half.contains("hqdn3d=6:3:10:6"),
             "the half-strength chain is {half}"
@@ -8323,7 +8368,7 @@ mod reverse_filtergraph_tests {
         let mut prev = 0i32;
         for step in 1..=4 {
             let a = step as f32 / 4.0;
-            let chain = build_one_effect("enhance", a).expect("a chain");
+            let chain = build_one_effect("enhance", a, None).expect("a chain");
             let s = chain
                 .split("hqdn3d=")
                 .nth(1)
