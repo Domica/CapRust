@@ -184,17 +184,28 @@ jobs:
           $v = "${{ steps.version.outputs.version }}"
           $files = @(Get-ChildItem release -File | ForEach-Object { $_.FullName })
           if ($files.Count -eq 0) { throw "nothing to publish" }
+          # Build the gh args as an array so each flag/value stays separate
+          # (avoids PowerShell string-splitting issues with --notes-file).
+          $params = @("release", "create", "v$v")
+          $params += $files
+          $params += @("--title", "v$v")
           $notesFile = "release_notes_v$v.md"
-          $notesArg = if (Test-Path $notesFile) { "--notes-file $notesFile" } else { "--generate-notes" }
-          gh release create "v$v" @files `
-            --title "v$v" `
-            $notesArg
-          Write-Host "published v$v"
+          if (Test-Path $notesFile) {
+            $params += @("--notes-file", $notesFile)
+          } else {
+            $params += "--generate-notes"
+          }
+          gh $params
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release create returned $LASTEXITCODE (release may already exist)"
+          } else {
+            Write-Host "published v$v"
+          }
 
-      - name: Upload the signed files to an existing release
-        # For a re-run of a tag that already has a release, the create
-        # above fails and the files are attached instead.
-        if: failure()
+      - name: Upload assets to release
+        # Always runs: uploads/clobbers assets whether the release was
+        # just created above or already existed from a previous run.
+        if: always()
         shell: pwsh
         env:
           GH_TOKEN: '${{ github.token }}'
@@ -206,6 +217,7 @@ jobs:
             exit 0
           }
           gh release upload "v$v" @files --clobber
+          Write-Host "uploaded assets to v$v"
 
   build-linux:
     name: Linux release
