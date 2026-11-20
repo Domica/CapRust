@@ -1731,6 +1731,51 @@ fn show_video(
 
         ui.add_space(space::M_PLUS);
         ui.separator();
+
+        // --- Face Restore (GFPGAN v1.4) ---
+        // Runs during export on video/image clips only.
+        ui.label(egui::RichText::new(tr("props-face-restore")).strong());
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new(tr("props-face-restore-hint"))
+                .small()
+                .color(egui::Color32::from_gray(160)),
+        );
+        models.scan_local(&settings.effective_models_dir());
+        let gfpgan_model = models.models.iter().find(|m| m.id == "gfpgan-v1.4");
+        let gfpgan_ready = gfpgan_model
+            .map(|m| m.status == ModelStatus::Ready && m.enabled)
+            .unwrap_or(false);
+        let has_gfpgan = clip.effects.iter().any(|fx| fx.effect_id == "gfpgan");
+        let mut gfpgan_enabled = has_gfpgan;
+        if ui
+            .add_enabled_ui(gfpgan_ready, |ui| {
+                ui.checkbox(&mut gfpgan_enabled, tr("props-face-restore-enable"))
+                    .on_hover_text(tr("props-face-restore-enable-hint"))
+            })
+            .inner
+            .changed()
+        {
+            if gfpgan_enabled {
+                state
+                    .pending
+                    .push(PendingEdit::AddEffect("gfpgan".to_string()));
+            } else {
+                state
+                    .pending
+                    .push(PendingEdit::RemoveEffect("gfpgan".to_string()));
+            }
+        }
+        if !gfpgan_ready {
+            ui.label(
+                egui::RichText::new(tr("props-face-restore-needs-model"))
+                    .small()
+                    .color(egui::Color32::from_rgb(200, 100, 100)),
+            );
+        }
+
+        ui.add_space(space::M_PLUS);
+        ui.separator();
     } // !is_text_overlay
     ui.add_space(space::M_PLUS);
     ui.separator();
@@ -2782,43 +2827,6 @@ fn show_effects(
         }
     }
 
-    // --- Face Restore (GFPGAN v1.4) ---
-    // Ensure models are scanned first
-    models.scan_local(&settings.effective_models_dir());
-
-    // Check if GFPGAN model is ready and enabled
-    let gfpgan_model = models.models.iter().find(|m| m.id == "gfpgan-v1.4");
-    if let Some(model) = gfpgan_model {
-        if model.status == ModelStatus::Ready && model.enabled {
-            ui.add_space(space::M);
-            ui.separator();
-            ui.add_space(space::S);
-            ui.label(egui::RichText::new(tr("props-face-restore")).strong());
-            ui.add_space(space::XS);
-            ui.label(
-                egui::RichText::new(tr("props-face-restore-hint"))
-                    .small()
-                    .color(egui::Color32::from_gray(160)),
-            );
-            let has_gfpgan = clip.effects.iter().any(|fx| fx.effect_id == "gfpgan");
-            let mut gfpgan_enabled = has_gfpgan;
-            if ui
-                .checkbox(&mut gfpgan_enabled, tr("props-face-restore-enable"))
-                .on_hover_text(tr("props-face-restore-enable-hint"))
-                .changed()
-            {
-                if gfpgan_enabled {
-                    state
-                        .pending
-                        .push(PendingEdit::AddEffect("gfpgan".to_string()));
-                } else {
-                    state
-                        .pending
-                        .push(PendingEdit::RemoveEffect("gfpgan".to_string()));
-                }
-            }
-        }
-    }
 }
 
 fn clip_kind_label(clip: &Clip) -> &'static str {
