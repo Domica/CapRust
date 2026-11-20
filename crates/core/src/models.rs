@@ -367,8 +367,9 @@ impl Default for ModelRegistry {
                 .with_url(
                     "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.onnx",
                 )
-                // TODO: fill in real sha256 before release; empty skips verification.
-                .with_sha256(""),
+                .with_sha256(
+                    "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5",
+                ),
                 // --- Object Segmentation (MobileSAM) ---
                 // MobileSAM, Apache 2.0. Input 1024x1024 RGB + point/box prompt,
                 // output 256x256 mask logits. Lightweight SAM variant (~40 MB).
