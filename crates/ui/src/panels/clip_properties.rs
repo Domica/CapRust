@@ -586,7 +586,7 @@ pub fn show(
                 egui::TextEdit::singleline(&mut new_text)
                     .id(egui::Id::new(("cap_add", clip_id)))
                     .hint_text(tr("props-captions-add-hint"))
-                    .desired_width(f32::INFINITY),
+                    .desired_width(260.0),
             );
             ui.add_enabled_ui(!new_text.trim().is_empty(), |ui| {
                 ui.button(tr("props-captions-add")).clicked()
