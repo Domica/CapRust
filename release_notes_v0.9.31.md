@@ -9,6 +9,7 @@ Release 0.9.31: GFPGAN face restore, export cancel, model download progress in j
 
 ### Fixes
 
+- **Stranded model download self-heals.** `scan_local()` skips `Downloading` models to avoid clobbering real progress, but if the download thread died (or `.part` was deleted manually), status stayed `Downloading` forever with no Download button — stranded at e.g. 52%. Now `scan_local()` resets to `NotDownloaded` when neither the final file nor `.part` exists, and `drain_model_download()` resets on `Disconnected`. Combined with the new Cancel (Downloading) / Retry (Error) buttons in Settings → AI Models, stuck downloads can always be recovered.
 - `cargo fmt --all -- --check` now passes on all CI platforms (was failing CI run 44352985131 on step `cargo fmt`).
 
 ### Downloads
