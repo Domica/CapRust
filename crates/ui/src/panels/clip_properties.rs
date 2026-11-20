@@ -2826,7 +2826,6 @@ fn show_effects(
             }
         }
     }
-
 }
 
 fn clip_kind_label(clip: &Clip) -> &'static str {
