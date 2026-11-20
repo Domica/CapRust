@@ -734,10 +734,20 @@ impl ModelRegistry {
             .collect();
         for (m, path) in self.models.iter_mut().zip(paths) {
             let exists = path.is_file() && path.metadata().map(|md| md.len() > 0).unwrap_or(false);
-            // Don't clobber an in-flight download: the .part file exists
-            // while downloading but the final target doesn't yet, so a
-            // naive exists-check would reset progress to 0 every frame.
             if m.status == ModelStatus::Downloading {
+                // Don't clobber an in-flight download: the .part file exists
+                // while downloading but the final target doesn't yet, so a
+                // naive exists-check would reset progress to 0 every frame.
+                // However, if neither the final file nor the .part file
+                // exists, the download thread died or was aborted and the
+                // status is stranded — reset so the Download button
+                // reappears instead of being stuck at Downloading forever.
+                let part_path = path.with_extension("part");
+                let part_exists = part_path.is_file();
+                if !part_exists && !exists {
+                    m.status = ModelStatus::NotDownloaded;
+                    m.progress = 0.0;
+                }
                 continue;
             }
             m.status = if exists {

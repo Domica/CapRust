@@ -6360,7 +6360,17 @@ impl CapRustApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    tracing::warn!("model download thread vanished");
+                    // The download thread died without sending Done or Failed
+                    // (e.g. process killed mid-download, or .part deleted by
+                    // user leaving status stuck at Downloading). Reset so the
+                    // Download button reappears instead of being stranded
+                    // forever — scan_local() skips Downloading models so it
+                    // would never self-heal otherwise.
+                    tracing::warn!("model download thread vanished for {model_id}");
+                    if let Some(m) = self.project.models_mut().get_mut(&model_id) {
+                        m.status = caprust_core::ModelStatus::NotDownloaded;
+                        m.progress = 0.0;
+                    }
                     keep = false;
                     break;
                 }
