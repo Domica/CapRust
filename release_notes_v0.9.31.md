@@ -34,8 +34,7 @@ Release 0.9.31: GFPGAN face restore, export cancel, model download progress in j
 
 ### Known limitations
 
-- GFPGAN: the ONNX model is registered and the UI checkbox is wired, but the tract-onnx execution pipeline runs a denoise+deband fall-back until the native GFPGAN pass lands.
 - Keyframe easing curves on export: ffmpeg filtergraph easing works for trajectory, per-property track easing on export is not yet wired.
 - Android editor: feature parity with desktop is partial (no keyframe tracks tab, no plugin UI).
 
-Full Changelog: https://github.com/Domica/CapRust/compare/v0.9.30...v0.9.31
+Full Changelog: https://github.com/Domica/CapRust/compare/v0.9.29...v0.9.31
