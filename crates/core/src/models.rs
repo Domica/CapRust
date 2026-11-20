@@ -674,8 +674,16 @@ fn download_impl(
         let _ = tx.send(DownloadEvent::Verifying);
         let got = download::sha256_file(&part_path)?;
         if !got.eq_ignore_ascii_case(expected_sha256) {
-            let _ = std::fs::remove_file(&part_path);
-            anyhow::bail!("SHA-256 mismatch: got {got}, expected {expected_sha256}");
+            // NE brišite .part datoteku na SHA mismatch — ostavite je za
+            // inspekaciju tako korisnik vidi što je zapravo preuzeto. Ovo
+            // sprječava "dođe do kraja i onda nestane file" scenarij gdje
+            // preuzimanje stigne do 100 %, SHA ne uspije, .part se briše,
+            // a .onnx nikada nije kreiran.
+            let part_display = part_path.display();
+            anyhow::bail!(
+                "SHA-256 mismatch: got {got}, expected {expected_sha256}. \
+                 Partial file kept at {part_display}"
+            );
         }
         tracing::info!("model download: SHA-256 ok");
     }
