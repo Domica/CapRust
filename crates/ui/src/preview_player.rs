@@ -65,27 +65,30 @@ impl Slot {
 
     /// Overwrite the slot. If a job was already waiting, it is dropped.
     fn put(&self, job: FrameJob) {
-        *self.inner.lock().unwrap() = Some(job);
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
         self.cv.notify_one();
     }
 
     /// Wait for a job, take it.
     fn take(&self) -> FrameJob {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         while guard.is_none() {
-            guard = self.cv.wait(guard).unwrap();
+            guard = self.cv.wait(guard).unwrap_or_else(|e| e.into_inner());
         }
-        guard.take().unwrap()
+        guard.take().expect("guard is Some after is_none loop")
     }
 
     /// Peek whether a newer job is waiting (without taking it).
     fn has_pending(&self) -> bool {
-        self.inner.lock().unwrap().is_some()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 
     /// Clear any pending job.
     fn clear(&self) {
-        *self.inner.lock().unwrap() = None;
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 

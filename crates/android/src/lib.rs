@@ -151,7 +151,7 @@ impl Session {
 
     /// The media in the library.
     pub fn media(&self) -> &[MediaItem] {
-        &self.project.media.items
+        &self.project.media().items
     }
 
     /// The clips on the timeline.
@@ -161,7 +161,7 @@ impl Session {
 
     /// The tracks.
     pub fn tracks(&self) -> &[Track] {
-        &self.project.tracks
+        self.project.tracks()
     }
 
     /// Bring a file into the library.
@@ -174,10 +174,10 @@ impl Session {
         let probe = caprust_media_io::ffprobe::probe(&self.paths.ffprobe, path)
             .with_context(|| format!("probe {}", path.display()))?;
 
-        let id = self.project.media.add(&path.to_string_lossy(), kind);
+        let id = self.project.media_mut().add(&path.to_string_lossy(), kind);
         let item = self
             .project
-            .media
+            .media_mut()
             .items
             .iter_mut()
             .find(|i| i.id == id)
@@ -205,7 +205,7 @@ impl Session {
     pub fn add_to_timeline(&mut self, media_id: Uuid, track: usize, start_ms: u64) -> Result<Uuid> {
         let item = self
             .project
-            .media
+            .media()
             .items
             .iter()
             .find(|i| i.id == media_id)
@@ -289,7 +289,7 @@ impl Session {
     /// The first video lane, or a new one if the project has none.
     pub fn first_video_track(&self) -> Option<usize> {
         self.project
-            .tracks
+            .tracks()
             .iter()
             .position(|t| t.kind == TrackKind::Video)
     }

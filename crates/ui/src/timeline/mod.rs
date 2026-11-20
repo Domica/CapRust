@@ -135,7 +135,11 @@ fn contributes_audio(
     clip: &caprust_core::clip::Clip,
 ) -> bool {
     use caprust_core::ClipType;
-    if project.tracks.get(clip.track_index).is_none_or(|t| t.muted) {
+    if project
+        .tracks()
+        .get(clip.track_index)
+        .is_none_or(|t| t.muted)
+    {
         return false;
     }
     match clip.clip_type {
@@ -144,7 +148,7 @@ fn contributes_audio(
             !clip.audio_detached
                 && clip
                     .media_id
-                    .and_then(|id| project.media.items.iter().find(|m| m.id == id))
+                    .and_then(|id| project.media().items.iter().find(|m| m.id == id))
                     .is_none_or(|m| m.has_audio)
         }
         _ => false,
@@ -464,8 +468,8 @@ mod overlay_tests {
     fn project_with(clips: &[Clip]) -> ProjectState {
         let mut p = ProjectState::default();
         for c in clips {
-            while p.tracks.len() <= c.track_index {
-                p.tracks.push(Track::new("t", TrackKind::Audio));
+            while p.tracks().len() <= c.track_index {
+                p.tracks_mut().push(Track::new("t", TrackKind::Audio));
             }
             p.add_clip_for_test(c.clone());
         }
@@ -664,10 +668,10 @@ mod overlay_tests {
                 m.duck_against = Some(m.id);
             }),
             ("control track muted", false, |p, _, _, _| {
-                p.tracks[5].muted = true;
+                p.tracks_mut()[5].muted = true;
             }),
             ("ducked clip track muted", false, |p, _, _, _| {
-                p.tracks[3].muted = true;
+                p.tracks_mut()[3].muted = true;
             }),
             ("video control with audio", true, |_, _, c, f| {
                 let id = c.id;
@@ -687,8 +691,8 @@ mod overlay_tests {
                     let id = c.id;
                     *c = Clip::new_video(f, 1, 1000, 2000);
                     c.id = id;
-                    let mid = p.media.add(f, MediaKind::Video);
-                    p.media
+                    let mid = p.media_mut().add(f, MediaKind::Video);
+                    p.media_mut()
                         .items
                         .iter_mut()
                         .find(|m| m.id == mid)
@@ -706,7 +710,9 @@ mod overlay_tests {
         let mut bad: Vec<String> = Vec::new();
         for (label, expect, tweak) in cases {
             let mut project = ProjectState::default();
-            project.tracks.push(Track::new("A2", TrackKind::Audio));
+            project
+                .tracks_mut()
+                .push(Track::new("A2", TrackKind::Audio));
             // Keeps the planner happy (it wants a video or text clip).
             project.add_clip_for_test(Clip::new_text("x", 0, 0, 10_000, false));
             let mut music = Clip::new_audio(&file("music.wav"), 3, 0, 4000);

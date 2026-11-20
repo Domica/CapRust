@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build-windows:
     name: Windows release
     runs-on: windows-latest
     env:
@@ -184,9 +184,11 @@ jobs:
           $v = "${{ steps.version.outputs.version }}"
           $files = @(Get-ChildItem release -File | ForEach-Object { $_.FullName })
           if ($files.Count -eq 0) { throw "nothing to publish" }
+          $notesFile = "release_notes_v$v.md"
+          $notesArg = if (Test-Path $notesFile) { "--notes-file $notesFile" } else { "--generate-notes" }
           gh release create "v$v" @files `
             --title "v$v" `
-            --generate-notes
+            $notesArg
           Write-Host "published v$v"
 
       - name: Upload the signed files to an existing release
@@ -204,3 +206,219 @@ jobs:
             exit 0
           }
           gh release upload "v$v" @files --clobber
+
+  build-linux:
+    name: Linux release
+    needs: [build-windows]
+    runs-on: ubuntu-22.04
+    env:
+      CMAKE_ARGS: -DGGML_NATIVE=OFF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config clang libclang-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev \
+            libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@1.91.0
+      # Bust: the runner moved from 24.04 to 22.04, and the old cache
+      # carries build-script binaries linked against glibc 2.39.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: v2-22.04
+      - run: cargo build --release -p caprust-app --no-default-features
+
+      # A .deb, so a Debian or Ubuntu box can install with dpkg -i
+      # instead of unpacking a tarball by hand.
+      - name: Build the .deb
+        run: |
+          VERSION="$(cat Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)"
+          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/share/applications pkg/usr/share/icons/hicolor/128x128/apps
+          cat > pkg/DEBIAN/control <<EOF
+          Package: caprust
+          Version: $VERSION
+          Section: video
+          Priority: optional
+          Architecture: amd64
+          Installed-Size: $(( $(stat -c%s target/release/caprust-app) / 1024 ))
+          Depends: libgtk-3-0, libasound2
+          Maintainer: Domica <[EMAIL]>
+          Homepage: https://github.com/Domica/CapRust
+          Description: Social-first video editor in Rust
+           A native video editor for short-form creators.
+           No cloud, no telemetry, MIT licensed.
+          EOF
+          cp target/release/caprust-app pkg/usr/bin/caprust
+          cp docs/logo.png pkg/usr/share/icons/hicolor/128x128/apps/caprust.png
+          cat > pkg/usr/share/applications/caprust.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=CapRust
+          Comment=Social-first video editor
+          Exec=caprust
+          Icon=caprust
+          Categories=AudioVideo;Video;AudioVideoEditing;
+          Terminal=false
+          EOF
+          dpkg-deb --build --root-owner-group pkg "caprust_${VERSION}_amd64.deb"
+          echo "Built caprust_${VERSION}_amd64.deb ($(stat -c%s "caprust_${VERSION}_amd64.deb") bytes)"
+          # Smoke test: the package unpacks and the binary is there.
+          dpkg-deb -c "caprust_${VERSION}_amd64.deb" | grep -q 'usr/bin/caprust'
+          dpkg-deb --info "caprust_${VERSION}_amd64.deb" | grep -q 'Package: caprust'
+
+      - name: Upload .deb to release
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          VERSION="$(cat Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)"
+          gh release upload "v${VERSION}" "caprust_${VERSION}_amd64.deb" --clobber
+
+  build-android:
+    name: Android release
+    needs: [build-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The engine, for the phone.
+      #
+      # The same Rust the desktop runs, built for the phone's
+      # architecture. It goes into the APK's native library folder,
+      # which is the only place an Android app may run a binary from.
+      # Two architectures: a phone is arm64, an emulator on a laptop is
+      # x86_64. The app finds the engine in its own native library
+      # folder, which Android fills for the architecture it runs on,
+      # so the APK has to carry both.
+      - name: Install the Android targets
+        run: |
+          TOOLCHAIN="$(cat rust-toolchain.toml | grep channel | cut -d'"' -f2)"
+          rustup target add aarch64-linux-android --toolchain "$TOOLCHAIN"
+          rustup target add armv7-linux-androideabi --toolchain "$TOOLCHAIN"
+          rustup target add x86_64-linux-android --toolchain "$TOOLCHAIN"
+          rustup target add i686-linux-android --toolchain "$TOOLCHAIN"
+
+      - name: Point cargo at the NDK clang wrappers
+        run: |
+          NDK="$ANDROID_NDK_ROOT"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android21-clang"
+            echo "CC_aarch64_linux_android=$BIN/aarch64-linux-android21-clang"
+            echo "CXX_aarch64_linux_android=$BIN/aarch64-linux-android21-clang++"
+            echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$BIN/armv7a-linux-androideabi21-clang"
+            echo "CC_armv7_linux_androideabi=$BIN/armv7a-linux-androideabi21-clang"
+            echo "CXX_armv7_linux_androideabi=$BIN/armv7a-linux-androideabi21-clang++"
+            echo "CARGO_TARGET_I686_LINUX_ANDROID_LINKER=$BIN/i686-linux-android21-clang"
+            echo "CC_i686_linux_android=$BIN/i686-linux-android21-clang"
+            echo "CXX_i686_linux_android=$BIN/i686-linux-android21-clang++"
+            echo "AR_i686_linux_android=$BIN/llvm-ar"
+            echo "RANLIB_i686_linux_android=$BIN/llvm-ranlib"
+            echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$BIN/x86_64-linux-android21-clang"
+            echo "CC_x86_64_linux_android=$BIN/x86_64-linux-android21-clang"
+            echo "CXX_x86_64_linux_android=$BIN/x86_64-linux-android21-clang++"
+            echo "AR_aarch64_linux_android=$BIN/llvm-ar"
+            echo "RANLIB_aarch64_linux_android=$BIN/llvm-ranlib"
+            echo "AR_armv7_linux_androideabi=$BIN/llvm-ar"
+            echo "RANLIB_armv7_linux_androideabi=$BIN/llvm-ranlib"
+            echo "ANDROID_API=21"
+            echo "PATH=$BIN:$PATH"
+          } >> "$GITHUB_ENV"
+          echo "export PATH=\"$BIN:\$PATH\"" >> "$GITHUB_PATH"
+
+      - name: Build the engine for the phone
+        run: |
+          cargo build --release -p caprust-android --target aarch64-linux-android --bin caprust-androidd
+          cargo build --release -p caprust-android --target armv7-linux-androideabi --bin caprust-androidd
+          cargo build --release -p caprust-android --target x86_64-linux-android --bin caprust-androidd
+          cargo build --release -p caprust-android --target i686-linux-android --bin caprust-androidd
+
+      # The renderer. It has to be in the APK: an Android app may only
+      # run a binary out of its own native library folder, and the
+      # engine renders by calling ffmpeg.
+      #
+      # Built from source, because a third-party binary in a release is
+      # a thing that has to be trusted, and because the old prebuilt
+      # Android builds are from 2016 and have no xfade in them, so no
+      # transitions.
+      #
+      # The build is cached: the first one takes twenty minutes, the
+      # rest take a minute.
+      # The ffmpeg build takes twenty minutes an architecture, and
+      # the nightly runs on every push. The binaries are cached, so
+      # only the first run pays for them.
+      - name: Restore the ffmpeg builds
+        uses: actions/cache@v4
+        with:
+          path: android/ffmpeg
+          key: android-ffmpeg-${{ hashFiles('android/build-ffmpeg.sh') }}
+
+      - name: Build ffmpeg for the phone
+        # Not fatal yet: the recipe is new, and the APK is worth
+        # building without a renderer in it. The check that the
+        # ffmpeg is in the APK comes when the recipe works.
+        continue-on-error: true
+        run: |
+          for ABI in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+            echo "=== ffmpeg for $ABI ==="
+            bash android/build-ffmpeg.sh "$ABI"
+          done
+
+      # gradle from the runner image rather than a wrapper: the wrapper
+      # would mean committing a binary jar for a build that only needs
+      # assembleDebug. rust-toolchain.toml pins the Rust version, not
+      # Gradle, so nothing here is coupled to it.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        # Debug, not release: there is no signing config, and an
+        # unsigned release APK cannot be sideloaded anyway. Debug is
+        # signed with the default debug key, which is enough to install
+        # by tapping the file on the device.
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+
+      # A build with the Kotlin plugin missing exits 0 and produces an
+      # APK whose classes.dex is a few kilobytes of nothing: the
+      # manifest still names MainActivity, so it installs and then dies
+      # on launch. `assembleDebug` succeeding is not evidence the app is
+      # in there. This is.
+      - name: Verify the APK actually contains the app
+        working-directory: android
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK" || { echo "no APK at $APK"; exit 1; }
+          SIZE=$(stat -c%s "$APK")
+          echo "APK: $SIZE bytes"
+          # Below ~200 KB means no compiled app code got in.
+          if [ "$SIZE" -lt 204800 ]; then
+            echo "APK is too small to contain the app. Check that the"
+            echo "Kotlin plugin is applied; without it .kt files are skipped"
+            echo "and the build still succeeds."
+            exit 1
+          fi
+          unzip -l "$APK" | grep -q 'classes.dex' || {
+            echo "no classes.dex in the APK"; exit 1; }
+          # The engine has to be in there too. An APK without it
+          # installs and then says the engine is missing, which looks
+          # like a bug in the app rather than a build that skipped a
+          # step.
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libcaprust-androidd.so' || {
+            echo "no engine for the phone in the APK"; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/x86_64/libcaprust-androidd.so' || {
+            echo "no engine for the emulator in the APK"; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/x86/libcaprust-androidd.so' || {
+            echo "no engine for the 32-bit emulator in the APK"; exit 1; }
+          echo "APK looks real."
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          VERSION="$(cat Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "caprust-${VERSION}.apk"
+          gh release upload "v${VERSION}" "caprust-${VERSION}.apk" --clobber

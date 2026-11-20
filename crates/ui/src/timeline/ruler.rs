@@ -16,7 +16,7 @@ fn pick_interval(px_per_ms: f32, min_px: f32) -> u64 {
             return c;
         }
     }
-    *candidates_ms.last().unwrap()
+    candidates_ms[candidates_ms.len() - 1]
 }
 
 /// Draw the ruler. Returns click position (in ms) if the user clicked on it.

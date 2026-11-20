@@ -631,15 +631,15 @@ fn get_project_summary(p: &ProjectState) -> Result<String> {
         "locale": p.locale,
         "total_duration_ms": total_duration_ms,
         "clip_count": p.clips().len(),
-        "track_count": p.tracks.len(),
-        "media_count": p.media.items.len(),
+        "track_count": p.tracks().len(),
+        "media_count": p.media().items.len(),
     });
     Ok(serde_json::to_string_pretty(&summary)?)
 }
 
 fn list_tracks(p: &ProjectState) -> Result<String> {
     let arr: Vec<Value> = p
-        .tracks
+        .tracks()
         .iter()
         .enumerate()
         .map(|(i, t)| {
@@ -677,7 +677,7 @@ fn list_clips(p: &ProjectState, args: &Value) -> Result<String> {
                 "duration_ms": c.duration_ms,
                 "kind": clip_kind_str(&c.clip_type),
                 "media_id": c.media_id,
-                "name": p.media.items.iter().find(|m| c.media_id == Some(m.id)).map(|m| m.name.clone()).unwrap_or_default(),
+                "name": p.media().items.iter().find(|m| c.media_id == Some(m.id)).map(|m| m.name.clone()).unwrap_or_default(),
                 "speed": c.speed,
                 "reversed": c.reversed,
                 "flip_h": c.flip_h,
@@ -709,7 +709,7 @@ fn list_clips(p: &ProjectState, args: &Value) -> Result<String> {
 
 fn list_media(p: &ProjectState) -> Result<String> {
     let arr: Vec<Value> = p
-        .media
+        .media()
         .items
         .iter()
         .map(|m| {
@@ -992,15 +992,15 @@ fn add_clip_to_timeline(
         .context("missing or non-integer `track_index`")? as usize;
     let start_ms = parse_u64(args, "start_ms")?;
 
-    if track_index >= project.tracks.len() {
+    if track_index >= project.tracks().len() {
         bail!(
             "track_index {track_index} out of bounds (0..{})",
-            project.tracks.len()
+            project.tracks().len()
         );
     }
 
     let media = project
-        .media
+        .media()
         .items
         .iter()
         .find(|m| m.id == media_id)
@@ -1073,7 +1073,7 @@ fn add_media(args: &Value, project: &mut ProjectState, undo: &mut UndoStack) -> 
 
     undo.execute(Box::new(AddMediaCommand::new(path, kind)), project)?;
 
-    let new_id = project.media.items.last().map(|m| m.id);
+    let new_id = project.media().items.last().map(|m| m.id);
     Ok(
         json!({ "ok": true, "media_id": new_id.map(|id| id.to_string()).unwrap_or_default() })
             .to_string(),
@@ -1105,9 +1105,9 @@ mod tests {
 
     fn empty_project() -> ProjectState {
         let mut p = ProjectState::default();
-        p.tracks.clear();
+        p.clear_tracks_for_test();
         p.clear_clips_for_test();
-        p.media.items.clear();
+        p.clear_media_for_test();
         p
     }
 
@@ -1135,8 +1135,8 @@ mod tests {
         let p = ProjectState::default();
         let s = get_project_summary(&p).unwrap();
         let v: Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["track_count"], p.tracks.len());
-        assert!(!p.tracks.is_empty(), "default state has seed tracks");
+        assert_eq!(v["track_count"], p.tracks().len());
+        assert!(!p.tracks().is_empty(), "default state has seed tracks");
     }
 
     #[test]
@@ -1459,14 +1459,14 @@ mod tests {
         let mut p = ProjectState::default();
         let mut u = UndoStack::new();
         let clips_before = p.clips().len();
-        let tracks_before = p.tracks.len();
+        let tracks_before = p.tracks().len();
         // UndoStack::undo on an empty stack is a silent no-op, not an error.
         // Mutating tools are the only producers of stack entries, so this
         // path is only reachable when a client calls undo() before any
         // mutating call.
         let _ = do_undo(&mut p, &mut u);
         assert_eq!(p.clips().len(), clips_before);
-        assert_eq!(p.tracks.len(), tracks_before);
+        assert_eq!(p.tracks().len(), tracks_before);
     }
 
     #[test]
@@ -1545,17 +1545,17 @@ mod tests {
 
         let mut p = ProjectState::default();
         let mut u = UndoStack::new();
-        let before = p.media.items.len();
+        let before = p.media().items.len();
 
         add_media(&json!({ "path": tmp.to_string_lossy() }), &mut p, &mut u).unwrap();
-        assert_eq!(p.media.items.len(), before + 1);
+        assert_eq!(p.media().items.len(), before + 1);
         assert!(matches!(
-            p.media.items.last().unwrap().kind,
+            p.media().items.last().unwrap().kind,
             MediaKind::Video
         ));
 
         u.undo(&mut p).unwrap();
-        assert_eq!(p.media.items.len(), before);
+        assert_eq!(p.media().items.len(), before);
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -1585,7 +1585,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            p.media.items.last().unwrap().kind,
+            p.media().items.last().unwrap().kind,
             MediaKind::Audio
         ));
         let _ = std::fs::remove_file(&tmp);

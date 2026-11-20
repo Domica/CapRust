@@ -20,18 +20,6 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 - `cargo fmt --all -- --check` now passes on all CI platforms (was failing CI run 44352985131 on step `cargo fmt`).
 
-### Added
-
-- **Faza 2.1 UndoStack atomic batch execution.** `UndoStack::execute_batch(Vec<Box<dyn Command>>)` wraps multiple commands in a `MacroCommand` for a single undo step with atomic rollback on mid-batch failure. Ctrl+Z reverts an entire batch at once instead of per-command.
-
-### Fixed
-
-- **Faza 2.2 clips privatization.** `ProjectState.clips` field changed from `pub` to `pub(crate)`; all clip mutations go through controlled accessor/mutator methods (`clips()`, `modify_clip_by_id`, `modify_clip_by_index`, `retain_clips`, `clip_by_id_mut`, `with_clip_and_models_mut`, `add_clip_for_test`, `clear_clips_for_test`) so every mutation is undoable via `UndoStack`. Updated `caprust-ui`, `caprust-media-io`, `caprust-mcp`, and `caprust-android` crates accordingly.
-
-- **Faza 2.3 Panics → bail!.** Replaced bare `.unwrap()` calls in core test code with `.expect("descriptive message")` so failures carry context instead of silent panics. Fixed integration test `set_clip_auto_reframe.rs` to use the public `add_clip_for_test()` / `clips()` API for `pub(crate)` access.
-
-- **Faza 2.5 Production .unwrap() → error handling.** `detect_beats()` in `crates/core/src/beat.rs` no longer panics when no BPM candidates fall in the 60–240 BPM range; returns an empty `BeatGrid` instead, consistent with existing early-return behavior.
-
 ## [0.9.29] - 2026-11-15
 
 ### Added

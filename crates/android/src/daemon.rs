@@ -360,7 +360,7 @@ impl Daemon {
     fn probe_new_media(&mut self) {
         let pending: Vec<(uuid::Uuid, String)> = self
             .project
-            .media
+            .media()
             .items
             .iter()
             .filter(|m| !m.probe_done)
@@ -369,7 +369,13 @@ impl Daemon {
         for (id, path) in pending {
             let probe = caprust_media_io::ffprobe::probe(&self.paths.ffprobe, Path::new(&path));
             let Ok(probe) = probe else { continue };
-            if let Some(item) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+            if let Some(item) = self
+                .project
+                .media_mut()
+                .items
+                .iter_mut()
+                .find(|m| m.id == id)
+            {
                 item.duration_ms = probe.duration_ms;
                 item.has_audio = probe.has_audio;
                 item.probe_done = true;

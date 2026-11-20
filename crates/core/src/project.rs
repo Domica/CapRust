@@ -14,9 +14,9 @@ pub struct ProjectState {
     pub locale: String,
     pub frame_rate: crate::frame_rate::FrameRate,
     pub project_path: Option<String>,
-    pub media: crate::media::MediaLibrary,
-    pub models: crate::models::ModelRegistry,
-    pub tracks: Vec<crate::track::Track>,
+    pub(crate) media: crate::media::MediaLibrary,
+    pub(crate) models: crate::models::ModelRegistry,
+    pub(crate) tracks: Vec<crate::track::Track>,
     /// Master-bus CLAP plugin chain (Faza I). Applied to the
     /// final mix, not per-clip. See DIRECTIVES 12 and 28.3.
     #[serde(default)]
@@ -127,6 +127,78 @@ impl ProjectState {
     /// Test-only: clear all clips without going through a Command.
     pub fn clear_clips_for_test(&mut self) {
         self.clips.clear();
+    }
+
+    // ── Media library accessors ───────────────────────────────────────
+
+    /// Read-only access to the media library. External crates must use
+    /// this instead of accessing the `media` field directly (it is `pub(crate)`).
+    pub fn media(&self) -> &crate::media::MediaLibrary {
+        &self.media
+    }
+
+    /// Mutable access to the media library.
+    pub fn media_mut(&mut self) -> &mut crate::media::MediaLibrary {
+        &mut self.media
+    }
+
+    // ── Model registry accessors ──────────────────────────────────────
+
+    /// Read-only access to the model registry.
+    pub fn models(&self) -> &crate::models::ModelRegistry {
+        &self.models
+    }
+
+    /// Mutable access to the model registry.
+    pub fn models_mut(&mut self) -> &mut crate::models::ModelRegistry {
+        &mut self.models
+    }
+
+    // ── Tracks accessors ──────────────────────────────────────────────
+
+    /// Read-only access to the track list. External crates must use this
+    /// instead of accessing the `tracks` field directly (it is `pub(crate)`).
+    pub fn tracks(&self) -> &[crate::track::Track] {
+        &self.tracks
+    }
+
+    /// Mutable access to the track list (full Vec access).
+    pub fn tracks_mut(&mut self) -> &mut Vec<crate::track::Track> {
+        &mut self.tracks
+    }
+
+    /// Mutable borrow of a single track by index.
+    pub fn track_mut(&mut self, index: usize) -> Option<&mut crate::track::Track> {
+        self.tracks.get_mut(index)
+    }
+
+    /// Push a new track onto the project.
+    pub fn add_track(&mut self, track: crate::track::Track) {
+        self.tracks.push(track);
+    }
+
+    /// Remove a track by index, returning it if it existed.
+    pub fn remove_track(&mut self, index: usize) -> Option<crate::track::Track> {
+        if index < self.tracks.len() {
+            Some(self.tracks.remove(index))
+        } else {
+            None
+        }
+    }
+
+    /// Test-only: push a track without going through a Command.
+    pub fn add_track_for_test(&mut self, track: crate::track::Track) {
+        self.tracks.push(track);
+    }
+
+    /// Test-only: clear all tracks without going through a Command.
+    pub fn clear_tracks_for_test(&mut self) {
+        self.tracks.clear();
+    }
+
+    /// Test-only: clear all media items without going through a Command.
+    pub fn clear_media_for_test(&mut self) {
+        self.media.items.clear();
     }
 
     pub fn project_dimensions(&self) -> (u32, u32) {

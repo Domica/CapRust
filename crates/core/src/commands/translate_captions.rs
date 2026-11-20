@@ -193,7 +193,9 @@ mod tests {
         let mut stack = UndoStack::default();
 
         let cmd = TranslateCaptionsCommand::new(src_id, "hr", vec!["Bok".into(), "Svijete".into()]);
-        stack.execute(Box::new(cmd), &mut p).expect("execute TranslateCaptionsCommand");
+        stack
+            .execute(Box::new(cmd), &mut p)
+            .expect("execute TranslateCaptionsCommand");
 
         assert_eq!(p.tracks.len(), tracks_before + 1);
         assert_eq!(p.clips.len(), clips_before + 1);

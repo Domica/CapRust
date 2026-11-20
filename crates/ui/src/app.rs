@@ -630,6 +630,10 @@ pub struct CapRustApp {
     pub audio_baseline_ms: u64,
     pub asset_browser: AssetBrowserState,
     pub export_in_progress: bool,
+    /// Set when the user clicks Cancel in the export window. poll_export
+    /// drains remaining events without updating state, so the ffmpeg
+    /// process finishes in the background but its results are ignored.
+    pub export_cancel: bool,
     pub export_rx: Option<std::sync::mpsc::Receiver<ExportEvent>>,
     pub export_progress: f32,
     /// Wall-clock tracker for the in-flight export. Some while an
@@ -1730,6 +1734,7 @@ impl CapRustApp {
             audio_baseline_ms: 0,
             asset_browser: AssetBrowserState::new(),
             export_in_progress: false,
+            export_cancel: false,
             export_rx: None,
             export_progress: 0.0,
             export_tracker: None,
@@ -1755,9 +1760,9 @@ impl CapRustApp {
         // NotDownloaded until some job path happens to scan, which is
         // exactly the "models need downloading although they are on
         // disk" report after a version update.
-        app.project.models.merge_missing_defaults();
+        app.project.models_mut().merge_missing_defaults();
         app.project
-            .models
+            .models_mut()
             .scan_local(&app.settings.effective_models_dir());
         // Extract embedded LUTs so built-in grades work on installed
         // builds (installer ships only the exe). Best-effort: a
@@ -1797,9 +1802,9 @@ impl CapRustApp {
         self.project = project;
         // Fresh registry from Default is all NotDownloaded; rescan so
         // Settings shows the on-disk truth (same reason as new()).
-        self.project.models.merge_missing_defaults();
+        self.project.models_mut().merge_missing_defaults();
         let models_dir = self.settings.effective_models_dir();
-        self.project.models.scan_local(&models_dir);
+        self.project.models_mut().scan_local(&models_dir);
         self.undo_stack = UndoStack::new();
         self.mode = AppMode::Editor;
         // Do NOT persist yet — user must hit Save (Ctrl+S) first.
@@ -2211,9 +2216,9 @@ impl CapRustApp {
                                 // and Save go to the same place.
                                 state.project_path =
                                     Some(self.project.project_path.clone().unwrap_or_default());
-                                state.models.merge_missing_defaults();
+                                state.models_mut().merge_missing_defaults();
                                 state
-                                    .models
+                                    .models_mut()
                                     .scan_local(&self.settings.effective_models_dir());
                                 self.project = state;
                                 self.undo_stack = UndoStack::new();
@@ -2275,12 +2280,12 @@ impl CapRustApp {
                 // the saved snapshot (e.g. projects created before F1b
                 // added Piper URLs). Also adds brand-new models from
                 // later builds.
-                state.models.merge_missing_defaults();
+                state.models_mut().merge_missing_defaults();
                 // Rescan: a project saved by an older build carries
                 // stale statuses, and merged-in entries start as
                 // NotDownloaded even when the file is on disk.
                 let models_dir = self.settings.effective_models_dir();
-                state.models.scan_local(&models_dir);
+                state.models_mut().scan_local(&models_dir);
                 self.project = state;
                 self.undo_stack = UndoStack::new();
                 self.mode = AppMode::Editor;
@@ -2357,7 +2362,7 @@ impl CapRustApp {
             .beat_grids
             .iter()
             .filter(|(id, e)| {
-                let path = match self.project.media.items.iter().find(|m| &m.id == *id) {
+                let path = match self.project.media().items.iter().find(|m| &m.id == *id) {
                     Some(m) => m.path.clone(),
                     None => return true,
                 };
@@ -3084,9 +3089,9 @@ impl CapRustApp {
                 if state.project_path.is_none() {
                     state.project_path = src.parent().map(|p| p.to_string_lossy().to_string());
                 }
-                state.models.merge_missing_defaults();
+                state.models_mut().merge_missing_defaults();
                 let models_dir = self.settings.effective_models_dir();
-                state.models.scan_local(&models_dir);
+                state.models_mut().scan_local(&models_dir);
                 self.undo_stack = UndoStack::new();
                 self.project = state;
                 // Importer plugins do not set `media_id` on clips -- they
@@ -3095,7 +3100,7 @@ impl CapRustApp {
                 // has an audio stream instead of guessing it does.
                 let media_by_path: std::collections::HashMap<String, uuid::Uuid> = self
                     .project
-                    .media
+                    .media()
                     .items
                     .iter()
                     .map(|m| (m.path.clone(), m.id))
@@ -3560,8 +3565,8 @@ impl CapRustApp {
                 ui.label(format!(
                     "Clips: {} | Media: {} | Tracks: {} | {} | {}",
                     self.project.clips().len(),
-                    self.project.media.items.len(),
-                    self.project.tracks.len(),
+                    self.project.media().items.len(),
+                    self.project.tracks().len(),
                     self.project.aspect_ratio.label(),
                     self.project.frame_rate.label()
                 ));
@@ -3723,7 +3728,7 @@ impl CapRustApp {
         // Which tracks pack on their own?
         let video_tracks: Vec<usize> = self
             .project
-            .tracks
+            .tracks()
             .iter()
             .enumerate()
             .filter(|(_, t)| {
@@ -3776,7 +3781,7 @@ impl CapRustApp {
             .iter()
             .filter(|c| {
                 self.project
-                    .tracks
+                    .tracks()
                     .get(c.track_index)
                     .map(|t| {
                         matches!(
@@ -3805,7 +3810,7 @@ impl CapRustApp {
             .iter()
             .filter(|c| {
                 self.project
-                    .tracks
+                    .tracks()
                     .get(c.track_index)
                     .map(|t| {
                         matches!(
@@ -3836,7 +3841,7 @@ impl CapRustApp {
                 // closest to, they do not anchor the pack.
                 let on_video_track = self
                     .project
-                    .tracks
+                    .tracks()
                     .get(c.track_index)
                     .map(|t| {
                         matches!(
@@ -3961,10 +3966,10 @@ impl CapRustApp {
             self.timeline_zoom = 1.0;
         }
         if ev.add_track {
-            let idx = self.project.tracks.len() + 1;
+            let idx = self.project.tracks().len() + 1;
             let kind = caprust_core::TrackKind::Video;
             self.project
-                .tracks
+                .tracks_mut()
                 .push(caprust_core::Track::new(&format!("V{idx}"), kind));
         }
         if ev.captions_clicked {
@@ -3978,10 +3983,10 @@ impl CapRustApp {
             // Pick the family with more missing entries so the first
             // screen the user sees is the one that needs attention.
             let models_dir = self.settings.effective_models_dir();
-            self.project.models.scan_local(&models_dir);
+            self.project.models_mut().scan_local(&models_dir);
             let captions_missing = self
                 .project
-                .models
+                .models()
                 .models
                 .iter()
                 .filter(|m| m.kind == caprust_core::ModelKind::Caption)
@@ -3989,7 +3994,7 @@ impl CapRustApp {
                 .count();
             let narration_missing = self
                 .project
-                .models
+                .models()
                 .models
                 .iter()
                 .filter(|m| m.kind == caprust_core::ModelKind::Narration)
@@ -4014,7 +4019,7 @@ impl CapRustApp {
                 .map(|c| c.track_index)
                 .or_else(|| {
                     self.project
-                        .tracks
+                        .tracks()
                         .iter()
                         .position(|t| t.kind == caprust_core::TrackKind::Video)
                         .filter(|idx| self.project.clips().iter().any(|c| c.track_index == *idx))
@@ -4028,8 +4033,8 @@ impl CapRustApp {
             // Refresh from disk so manually-placed Piper voices (and
             // ones added since startup) are seen without a restart.
             let models_dir = self.settings.effective_models_dir();
-            self.project.models.scan_local(&models_dir);
-            let any_ready = !self.project.models.ready_narration().is_empty();
+            self.project.models_mut().scan_local(&models_dir);
+            let any_ready = !self.project.models().ready_narration().is_empty();
             if any_ready {
                 if self.narration_rx.is_some() {
                     tracing::info!("narration job already in flight, ignoring click");
@@ -4046,7 +4051,7 @@ impl CapRustApp {
     /// Spawn a background Piper synthesis job. See `NarrationRequest`.
     fn start_narration_job(&mut self, voice_id: String, text: String) {
         let models_dir = self.settings.effective_models_dir();
-        let voice_onnx_path = self.project.models.local_path(&models_dir, &voice_id);
+        let voice_onnx_path = self.project.models().local_path(&models_dir, &voice_id);
         if !voice_onnx_path.is_file() {
             tracing::warn!(
                 "narration: voice {} not on disk at {}",
@@ -4088,12 +4093,12 @@ impl CapRustApp {
     fn resolve_face_model(&mut self) -> Option<(std::path::PathBuf, bool)> {
         // Pull in any registry entries added since the project was
         // last saved (e.g. SCRFD in a newer build) before scanning.
-        self.project.models.merge_missing_defaults();
+        self.project.models_mut().merge_missing_defaults();
         self.project
-            .models
+            .models_mut()
             .scan_local(&self.settings.effective_models_dir());
         let models_dir = self.settings.effective_models_dir();
-        let all = &self.project.models.models;
+        let all = &self.project.models().models;
         let resolve =
             |id: &str| caprust_core::models::ModelRegistry::local_path_static(all, &models_dir, id);
         let scrfd = all
@@ -4562,18 +4567,18 @@ impl CapRustApp {
 
         // Model: resolve u2netp path from the registry.
         self.project
-            .models
+            .models_mut()
             .scan_local(&self.settings.effective_models_dir());
         let models_dir = self.settings.effective_models_dir();
         let model_path = self
             .project
-            .models
+            .models()
             .models
             .iter()
             .find(|m| m.kind == caprust_core::ModelKind::BackgroundRemover)
             .map(|m| {
                 caprust_core::models::ModelRegistry::local_path_static(
-                    &self.project.models.models,
+                    &self.project.models().models,
                     &models_dir,
                     &m.id,
                 )
@@ -4683,7 +4688,7 @@ impl CapRustApp {
 
         // Check if models are available locally
         self.project
-            .models
+            .models_mut()
             .scan_local(&self.settings.effective_models_dir());
         let models_dir = self.settings.effective_models_dir();
 
@@ -4702,13 +4707,13 @@ impl CapRustApp {
             })
             .or_else(|| {
                 self.project
-                    .models
+                    .models()
                     .models
                     .iter()
                     .find(|m| m.id == "mobile-sam-encoder")
                     .map(|m| {
                         caprust_core::models::ModelRegistry::local_path_static(
-                            &self.project.models.models,
+                            &self.project.models().models,
                             &models_dir,
                             &m.id,
                         )
@@ -4735,13 +4740,13 @@ impl CapRustApp {
             })
             .or_else(|| {
                 self.project
-                    .models
+                    .models()
                     .models
                     .iter()
                     .find(|m| m.id == "mobile-sam-decoder")
                     .map(|m| {
                         caprust_core::models::ModelRegistry::local_path_static(
-                            &self.project.models.models,
+                            &self.project.models().models,
                             &models_dir,
                             &m.id,
                         )
@@ -4756,13 +4761,13 @@ impl CapRustApp {
         // Find LaMa inpainter
         let inpainter_path = self
             .project
-            .models
+            .models()
             .models
             .iter()
             .find(|m| m.id == "lama-inpainter")
             .map(|m| {
                 caprust_core::models::ModelRegistry::local_path_static(
-                    &self.project.models.models,
+                    &self.project.models().models,
                     &models_dir,
                     &m.id,
                 )
@@ -4897,18 +4902,18 @@ impl CapRustApp {
         // auto-reframe), fall back to YuNet (its 2022mar decode is a
         // stub, so a YuNet-only setup yields empty masks).
         self.project
-            .models
+            .models_mut()
             .scan_local(&self.settings.effective_models_dir());
         let models_dir = self.settings.effective_models_dir();
         let find_model = |kind: caprust_core::ModelKind| {
             self.project
-                .models
+                .models()
                 .models
                 .iter()
                 .find(|m| m.kind == kind)
                 .map(|m| {
                     caprust_core::models::ModelRegistry::local_path_static(
-                        &self.project.models.models,
+                        &self.project.models().models,
                         &models_dir,
                         &m.id,
                     )
@@ -5370,7 +5375,7 @@ impl CapRustApp {
         // Check if LaMa model is ready
         let inpainter_ready = self
             .project
-            .models
+            .models()
             .ready_inpainter()
             .iter()
             .any(|m| m.enabled);
@@ -5380,7 +5385,7 @@ impl CapRustApp {
         }
         let model_path = self
             .project
-            .models
+            .models()
             .local_path(&self.settings.effective_models_dir(), "lama-inpainter");
 
         let Some(ffmpeg) = self.ffmpeg_status.ffmpeg.clone() else {
@@ -5804,20 +5809,20 @@ impl CapRustApp {
     fn ensure_audio_track(&mut self) -> usize {
         if let Some((i, _)) = self
             .project
-            .tracks
+            .tracks()
             .iter()
             .enumerate()
             .find(|(_, t)| t.kind == caprust_core::TrackKind::Audio)
         {
             return i;
         }
-        let idx = self.project.tracks.len() + 1;
-        self.project.tracks.push(caprust_core::Track::new(
+        let idx = self.project.tracks().len() + 1;
+        self.project.tracks_mut().push(caprust_core::Track::new(
             &format!("A{idx}"),
             caprust_core::TrackKind::Audio,
         ));
         tracing::info!("narration: auto-created Audio track A{idx}");
-        self.project.tracks.len() - 1
+        self.project.tracks().len() - 1
     }
 
     /// Return the index of the dedicated Captions track, creating it
@@ -5833,19 +5838,19 @@ impl CapRustApp {
     fn ensure_captions_track(&mut self) -> usize {
         if let Some((i, _)) = self
             .project
-            .tracks
+            .tracks()
             .iter()
             .enumerate()
             .find(|(_, t)| t.kind == caprust_core::TrackKind::Captions)
         {
             return i;
         }
-        self.project.tracks.push(caprust_core::Track::new(
+        self.project.tracks_mut().push(caprust_core::Track::new(
             "Captions",
             caprust_core::TrackKind::Captions,
         ));
         tracing::info!("caption: auto-created Captions track");
-        self.project.tracks.len() - 1
+        self.project.tracks().len() - 1
     }
 
     /// Drop Captions clips that carry no segments. These are leftovers
@@ -5987,15 +5992,15 @@ impl CapRustApp {
             // manually-placed file for an entry the snapshot did not
             // have) would otherwise never see the entry. Idempotent:
             // existing rows keep status, missing rows are cloned in.
-            self.project.models.merge_missing_defaults();
+            self.project.models_mut().merge_missing_defaults();
 
             // scan_local() marks a model Ready when its file exists and
             // is non-empty, so manually-placed weights (and downloads
             // that completed after the last startup) are picked up
             // without a restart.
-            self.project.models.scan_local(&models_dir);
+            self.project.models_mut().scan_local(&models_dir);
 
-            let ready = self.project.models.ready_captions();
+            let ready = self.project.models().ready_captions();
             let Some(model) = ready.first() else {
                 tracing::info!("no caption model ready — opening prompt");
                 self.model_prompt = Some(caprust_core::ModelKind::Caption);
@@ -6005,7 +6010,7 @@ impl CapRustApp {
             let model_id = model.id.clone();
             let language = model.language.clone();
 
-            let model_path = self.project.models.local_path(&models_dir, &model_id);
+            let model_path = self.project.models().local_path(&models_dir, &model_id);
             if !model_path.is_file() {
                 tracing::warn!(
                     "caption: model {} not on disk at {}",
@@ -6314,7 +6319,7 @@ impl CapRustApp {
                         model_id,
                         total_bytes
                     );
-                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                    if let Some(m) = self.project.models_mut().get_mut(&model_id) {
                         m.status = caprust_core::ModelStatus::Downloading;
                         m.progress = 0.0;
                     }
@@ -6324,7 +6329,7 @@ impl CapRustApp {
                         Some(t) if t > 0 => downloaded as f32 / t as f32,
                         _ => 0.0,
                     };
-                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                    if let Some(m) = self.project.models_mut().get_mut(&model_id) {
                         m.status = caprust_core::ModelStatus::Downloading;
                         m.progress = pct.clamp(0.0, 1.0);
                     }
@@ -6334,7 +6339,7 @@ impl CapRustApp {
                 }
                 Ok(DownloadEvent::Done) => {
                     tracing::info!("model download {}: done", model_id);
-                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                    if let Some(m) = self.project.models_mut().get_mut(&model_id) {
                         m.status = caprust_core::ModelStatus::Ready;
                         m.progress = 1.0;
                         m.enabled = true;
@@ -6345,7 +6350,7 @@ impl CapRustApp {
                 }
                 Ok(DownloadEvent::Failed(msg)) => {
                     tracing::error!("model download {}: failed: {msg}", model_id);
-                    if let Some(m) = self.project.models.get_mut(&model_id) {
+                    if let Some(m) = self.project.models_mut().get_mut(&model_id) {
                         m.status = caprust_core::ModelStatus::Error;
                         m.progress = 0.0;
                     }
@@ -6375,7 +6380,13 @@ impl CapRustApp {
             tracing::info!("model download already in flight, ignoring");
             return;
         }
-        let Some(m) = self.project.models.models.iter().find(|m| m.id == model_id) else {
+        let Some(m) = self
+            .project
+            .models()
+            .models
+            .iter()
+            .find(|m| m.id == model_id)
+        else {
             return;
         };
         if m.url.is_empty() {
@@ -6453,12 +6464,12 @@ impl CapRustApp {
         match rx.try_recv() {
             Ok(Ok(path)) => {
                 let path_str = path.to_string_lossy().to_string();
-                if self.project.media.find_by_path(&path_str).is_none() {
+                if self.project.media().find_by_path(&path_str).is_none() {
                     let id = self
                         .project
-                        .media
+                        .media_mut()
                         .add(&path_str, caprust_core::MediaKind::Audio);
-                    if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
+                    if let Some(item) = self.project.media().items.iter().find(|m| m.id == id) {
                         let item_clone = item.clone();
                         self.job_runner.enqueue(
                             &item_clone,
@@ -6608,7 +6619,20 @@ impl CapRustApp {
     /// Thin bar above the timeline listing live background jobs.
     /// Auto-hides when the list is empty.
     fn show_jobs_bar(&mut self, ctx: &egui::Context) {
-        if self.jobs.is_empty() {
+        // Model download is tracked separately from self.jobs; fold it
+        // into the bar so the user sees progress no matter where the
+        // download was triggered from.
+        let model_download_progress = self.model_download.as_ref().and_then(|(id, _)| {
+            self.project
+                .models()
+                .models
+                .iter()
+                .find(|m| m.id == *id)
+                .map(|m| m.progress)
+        });
+        let has_model_download = self.model_download.is_some();
+
+        if self.jobs.is_empty() && !has_model_download {
             return;
         }
 
@@ -6619,7 +6643,7 @@ impl CapRustApp {
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(space::M);
-                    let n = self.jobs.len();
+                    let n = self.jobs.len() + if has_model_download { 1 } else { 0 };
                     ui.label(
                         egui::RichText::new(format!(
                             "{} job{} running",
@@ -6675,6 +6699,43 @@ impl CapRustApp {
                         }
                         ui.add_space(space::L);
                     }
+
+                    // Model download entry (shown alongside jobs).
+                    if let Some(progress) = model_download_progress {
+                        let model_id = self
+                            .model_download
+                            .as_ref()
+                            .map(|(id, _)| id.clone())
+                            .unwrap_or_default();
+                        let m = self
+                            .project
+                            .models()
+                            .models
+                            .iter()
+                            .find(|m| m.id == model_id);
+                        let label = m.map(|m| m.name.as_str()).unwrap_or("Model");
+                        ui.label(
+                            egui::RichText::new(label)
+                                .small()
+                                .color(egui::Color32::from_gray(220)),
+                        );
+                        ui.add(
+                            egui::ProgressBar::new(progress)
+                                .desired_width(120.0)
+                                .desired_height(8.0),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{:.0}%", progress * 100.0))
+                                .small()
+                                .monospace()
+                                .color(egui::Color32::from_gray(150)),
+                        );
+                        if ui.button("✕").on_hover_text(tr("cancel")).clicked() {
+                            self.model_download = None;
+                        }
+                        ui.add_space(space::L);
+                    }
+
                     for id in cancel_ids {
                         self.cancel_job_by_id(id);
                     }
@@ -7042,7 +7103,7 @@ impl CapRustApp {
         let mut marked = 0usize;
         let items: Vec<(uuid::Uuid, caprust_core::MediaKind, String, bool)> = self
             .project
-            .media
+            .media()
             .items
             .iter()
             .map(|m| (m.id, m.kind, m.path.clone(), m.waveform_done))
@@ -7057,7 +7118,13 @@ impl CapRustApp {
             }
             if caprust_core::cache::waveform_exists(proj, id) {
                 if !done {
-                    if let Some(m) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+                    if let Some(m) = self
+                        .project
+                        .media_mut()
+                        .items
+                        .iter_mut()
+                        .find(|m| m.id == id)
+                    {
                         m.waveform_done = true;
                         marked += 1;
                     }
@@ -7068,7 +7135,13 @@ impl CapRustApp {
             // this item as pending again (thumbnail / waveform strip
             // draws nothing while `*_done == false`).
             if done {
-                if let Some(m) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+                if let Some(m) = self
+                    .project
+                    .media_mut()
+                    .items
+                    .iter_mut()
+                    .find(|m| m.id == id)
+                {
                     m.waveform_done = false;
                 }
             }
@@ -7185,7 +7258,12 @@ impl CapRustApp {
             caprust_core::TimelineSize::M => 1.3,
             caprust_core::TimelineSize::L => 1.7,
         };
-        let lanes: f32 = self.project.tracks.iter().map(|t| t.height * factor).sum();
+        let lanes: f32 = self
+            .project
+            .tracks()
+            .iter()
+            .map(|t| t.height * factor)
+            .sum();
         TIMELINE_CHROME_H + crate::timeline::ruler::RULER_HEIGHT + lanes
     }
 
@@ -7371,7 +7449,7 @@ impl CapRustApp {
             }
         };
         ui.set_min_height(min_h);
-        self.project.models.tick_downloads(1.0 / 60.0);
+        self.project.models_mut().tick_downloads(1.0 / 60.0);
         self.last_pointer = ctx.input(|i| i.pointer.hover_pos());
 
         // Persistent banner when media files referenced by the
@@ -7391,20 +7469,20 @@ impl CapRustApp {
         let _ = models_dir; // reserved for a future filesystem scan inside this frame
         let captions_total = self
             .project
-            .models
+            .models()
             .models
             .iter()
             .filter(|m| m.kind == caprust_core::ModelKind::Caption)
             .count();
         let narration_total = self
             .project
-            .models
+            .models()
             .models
             .iter()
             .filter(|m| m.kind == caprust_core::ModelKind::Narration)
             .count();
-        let captions_ready = self.project.models.ready_captions().len();
-        let narration_ready = self.project.models.ready_narration().len();
+        let captions_ready = self.project.models().ready_captions().len();
+        let narration_ready = self.project.models().ready_narration().len();
         let availability = crate::timeline::toolbar::ModelAvailability::Status {
             captions_ready,
             narration_ready,
@@ -7428,8 +7506,8 @@ impl CapRustApp {
         let ruler_h = crate::timeline::ruler::RULER_HEIGHT;
         let full_h = ui.available_height().max(150.0);
 
-        let order = caprust_core::track::display_order(&self.project.tracks);
-        let mut updated_tracks = self.project.tracks.clone();
+        let order = caprust_core::track::display_order(self.project.tracks());
+        let mut updated_tracks = self.project.tracks().to_vec();
         let mut header_changed = false;
         let mut pending_delete_track: Option<usize> = None;
         // (clip_id, screen rect) for marquee hit test on release.
@@ -7497,7 +7575,7 @@ impl CapRustApp {
             self.settings.timeline_size,
             &self
                 .project
-                .tracks
+                .tracks()
                 .iter()
                 .map(|t| t.height)
                 .collect::<Vec<_>>(),
@@ -7629,7 +7707,7 @@ impl CapRustApp {
                             100, 250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000, 60_000,
                             120_000, 300_000, 600_000,
                         ];
-                        let mut c = *cands.last().unwrap();
+                        let mut c = cands[cands.len() - 1];
                         for &x in cands {
                             if (x as f32) * px_per_ms >= 70.0 {
                                 c = x;
@@ -7910,7 +7988,7 @@ impl CapRustApp {
                             // when they butt up against each other.
                             let border_kind = self
                                 .project
-                                .tracks
+                                .tracks()
                                 .get(idx)
                                 .map(|t| t.kind)
                                 .unwrap_or(caprust_core::TrackKind::Video);
@@ -8365,7 +8443,7 @@ impl CapRustApp {
                                 // drag-select.
                                 let track_locked_fh = self
                                     .project
-                                    .tracks
+                                    .tracks()
                                     .get(idx)
                                     .map(|t| t.locked)
                                     .unwrap_or(false);
@@ -8658,7 +8736,7 @@ impl CapRustApp {
                                 );
                                 let track_locked_here = self
                                     .project
-                                    .tracks
+                                    .tracks()
                                     .get(idx)
                                     .map(|t| t.locked)
                                     .unwrap_or(false);
@@ -8967,7 +9045,7 @@ impl CapRustApp {
                                 // media item being dropped.
                                 let dur = self
                                     .project
-                                    .media
+                                    .media()
                                     .items
                                     .iter()
                                     .find(|m| ids.first() == Some(&m.id))
@@ -9184,11 +9262,11 @@ impl CapRustApp {
         }
 
         if header_changed {
-            self.project.tracks = updated_tracks;
+            *self.project.tracks_mut() = updated_tracks;
         }
         if let Some(idx) = pending_delete_track {
-            if idx < self.project.tracks.len() {
-                self.project.tracks.remove(idx);
+            if idx < self.project.tracks().len() {
+                self.project.tracks_mut().remove(idx);
                 self.project.retain_clips(|c| c.track_index != idx);
                 let updates: Vec<(uuid::Uuid, usize)> = self
                     .project
@@ -9215,7 +9293,7 @@ impl CapRustApp {
         if let Some(idx) = pending_rename_track {
             let name = self
                 .project
-                .tracks
+                .tracks()
                 .get(idx)
                 .map(|t| t.name.clone())
                 .unwrap_or_default();
@@ -9588,7 +9666,7 @@ impl CapRustApp {
                                     // batch in one step.
                                     let delta_ms = nm as i64 - d.origin_ms as i64;
                                     let delta_track = nt as i64 - d.origin_track as i64;
-                                    let max_track = self.project.tracks.len().saturating_sub(1);
+                                    let max_track = self.project.tracks().len().saturating_sub(1);
                                     let moves: Vec<caprust_core::commands::move_many::ClipMove> = d
                                         .group
                                         .iter()
@@ -9767,7 +9845,7 @@ impl CapRustApp {
                     if let Some(mut c) = self.clip_clipboard.clone() {
                         c.id = uuid::Uuid::new_v4();
                         c.start_time_ms = self.playhead_ms;
-                        if c.track_index >= self.project.tracks.len() {
+                        if c.track_index >= self.project.tracks().len() {
                             c.track_index = 0;
                         }
                         let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(c);
@@ -9914,7 +9992,7 @@ impl CapRustApp {
             for mid in mids {
                 let item = self
                     .project
-                    .media
+                    .media()
                     .items
                     .iter()
                     .find(|m| m.id == mid)
@@ -9957,7 +10035,10 @@ impl CapRustApp {
                 0 => {}
                 1 => {
                     let cmd = caprust_core::commands::ripple::RippleInsertCommand::new(
-                        clips.into_iter().next().unwrap(),
+                        clips
+                            .into_iter()
+                            .next()
+                            .expect("exactly one clip in this branch"),
                     );
                     let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                 }
@@ -11409,18 +11490,18 @@ impl CapRustApp {
         // a sticker small and positioned whatever lane it sits on.
         if let Some(i) = self
             .project
-            .tracks
+            .tracks()
             .iter()
             .rposition(|t| t.kind == caprust_core::TrackKind::Video)
         {
             return i;
         }
-        let name = format!("V{}", self.project.tracks.len() + 1);
-        self.project.tracks.push(caprust_core::Track::new(
+        let name = format!("V{}", self.project.tracks().len() + 1);
+        self.project.tracks_mut().push(caprust_core::Track::new(
             &name,
             caprust_core::TrackKind::Video,
         ));
-        self.project.tracks.len() - 1
+        self.project.tracks().len() - 1
     }
 
     fn handle_asset_browser_output(
@@ -11507,7 +11588,7 @@ impl CapRustApp {
         }
         // Enqueue background probe + thumbnail jobs for new imports.
         for id in out.media.newly_imported {
-            if let Some(item) = self.project.media.items.iter().find(|m| m.id == id) {
+            if let Some(item) = self.project.media().items.iter().find(|m| m.id == id) {
                 tracing::info!("enqueueing probe for {}", item.path);
                 let item_clone = item.clone();
                 self.job_runner.enqueue(
@@ -11543,7 +11624,7 @@ impl CapRustApp {
                 let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                 self.selected_clips.retain(|x| x != cid);
             }
-            self.project.media.remove(id);
+            self.project.media_mut().remove(id);
             self.clip_textures.remove(&id);
             tracing::info!(
                 "media removed: {id} ({} clip(s) dropped from timeline)",
@@ -11795,7 +11876,7 @@ impl CapRustApp {
             let on = ph >= c.start_time_ms && ph < c.start_time_ms + c.duration_ms;
             let vis = self
                 .project
-                .tracks
+                .tracks()
                 .get(c.track_index)
                 .map(|t| t.visible)
                 .unwrap_or(true);
@@ -12349,7 +12430,7 @@ impl CapRustApp {
                 }
                 let track_visible = self
                     .project
-                    .tracks
+                    .tracks()
                     .get(c.track_index)
                     .map(|t| t.visible)
                     .unwrap_or(true);
@@ -12979,11 +13060,11 @@ impl CapRustApp {
                                 let models_dir = self.settings.effective_models_dir();
                                 let encoder_path = self
                                     .project
-                                    .models
+                                    .models()
                                     .local_path(&models_dir, "mobile-sam-encoder");
                                 let decoder_path = self
                                     .project
-                                    .models
+                                    .models()
                                     .local_path(&models_dir, "mobile-sam-decoder");
                                 let segmenter_ready =
                                     encoder_path.is_file() && decoder_path.is_file();
@@ -12991,7 +13072,7 @@ impl CapRustApp {
                                 // Check if LaMa inpainter is downloaded
                                 let inpainter_path = self
                                     .project
-                                    .models
+                                    .models()
                                     .local_path(&models_dir, "lama-inpainter");
                                 let inpainter_ready = inpainter_path.is_file();
 
@@ -13030,31 +13111,36 @@ impl CapRustApp {
                                         cancel: segment_cancel.clone(),
                                     };
 
-                                    let rx = crate::media_jobs::spawn_segment_job(
-                                        std::path::PathBuf::from(
-                                            self.ffmpeg_status.ffmpeg.clone().unwrap(),
-                                        ),
-                                        std::path::PathBuf::from(
-                                            self.ffmpeg_status.ffprobe.clone().unwrap(),
-                                        ),
-                                        req,
-                                    );
+                                    if let (Some(ffmpeg), Some(ffprobe)) = (
+                                        self.ffmpeg_status.ffmpeg.clone(),
+                                        self.ffmpeg_status.ffprobe.clone(),
+                                    ) {
+                                        let rx = crate::media_jobs::spawn_segment_job(
+                                            std::path::PathBuf::from(ffmpeg),
+                                            std::path::PathBuf::from(ffprobe),
+                                            req,
+                                        );
 
-                                    // Store the receiver to poll for progress
-                                    self.segment_rx = Some(rx);
-                                    self.segment_cancel = Some(segment_cancel);
-                                    self.segment_job_clip_id = Some(clip_id);
-                                    self.segment_job_click = Some((click_x, click_y));
-                                    let job_id = self.begin_job(
-                                        JobKind::ObjectRemoval,
-                                        tr("job-object-removal"),
-                                    );
-                                    self.segment_job_id = Some(job_id);
+                                        // Store the receiver to poll for progress
+                                        self.segment_rx = Some(rx);
+                                        self.segment_cancel = Some(segment_cancel);
+                                        self.segment_job_clip_id = Some(clip_id);
+                                        self.segment_job_click = Some((click_x, click_y));
+                                        let job_id = self.begin_job(
+                                            JobKind::ObjectRemoval,
+                                            tr("job-object-removal"),
+                                        );
+                                        self.segment_job_id = Some(job_id);
 
-                                    tracing::info!(
-                                        "Started MobileSAM segment job for clip {}",
-                                        clip_id
-                                    );
+                                        tracing::info!(
+                                            "Started MobileSAM segment job for clip {}",
+                                            clip_id
+                                        );
+                                    } else {
+                                        tracing::warn!(
+                                            "ffmpeg or ffprobe not available; skipping segment job"
+                                        );
+                                    }
                                 } else {
                                     tracing::warn!(
                                         "MobileSAM or LaMa models not ready for object removal"
@@ -13387,7 +13473,10 @@ impl CapRustApp {
                             TextOverlayDragMode::Scale => handle_resp.drag_stopped(),
                         };
                         if stopped {
-                            let drag = self.text_overlay_drag.take().unwrap();
+                            let drag = self
+                                .text_overlay_drag
+                                .take()
+                                .expect("drag should be set when drag stopped");
                             let final_motion = self
                                 .project
                                 .clips()
@@ -13589,6 +13678,18 @@ impl CapRustApp {
                                 .color(egui::Color32::from_gray(180)),
                         );
                     }
+                    ui.horizontal(|ui| {
+                        if button::secondary(ui, tr("exp-cancel")).clicked() {
+                            self.export_cancel = true;
+                        }
+                        if self.export_cancel {
+                            ui.label(
+                                egui::RichText::new(tr("exp-cancelling"))
+                                    .small()
+                                    .color(egui::Color32::from_gray(150)),
+                            );
+                        }
+                    });
                     ctx.request_repaint();
                 }
 
@@ -13767,7 +13868,7 @@ impl CapRustApp {
 
         let Some(item) = self
             .project
-            .media
+            .media()
             .items
             .iter()
             .find(|m| m.path == path_str)
@@ -13842,7 +13943,7 @@ impl CapRustApp {
         if commit {
             let trimmed = buf.trim().to_string();
             if !trimmed.is_empty() {
-                if let Some(t) = self.project.tracks.get_mut(idx) {
+                if let Some(t) = self.project.tracks_mut().get_mut(idx) {
                     t.name = trimmed;
                 }
                 tracing::info!("renamed track {idx}");
@@ -13996,9 +14097,9 @@ impl CapRustApp {
                     // back empty and the clips pointed at nothing.
                     // Merge the template's items in instead; the
                     // existing entries keep their cache flags.
-                    let mut media = std::mem::take(&mut self.project.media);
-                    media.merge_missing_from(&state.media);
-                    state.media = media;
+                    let mut media = std::mem::take(self.project.media_mut());
+                    media.merge_missing_from(state.media());
+                    *state.media_mut() = media;
                     self.project = state;
                     self.undo_stack = UndoStack::new();
                     self.selected_clips.clear();
@@ -14098,7 +14199,7 @@ impl CapRustApp {
         // together with self.model_prompt_tab. See start_*_job below.
 
         // Advance fake downloads while this dialog is up.
-        self.project.models.tick_downloads(1.0 / 60.0);
+        self.project.models_mut().tick_downloads(1.0 / 60.0);
 
         let tab = self.model_prompt_tab;
         let title = match tab {
@@ -14185,7 +14286,7 @@ impl CapRustApp {
                 let tab = self.model_prompt_tab;
                 let ids: Vec<String> = self
                     .project
-                    .models
+                    .models()
                     .models
                     .iter()
                     .filter(|m| m.kind == tab)
@@ -14193,13 +14294,15 @@ impl CapRustApp {
                     .collect();
 
                 for id in ids {
-                    let m = self
+                    let Some(m) = self
                         .project
-                        .models
+                        .models_mut()
                         .models
                         .iter_mut()
                         .find(|m| m.id == id)
-                        .unwrap();
+                    else {
+                        continue;
+                    };
 
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -14314,7 +14417,7 @@ impl CapRustApp {
             // marked Ready in the JSON but missing from disk would
             // otherwise dispatch and fail silently.
             let models_dir = self.settings.effective_models_dir();
-            self.project.models.scan_local(&models_dir);
+            self.project.models_mut().scan_local(&models_dir);
 
             self.model_prompt = None;
             // Use the current tab, not the kind the prompt was originally
@@ -14328,7 +14431,7 @@ impl CapRustApp {
                     self.start_caption_job(None);
                 }
                 caprust_core::ModelKind::Narration => {
-                    if self.project.models.ready_narration().is_empty() {
+                    if self.project.models().ready_narration().is_empty() {
                         // Re-open prompt; nothing to narrate with yet.
                         self.model_prompt = Some(caprust_core::ModelKind::Narration);
                         self.model_prompt_tab = caprust_core::ModelKind::Narration;
@@ -14382,7 +14485,7 @@ impl CapRustApp {
         // borrow across that mutation trips the borrow checker.
         let items: Vec<(uuid::Uuid, bool, caprust_core::MediaItem)> = self
             .project
-            .media
+            .media()
             .items
             .iter()
             .filter(|i| {
@@ -14402,7 +14505,13 @@ impl CapRustApp {
                 // Clear the stale flag so any consumer that gates on
                 // `thumb_done` sees the item as pending again.
                 if was_done {
-                    if let Some(m) = self.project.media.items.iter_mut().find(|m| m.id == id) {
+                    if let Some(m) = self
+                        .project
+                        .media_mut()
+                        .items
+                        .iter_mut()
+                        .find(|m| m.id == id)
+                    {
                         m.thumb_done = false;
                     }
                 }
@@ -14437,7 +14546,7 @@ impl CapRustApp {
         }
         let items: Vec<caprust_core::MediaItem> = self
             .project
-            .media
+            .media()
             .items
             .iter()
             .filter(|m| !m.probe_done)
@@ -14568,6 +14677,7 @@ impl CapRustApp {
         self.export_job_id = Some(job_id);
         self.export_rx = Some(rx);
         self.export_in_progress = true;
+        self.export_cancel = false;
         self.export_progress = 0.0;
         self.export_tracker =
             Some(caprust_media_io::export_progress::ExportProgressTracker::start());
@@ -14591,15 +14701,24 @@ impl CapRustApp {
         for ev in events {
             match ev {
                 ExportEvent::Started => {
+                    if self.export_cancel {
+                        continue;
+                    }
                     tracing::info!("export: ffmpeg started");
                 }
                 ExportEvent::Progress(p) => {
+                    if self.export_cancel {
+                        continue;
+                    }
                     if let Some(id) = self.export_job_id {
                         self.update_job_progress(id, p);
                     }
                     self.export_progress = p;
                 }
                 ExportEvent::Log(line) => {
+                    if self.export_cancel {
+                        continue;
+                    }
                     tracing::info!("export log: {line}");
                 }
                 ExportEvent::Finished { output } => {
@@ -14609,19 +14728,33 @@ impl CapRustApp {
                     }
                     self.export_in_progress = false;
                     self.export_tracker = None;
-                    self.export_finished_path = Some(output.to_string_lossy().to_string());
-                    if self.export_state.subtitles_srt {
-                        let srt_path = std::path::PathBuf::from(&output).with_extension("srt");
-                        match Self::write_srt_file(self.project.clips(), &srt_path) {
-                            Ok(n) => self.toast(format!("{} ({n})", tr("exp-srt-done"))),
-                            Err(e) => {
-                                tracing::error!("srt sidecar failed: {e}");
-                                self.toast_error(format!("{}: {e}", tr("toast-export-failed")));
+                    let was_cancelled = self.export_cancel;
+                    self.export_cancel = false;
+                    if !was_cancelled {
+                        self.export_finished_path = Some(output.to_string_lossy().to_string());
+                        if self.export_state.subtitles_srt {
+                            let srt_path = std::path::PathBuf::from(&output).with_extension("srt");
+                            match Self::write_srt_file(self.project.clips(), &srt_path) {
+                                Ok(n) => self.toast(format!("{} ({n})", tr("exp-srt-done"))),
+                                Err(e) => {
+                                    tracing::error!("srt sidecar failed: {e}");
+                                    self.toast_error(format!("{}: {e}", tr("toast-export-failed")));
+                                }
                             }
                         }
                     }
                 }
                 ExportEvent::Failed(msg) => {
+                    if self.export_cancel {
+                        // Silently swallow failure when user cancelled.
+                        if let Some(id) = self.export_job_id.take() {
+                            self.finish_job(id);
+                        }
+                        self.export_in_progress = false;
+                        self.export_tracker = None;
+                        self.export_cancel = false;
+                        continue;
+                    }
                     tracing::error!("export failed: {msg}");
                     self.toast_error(format!("{}: {msg}", tr("toast-export-failed")));
                     if let Some(id) = self.export_job_id.take() {
@@ -15030,7 +15163,7 @@ impl CapRustApp {
         use crate::panels::tour::TourStep;
 
         let done = match self.tour_step {
-            TourStep::Import => !self.project.media.items.is_empty(),
+            TourStep::Import => !self.project.media().items.is_empty(),
             TourStep::Timeline => !self.project.clips().is_empty(),
             TourStep::Export => self.export_open,
         };
@@ -15074,7 +15207,7 @@ impl CapRustApp {
                 let ev = crate::panels::settings_dialog::show(
                     ui,
                     &mut self.theme,
-                    &mut self.project.models,
+                    self.project.models_mut(),
                     &mut self.settings,
                     &mut self.settings_tab,
                     &mut self.ffmpeg_status,
@@ -15437,7 +15570,7 @@ impl eframe::App for CapRustApp {
         // added in a newer build -- whisper-tiny being the case that
         // surfaced this. Existing rows keep status/progress; missing
         // rows are cloned in.
-        self.project.models.merge_missing_defaults();
+        self.project.models_mut().merge_missing_defaults();
         caprust_i18n::set_current_lang(&self.settings.language);
         self.theme.apply(ctx);
 
@@ -15723,7 +15856,7 @@ impl eframe::App for CapRustApp {
             let n_ev = crate::panels::narration_input::show(
                 ctx,
                 &mut self.narration_input,
-                &self.project.models,
+                self.project.models(),
             );
             if let Some((voice_id, text)) = n_ev.synthesize {
                 self.start_narration_job(voice_id, text);
@@ -17215,10 +17348,10 @@ mod sticker_overlay_tests {
         use caprust_core::track::{Track, TrackKind};
 
         let mut p = caprust_core::ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
-        p.tracks.push(Track::new("V2", TrackKind::Video));
-        p.tracks.last_mut().unwrap().visible = false;
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().push(Track::new("V2", TrackKind::Video));
+        p.tracks_mut().last_mut().unwrap().visible = false;
 
         let sticker = |id: u128, track: usize, start: u64| {
             let mut c = Clip::new_video("s.png", track, start, 4000);
@@ -17258,8 +17391,8 @@ mod sticker_overlay_tests {
         use caprust_core::track::{Track, TrackKind};
 
         let mut p = caprust_core::ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
 
         let mut c = Clip::new_video("s.png", 0, 0, 4000);
         c.clip_type = ClipType::Image {
@@ -17311,8 +17444,8 @@ mod sticker_overlay_tests {
         use caprust_core::track::{Track, TrackKind};
 
         let mut p = caprust_core::ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
 
         let mut c = Clip::new_video("s.png", 0, 0, 4000);
         c.clip_type = ClipType::Image {
@@ -18214,8 +18347,8 @@ mod sticker_overlay_tests {
         use caprust_core::track::{Track, TrackKind};
 
         let mut p = caprust_core::ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
 
         for (id, anim) in [(1u128, Some("pop")), (2, Some("spin")), (3, None)] {
             let mut c = Clip::new_video("s.png", 0, 0, 4000);
@@ -18277,8 +18410,8 @@ mod sticker_overlay_tests {
         use caprust_core::track::{Track, TrackKind};
 
         let mut p = caprust_core::ProjectState::default();
-        p.tracks.clear();
-        p.tracks.push(Track::new("V1", TrackKind::Video));
+        p.tracks_mut().clear();
+        p.tracks_mut().push(Track::new("V1", TrackKind::Video));
 
         let place = OverlayPlacement {
             scale: 0.3,

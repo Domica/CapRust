@@ -584,7 +584,9 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
 
     let mut download_request: Option<String> = None;
     for id in ids {
-        let m = models.models.iter_mut().find(|m| m.id == id).unwrap();
+        let Some(m) = models.models.iter_mut().find(|m| m.id == id) else {
+            continue;
+        };
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {

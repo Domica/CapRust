@@ -331,7 +331,12 @@ impl JobRunner {
                     duration_ms,
                     has_audio,
                 } => {
-                    if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
+                    if let Some(m) = project
+                        .media_mut()
+                        .items
+                        .iter_mut()
+                        .find(|m| m.id == media_id)
+                    {
                         m.duration_ms = duration_ms;
                         m.has_audio = has_audio;
                         m.probe_done = true;
@@ -369,7 +374,12 @@ impl JobRunner {
                 }
                 JobResult::WaveformDone { media_id } => {
                     tracing::info!("job: WaveformDone for {media_id}");
-                    if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
+                    if let Some(m) = project
+                        .media_mut()
+                        .items
+                        .iter_mut()
+                        .find(|m| m.id == media_id)
+                    {
                         m.waveform_done = true;
                     }
                     // Move the temp .bin into the project cache.
@@ -412,7 +422,12 @@ impl JobRunner {
                 }
                 JobResult::ThumbDone { media_id } => {
                     tracing::info!("job: ThumbDone for {media_id}");
-                    if let Some(m) = project.media.items.iter_mut().find(|m| m.id == media_id) {
+                    if let Some(m) = project
+                        .media_mut()
+                        .items
+                        .iter_mut()
+                        .find(|m| m.id == media_id)
+                    {
                         m.thumb_done = true;
                     }
                     thumbs_ready.push(media_id);

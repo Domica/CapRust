@@ -343,7 +343,7 @@ pub struct MediaBinOutput {
 fn refresh_imported(project: &ProjectState) -> (usize, usize) {
     let mut found = 0;
     let mut missing = 0;
-    for item in &project.media.items {
+    for item in &project.media().items {
         if std::path::Path::new(&item.path).exists() {
             found += 1;
         } else {
@@ -415,7 +415,7 @@ fn show_legacy(
                         state.confirm_clear = false;
                     }
                     if button::primary(ui, tr("yes")).clicked() {
-                        project.media.items.clear();
+                        project.media_mut().items.clear();
                         tracing::info!("media library cleared");
                         state.confirm_clear = false;
                     }
@@ -484,7 +484,7 @@ fn show_legacy(
 
     // --- Sorted item list (full width grid) ---
     let mut sorted: Vec<MediaItem> = project
-        .media
+        .media()
         .items
         .iter()
         .filter(|m| state.filter.matches(m.kind))
@@ -768,7 +768,7 @@ pub fn show(ui: &mut Ui, project: &mut ProjectState, state: &mut MediaBinState) 
     // Save sidebar width
     state.sidebar_width = sidebar_w;
 
-    result.unwrap()
+    result.expect("media bin output should be set after horizontal_top")
 }
 
 fn a_lower(s: &str) -> String {
@@ -1201,12 +1201,12 @@ fn import_with(project: &mut ProjectState, exts: &[&str], label: &str) -> (Vec<U
     {
         for p in paths {
             let s = p.to_string_lossy().to_string();
-            if project.media.find_by_path(&s).is_some() {
+            if project.media().find_by_path(&s).is_some() {
                 skipped += 1;
                 continue;
             }
             let kind = guess_kind(&s).unwrap_or(MediaKind::Video);
-            let id = project.media.add(&s, kind);
+            let id = project.media_mut().add(&s, kind);
             new_ids.push(id);
         }
     }
@@ -1273,7 +1273,7 @@ fn import_and_grid_ui(
                         state.confirm_clear = false;
                     }
                     if button::primary(ui, tr("yes")).clicked() {
-                        project.media.items.clear();
+                        project.media_mut().items.clear();
                         tracing::info!("media library cleared");
                         state.confirm_clear = false;
                     }
@@ -1288,7 +1288,7 @@ fn import_and_grid_ui(
 
     // --- Sorted item list ---
     let mut sorted: Vec<MediaItem> = project
-        .media
+        .media()
         .items
         .iter()
         .filter(|m| state.filter.matches(m.kind))
