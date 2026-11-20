@@ -195,12 +195,15 @@ jobs:
           } else {
             $params += "--generate-notes"
           }
-          gh $params
+          # Release may already exist from a prior run of the same tag;
+          # that's fine — assets are clobbered in the next step either way.
+          gh $params 2>$null
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "Release create returned $LASTEXITCODE (release may already exist)"
+            Write-Host "Release create returned $LASTEXITCODE (release may already exist, continuing)"
           } else {
             Write-Host "published v$v"
           }
+          exit 0
 
       - name: Upload assets to release
         # Always runs: uploads/clobbers assets whether the release was
