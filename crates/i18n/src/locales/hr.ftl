@@ -535,6 +535,7 @@ set-models-segmenter = Segmentacija objekata (MobileSAM)
 set-models-inpainter = AI Inpainting (LaMa)
 set-models-download = Preuzmi
 set-models-enabled = Omogućeno
+set-models-retry = Ponovi
 set-shortcuts-heading = Tipkovnički prečaci
 set-shortcuts-enable = Omogući tipkovničke prečace
 set-language-heading = Jezik sučelja

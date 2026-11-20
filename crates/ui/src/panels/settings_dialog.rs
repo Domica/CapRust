@@ -32,6 +32,13 @@ pub struct SettingsEvents {
     /// The app layer consumes this by calling start_model_download; the
     /// settings panel itself has no way to spawn threads.
     pub download_requested: Option<String>,
+    /// Model id whose Cancel button was clicked this frame, if any.
+    /// The app layer consumes this by resetting the model status to
+    /// NotDownloaded and dropping the in-flight download receiver.
+    pub download_cancel_requested: Option<String>,
+    /// Model id whose Retry button was clicked this frame, if any.
+    /// The app layer consumes this by calling start_model_download again.
+    pub download_retry_requested: Option<String>,
     /// User clicked "Export settings" in Paths -> Backup. app.rs opens
     /// a save dialog and writes AppSettings via export_to_file.
     pub export_requested: bool,
@@ -86,6 +93,8 @@ pub fn show(
         save: false,
         close: false,
         download_requested: None,
+        download_cancel_requested: None,
+        download_retry_requested: None,
         export_requested: false,
         import_requested: false,
         theme_export_requested: false,
@@ -116,9 +125,10 @@ pub fn show(
         .show(ui, |ui| match tab {
             SettingsTab::Appearance => show_appearance(ui, theme, settings, &mut ev),
             SettingsTab::Models => {
-                if let Some(id) = show_models(ui, models, settings) {
-                    ev.download_requested = Some(id);
-                }
+                let outcome = show_models(ui, models, settings);
+                ev.download_requested = outcome.download_requested;
+                ev.download_cancel_requested = outcome.cancel_requested;
+                ev.download_retry_requested = outcome.retry_requested;
             }
             SettingsTab::Shortcuts => show_shortcuts(ui, &mut settings.enable_shortcuts),
             SettingsTab::Language => show_language(ui, &mut settings.language),
@@ -483,10 +493,23 @@ fn show_appearance(
 // AI Models
 // ---------------------------------------------------------------------------
 
+/// Outcome of rendering one model group: which (if any) Download,
+/// Cancel, or Retry button was clicked this frame.
+#[derive(Default)]
+struct ModelGroupOutcome {
+    download_requested: Option<String>,
+    cancel_requested: Option<String>,
+    retry_requested: Option<String>,
+}
+
 /// Returns the id of a model whose Download button was clicked this
 /// frame, if any. The caller (app.rs) hands it to start_model_download;
 /// this panel cannot spawn threads itself.
-fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) -> Option<String> {
+fn show_models(
+    ui: &mut Ui,
+    models: &mut ModelRegistry,
+    settings: &AppSettings,
+) -> ModelGroupOutcome {
     // Backfill registry entries added since this project was saved,
     // so a model introduced in a later build appears in Settings
     // without requiring a project reopen. Rescan right away: merged
@@ -505,76 +528,70 @@ fn show_models(ui: &mut Ui, models: &mut ModelRegistry, settings: &AppSettings) 
     );
     ui.add_space(space::M);
 
-    let mut clicked: Option<String> = None;
+    let mut outcome = ModelGroupOutcome::default();
 
     // Captions (collapsible, multiple models)
     egui::CollapsingHeader::new(tr("set-models-captions"))
         .default_open(false)
         .show(ui, |ui| {
-            if let Some(id) = show_model_group(ui, models, ModelKind::Caption) {
-                clicked = Some(id);
-            }
+            outcome.merge(show_model_group(ui, models, ModelKind::Caption));
         });
 
     // Narration (collapsible, multiple models)
     egui::CollapsingHeader::new(tr("set-models-narration"))
         .default_open(false)
         .show(ui, |ui| {
-            if let Some(id) = show_model_group(ui, models, ModelKind::Narration) {
-                clicked = Some(id);
-            }
+            outcome.merge(show_model_group(ui, models, ModelKind::Narration));
         });
 
     // Face detection (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-face")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::FaceDetector) {
-        clicked = Some(id);
-    }
+    outcome.merge(show_model_group(ui, models, ModelKind::FaceDetector));
 
     // Background removal (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-bg")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::BackgroundRemover) {
-        clicked = Some(id);
-    }
+    outcome.merge(show_model_group(ui, models, ModelKind::BackgroundRemover));
 
     // SCRFD detector (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-scrfd")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::ScrfdDetector) {
-        clicked = Some(id);
-    }
+    outcome.merge(show_model_group(ui, models, ModelKind::ScrfdDetector));
 
     // AI Enhance (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-enhance")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::Enhancer) {
-        clicked = Some(id);
-    }
+    outcome.merge(show_model_group(ui, models, ModelKind::Enhancer));
 
     // Object Segmentation (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-segmenter")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::Segmenter) {
-        clicked = Some(id);
-    }
+    outcome.merge(show_model_group(ui, models, ModelKind::Segmenter));
 
     // AI Inpainting (single model, always open)
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-inpainter")).strong());
-    if let Some(id) = show_model_group(ui, models, ModelKind::Inpainter) {
-        clicked = Some(id);
-    }
+    outcome.merge(show_model_group(ui, models, ModelKind::Inpainter));
 
-    clicked
+    outcome
 }
 
-/// Returns the id of a model whose Download button was clicked this
-/// frame, if any. Does not mutate `status` itself -- the real
-/// downloader in app.rs owns the state transition (see the note in the
-/// NotDownloaded arm).
-fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) -> Option<String> {
+impl ModelGroupOutcome {
+    fn merge(&mut self, other: ModelGroupOutcome) {
+        // First non-None wins for each field; only one model group can
+        // realistically have an actionable button per frame anyway.
+        self.download_requested = self.download_requested.take().or(other.download_requested);
+        self.cancel_requested = self.cancel_requested.take().or(other.cancel_requested);
+        self.retry_requested = self.retry_requested.take().or(other.retry_requested);
+    }
+}
+
+/// Returns the outcome of rendering one model row: which (if any)
+/// Download, Cancel, or Retry button was clicked this frame. Does not
+/// mutate `status` itself -- the real downloader in app.rs owns the
+/// state transition (see the note in the NotDownloaded arm).
+fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) -> ModelGroupOutcome {
     let ids: Vec<String> = models
         .models
         .iter()
@@ -582,7 +599,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
         .map(|m| m.id.clone())
         .collect();
 
-    let mut download_request: Option<String> = None;
+    let mut outcome = ModelGroupOutcome::default();
     for id in ids {
         let Some(m) = models.models.iter_mut().find(|m| m.id == id) else {
             continue;
@@ -616,7 +633,7 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
                                 // nothing actually started a download.
                                 // start_model_download in app.rs owns
                                 // the state transition now.
-                                download_request = Some(id.clone());
+                                outcome.download_requested = Some(id.clone());
                             }
                         }
                         ModelStatus::Downloading => {
@@ -625,6 +642,9 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
                                     .desired_width(120.0)
                                     .show_percentage(),
                             );
+                            if button::secondary(ui, "✕").clicked() {
+                                outcome.cancel_requested = Some(id.clone());
+                            }
                         }
                         ModelStatus::Ready => {
                             switch::switch_labeled(ui, &mut m.enabled, tr("set-models-enabled"));
@@ -634,13 +654,16 @@ fn show_model_group(ui: &mut Ui, models: &mut ModelRegistry, kind: ModelKind) ->
                                 egui::RichText::new("Error")
                                     .color(egui::Color32::from_rgb(230, 90, 90)),
                             );
+                            if button::secondary(ui, tr("set-models-retry")).clicked() {
+                                outcome.retry_requested = Some(id.clone());
+                            }
                         }
                     },
                 );
             });
         });
     }
-    download_request
+    outcome
 }
 
 // ---------------------------------------------------------------------------

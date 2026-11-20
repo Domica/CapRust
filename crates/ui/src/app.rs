@@ -15222,6 +15222,21 @@ impl CapRustApp {
                 if let Some(id) = ev.download_requested.clone() {
                     self.start_model_download(&id);
                 }
+                if let Some(id) = ev.download_cancel_requested.clone() {
+                    // Reset status so the Download button reappears, and
+                    // drop the in-flight receiver so the background thread
+                    // can no longer report progress (its sends will fail
+                    // silently on the disconnected channel).
+                    if let Some(m) = self.project.models_mut().get_mut(&id) {
+                        m.status = caprust_core::ModelStatus::NotDownloaded;
+                        m.progress = 0.0;
+                    }
+                    self.model_download = None;
+                    tracing::info!("model download {}: cancelled by user", id);
+                }
+                if let Some(id) = ev.download_retry_requested.clone() {
+                    self.start_model_download(&id);
+                }
                 if ev.export_requested {
                     self.handle_settings_export();
                 }

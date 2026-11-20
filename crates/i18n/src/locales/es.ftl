@@ -535,6 +535,7 @@ set-models-segmenter = Segmentación de objetos (MobileSAM)
 set-models-inpainter = AI Inpainting (LaMa)
 set-models-download = Descargar
 set-models-enabled = Activado
+set-models-retry = Reintentar
 set-shortcuts-heading = Atajos de teclado
 set-shortcuts-enable = Activar atajos de teclado
 set-language-heading = Idioma de la interfaz
