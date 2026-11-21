@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: Windows nightly .exe
+    name: Windows nightly (3 variants)
     runs-on: windows-latest
     env:
       # whisper-rs-sys builds whisper.cpp from source. GitHub's
@@ -23,15 +23,52 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p caprust-app --no-default-features
-      - name: Strip Windows binary
+
+      - name: Build all three Windows variants
+        shell: pwsh
         run: |
-          cargo install cargo-strip --locked
-          cargo strip
-      - uses: actions/upload-artifact@v4
+          $variants = @(
+            @{ name = "standard"; features = "--no-default-features"; variant = ""; exeName = "caprust-app.exe"; setupSuffix = "" },
+            @{ name = "cuda";     features = "--no-default-features --features gpu-cuda";     variant = "-cuda"; exeName = "caprust-app-cuda.exe"; setupSuffix = "-cuda" },
+            @{ name = "directml"; features = "--no-default-features --features gpu-directml"; variant = "-directml"; exeName = "caprust-app-directml.exe"; setupSuffix = "-directml" }
+          )
+          New-Item -ItemType Directory -Force -Path installer\staging | Out-Null
+          foreach ($var in $variants) {
+            Write-Host "=== Building $($var.name) ==="
+            cargo build --release -p caprust-app $($var.features)
+            Copy-Item "target\release\caprust-app.exe" "installer\staging\$($var.exeName)" -Force
+            # Build the installer for this variant
+            $iscc = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+              "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $iscc) {
+              $found = @()
+              foreach ($root in @("${env:ProgramFiles(x86)}", "${env:ProgramFiles}", "${env:LOCALAPPDATA}\Programs")) {
+                if (Test-Path $root) {
+                  $found += Get-ChildItem -Path $root -Directory -Filter 'Inno Setup*' -ErrorAction SilentlyContinue | ForEach-Object {
+                    Join-Path $_.FullName 'ISCC.exe'
+                  } | Where-Object { Test-Path $_ }
+                }
+              }
+              $iscc = $found | Select-Object -First 1
+            }
+            if (-not $iscc) { throw "ISCC.exe not found" }
+            & $iscc "/DMyAppVersion=nightly" "/DMyAppVariant=$($var.variant)" "/DMyAppExeName=$($var.exeName)" installer\caprust.iss
+            if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $($var.name)" }
+            Copy-Item "installer\dist\CapRust-nightly-win64-setup$($var.setupSuffix).exe" "installer\staging\CapRust-nightly-win64-setup$($var.setupSuffix).exe" -Force
+            # Pack the portable zip for this variant
+            Compress-Archive -Path "installer\staging\$($var.exeName)" -DestinationPath "installer\staging\caprust-nightly-windows$($var.setupSuffix).zip" -CompressionLevel Optimal
+            Write-Host "  $($var.name): EXE + installer + zip ready"
+          }
+          Get-ChildItem installer\staging | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length) }
+
+      - name: Upload nightly artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: caprust-nightly-win64
-          path: target/release/caprust-app.exe
+          name: caprust-nightly-windows-3-variants
+          path: installer\staging\*
           retention-days: 14
 
   build-linux:
