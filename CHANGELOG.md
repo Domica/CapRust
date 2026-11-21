@@ -4,6 +4,18 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.33] - 2026-11-21
+
+### Added
+
+- **Slide (scrub) tool.** New toolbar tool (↔, mutually exclusive with Pan). Drag anywhere on the timeline to move the playhead precisely; playback pauses on press and resumes from the new position on release. The time ruler also supports click-and-drag without the tool.
+- **Corrected GFPGAN model source.** Switched to a dedicated stable mirror (`neurobytemind/GFPGANv1.4.onnx`) and pinned the verified SHA-256 (`cd7311b8…`). The old hash never matched the served file, so downloads always failed verification.
+
+### Fixed
+
+- **Face Restore no longer a no-op.** The `gfpgan` effect always emits the smartblur + hqdn3d smoothing chain; previously it returned `None` when the ONNX model was on disk, expecting an external restorer that was never called. Regression test added. **Note: full GFPGAN ONNX restoration is still in implementation — current behaviour is smartblur + hqdn3d face smoothing during export only.**
+- `tt-slide` tooltip added to all five locales (en, hr, de, es, it).
+
 ## [0.9.32] - 2026-11-20
 
 ### Fixed

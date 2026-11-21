@@ -2189,7 +2189,7 @@ fn sticker_animation_fragment(id: &str) -> String {
     }
 }
 
-fn build_one_effect(id: &str, amount: f32, gfpgan_path: Option<&Path>) -> Option<String> {
+fn build_one_effect(id: &str, amount: f32, _gfpgan_path: Option<&Path>) -> Option<String> {
     let frag: String = match id {
         // ---- Static effects: amount scales magnitude ----
         "blur" => format!(",boxblur={:.2}:2", 4.0 * amount),
@@ -2634,26 +2634,17 @@ fn build_one_effect(id: &str, amount: f32, gfpgan_path: Option<&Path>) -> Option
             format!(",smartblur=luma_radius={r:.1}:luma_strength={s:.2}:luma_threshold=8")
         }
 
-        // ---- Face Restore (GFPGAN v1.4) ----
-        // GFPGAN is an ONNX model run through tract-onnx; the ffmpeg
-        // filtergraph cannot execute a neural network, so when the
-        // GFPGANv1.4.onnx model is on disk we return None here and
-        // defer to the external GfpganRestorer pipeline (see gfpgan.rs).
-        // When the model is missing, fall back to a face-smoothing
-        // denoise chain (smartblur + hqdn3d) that reads as "cleaner
-        // face" at a glance.
+        // ---- Face Restore (currently smartblur + hqdn3d) ----
+        // NOTE: Full GFPGAN v1.4 face restoration (tract-onnx inference
+        // in `gfpgan.rs`) is still being wired into the export pipeline.
+        // Until that lands, this effect applies a face-smoothing denoise
+        // chain (smartblur + hqdn3d) that reads as a "cleaner face".
+        // Previously this branch returned None when the ONNX model was
+        // on disk, expecting an external restorer that was never called —
+        // so the effect silently did nothing. Always emit the filter now.
         "gfpgan" => {
             if amount <= 0.001 {
                 return None;
-            }
-            // When the GFPGAN ONNX model is on disk, skip the ffmpeg
-            // filter fragment entirely -- the tract-onnx restorer
-            // handles face restoration externally. Only fall back to
-            // the smartblur denoise when the model is missing.
-            if let Some(path) = gfpgan_path {
-                if path.is_file() {
-                    return None;
-                }
             }
             let a = amount.clamp(0.0, 1.0);
             format!(
@@ -5607,6 +5598,23 @@ mod tests {
         assert!(
             a.contains("hqdn3d") && a.contains("deband"),
             "ai_enhance should fall back to denoise+deband"
+        );
+        // Face restore must always emit a filter. A previous version
+        // returned None when the ONNX model was on disk, expecting an
+        // external restorer that was never called — so the effect did
+        // nothing. Guard against that regression for both the
+        // "model present" and "model absent" cases.
+        let g = build_one_effect("gfpgan", 1.0, None).expect("gfpgan chain");
+        assert!(
+            g.contains("smartblur") && g.contains("hqdn3d"),
+            "gfpgan should use smartblur+hqdn3d face smoothing"
+        );
+        let _model_path = std::path::Path::new("models/GFPGANv1.4.onnx");
+        let g_with_model = build_one_effect("gfpgan", 1.0, Some(_model_path))
+            .expect("gfpgan chain must exist even when model is on disk");
+        assert_eq!(
+            g, g_with_model,
+            "gfpgan filter must not be skipped when the ONNX model is present"
         );
         assert!(
             build_one_effect("nope", 1.0, None).is_none(),
