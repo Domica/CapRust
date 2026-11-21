@@ -14,12 +14,12 @@ use tract_onnx::prelude::*;
 
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 use ort::environment::Environment;
-#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
-use ort::session::Session;
-#[cfg(feature = "gpu-cuda")]
-use ort::ep::CUDA;
 #[cfg(feature = "gpu-directml")]
 use ort::ep::DirectML;
+#[cfg(feature = "gpu-cuda")]
+use ort::ep::CUDA;
+#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+use ort::session::Session;
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 use ort::value::TensorValueType;
 
@@ -202,7 +202,9 @@ impl OrtBackend {
                 // CPU is the default; no provider needed.
             }
             BackendType::Auto => {
-                unreachable!("Auto is resolved to a concrete backend before OrtBackend::load is called")
+                unreachable!(
+                    "Auto is resolved to a concrete backend before OrtBackend::load is called"
+                )
             }
         }
 
@@ -252,7 +254,9 @@ impl InferenceBackend for OrtBackend {
         let input_tensor = ort::value::Tensor::from_array(arr)
             .map_err(|e| anyhow!("ort create input tensor: {e:?}"))?;
 
-        let mut session = self.session.lock()
+        let mut session = self
+            .session
+            .lock()
             .map_err(|e| anyhow!("ort session lock poisoned: {e}"))?;
         let outputs = session
             .run(ort::inputs![self.input_name.clone() => input_tensor])
