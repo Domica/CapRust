@@ -10,17 +10,24 @@
   #define MyAppVersion "0.0.0-dev"
 #endif
 
+#ifndef MyAppVariant
+  #define MyAppVariant ""
+#endif
+
+#ifndef MyAppExeName
+  #define MyAppExeName "caprust-app.exe"
+#endif
+
 #define MyAppName        "CapRust"
 #define MyAppPublisher   "Domica"
 #define MyAppURL         "https://github.com/Domica/CapRust"
-#define MyAppExeName     "caprust-app.exe"
 #define MyAppId          "{{8B4A9E5C-2F1D-4A6E-9F3C-7D2E1A5B8C4F}"
 
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}{#MyAppVariant}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
@@ -29,7 +36,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=dist
-OutputBaseFilename=CapRust-{#MyAppVersion}-win64-setup
+OutputBaseFilename=CapRust-{#MyAppVersion}-win64-setup{#MyAppVariant}
 SetupIconFile=..\crates\app\assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max

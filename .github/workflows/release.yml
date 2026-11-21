@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
 
       - name: Work out the version
@@ -50,66 +50,46 @@ jobs:
           }
           "version=$wanted" >> $env:GITHUB_OUTPUT
 
-      - name: Build the release binary
-        run: cargo build --release -p caprust-app --no-default-features
-
-      - name: Install Inno Setup
-        # The installer is part of the release, so it has to be built
-        # inside the workflow for the signature to be trusted.
-        run: choco install innosetup --no-progress -y
-
-      - name: Build the installer and collect the release files
+      - name: Build all three Windows variants
         shell: pwsh
         run: |
           $v = "${{ steps.version.outputs.version }}"
+          $variants = @(
+            @{ name = "standard"; features = "--no-default-features"; variant = ""; exeName = "caprust-app.exe"; setupSuffix = "" },
+            @{ name = "cuda";     features = "--no-default-features --features gpu-cuda";     variant = "-cuda"; exeName = "caprust-app-cuda.exe"; setupSuffix = "-cuda" },
+            @{ name = "directml"; features = "--no-default-features --features gpu-directml"; variant = "-directml"; exeName = "caprust-app-directml.exe"; setupSuffix = "-directml" }
+          )
           New-Item -ItemType Directory -Force -Path installer\staging | Out-Null
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item target\release\caprust-app.exe installer\staging\caprust-app.exe -Force
-          # PowerShell needs the braces around a variable whose name has
-          # parentheses in it. Without them it reads $env:ProgramFiles and
-          # then treats (x86) as an expression, and the path never
-          # resolves.
-          #
-          # Prefer the known Inno Setup 6 locations. A broad -Recurse over
-          # all of Program Files used to "find" an old v5 ISCC left by an
-          # unrelated product and silently built the installer with it.
-          # The fallback therefore scans only Inno Setup* folders, and the
-          # version is checked before anything is compiled.
-          $roots = @(
-            "${env:ProgramFiles(x86)}",
-            "${env:ProgramFiles}",
-            "${env:LOCALAPPDATA}\Programs"
-          ) | Where-Object { $_ -and (Test-Path $_) }
-          $candidates = foreach ($root in $roots) {
-            Join-Path $root "Inno Setup 6\ISCC.exe"
-          }
-          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) {
-            # The package has moved before; look inside Inno Setup* dirs.
-            $found = @()
-            foreach ($root in $roots) {
-              $found += Get-ChildItem -Path $root -Directory -Filter 'Inno Setup*' `
-                -ErrorAction SilentlyContinue | ForEach-Object {
-                  Join-Path $_.FullName 'ISCC.exe'
-                } | Where-Object { Test-Path $_ }
+          foreach ($var in $variants) {
+            Write-Host "=== Building $($var.name) ==="
+            cargo build --release -p caprust-app $($var.features)
+            Copy-Item "target\release\caprust-app.exe" "installer\staging\$($var.exeName)" -Force
+            # Build the installer for this variant
+            $iscc = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+              "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $iscc) {
+              $found = @()
+              foreach ($root in @("${env:ProgramFiles(x86)}", "${env:ProgramFiles}", "${env:LOCALAPPDATA}\Programs")) {
+                if (Test-Path $root) {
+                  $found += Get-ChildItem -Path $root -Directory -Filter 'Inno Setup*' -ErrorAction SilentlyContinue | ForEach-Object {
+                    Join-Path $_.FullName 'ISCC.exe'
+                  } | Where-Object { Test-Path $_ }
+                }
+              }
+              $iscc = $found | Select-Object -First 1
             }
-            $iscc = $found | Select-Object -First 1
+            if (-not $iscc) { throw "ISCC.exe not found" }
+            & $iscc "/DMyAppVersion=$v" "/DMyAppVariant=$($var.variant)" "/DMyAppExeName=$($var.exeName)" installer\caprust.iss
+            if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $($var.name)" }
+            Copy-Item "installer\dist\CapRust-$v-win64-setup$($var.setupSuffix).exe" "release\CapRust-$v-win64-setup$($var.setupSuffix).exe" -Force
+            # Pack the portable zip for this variant
+            Compress-Archive -Path "installer\staging\$($var.exeName)" -DestinationPath "release\caprust-$v-windows$($var.setupSuffix).zip" -CompressionLevel Optimal
+            Write-Host "  $($var.name): EXE + installer + zip ready"
           }
-          if (-not $iscc) {
-            throw ("ISCC.exe not found after installing Inno Setup. " +
-                   "Searched: " + ($roots -join '; '))
-          }
-          $isccVersion = (Get-Item $iscc).VersionInfo.FileVersion
-          if (-not $isccVersion -or -not $isccVersion.StartsWith('6.')) {
-            Write-Host ("  WARNING: ISCC at $iscc reports version '$isccVersion', not 6.x; " +
-                        "proceeding because the path is Inno Setup 6\")
-          } else {
-            Write-Host ("  using $iscc (v$isccVersion)")
-          }
-          & $iscc "/DMyAppVersion=$v" installer\caprust.iss
-          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
-          Copy-Item "installer\dist\CapRust-$v-win64-setup.exe" release\ -Force
-          Copy-Item installer\staging\caprust-app.exe release\ -Force
           Get-ChildItem release | ForEach-Object { Write-Host ("  " + $_.Name + "  " + $_.Length) }
 
       - name: Upload the unsigned release files
@@ -145,36 +125,35 @@ jobs:
         shell: pwsh
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          Copy-Item signed\CapRust-$v-win64-setup.exe release\ -Force
-          Copy-Item signed\caprust-app.exe release\ -Force
+          @("CapRust-$v-win64-setup.exe", "CapRust-$v-win64-setup-cuda.exe", "CapRust-$v-win64-setup-directml.exe",
+            "caprust-app.exe", "caprust-app-cuda.exe", "caprust-app-directml.exe") | ForEach-Object {
+            $src = "signed\$_"
+            $dst = "release\$_"
+            if (Test-Path $src) { Copy-Item $src $dst -Force }
+          }
 
-      - name: Verify the signature
+      - name: Verify the signatures
         if: ${{ steps.sign.outputs.signing-request-id != '' }}
         shell: pwsh
         run: |
-          # A signed file that does not verify is worse than an unsigned
-          # one, because it looks done.
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $v = "${{ steps.version.outputs.version }}"
-          $setup = "release\CapRust-$v-win64-setup.exe"
-          $sig = Get-AuthenticodeSignature $setup
-          Write-Host ("  setup.exe status: " + $sig.Status)
-          if ($sig.Status -ne 'Valid') {
-            throw "the setup.exe signature is $($sig.Status), not Valid"
-          }
-          $portable = "release\caprust-app.exe"
-          $sig2 = Get-AuthenticodeSignature $portable
-          Write-Host ("  caprust-app.exe status: " + $sig2.Status)
-          if ($sig2.Status -ne 'Valid') {
-            throw "the portable binary's signature is $($sig2.Status), not Valid"
+          @("CapRust-$v-win64-setup.exe", "CapRust-$v-win64-setup-cuda.exe", "CapRust-$v-win64-setup-directml.exe",
+            "caprust-app.exe", "caprust-app-cuda.exe", "caprust-app-directml.exe") | ForEach-Object {
+            $path = "release\$_"
+            if (-not (Test-Path $path)) { return }
+            $sig = Get-AuthenticodeSignature $path
+            Write-Host ("  $_ status: " + $sig.Status)
+            if ($sig.Status -ne 'Valid') {
+              throw "the signature for $_ is $($sig.Status), not Valid"
+            }
           }
 
       - name: Pack the portable zip
         shell: pwsh
         run: |
-          $v = "${{ steps.version.outputs.version }}"
-          Compress-Archive -Path release\caprust-app.exe -DestinationPath "release\caprust-$v-windows.zip" -CompressionLevel Optimal
-          Remove-Item release\caprust-app.exe
+          # Portable zips are already packed in the "Build all three Windows
+          # variants" step above; nothing to do here.
 
       - name: Publish the release
         shell: pwsh
@@ -239,7 +218,7 @@ jobs:
             libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev \
             libasound2-dev
 
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: dtolnay/rust-toolchain@1.92.0
       # Bust: the runner moved from 24.04 to 22.04, and the old cache
       # carries build-script binaries linked against glibc 2.39.
       - uses: Swatinem/rust-cache@v2
