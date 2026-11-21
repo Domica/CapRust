@@ -5681,7 +5681,7 @@ impl CapRustApp {
             backend: match self.settings.ai_inference_backend.as_str() {
                 "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
                 "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
-                "auto" | _ => caprust_media_io::inference_backend::BackendType::Auto,
+                _ => caprust_media_io::inference_backend::BackendType::Auto,
             },
         };
         let rx = crate::media_jobs::spawn_gfpgan_job(
@@ -6942,7 +6942,10 @@ impl CapRustApp {
                         // cooperative cancellation (1.5).
                         let can_cancel = matches!(
                             j.kind,
-                            JobKind::BgRemoval | JobKind::ObjectRemoval | JobKind::Anon | JobKind::FaceRestore
+                            JobKind::BgRemoval
+                                | JobKind::ObjectRemoval
+                                | JobKind::Anon
+                                | JobKind::FaceRestore
                         );
                         if can_cancel && ui.button("✕").on_hover_text(tr("cancel")).clicked() {
                             cancel_ids.push(j.id);

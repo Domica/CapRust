@@ -983,7 +983,7 @@ fn run_reframe_job(
                 &req.model_path,
                 caprust_media_io::inference_backend::BackendType::Cpu,
             )
-                .map_err(|e| format!("load SCRFD: {e}"))
+            .map_err(|e| format!("load SCRFD: {e}"))
         })?;
         let mut out = Vec::with_capacity(frames.len());
         for f in &frames {
@@ -1764,7 +1764,7 @@ fn run_anon_inner(
                 &req.model_path,
                 caprust_media_io::inference_backend::BackendType::Cpu,
             )
-                .map_err(|e| format!("load SCRFD: {e}"))
+            .map_err(|e| format!("load SCRFD: {e}"))
         })?;
         Detector::Scrfd(d)
     } else {
@@ -2418,7 +2418,7 @@ fn run_gfpgan_inner(
             &req.restorer_path,
             req.backend,
         )
-            .map_err(|e| format!("load GFPGAN: {e}"))
+        .map_err(|e| format!("load GFPGAN: {e}"))
     })?;
     let restorer = restorer.as_ref();
 

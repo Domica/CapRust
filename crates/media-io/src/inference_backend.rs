@@ -72,10 +72,10 @@ pub trait InferenceBackend: Send + Sync {
     /// Convenience: return only the first output as a flat `Vec<f32>`.
     fn run_single(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<f32>> {
         let outputs = self.run(input, shape)?;
-        Ok(outputs
+        outputs
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("model produced no outputs"))?)
+            .ok_or_else(|| anyhow!("model produced no outputs"))
     }
 }
 
@@ -149,8 +149,8 @@ impl OrtBackend {
             .build()
             .map_err(|e| anyhow!("ort environment: {e:?}"))?;
 
-        let mut builder = ort::SessionBuilder::new(&env)
-            .map_err(|e| anyhow!("ort session builder: {e:?}"))?;
+        let mut builder =
+            ort::SessionBuilder::new(&env).map_err(|e| anyhow!("ort session builder: {e:?}"))?;
 
         match backend {
             BackendType::Cuda => {
@@ -200,9 +200,8 @@ impl InferenceBackend for OrtBackend {
     fn run(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<Vec<f32>>> {
         let dims: Vec<i64> = shape.to_vec();
 
-        let input_tensor =
-            ort::value::Tensor::from_array(&self.env, input, &dims)
-                .map_err(|e| anyhow!("ort create input tensor: {e:?}"))?;
+        let input_tensor = ort::value::Tensor::from_array(&self.env, input, &dims)
+            .map_err(|e| anyhow!("ort create input tensor: {e:?}"))?;
 
         let outputs = self
             .session
@@ -236,9 +235,7 @@ impl InferenceSession {
             other => other,
         };
         let backend_obj: Box<dyn InferenceBackend> = match backend {
-            BackendType::Cpu => {
-                Box::new(TractBackend::load(path, shape, label)?)
-            }
+            BackendType::Cpu => Box::new(TractBackend::load(path, shape, label)?),
             BackendType::Cuda | BackendType::DirectML => {
                 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
                 {
@@ -264,7 +261,9 @@ impl InferenceSession {
                     Box::new(TractBackend::load(path, shape, label)?)
                 }
             }
-            BackendType::Auto => unreachable!("Auto is resolved to a concrete backend before this match"),
+            BackendType::Auto => {
+                unreachable!("Auto is resolved to a concrete backend before this match")
+            }
         };
 
         Ok(Self {
@@ -294,10 +293,10 @@ impl InferenceSession {
     /// Run inference on an `Array4<f32>`, return only the first output.
     pub fn run_array_single(&self, input: &tract_ndarray::Array4<f32>) -> Result<Vec<f32>> {
         let outputs = self.run_array(input)?;
-        Ok(outputs
+        outputs
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("model produced no outputs"))?)
+            .ok_or_else(|| anyhow!("model produced no outputs"))
     }
 
     pub fn shape(&self) -> [i64; 4] {

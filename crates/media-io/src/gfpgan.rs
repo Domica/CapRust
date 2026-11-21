@@ -40,6 +40,14 @@ pub struct GfpganRestorer {
     session: InferenceSession,
 }
 
+impl std::fmt::Debug for GfpganRestorer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GfpganRestorer")
+            .field("input_shape", &self.session.shape())
+            .finish()
+    }
+}
+
 impl GfpganRestorer {
     /// Load and optimize a GFPGAN ONNX model from disk.
     ///
@@ -53,7 +61,11 @@ impl GfpganRestorer {
             "GFPGAN v1.4",
             backend,
         )?;
-        tracing::info!("gfpgan: loaded {} on {:?} backend", model_path.display(), backend);
+        tracing::info!(
+            "gfpgan: loaded {} on {:?} backend",
+            model_path.display(),
+            backend
+        );
         Ok(Self { session })
     }
 
@@ -128,7 +140,7 @@ impl GfpganRestorer {
     /// channels. Converts to RGB HWC and maps -1..1 -> 0..255.
     fn postprocess(&self, output: &[f32]) -> Result<Vec<u8>> {
         let size = GFPGAN_INPUT_SIZE as usize;
-        let expected = 1 * 3 * size * size;
+        let expected = 3 * size * size;
         if output.len() != expected {
             return Err(anyhow!(
                 "GFPGAN output length {} != expected {}",
@@ -172,7 +184,9 @@ mod tests {
     #[test]
     fn load_missing_file_names_model_and_label() {
         let path = std::path::Path::new("definitely-not-a-real-gfpgan.onnx");
-        let err = GfpganRestorer::load(path, BackendType::Cpu).unwrap_err().to_string();
+        let err = GfpganRestorer::load(path, BackendType::Cpu)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("GFPGAN v1.4"), "error must name label: {err}");
         assert!(err.contains("not found"), "error must explain: {err}");
     }

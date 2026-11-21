@@ -70,7 +70,11 @@ impl ScrfdDetector {
             "SCRFD",
             backend,
         )?;
-        tracing::info!("scrfd: loaded {} on {:?} backend", model_path.display(), backend);
+        tracing::info!(
+            "scrfd: loaded {} on {:?} backend",
+            model_path.display(),
+            backend
+        );
         Ok(Self { session })
     }
 
@@ -97,10 +101,7 @@ impl ScrfdDetector {
         let outputs = self.session.run_array(&tensor)?;
 
         if outputs.len() != 9 {
-            return Err(anyhow!(
-                "SCRFD expected 9 outputs, got {}",
-                outputs.len()
-            ));
+            return Err(anyhow!("SCRFD expected 9 outputs, got {}", outputs.len()));
         }
 
         let (scale, pad_x, pad_y) = letterbox_params(width, height);

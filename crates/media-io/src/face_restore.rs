@@ -277,7 +277,7 @@ mod tests {
         if !path.is_file() {
             return;
         }
-        let restorer = GfpganRestorer::load(path).unwrap();
+        let restorer = GfpganRestorer::load(path, BackendType::Cpu).unwrap();
         let rgb = vec![128u8; 64 * 64 * 3];
         // Warm up once.
         let _ = restorer.restore(&rgb, 64, 64).unwrap();

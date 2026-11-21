@@ -226,18 +226,18 @@ pub struct AppSettings {
     /// built-in arrangement. View -> Modern zones -> Save panel state.
     #[serde(default)]
     pub remember_panel_state: bool,
-/// Serialized `ModernState` (the four zone tab stacks). Stored as
-/// JSON so the core crate does not depend on the UI crate's `Tab`
-/// enum, the same trick `dock_layout` uses. `None` or an
-/// unparseable value falls back to the built-in arrangement.
-#[serde(default)]
-pub modern_panel_state: Option<String>,
-/// ONNX inference backend for AI models (GFPGAN, SCRFD, etc.).
-/// "cpu" = tract-onnx (always available), "cuda" = NVIDIA GPU via
-/// ONNX Runtime, "directml" = AMD GPU via ONNX Runtime.
-/// Falls back to CPU if the requested GPU backend cannot load.
-#[serde(default = "default_ai_backend")]
-pub ai_inference_backend: String,
+    /// Serialized `ModernState` (the four zone tab stacks). Stored as
+    /// JSON so the core crate does not depend on the UI crate's `Tab`
+    /// enum, the same trick `dock_layout` uses. `None` or an
+    /// unparseable value falls back to the built-in arrangement.
+    #[serde(default)]
+    pub modern_panel_state: Option<String>,
+    /// ONNX inference backend for AI models (GFPGAN, SCRFD, etc.).
+    /// "cpu" = tract-onnx (always available), "cuda" = NVIDIA GPU via
+    /// ONNX Runtime, "directml" = AMD GPU via ONNX Runtime.
+    /// Falls back to CPU if the requested GPU backend cannot load.
+    #[serde(default = "default_ai_backend")]
+    pub ai_inference_backend: String,
 }
 
 /// Autosave cadence in minutes. Every 5 minutes is short enough that
