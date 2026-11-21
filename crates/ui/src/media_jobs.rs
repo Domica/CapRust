@@ -2423,7 +2423,7 @@ fn run_gfpgan_inner(
             .write_frame(&restored)
             .map_err(|e| format!("write frame {processed}: {e}"))?;
         processed += 1;
-        if processed % PROGRESS_STRIDE == 0 || processed == total {
+        if processed.is_multiple_of(PROGRESS_STRIDE) || processed == total {
             let _ = tx.send(GfpganEvent::Progress {
                 done: processed,
                 total,

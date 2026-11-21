@@ -21,7 +21,7 @@ use std::path::Path;
 /// the same order.
 pub const REF_LANDMARKS: [[f32; 2]; 5] = [
     [192.98138, 239.94708],
-    [318.90277, 240.19360],
+    [318.90277, 240.1936],
     [256.63416, 314.01935],
     [201.26117, 371.41043],
     [313.08905, 371.15118],
@@ -283,7 +283,7 @@ mod tests {
         };
         paste_back(&mut frame, w, h, &restored, &t);
         // Centre must change, far corner must not.
-        let centre = ((64 * w as usize + 64) * 3) as usize;
+        let centre = (64 * w as usize + 64) * 3;
         assert!(frame[centre] > 150);
         let corner = 0usize;
         assert_eq!(frame[corner], 100);

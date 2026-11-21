@@ -1408,6 +1408,7 @@ fn show_color_grade(ui: &mut Ui, clip: &Clip, state: &mut PropertiesState) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_video(
     ui: &mut Ui,
     clip: &Clip,
