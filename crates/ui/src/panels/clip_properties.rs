@@ -98,6 +98,10 @@ pub enum PendingEdit {
     ClearObjectRemovalVideo,
     /// Start object removal job (MobileSAM + LaMa).
     StartObjectRemoval,
+    /// Run the real GFPGAN face-restore pre-pass for this clip.
+    StartFaceRestore,
+    /// Drop the cached restored video (falls back to smartblur).
+    ClearFaceRestoreVideo,
     /// Overlay placement for a sticker. `None` clears it and puts the clip
     /// back to filling the frame.
     Overlay(Option<caprust_core::clip::OverlayPlacement>),
@@ -248,6 +252,7 @@ pub fn show(
     settings: &AppSettings,
     segment_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
     inpaint_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
+    gfpgan_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::GfpganEvent>>,
 ) {
     state.last_playhead_ms = playhead_ms;
     state.last_project_clips = project.clips().to_vec();
@@ -1207,7 +1212,9 @@ pub fn show(
                     }
                 } else {
                     project.with_clip_and_models_mut(clip_id, |clip, models| {
-                        show_video(ui, clip, state, models, settings, segment_rx, inpaint_rx);
+                        show_video(
+                            ui, clip, state, models, settings, segment_rx, inpaint_rx, gfpgan_rx,
+                        );
                     });
                 }
             }
@@ -1409,6 +1416,7 @@ fn show_video(
     settings: &AppSettings,
     segment_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::SegmentEvent>>,
     inpaint_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::InpaintEvent>>,
+    gfpgan_rx: &Option<std::sync::mpsc::Receiver<crate::media_jobs::GfpganEvent>>,
 ) {
     // --- Main ---
     ui.label(egui::RichText::new(tr("props-video-main")).strong());
@@ -1732,8 +1740,7 @@ fn show_video(
         ui.add_space(space::M_PLUS);
         ui.separator();
 
-        // --- Face Restore (GFPGAN v1.4) ---
-        // Runs during export on video/image clips only.
+        // --- Face Restore (real GFPGAN v1.4) ---
         ui.label(egui::RichText::new(tr("props-face-restore")).strong());
         ui.add_space(space::XS);
         ui.label(
@@ -1742,29 +1749,49 @@ fn show_video(
                 .color(egui::Color32::from_gray(160)),
         );
         models.scan_local(&settings.effective_models_dir());
-        let gfpgan_model = models.models.iter().find(|m| m.id == "gfpgan-v1.4");
-        let gfpgan_ready = gfpgan_model
-            .map(|m| m.status == ModelStatus::Ready && m.enabled)
-            .unwrap_or(false);
-        let has_gfpgan = clip.effects.iter().any(|fx| fx.effect_id == "gfpgan");
-        let mut gfpgan_enabled = has_gfpgan;
-        if ui
-            .add_enabled_ui(gfpgan_ready, |ui| {
-                ui.checkbox(&mut gfpgan_enabled, tr("props-face-restore-enable"))
-                    .on_hover_text(tr("props-face-restore-enable-hint"))
-            })
-            .inner
-            .changed()
-        {
-            if gfpgan_enabled {
-                state
-                    .pending
-                    .push(PendingEdit::AddEffect("gfpgan".to_string()));
-            } else {
+        let model_ready = |id: &str| {
+            models
+                .models
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| m.status == ModelStatus::Ready && m.enabled)
+                .unwrap_or(false)
+        };
+        let gfpgan_ready = model_ready("gfpgan-v1.4") && model_ready("scrfd-face");
+        let has_result = clip.face_restore_video.is_some();
+        let busy = gfpgan_rx.is_some();
+        let mut gfpgan_enabled = has_result || busy;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled_ui(gfpgan_ready && !busy, |ui| {
+                    ui.checkbox(&mut gfpgan_enabled, tr("props-face-restore-enable"))
+                        .on_hover_text(tr("props-face-restore-enable-hint"))
+                })
+                .inner
+                .changed()
+                && gfpgan_enabled
+            {
+                state.pending.push(PendingEdit::StartFaceRestore);
+            }
+            if has_result && button::ghost(ui, tr("props-face-restore-clear")).clicked() {
+                state.pending.push(PendingEdit::ClearFaceRestoreVideo);
                 state
                     .pending
                     .push(PendingEdit::RemoveEffect("gfpgan".to_string()));
             }
+        });
+        if busy {
+            ui.label(
+                egui::RichText::new(tr("props-face-restore-processing"))
+                    .small()
+                    .color(egui::Color32::from_rgb(100, 200, 255)),
+            );
+        } else if has_result {
+            ui.label(
+                egui::RichText::new(tr("props-face-restore-done"))
+                    .small()
+                    .color(egui::Color32::from_rgb(100, 200, 100)),
+            );
         }
         if !gfpgan_ready {
             ui.label(

@@ -2212,6 +2212,237 @@ fn run_stab_inner(
     Ok(())
 }
 
+// --- Real GFPGAN face restoration pre-pass ----------------------------
+//
+// Runs SCRFD + GFPGAN over every frame of a clip's source window and
+// writes an FFV1 MKV to the project cache. Export and preview then use
+// that file as the clip's input, so inference happens once per frame
+// in a cancellable job rather than on every preview tick.
+
+static GFPGAN_CACHE: ModelSlot<caprust_media_io::face_restore::FaceRestorer> = OnceLock::new();
+
+pub struct GfpganRequest {
+    pub clip_id: uuid::Uuid,
+    pub source_path: PathBuf,
+    pub t_start_ms: u64,
+    pub duration_ms: u64,
+    pub fps: f64,
+    pub detector_path: PathBuf,
+    pub restorer_path: PathBuf,
+    pub output_path: PathBuf,
+    pub max_side: u32,
+    pub cancel: CancellationToken,
+}
+
+#[derive(Debug)]
+pub enum GfpganEvent {
+    Started {
+        total_frames: usize,
+    },
+    Progress {
+        done: usize,
+        total: usize,
+    },
+    Finished {
+        clip_id: uuid::Uuid,
+        output_path: PathBuf,
+        frame_count: usize,
+    },
+    Failed(String),
+}
+
+pub fn spawn_gfpgan_job(
+    ffmpeg: PathBuf,
+    ffprobe: PathBuf,
+    req: GfpganRequest,
+) -> Receiver<GfpganEvent> {
+    let (tx, rx) = channel();
+    std::thread::Builder::new()
+        .name("caprust-gfpgan".into())
+        // tract inference is stack-hungry on Windows; see other AI jobs.
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            if let Err(reason) = run_gfpgan_inner(&ffmpeg, &ffprobe, &req, &tx) {
+                tracing::error!("gfpgan job: {reason}");
+                let _ = tx.send(GfpganEvent::Failed(reason));
+            }
+        })
+        .expect("spawn gfpgan thread");
+    rx
+}
+
+/// FFV1/RGB writer for restored frames. FFV1 is lossless so the AI
+/// work is not degraded before the export encoder sees it.
+struct RgbWriter {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    frame_bytes: usize,
+}
+
+impl RgbWriter {
+    fn write_frame(&mut self, rgb: &[u8]) -> std::io::Result<()> {
+        debug_assert_eq!(rgb.len(), self.frame_bytes);
+        std::io::Write::write_all(&mut self.stdin, rgb)
+    }
+
+    fn finish(mut self) -> Result<(), String> {
+        drop(self.stdin);
+        let status = self
+            .child
+            .wait()
+            .map_err(|e| format!("wait ffmpeg gfpgan writer: {e}"))?;
+        if !status.success() {
+            return Err(format!("ffmpeg gfpgan writer exited {status}"));
+        }
+        Ok(())
+    }
+}
+
+fn spawn_rgb_writer(
+    ffmpeg: &Path,
+    output: &Path,
+    w: u32,
+    h: u32,
+    fps: f64,
+) -> Result<RgbWriter, String> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let args: Vec<String> = vec![
+        "-y".into(),
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-f".into(),
+        "rawvideo".into(),
+        "-pix_fmt".into(),
+        "rgb24".into(),
+        "-s".into(),
+        format!("{w}x{h}"),
+        "-r".into(),
+        format!("{fps:.6}"),
+        "-i".into(),
+        "-".into(),
+        "-an".into(),
+        "-c:v".into(),
+        "ffv1".into(),
+        "-pix_fmt".into(),
+        "rgb24".into(),
+        output.to_string_lossy().into_owned(),
+    ];
+    let mut child = caprust_media_io::silent_cmd::silent_command(ffmpeg)
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg gfpgan writer: {e}"))?;
+    if let Some(mut err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(&mut err)
+                .lines()
+                .map_while(std::result::Result::ok)
+            {
+                if !line.trim().is_empty() {
+                    tracing::warn!("gfpgan ffmpeg: {line}");
+                }
+            }
+        });
+    }
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "ffmpeg gfpgan writer: stdin missing".to_string())?;
+    Ok(RgbWriter {
+        child,
+        stdin,
+        frame_bytes: (w as usize) * (h as usize) * 3,
+    })
+}
+
+fn run_gfpgan_inner(
+    ffmpeg: &Path,
+    ffprobe: &Path,
+    req: &GfpganRequest,
+    tx: &Sender<GfpganEvent>,
+) -> Result<(), String> {
+    let probe = caprust_media_io::ffprobe::probe(ffprobe, &req.source_path)
+        .map_err(|e| format!("probe {}: {e}", req.source_path.display()))?;
+    if !probe.has_video {
+        return Err("source has no video stream".into());
+    }
+    let src_w = probe
+        .width
+        .ok_or_else(|| "probe: missing width".to_string())?;
+    let src_h = probe
+        .height
+        .ok_or_else(|| "probe: missing height".to_string())?;
+
+    let frames = caprust_media_io::frame_extract::extract_rgb_frames(
+        ffmpeg,
+        &req.source_path,
+        src_w,
+        src_h,
+        req.t_start_ms as f64 / 1000.0,
+        req.duration_ms as f64 / 1000.0,
+        req.fps,
+        req.max_side,
+    )
+    .map_err(|e| format!("frame extraction: {e}"))?;
+    let total = frames.len();
+    if total == 0 {
+        return Err("no frames extracted".into());
+    }
+    let _ = tx.send(GfpganEvent::Started {
+        total_frames: total,
+    });
+
+    let key = format!(
+        "{}|{}",
+        req.detector_path.to_string_lossy(),
+        req.restorer_path.to_string_lossy()
+    );
+    let restorer = model_get_or_load(&GFPGAN_CACHE, key, file_mtime(&req.restorer_path), || {
+        caprust_media_io::face_restore::FaceRestorer::load(&req.detector_path, &req.restorer_path)
+            .map_err(|e| format!("load GFPGAN: {e}"))
+    })?;
+    let restorer = restorer.as_ref();
+
+    let (fw, fh) = (frames[0].width, frames[0].height);
+    let mut writer = spawn_rgb_writer(ffmpeg, &req.output_path, fw, fh, req.fps)?;
+    let mut processed = 0usize;
+    for frame in &frames {
+        if req.cancel.is_cancelled() {
+            break;
+        }
+        let restored = restorer
+            .restore_frame(&frame.rgb, frame.width, frame.height)
+            .map_err(|e| format!("restore frame {processed}: {e}"))?;
+        writer
+            .write_frame(&restored)
+            .map_err(|e| format!("write frame {processed}: {e}"))?;
+        processed += 1;
+        if processed % PROGRESS_STRIDE == 0 || processed == total {
+            let _ = tx.send(GfpganEvent::Progress {
+                done: processed,
+                total,
+            });
+        }
+    }
+    writer.finish()?;
+    if processed == 0 {
+        return Err("cancelled before the first frame".into());
+    }
+    let _ = tx.send(GfpganEvent::Finished {
+        clip_id: req.clip_id,
+        output_path: req.output_path.clone(),
+        frame_count: processed,
+    });
+    tracing::info!("gfpgan: clip {} restored {processed} frames", req.clip_id);
+    Ok(())
+}
+
 #[cfg(test)]
 mod model_cache_tests {
     use super::{file_mtime, model_get_or_load, ModelSlot};
@@ -2229,6 +2460,7 @@ mod model_cache_tests {
         assert_send_sync::<caprust_media_io::lama::Lama>();
         assert_send_sync::<caprust_media_io::face_detect::FaceDetector>();
         assert_send_sync::<caprust_media_io::scrfd::ScrfdDetector>();
+        assert_send_sync::<caprust_media_io::face_restore::FaceRestorer>();
     }
 
     #[test]

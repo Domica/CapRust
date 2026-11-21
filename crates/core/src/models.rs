@@ -362,7 +362,7 @@ impl Default for ModelRegistry {
                     ModelKind::Enhancer,
                     "multi",
                     350,
-                    "Face restoration — sharpens blurry/distorted AI-generated faces while keeping expression and speech motion. Runs during export.",
+                    "Real GFPGAN v1.4 face restoration. Pre-pass with SCRFD face detection; restored video is cached and used in preview and export. Requires SCRFD face model.",
                 )
                 .with_url(
                     "https://huggingface.co/neurobytemind/GFPGANv1.4.onnx/resolve/main/GFPGANv1.4.onnx",

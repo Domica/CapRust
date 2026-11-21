@@ -109,6 +109,9 @@ pub struct VideoClip {
     pub color_grade: Option<caprust_core::clip::ColorGrade>,
     /// Resolved face-anonymize mask path. None = no anonymization.
     pub anon_mask_path: Option<std::path::PathBuf>,
+    /// Resolved face-restored video. When present it replaces the
+    /// clip's source input and the `gfpgan` effect emits no filter.
+    pub face_restore_path: Option<std::path::PathBuf>,
     /// Resolved object removal mask path. None = no object removal.
     pub object_removal_mask_path: Option<std::path::PathBuf>,
     /// Whether object removal (AI inpainting) is enabled for this clip.
@@ -642,7 +645,11 @@ impl RenderPlan {
             if let Some(g) = &c.color_grade {
                 fg.push_str(&build_color_grade_chain(g));
             }
-            let effects_chain = build_effects_chain(&c.effects, self.gfpgan_model_path.as_deref());
+            let effects_chain = build_effects_chain(
+                &c.effects,
+                self.gfpgan_model_path.as_deref(),
+                c.face_restore_path.is_some(),
+            );
             fg.push_str(&effects_chain);
             // Effects like zoom_pulse and shake use
             // `crop=w=iw*0.9:h=ih*0.9,...,scale=iw*1.111111:ih*1.111111`
@@ -1120,7 +1127,8 @@ impl RenderPlan {
             // Dimension-changing effects (shake crop, pixelate scale)
             // are normalized back to the exact project size, mirroring
             // the video-clip path. Empty = byte-identical output.
-            let fx_chain = build_effects_chain(&t.effects, self.gfpgan_model_path.as_deref());
+            let fx_chain =
+                build_effects_chain(&t.effects, self.gfpgan_model_path.as_deref(), false);
             let fx_suffix = if fx_chain.is_empty() {
                 String::new()
             } else {
@@ -1914,6 +1922,7 @@ pub fn xfade_name(id: &str) -> Option<&'static str> {
 fn build_effects_chain(
     effects: &[caprust_core::clip::EffectInstance],
     gfpgan_path: Option<&Path>,
+    face_restore_active: bool,
 ) -> String {
     let mut out = String::new();
     for inst in effects {
@@ -1923,6 +1932,11 @@ fn build_effects_chain(
         // Clamp amount to a well-behaved range; UI slider is 0..=2 but
         // serialized projects might carry values from older builds.
         let amount = inst.amount.clamp(0.0, 4.0);
+        // A restored cache already contains real GFPGAN output -- a
+        // smartblur on top would only degrade it.
+        if face_restore_active && inst.effect_id == "gfpgan" {
+            continue;
+        }
         let frag = build_one_effect(&inst.effect_id, amount, gfpgan_path);
         if let Some(f) = frag {
             out.push_str(&f);
@@ -3297,6 +3311,25 @@ pub fn escape_output_path(path: &std::path::Path) -> String {
 /// whole frame. Fixing that means re-projecting the crop onto the
 /// mask, which is a follow-up. For now, auto-reframe wins and
 /// bg-removal is skipped for that clip with a warning.
+/// Resolve a clip's GFPGAN-restored video. Unlike mask paths this file
+/// is used directly as an ffmpeg `-i` argument, not inside a filter, so
+/// there is no filter-injection risk -- but we still keep it inside the
+/// project's cache directory and require a regular file.
+fn resolve_face_restore_path(
+    project: &caprust_core::ProjectState,
+    clip: &caprust_core::Clip,
+) -> Option<std::path::PathBuf> {
+    let rel = clip.face_restore_video.as_ref()?;
+    let proj = std::path::Path::new(project.project_path.as_ref()?);
+    let path = proj.join(rel);
+    let canonical = path.canonicalize().ok()?;
+    let cache_root = proj.join("cache").join("gfpgan").canonicalize().ok()?;
+    if !canonical.starts_with(&cache_root) || !canonical.is_file() {
+        return None;
+    }
+    Some(canonical)
+}
+
 fn resolve_bg_removal_path(
     project: &caprust_core::ProjectState,
     clip: &caprust_core::Clip,
@@ -3818,7 +3851,14 @@ pub fn plan_from_project(
                     // window begins. Set by split-at-playhead; 0 for
                     // fresh clips. It is a SOURCE-time offset, so it
                     // stacks with the input seek below.
-                    let base_ss = c.source_offset_ms as f64 / 1000.0;
+                    let face_restore_path = resolve_face_restore_path(project, c);
+                    // The cache file already starts at the clip's source
+                    // offset, so it needs no base seek.
+                    let base_ss = if face_restore_path.is_some() {
+                        0.0
+                    } else {
+                        c.source_offset_ms as f64 / 1000.0
+                    };
                     let (input_ss_sec, visible_dur, new_start) = if do_input_seek {
                         if clip_start >= seek_sec {
                             (base_ss, dur_sec, clip_start - seek_sec)
@@ -3837,9 +3877,15 @@ pub fn plan_from_project(
                     if do_input_seek && visible_dur < 0.1 {
                         continue;
                     }
-                    let idx = register_input(&mut inputs, path, input_ss_sec, visible_dur);
+                    let effective_path = face_restore_path
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.clone());
+                    let idx =
+                        register_input(&mut inputs, &effective_path, input_ss_sec, visible_dur);
                     video_clips.push(VideoClip {
                         input_index: idx,
+                        face_restore_path: face_restore_path.clone(),
                         timeline_start_sec: new_start,
                         duration_sec: visible_dur,
                         speed: c.speed,
@@ -3895,6 +3941,7 @@ pub fn plan_from_project(
                     let idx = register_input(&mut inputs, &input_path, 0.0, visible_dur);
                     video_clips.push(VideoClip {
                         input_index: idx,
+                        face_restore_path: None,
                         timeline_start_sec: new_start,
                         duration_sec: visible_dur,
                         speed: c.speed,
@@ -4426,10 +4473,10 @@ pub fn plan_from_project(
         audio_from_video,
     );
 
-    // Resolve the GFPGAN v1.4 model path from the registry. The gfpgan
-    // effect arm checks this path at filtergraph build time: when the
-    // ONNX file exists on disk it defers to the tract-onnx restorer
-    // (see gfpgan.rs); otherwise it falls back to smartblur+hqdn3d.
+    // Resolve the GFPGAN v1.4 model path from the registry. Real
+    // restoration happens in a pre-pass job that writes a cache video;
+    // this path is kept for the smartblur fallback branch of the
+    // gfpgan effect on clips that have no restored cache yet.
     let default_registry = ModelRegistry::default();
     let resolved_gfpgan_path =
         ModelRegistry::local_path_static(&default_registry.models, models_dir, "gfpgan-v1.4");
@@ -4781,6 +4828,7 @@ mod tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,
@@ -5311,6 +5359,7 @@ mod tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 1.0,
                 speed: 1.0,
@@ -5680,6 +5729,48 @@ mod tests {
     }
 
     #[test]
+    fn face_restore_cache_path_resolves_only_inside_project_cache() {
+        let root =
+            std::env::temp_dir().join(format!("caprust-face-restore-test-{}", std::process::id()));
+        let cache = root.join("cache").join("gfpgan");
+        let _ = std::fs::create_dir_all(&cache);
+        let clip_id = uuid::Uuid::new_v4();
+        let file = cache.join(format!("{clip_id}.mkv"));
+        std::fs::write(&file, b"placeholder").unwrap();
+
+        let mut project = caprust_core::ProjectState::default();
+        project.project_path = Some(root.to_string_lossy().into_owned());
+        let mut clip = caprust_core::Clip::new_video("source.mp4", 0, 0, 1000);
+        clip.face_restore_video = Some(format!("cache/gfpgan/{clip_id}.mkv"));
+        assert_eq!(
+            resolve_face_restore_path(&project, &clip),
+            Some(file.canonicalize().unwrap())
+        );
+
+        // Traversal outside the cache must never be accepted.
+        clip.face_restore_video = Some("cache/gfpgan/../../evil.mp4".into());
+        assert_eq!(resolve_face_restore_path(&project, &clip), None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn restored_clip_skips_smartblur_fallback() {
+        use caprust_core::clip::EffectInstance;
+        let effects = vec![EffectInstance {
+            effect_id: "gfpgan".into(),
+            amount: 1.0,
+            enabled: true,
+        }];
+        // Without a restored source the documented fallback must exist.
+        let fallback = build_effects_chain(&effects, None, false);
+        assert!(fallback.contains("smartblur"), "{fallback}");
+        // With a real restored cache it must not be blurred again.
+        let restored = build_effects_chain(&effects, None, true);
+        assert!(restored.is_empty(), "{restored}");
+    }
+
+    #[test]
     fn fixed_effects_emit_working_fragments() {
         // cinematic_bars: drawbox bands (pad's option is `color`, not
         // `c` — the old fragment errored and stalled the preview).
@@ -5932,6 +6023,7 @@ mod tests {
         ) -> VideoClip {
             VideoClip {
                 input_index: input,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 4.0,
                 speed: 1.0,
@@ -6108,6 +6200,7 @@ mod tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,
@@ -6172,6 +6265,7 @@ mod tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,
@@ -6400,6 +6494,7 @@ mod tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,
@@ -7131,6 +7226,7 @@ mod flip_filtergraph_tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,
@@ -7235,6 +7331,7 @@ mod reverse_filtergraph_tests {
             }],
             video_clips: vec![VideoClip {
                 input_index: 0,
+                face_restore_path: None,
                 timeline_start_sec: 0.0,
                 duration_sec: 2.0,
                 speed: 1.0,

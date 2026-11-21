@@ -5,10 +5,14 @@
 //! identity, expression and mouth motion — suitable for talking-head
 //! footage and AI-generated clips with garbled facial features.
 //!
-//! Input:  [1, 3, 512, 512] f32, **BGR**, values 0..255 (no
-//!         normalization -- matches the face_detect.rs pattern, which
-//!         follows OpenCV's cv2.imread convention).
-//! Output: [1, 3, 512, 512] f32 RGB at 512x512.
+//! Verified ONNX contract (probed against the real GFPGANv1.4.onnx):
+//! Input:  [1, 3, 512, 512] f32, **BGR**, values **-1..1** with
+//!         `(v - 127.5) / 127.5`. Raw 0..255 input produces garbage
+//!         outputs of magnitude 1e17 -- normalization is mandatory.
+//! Output: [1, 3, 512, 512] f32, **BGR**, values -1..1. Convert with
+//!         `(v + 1) * 127.5` clamped to 0..255, then swap channels
+//!         0 <-> 2 to get RGB. (Verified visually: without the swap the
+//!         restored face comes out blue.)
 //!
 //! The model file (`GFPGANv1.4.onnx`) is downloaded on demand from
 //! the model registry (`gfpgan-v1.4`, ModelKind::Enhancer) and lives
@@ -89,7 +93,8 @@ impl GfpganRestorer {
     }
 
     /// Preprocess RGB into a (1, 3, 512, 512) CHW tensor, BGR channel
-    /// order, values 0..255, no normalization.
+    /// order, values -1..1. The model was verified to require
+    /// `(v - 127.5) / 127.5`; feeding raw 0..255 yields nonsense.
     fn preprocess(
         &self,
         rgb: &[u8],
@@ -111,10 +116,10 @@ impl GfpganRestorer {
                 let src_x = (dx as f32 + 0.5) * sx - 0.5;
                 let src_y = (dy as f32 + 0.5) * sy - 0.5;
                 let (r, g, b) = crate::onnx_common::bilinear_rgb(rgb, width, height, src_x, src_y);
-                // BGR: channel 0 = blue, 1 = green, 2 = red.
-                arr[[0, 0, dy as usize, dx as usize]] = b;
-                arr[[0, 1, dy as usize, dx as usize]] = g;
-                arr[[0, 2, dy as usize, dx as usize]] = r;
+                // BGR channels, normalized to -1..1.
+                arr[[0, 0, dy as usize, dx as usize]] = (b - 127.5) / 127.5;
+                arr[[0, 1, dy as usize, dx as usize]] = (g - 127.5) / 127.5;
+                arr[[0, 2, dy as usize, dx as usize]] = (r - 127.5) / 127.5;
             }
         }
 
@@ -123,21 +128,22 @@ impl GfpganRestorer {
 
     /// Postprocess output tensor to RGB bytes at 512x512.
     ///
-    /// Converts from CHW to HWC layout, clamping to 0..255.
+    /// Converts from BGR CHW to RGB HWC and maps -1..1 -> 0..255.
     fn postprocess(&self, output: &Tensor) -> Result<Vec<u8>> {
         let output = output.to_plain_array_view::<f32>()?;
         let output = output.into_dimensionality::<tract_ndarray::Ix4>()?;
-        // Shape: [1, 3, 512, 512] RGB
+        // Shape: [1, 3, 512, 512] BGR.
 
         let mut result = vec![0u8; (GFPGAN_INPUT_SIZE * GFPGAN_INPUT_SIZE * 3) as usize];
 
-        // Convert from CHW to HWC, clamp to 0..255.
+        // Convert BGR CHW -> RGB HWC, map -1..1 -> 0..255.
         for c in 0..3 {
+            let rgb_channel = 2 - c; // BGR 0,1,2 -> RGB 2,1,0
             for y in 0..GFPGAN_INPUT_SIZE as usize {
                 for x in 0..GFPGAN_INPUT_SIZE as usize {
                     let val = output[[0, c, y, x]];
-                    let byte = val.clamp(0.0, 255.0).round() as u8;
-                    let dst_idx = (y * GFPGAN_INPUT_SIZE as usize + x) * 3 + c;
+                    let byte = ((val + 1.0) * 127.5).clamp(0.0, 255.0).round() as u8;
+                    let dst_idx = (y * GFPGAN_INPUT_SIZE as usize + x) * 3 + rgb_channel;
                     result[dst_idx] = byte;
                 }
             }
@@ -164,5 +170,20 @@ mod tests {
         let err = GfpganRestorer::load(path).unwrap_err().to_string();
         assert!(err.contains("GFPGAN v1.4"), "error must name label: {err}");
         assert!(err.contains("not found"), "error must explain: {err}");
+    }
+
+    /// With the real model installed, verify a single inference returns
+    /// a finite 512x512 RGB image. Skipped on CI (models never bundled).
+    #[test]
+    fn restore_real_model_returns_finite_rgb() {
+        let path = std::path::Path::new(r"F:\Minimax H3\Git NEW APP\Models\gfpgan-v1.4.onnx");
+        if !path.is_file() {
+            return;
+        }
+        let restorer = GfpganRestorer::load(path).unwrap();
+        let rgb = vec![128u8; 64 * 64 * 3];
+        let out = restorer.restore(&rgb, 64, 64).unwrap();
+        assert_eq!(out.len(), 512 * 512 * 3);
+        assert!(out.iter().any(|&v| v != 0), "output must not be all black");
     }
 }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CapRust v0.9.33 — Slide scrub tool, working Face Restore fallback, corrected GFPGAN model</title>
+  <title>CapRust v0.9.34 — Real GFPGAN face restoration, Slide scrub tool</title>
   <meta name="description" content="A native Windows video editor for short-form creators. Built in Rust. AI captions, auto-reframe, background removal. Free and open source.">
   <link rel="icon" href="logo.png" type="image/png">
   <link rel="stylesheet" href="style.css">
@@ -28,7 +28,7 @@
 
 <header class="hero">
   <div class="container">
-    <div class="badge">v0.9.33 — Slide (scrub) tool, working Face Restore fallback, corrected GFPGAN model download
+    <div class="badge">v0.9.34 — Real GFPGAN v1.4 face restoration with SCRFD landmark alignment, cached for preview and export
     <h1>Video editing.<br>Without the drag.</h1>
     <p class="tagline">
       A native Windows video editor for short-form creators.
@@ -265,9 +265,9 @@
 <section id="download" class="download">
   <div class="container">
     <h2>Download CapRust</h2>
-    <p>v0.9.33 adds a Slide (scrub) tool for precise playhead positioning, fixes Face Restore so it actually applies smartblur + hqdn3d smoothing during export (full GFPGAN ONNX restoration is still in implementation), and corrects the GFPGAN model URL and SHA-256 so the model downloads. Downloads: Windows installer + ZIP, Linux .deb, Android APK.</p>
+    <p>v0.9.34 brings real GFPGAN v1.4 face restoration: SCRFD landmark detection, 512x512 face alignment, ONNX inference and feathered paste-back. A per-clip lossless cache makes it available in both preview and export. Also includes the Slide (scrub) tool from v0.9.33. Downloads: Windows installer + ZIP, Linux .deb, Android APK.</p>
     <a href="https://github.com/Domica/CapRust/releases/latest" class="btn btn-primary btn-lg">
-      ↓&nbsp; Download v0.9.33 for Windows
+      ↓&nbsp; Download v0.9.34 for Windows
     </a>
     <p class="verify">
       SHA-256 for each release is on the
@@ -326,7 +326,7 @@
       <details>
         <summary>It says "beta" — is it stable?</summary>
         <div class="answer">
-          v0.9.33 adds a Slide (scrub) tool for precise playhead positioning, fixes Face Restore so it applies smartblur + hqdn3d smoothing during export (full GFPGAN ONNX restoration still in implementation), and corrects the GFPGAN model URL and SHA-256; v0.9.32 fixes model download bugs: the downloaded file no longer vanishes on a SHA-256 mismatch and stranded Downloading status self-heals on restart; v0.9.31 adds GFPGAN face restore for AI-generated clips, an export cancel button, model download progress in the jobs bar, and six new visual effects; v0.9.30 wraps multiple commands into an atomic undo batch, privatizes `ProjectState.clips` so every clip mutation is undoable, replaces production `.unwrap()` calls with proper error handling, and swaps core test panics for `.expect()` with context; Phase 0 removes the tracked .bak file, adds bounded MCP request-line reads (DoS guard), removes the dead `initialized` field, and replaces Kotlin `!!` non-null assertions; Phase 4 normalizes hr.ftl Unicode escapes, hardens the Inno Setup 6 lookup, and adds stale PCM cache cleanup; Phase 6.9 switches preview frame pixels to Arc<[u8]> for zero-copy RGBA handling; v0.9.28 makes preview playback robust: streamed frames are no longer dropped as stale, pausing tears down the stream once instead of every frame, the per-frame copy for a connected phone is skipped during desktop editing, paused seeks are exact, and the double buffer is lock-free; v0.9.27 makes the trajectory & keyframe graph follow the dragged cursor, invalidates preview/export on trajectory/keyframe change, stops the double-buffer preview from freezing on a backwards seek, and improves playback/scrub performance; v0.9.26 fixes trajectory & keyframe drag visual feedback, drag persistence, right-click delete on keyframes, and trajectory Y coordinate bug; v0.9.25 adds complete keyframe animation system with generic tracks, easing curves, and curve editor; v0.9.24 brought the editor to Android and auto-updates; v0.9.20 added a first-run welcome, guided tips and the Enhance effect; v0.9.19 added stickers and keyframed movement; v0.9.18 added the Modern editor, plugin-based importers and remote control. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
+          v0.9.34 brings real GFPGAN v1.4 face restoration with SCRFD landmarks and a cached pre-pass used in preview and export; v0.9.33 added a Slide (scrub) tool and the working smartblur Face Restore fallback; v0.9.32 fixes model download bugs: the downloaded file no longer vanishes on a SHA-256 mismatch and stranded Downloading status self-heals on restart; v0.9.31 adds GFPGAN face restore for AI-generated clips, an export cancel button, model download progress in the jobs bar, and six new visual effects; v0.9.30 wraps multiple commands into an atomic undo batch, privatizes `ProjectState.clips` so every clip mutation is undoable, replaces production `.unwrap()` calls with proper error handling, and swaps core test panics for `.expect()` with context; Phase 0 removes the tracked .bak file, adds bounded MCP request-line reads (DoS guard), removes the dead `initialized` field, and replaces Kotlin `!!` non-null assertions; Phase 4 normalizes hr.ftl Unicode escapes, hardens the Inno Setup 6 lookup, and adds stale PCM cache cleanup; Phase 6.9 switches preview frame pixels to Arc<[u8]> for zero-copy RGBA handling; v0.9.28 makes preview playback robust: streamed frames are no longer dropped as stale, pausing tears down the stream once instead of every frame, the per-frame copy for a connected phone is skipped during desktop editing, paused seeks are exact, and the double buffer is lock-free; v0.9.27 makes the trajectory & keyframe graph follow the dragged cursor, invalidates preview/export on trajectory/keyframe change, stops the double-buffer preview from freezing on a backwards seek, and improves playback/scrub performance; v0.9.26 fixes trajectory & keyframe drag visual feedback, drag persistence, right-click delete on keyframes, and trajectory Y coordinate bug; v0.9.25 adds complete keyframe animation system with generic tracks, easing curves, and curve editor; v0.9.24 brought the editor to Android and auto-updates; v0.9.20 added a first-run welcome, guided tips and the Enhance effect; v0.9.19 added stickers and keyframed movement; v0.9.18 added the Modern editor, plugin-based importers and remote control. Everything from 0.9.0 onwards is included: chroma key, multicam, screen recording, and the original envelope overlay. The rest of the editor - timeline, preview, export, captions,
           audio effects, CLAP hosting and the MCP server are all in. Expect
           rough edges; a crash handler writes a report to
           <code>%APPDATA%\CapRust\crashes</code> if anything goes wrong, and

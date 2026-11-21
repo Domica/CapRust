@@ -38,7 +38,9 @@ pub const NMS_IOU_THRESHOLD: f32 = 0.4;
 const NORM_MEAN: f32 = 127.5;
 const NORM_SCALE: f32 = 128.0;
 
-/// One detected face, normalized [0, 1].
+/// One detected face, normalized [0, 1]. `landmarks` holds the five
+/// facial keypoints (eye, eye, nose, mouth, mouth) in the same
+/// normalized coordinates, used to align the crop before GFPGAN.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScrfdFace {
     pub x: f32,
@@ -46,6 +48,7 @@ pub struct ScrfdFace {
     pub w: f32,
     pub h: f32,
     pub confidence: f32,
+    pub landmarks: [[f32; 2]; 5],
 }
 
 impl ScrfdFace {
@@ -99,13 +102,13 @@ impl ScrfdDetector {
 
         // Output order (per InsightsFace export): cls_s8, cls_s16,
         // cls_s32, reg_s8, reg_s16, reg_s32, kps_s8, kps_s16, kps_s32.
-        // We consume cls (0..3) and reg (3..6). kps is skipped.
         let mut raw: Vec<ScrfdFace> = Vec::new();
         for (i, stride) in STRIDES.iter().copied().enumerate() {
             let cls = outputs[i].to_plain_array_view::<f32>()?;
             let reg = outputs[i + 3].to_plain_array_view::<f32>()?;
+            let kps = outputs[i + 6].to_plain_array_view::<f32>()?;
             decode_stride(
-                stride, &cls, &reg, scale, pad_x, pad_y, width, height, &mut raw,
+                stride, &cls, &reg, &kps, scale, pad_x, pad_y, width, height, &mut raw,
             )?;
         }
 
@@ -153,6 +156,7 @@ fn decode_stride(
     stride: u32,
     cls: &tract_ndarray::ArrayViewD<f32>,
     reg: &tract_ndarray::ArrayViewD<f32>,
+    kps: &tract_ndarray::ArrayViewD<f32>,
     scale: f32,
     pad_x: u32,
     pad_y: u32,
@@ -197,12 +201,23 @@ fn decode_stride(
         let wn = (x2_orig - x1_orig) / img_w as f32;
         let hn = (y2_orig - y1_orig) / img_h as f32;
 
+        // kps: five (x, y) offsets from the anchor centre, in stride
+        // units. Same un-letterbox + normalization as the box.
+        let mut landmarks = [[0.0f32; 2]; 5];
+        for (k, point) in landmarks.iter_mut().enumerate() {
+            let px = cx + kps[[i, k * 2]] * stride as f32;
+            let py = cy + kps[[i, k * 2 + 1]] * stride as f32;
+            point[0] = (px - pad_x as f32) / scale / img_w as f32;
+            point[1] = (py - pad_y as f32) / scale / img_h as f32;
+        }
+
         out.push(ScrfdFace {
             x: xn,
             y: yn,
             w: wn,
             h: hn,
             confidence: conf,
+            landmarks,
         });
     }
     let _ = n_cells; // silence unused-var when ANCHORS_PER_LOCATION == 1
@@ -273,6 +288,7 @@ mod tests {
             w: 0.2,
             h: 0.2,
             confidence: 0.9,
+            landmarks: [[0.0; 2]; 5],
         };
         let b = ScrfdFace {
             x: 0.01,
@@ -280,6 +296,7 @@ mod tests {
             w: 0.2,
             h: 0.2,
             confidence: 0.8,
+            landmarks: [[0.0; 2]; 5],
         };
         let c = ScrfdFace {
             x: 0.7,
@@ -287,6 +304,7 @@ mod tests {
             w: 0.2,
             h: 0.2,
             confidence: 0.7,
+            landmarks: [[0.0; 2]; 5],
         };
         let out = nms(vec![a, b, c], 0.4);
         assert_eq!(out.len(), 2);

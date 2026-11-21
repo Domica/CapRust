@@ -10,6 +10,7 @@ pub mod export_graph;
 pub mod export_progress;
 pub mod exporter;
 pub mod face_detect;
+pub mod face_restore;
 pub mod ffprobe;
 pub mod filter_script;
 pub mod frame_extract;

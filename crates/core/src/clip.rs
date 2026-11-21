@@ -1229,6 +1229,12 @@ pub struct Clip {
     /// consumed by the render graph as the replacement video.
     #[serde(default)]
     pub object_removal_video: Option<String>,
+    /// Path to the GFPGAN-restored video for this clip, relative to the
+    /// project directory, e.g. "cache/gfpgan/<clip_id>.mkv". Produced
+    /// by the face-restore pre-pass and consumed by the render graph
+    /// as a drop-in replacement for the clip's source file.
+    #[serde(default)]
+    pub face_restore_video: Option<String>,
     /// Path to the per-clip vidstab transforms file (stabilization
     /// pass 1). Relative to the project directory, e.g.
     /// "cache/stab/<clip_id>.trf". None = no stabilization.
@@ -1313,6 +1319,7 @@ impl Clip {
             object_removal_mask: None,
             object_removal_enabled: false,
             object_removal_video: None,
+            face_restore_video: None,
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
@@ -1374,6 +1381,7 @@ impl Clip {
             object_removal_mask: None,
             object_removal_enabled: false,
             object_removal_video: None,
+            face_restore_video: None,
             source_duration_ms: dur_ms,
             media_id: None,
             overlay: None,
@@ -1435,6 +1443,7 @@ impl Clip {
             object_removal_mask: None,
             object_removal_enabled: false,
             object_removal_video: None,
+            face_restore_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1500,6 +1509,7 @@ impl Clip {
             object_removal_mask: None,
             object_removal_enabled: false,
             object_removal_video: None,
+            face_restore_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1571,6 +1581,7 @@ impl Clip {
             object_removal_mask: None,
             object_removal_enabled: false,
             object_removal_video: None,
+            face_restore_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,
@@ -1640,6 +1651,7 @@ impl Clip {
             object_removal_mask: None,
             object_removal_enabled: false,
             object_removal_video: None,
+            face_restore_video: None,
             source_duration_ms: 0,
             media_id: None,
             overlay: None,

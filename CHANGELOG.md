@@ -4,6 +4,16 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.34] - 2026-11-21
+
+### Added
+- Real GFPGAN v1.4 face restoration: SCRFD 5-point landmark detection, similarity-transform face alignment to 512x512, tract-onnx GFPGAN inference, and feathered inverse-warp paste-back.
+- Per-clip face-restore pre-pass job with cancellation, progress, and lossless FFV1 cache in the project's cache directory. Cache is consumed by both preview and export; the smartblur fallback is skipped when a restored source exists.
+
+### Fixed
+- GFPGAN ONNX contract: input must be normalized to -1..1 (raw 0..255 produced garbage); model output is BGR and needed channel swap to RGB.
+- SCRFD now decodes its five facial keypoints instead of discarding them.
+
 ## [0.9.33] - 2026-11-21
 
 ### Added

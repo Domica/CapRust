@@ -68,6 +68,9 @@ pub struct SetClipCommand {
     /// Some(Some(p)) = set the inpainted video path for object removal.
     /// Some(None) = clear it. None = leave untouched.
     pub object_removal_video: Option<Option<String>>,
+    /// Some(Some(p)) = set the GFPGAN-restored video path.
+    /// Some(None) = clear it. None = leave untouched.
+    pub face_restore_video: Option<Option<String>>,
     /// Some(v) = enable/disable object removal for this clip.
     /// None = leave untouched.
     pub object_removal_enabled: Option<bool>,
@@ -138,6 +141,7 @@ impl SetClipCommand {
             auto_reframe: None,
             bg_removal: None,
             object_removal_video: None,
+            face_restore_video: None,
             object_removal_enabled: None,
             stab_trf: None,
             chroma_key: None,
@@ -330,6 +334,11 @@ impl SetClipCommand {
         self.object_removal_video = Some(v);
         self
     }
+    /// Set or clear the GFPGAN-restored video path.
+    pub fn face_restore_video(mut self, v: Option<String>) -> Self {
+        self.face_restore_video = Some(v);
+        self
+    }
     /// Enable or disable object removal for this clip.
     pub fn object_removal_enabled(mut self, v: bool) -> Self {
         self.object_removal_enabled = Some(v);
@@ -500,6 +509,9 @@ impl Command for SetClipCommand {
         if let Some(v) = self.object_removal_video.clone() {
             c.object_removal_video = v;
         }
+        if let Some(v) = self.face_restore_video.clone() {
+            c.face_restore_video = v;
+        }
         if let Some(v) = self.object_removal_enabled {
             c.object_removal_enabled = v;
         }
@@ -517,6 +529,9 @@ impl Command for SetClipCommand {
             || self.reversed.is_some()
         {
             c.stab_trf = None;
+            // The restored video covers the old source window; it
+            // cannot be reused after a trim or speed change.
+            c.face_restore_video = None;
         }
         if let Some(v) = self.chroma_key {
             c.chroma_key = v;

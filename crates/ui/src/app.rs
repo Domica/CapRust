@@ -214,6 +214,9 @@ pub enum JobKind {
     /// Face anonymize: YuNet boxes per frame, mask written as FFV1
     /// MKV into the project cache.
     Anon,
+    /// Real GFPGAN face restoration pre-pass. Restored frames are
+    /// written as FFV1 MKV into the project cache.
+    FaceRestore,
 }
 
 /// One in-flight background job. `progress` < 0.0 means indeterminate
@@ -539,6 +542,11 @@ pub struct CapRustApp {
     pub inpaint_cancel: Option<crate::media_jobs::CancellationToken>,
     /// The clip ID currently being processed by the inpaint job.
     pub inpaint_clip_id: Option<uuid::Uuid>,
+    /// Real GFPGAN face-restore pre-pass state.
+    pub gfpgan_rx: Option<std::sync::mpsc::Receiver<crate::media_jobs::GfpganEvent>>,
+    pub gfpgan_job_id: Option<u64>,
+    pub gfpgan_cancel: Option<crate::media_jobs::CancellationToken>,
+    pub gfpgan_clip_id: Option<uuid::Uuid>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -1716,6 +1724,10 @@ impl CapRustApp {
             segment_job_click: None,
             segment_mask_frame: None,
             inpaint_rx: None,
+            gfpgan_rx: None,
+            gfpgan_job_id: None,
+            gfpgan_cancel: None,
+            gfpgan_clip_id: None,
             inpaint_job_id: None,
             inpaint_cancel: None,
             inpaint_clip_id: None,
@@ -5568,6 +5580,200 @@ impl CapRustApp {
         }
     }
 
+    /// Start the real GFPGAN pre-pass for one clip. Writes a lossless
+    /// restored video to the project cache; export and preview pick it
+    /// up automatically through the render plan.
+    fn start_face_restore_job(&mut self, clip_id: uuid::Uuid) {
+        if self.gfpgan_rx.is_some() {
+            self.toast(tr("toast-face-restore-busy"));
+            return;
+        }
+        let Some(project_path) = self.project.project_path.clone() else {
+            self.toast(tr("toast-face-restore-needs-project"));
+            return;
+        };
+        let Some(clip) = self
+            .project
+            .clips()
+            .iter()
+            .find(|c| c.id == clip_id)
+            .cloned()
+        else {
+            return;
+        };
+        let source_raw = match &clip.clip_type {
+            caprust_core::ClipType::Video { path, .. }
+            | caprust_core::ClipType::Image { path, .. } => path.clone(),
+            _ => {
+                self.toast(tr("toast-face-restore-needs-video"));
+                return;
+            }
+        };
+        if clip.reversed || (clip.speed - 1.0).abs() > 0.001 || clip.speed_end.is_some() {
+            self.toast(tr("toast-face-restore-unsupported"));
+            return;
+        }
+        let source_path = if std::path::Path::new(&source_raw).is_absolute() {
+            std::path::PathBuf::from(source_raw)
+        } else {
+            std::path::Path::new(&project_path).join(source_raw)
+        };
+        if clip.duration_ms == 0 {
+            self.toast(tr("toast-face-restore-needs-video"));
+            return;
+        }
+
+        self.project
+            .models_mut()
+            .scan_local(&self.settings.effective_models_dir());
+        let models_dir = self.settings.effective_models_dir();
+        let find_model = |id: &str| {
+            let info = self.project.models().models.iter().find(|m| m.id == id)?;
+            if !info.enabled || info.status != caprust_core::ModelStatus::Ready {
+                return None;
+            }
+            let p = caprust_core::models::ModelRegistry::local_path_static(
+                &self.project.models().models,
+                &models_dir,
+                id,
+            );
+            p.is_file().then_some(p)
+        };
+        let Some(detector_path) = find_model("scrfd-face") else {
+            self.toast(tr("toast-face-restore-needs-model"));
+            return;
+        };
+        let Some(restorer_path) = find_model("gfpgan-v1.4") else {
+            self.toast(tr("toast-face-restore-needs-model"));
+            return;
+        };
+        let (Some(ffmpeg), Some(ffprobe)) = (
+            self.ffmpeg_status.ffmpeg.clone(),
+            self.ffmpeg_status.ffprobe.clone(),
+        ) else {
+            self.toast(tr("toast-face-restore-needs-ffmpeg"));
+            return;
+        };
+        let fps = {
+            let fr = &self.project.frame_rate;
+            if fr.den == 0 {
+                30.0
+            } else {
+                fr.num as f64 / fr.den as f64
+            }
+        };
+        let output_path =
+            caprust_core::cache::face_restore_path(std::path::Path::new(&project_path), clip_id);
+        let cancel = crate::media_jobs::CancellationToken::new();
+        let req = crate::media_jobs::GfpganRequest {
+            clip_id,
+            source_path,
+            t_start_ms: clip.source_offset_ms,
+            duration_ms: clip.duration_ms,
+            fps,
+            detector_path,
+            restorer_path,
+            output_path,
+            // Keep the source resolution: only the aligned face crop is
+            // 512x512, the rest of the frame must not be downscaled.
+            max_side: 8192,
+            cancel: cancel.clone(),
+        };
+        let rx = crate::media_jobs::spawn_gfpgan_job(
+            std::path::PathBuf::from(ffmpeg),
+            std::path::PathBuf::from(ffprobe),
+            req,
+        );
+        let job_id = self.begin_job(JobKind::FaceRestore, tr("job-face-restore"));
+        self.gfpgan_job_id = Some(job_id);
+        self.gfpgan_rx = Some(rx);
+        self.gfpgan_cancel = Some(cancel);
+        self.gfpgan_clip_id = Some(clip_id);
+        self.toast(tr("toast-face-restore-started"));
+        tracing::info!("gfpgan: started pre-pass for clip {clip_id}");
+    }
+
+    fn drain_gfpgan_job(&mut self) {
+        let Some(rx) = self.gfpgan_rx.take() else {
+            return;
+        };
+        let mut live = true;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::media_jobs::GfpganEvent::Started { total_frames }) => {
+                    tracing::info!("gfpgan: started, {total_frames} frames");
+                    if let Some(id) = self.gfpgan_job_id {
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+                    }
+                }
+                Ok(crate::media_jobs::GfpganEvent::Progress { done, total }) => {
+                    let p = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32
+                    };
+                    if let Some(id) = self.gfpgan_job_id {
+                        self.update_job_progress(id, p);
+                    }
+                }
+                Ok(crate::media_jobs::GfpganEvent::Finished {
+                    clip_id,
+                    output_path,
+                    frame_count,
+                }) => {
+                    let rel = self.project.project_path.as_ref().and_then(|p| {
+                        output_path
+                            .strip_prefix(p)
+                            .ok()
+                            .map(|r| r.to_string_lossy().into_owned())
+                    });
+                    if let Some(rel) = rel {
+                        let cmd = caprust_core::commands::set_clip::SetClipCommand::new(clip_id)
+                            .face_restore_video(Some(rel));
+                        if let Err(e) = self.undo_stack.execute(Box::new(cmd), &mut self.project) {
+                            tracing::error!("gfpgan: apply failed: {e}");
+                            self.toast_error(tr("toast-face-restore-failed"));
+                        } else {
+                            self.toast(tr("toast-face-restore-done"));
+                            tracing::info!("gfpgan: clip {clip_id} restored {frame_count} frames");
+                        }
+                    } else {
+                        self.toast_error(tr("toast-face-restore-failed"));
+                    }
+                    if let Some(id) = self.gfpgan_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.gfpgan_clip_id = None;
+                    self.gfpgan_cancel = None;
+                    live = false;
+                }
+                Ok(crate::media_jobs::GfpganEvent::Failed(reason)) => {
+                    tracing::error!("gfpgan: failed: {reason}");
+                    self.toast_error(format!("{}: {reason}", tr("toast-face-restore-failed")));
+                    if let Some(id) = self.gfpgan_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.gfpgan_clip_id = None;
+                    self.gfpgan_cancel = None;
+                    live = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if let Some(id) = self.gfpgan_job_id.take() {
+                        self.finish_job(id);
+                    }
+                    self.gfpgan_clip_id = None;
+                    self.gfpgan_cancel = None;
+                    live = false;
+                    break;
+                }
+            }
+        }
+        if live {
+            self.gfpgan_rx = Some(rx);
+        }
+    }
+
     /// Save the paused preview frame as PNG, rendered at full project
     /// resolution through the same filtergraph the preview shows.
     /// Runs ffmpeg on a worker thread; the result is toasted by
@@ -6621,6 +6827,12 @@ impl CapRustApp {
                 if let Some(cancel) = &self.bg_removal_cancel {
                     cancel.cancel();
                     tracing::info!("bg-removal: cancel requested for job {id}");
+                }
+            }
+            JobKind::FaceRestore => {
+                if let Some(cancel) = &self.gfpgan_cancel {
+                    cancel.cancel();
+                    tracing::info!("gfpgan: cancel requested for job {id}");
                 }
             }
             JobKind::ObjectRemoval => {
@@ -11286,6 +11498,7 @@ impl CapRustApp {
             &self.settings,
             &self.segment_rx,
             &self.inpaint_rx,
+            &self.gfpgan_rx,
         );
 
         // Consume any pending edits → commands
@@ -11467,6 +11680,21 @@ impl CapRustApp {
                         }
                         PendingEdit::StartObjectRemoval => {
                             self.start_object_removal_job(id);
+                        }
+                        PendingEdit::StartFaceRestore => {
+                            // Keep the effect flag too, so clearing the
+                            // cache falls back to the smartblur version.
+                            let c = caprust_core::commands::set_effect::AddEffectCommand::new(
+                                id,
+                                "gfpgan".to_string(),
+                            );
+                            let _ = self.undo_stack.execute(Box::new(c), &mut self.project);
+                            self.start_face_restore_job(id);
+                        }
+                        PendingEdit::ClearFaceRestoreVideo => {
+                            let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
+                                .face_restore_video(None);
+                            let _ = self.undo_stack.execute(Box::new(cmd), &mut self.project);
                         }
                         PendingEdit::ClearObjectRemovalVideo => {
                             let cmd = caprust_core::commands::set_clip::SetClipCommand::new(id)
@@ -15695,6 +15923,7 @@ impl eframe::App for CapRustApp {
         self.drain_stab_job();
         self.drain_segment_job();
         self.drain_inpaint_job();
+        self.drain_gfpgan_job();
         self.drain_save_frame();
         self.poll_audio_cache();
         let thumbs_ready = self.job_runner.drain(&mut self.project);

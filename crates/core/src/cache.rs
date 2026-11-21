@@ -114,6 +114,23 @@ pub fn inpaint_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
     p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
 }
 
+/// GFPGAN-restored video for one clip, encoded FFV1 in Matroska so the
+/// AI-restored faces survive without a second generation of lossy
+/// compression. Keyed by clip id because the file covers the clip's
+/// own source window.
+pub fn face_restore_path(project_path: &Path, clip_id: uuid::Uuid) -> std::path::PathBuf {
+    project_path
+        .join("cache")
+        .join("gfpgan")
+        .join(format!("{clip_id}.mkv"))
+}
+
+/// Best-effort: does a non-empty restored video already exist?
+pub fn face_restore_exists(project_path: &Path, clip_id: uuid::Uuid) -> bool {
+    let p = face_restore_path(project_path, clip_id);
+    p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+}
+
 pub fn clear_cache(project_path: &Path) -> Result<usize> {
     let cache_dir = project_path.join("cache");
     if !cache_dir.exists() {
