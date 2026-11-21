@@ -182,6 +182,7 @@ media-size-large = V
 # Timeline toolbar tooltips
 tt-add-track = Dodaj traku
 tt-pan = Alat za pomicanje
+tt-slide = Klizni alat (vuci za pomicanje playheada — pauzira na pritisku, nastavlja na otpuštanju)
 tt-magnetic = Magnetska vremenska linija
 tt-ripple-move = Ripple pomak (pomiće sljedeće isječke)
 tt-snap = Prikači na isječke

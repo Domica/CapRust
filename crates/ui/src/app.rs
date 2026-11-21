@@ -392,6 +392,8 @@ pub struct CapRustApp {
     pub clip_drag: Option<ClipDrag>,
     /// Rubber-band selection in progress, if any.
     pub marquee: Option<MarqueeState>,
+    /// In-progress scrub (drag-to-seek) gesture, if any.
+    pub scrub: Option<ScrubState>,
     /// In-progress fade handle drag, if any.
     pub fade_drag: Option<FadeDrag>,
     /// In-progress sticker move, scale or rotate on the preview. Holds
@@ -1163,6 +1165,19 @@ pub struct MarqueeState {
     pub current: egui::Pos2,
 }
 
+/// In-progress scrub (drag-to-seek) gesture. Started by dragging the
+/// ruler or by pressing anywhere on the timeline with the Slide tool
+/// active. `was_playing` remembers playback state at press time so it
+/// can be restored from the new playhead on release.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrubState {
+    /// True when the gesture began on the ruler (as opposed to a
+    /// Slide-tool drag over the lanes).
+    pub from_ruler: bool,
+    /// Whether playback was active when the gesture started.
+    pub was_playing: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClipDrag {
     pub clip_id: uuid::Uuid,
@@ -1649,6 +1664,7 @@ impl CapRustApp {
             selected_clips: Vec::new(),
             clip_drag: None,
             marquee: None,
+            scrub: None,
             fade_drag: None,
             sticker_drag: None,
             sticker_tex: Default::default(),
@@ -3949,6 +3965,13 @@ impl CapRustApp {
         if ev.trim_follow_toggled {
             self.settings.trim_follow = self.timeline_tools.trim_follow;
             tracing::info!("trim_follow = {}", self.settings.trim_follow);
+        }
+        if ev.slide_toggled {
+            // Slide mode is mutually exclusive with pan (enforced in the
+            // toolbar). Cancel any in-flight gesture when switching tools
+            // so a stuck scrub cannot survive a mode change.
+            self.scrub = None;
+            tracing::info!("slide_mode = {}", self.timeline_tools.slide_mode);
         }
         if ev.undo {
             let _ = self.undo_stack.undo(&mut self.project);
@@ -7535,6 +7558,7 @@ impl CapRustApp {
         }
         let pointer_hover = ctx.input(|i| i.pointer.hover_pos());
         let pointer_released = ctx.input(|i| i.pointer.any_released());
+        let primary_released = ctx.input(|i| i.pointer.primary_released());
         let pointer_down = ctx.input(|i| i.pointer.primary_down());
         let dnd_drop = if pointer_released {
             self.last_dnd_payload.clone()
@@ -7543,6 +7567,7 @@ impl CapRustApp {
         };
         let clip_drag_snapshot = self.clip_drag.clone();
         let pan_mode = self.timeline_tools.pan_mode;
+        let slide_mode = self.timeline_tools.slide_mode;
 
         // Time/px
         let total_ms = self.total_duration_ms();
@@ -7701,8 +7726,10 @@ impl CapRustApp {
                     ui.set_min_height(full_h);
 
                     // Ruler
-                    let (ruler_rect, _) = ui
-                        .allocate_exact_size(egui::vec2(viewport_w, ruler_h), egui::Sense::click());
+                    let (ruler_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(viewport_w, ruler_h),
+                        egui::Sense::click_and_drag(),
+                    );
                     let rp = ui.painter_at(ruler_rect);
                     rp.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(28));
                     rp.line_segment(
@@ -7818,13 +7845,43 @@ impl CapRustApp {
                     // allocated. Compact mode will use ruler_rect
                     // alone, but we defer both for a single code
                     // path.
-                    if ui.input(|i| i.pointer.primary_clicked()) {
-                        if let Some(p) = ui.ctx().pointer_interact_pos() {
-                            if ruler_rect.contains(p) {
-                                let ms = ((p.x - ruler_rect.left() + scroll_x) / px_per_ms).max(0.0)
-                                    as u64;
-                                pending_actions.push(ClipAction::SetPlayhead(ms));
-                            }
+                    // ---- Ruler press / drag → scrub playhead ----
+                    // Drag-to-seek: on press we pause playback (if it was
+                    // running) and remember the state; every frame while
+                    // the pointer is down we move the playhead with the
+                    // cursor; on release playback resumes from the new
+                    // position. A plain click still works — it is just a
+                    // zero-length scrub.
+                    // Slide tool extends the scrub gesture to the whole
+                    // timeline (ruler + lanes). Without it, only the
+                    // ruler is a scrub surface.
+                    let timeline_area = egui::Rect::from_min_size(
+                        ruler_rect.left_top(),
+                        egui::vec2(viewport_w, full_h),
+                    );
+                    let primary_pressed_now = ui.input(|i| i.pointer.primary_pressed());
+                    let start_on_ruler = primary_pressed_now
+                        && pointer_hover.map(|p| ruler_rect.contains(p)).unwrap_or(false);
+                    let start_on_slide = slide_mode
+                        && primary_pressed_now
+                        && pointer_hover.map(|p| timeline_area.contains(p)).unwrap_or(false);
+                    if (start_on_ruler || start_on_slide) && self.scrub.is_none() {
+                        self.scrub = Some(ScrubState {
+                            from_ruler: start_on_ruler,
+                            was_playing: self.preview.playing,
+                        });
+                        if self.preview.playing {
+                            // Pause without the full toggle_play teardown
+                            // here; the preview tick detects playing→paused
+                            // and stops the stream exactly once.
+                            self.preview.playing = false;
+                        }
+                    }
+                    if self.scrub.is_some() {
+                        if let Some(p) = pointer_hover {
+                            let ms = ((p.x - ruler_rect.left() + scroll_x) / px_per_ms).max(0.0)
+                                as u64;
+                            pending_actions.push(ClipAction::SetPlayhead(ms));
                         }
                     }
 
@@ -8459,6 +8516,7 @@ impl CapRustApp {
                                     .unwrap_or(false);
                                 if !track_locked_fh
                                     && !pan_mode
+                                    && !slide_mode
                                     && pointer_down
                                     && self.fade_drag.is_none()
                                     && clip_drag_snapshot.is_none()
@@ -8733,10 +8791,10 @@ impl CapRustApp {
                             // selected the wrong clip. egui
                             // arbitrates z-order for these
                             // callbacks so only the topmost fires.
-                            if resp.clicked() {
+                            if resp.clicked() && !slide_mode {
                                 pending_actions.push(ClipAction::Select(clip_id));
                             }
-                            if resp.drag_started() {
+                            if resp.drag_started() && !slide_mode {
                                 tracing::info!(
                                     "drag_started clip={} pointer_on_clip={} trim_edge_at_press={:?} clip_w={:.1}",
                                     clip_id,
@@ -8750,7 +8808,7 @@ impl CapRustApp {
                                     .get(idx)
                                     .map(|t| t.locked)
                                     .unwrap_or(false);
-                                if !track_locked_here && !pan_mode {
+                                if !track_locked_here && !pan_mode && !slide_mode {
                                     if !self.selected_clips.contains(&clip_id) {
                                         pending_actions.push(ClipAction::Select(clip_id));
                                     }
@@ -9187,7 +9245,7 @@ impl CapRustApp {
                         let shift = ui.input(|i| i.modifiers.shift);
 
                         // Start: press inside a lane but not on a clip.
-                        if pressed && self.marquee.is_none() && !pan_mode {
+                        if pressed && self.marquee.is_none() && !pan_mode && !slide_mode {
                             if let Some(pp) = pointer_pos {
                                 let on_lane = all_lane_rects.iter().any(|r| r.contains(pp));
                                 let on_clip = all_clip_rects.iter().any(|(_, r)| r.contains(pp));
@@ -9308,6 +9366,27 @@ impl CapRustApp {
                 .map(|t| t.name.clone())
                 .unwrap_or_default();
             self.track_rename = Some((idx, name));
+        }
+
+        // ---- Scrub release: restore playback from the new position ----
+        // A scrub ends on pointer release. Playback was paused on press
+        // (see ruler / Slide-tool handling above); if it had been running,
+        // resume from the playhead the user scrubbed to. `explicit_seek_ms`
+        // forces a full A/V restart at that exact frame, matching the
+        // seek-while-playing path below.
+        if primary_released {
+            if let Some(s) = self.scrub.take() {
+                if s.was_playing {
+                    self.preview.playing = true;
+                    self.explicit_seek_ms = Some(self.playhead_ms);
+                    self.play_anchor_set = false;
+                    tracing::info!(
+                        "scrub: resumed playback at {}ms (from_ruler={})",
+                        self.playhead_ms,
+                        s.from_ruler
+                    );
+                }
+            }
         }
 
         for a in pending_actions {

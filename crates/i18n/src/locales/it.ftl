@@ -182,6 +182,7 @@ media-size-large = L
 # Timeline toolbar tooltips
 tt-add-track = Aggiungi traccia
 tt-pan = Strumento panoramica (trascina per scorrere)
+tt-slide = Strumento scorrevole (trascina per spostare la testina — pausa alla pressione, riprende al rilascio)
 tt-magnetic = Timeline magnetica
 tt-ripple-move = Spostamento ripple (sposta le clip successive)
 tt-snap = Aggancia alle clip

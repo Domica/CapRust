@@ -182,6 +182,7 @@ media-size-large = G
 # Timeline toolbar tooltips
 tt-add-track = Añadir pista
 tt-pan = Herramienta de desplazamiento (arrastrar para desplazar)
+tt-slide = Herramienta deslizante (arrastrar para mover el cabezal — pausa al presionar, reanuda al soltar)
 tt-magnetic = Línea de tiempo magnética
 tt-ripple-move = Mover con desplazamiento (desplaza los clips posteriores)
 tt-snap = Ajustar a los clips

@@ -24,6 +24,11 @@ pub struct TimelineToolState {
     /// When true, trimming a clip edge moves the playhead with the
     /// edge. Mirrors `AppSettings.trim_follow`.
     pub trim_follow: bool,
+    /// Slide (scrub) tool. When active, dragging anywhere on the
+    /// timeline moves the playhead instead of moving clips / marquee
+    /// selecting. Playback pauses on press and resumes from the new
+    /// position on release.
+    pub slide_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -43,6 +48,7 @@ pub struct TimelineToolEvents {
     pub download_models_clicked: bool,
     pub follow_toggled: bool,
     pub trim_follow_toggled: bool,
+    pub slide_toggled: bool,
     pub undo: bool,
     pub redo: bool,
     pub zoom_in: bool,
@@ -208,6 +214,24 @@ pub fn show(
         if icon_toggle(ui, ph::HAND, &tr("tt-pan"), state.pan_mode, true) {
             state.pan_mode = !state.pan_mode;
             ev.pan_toggled = true;
+            if state.pan_mode {
+                state.slide_mode = false;
+            }
+        }
+
+        // --- Slide / scrub ---
+        if icon_toggle(
+            ui,
+            ph::ARROWS_LEFT_RIGHT,
+            &tr("tt-slide"),
+            state.slide_mode,
+            true,
+        ) {
+            state.slide_mode = !state.slide_mode;
+            ev.slide_toggled = true;
+            if state.slide_mode {
+                state.pan_mode = false;
+            }
         }
 
         // --- Magnetic ---

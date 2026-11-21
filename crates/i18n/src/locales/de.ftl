@@ -182,6 +182,7 @@ media-size-large = L
 # Timeline toolbar tooltips
 tt-add-track = Spur hinzufügen
 tt-pan = Verschiebewerkzeug (ziehen zum Scrollen)
+tt-slide = Schiebewerkzeug (ziehen um Abspielposition zu schrubben — pausiert beim Drücken, setzt beim Loslassen fort)
 tt-magnetic = Magnetische Zeitleiste
 tt-ripple-move = Ripple-Verschieben (spätere Clips mitverschieben)
 tt-snap = An Clips einrasten

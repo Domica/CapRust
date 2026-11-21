@@ -182,6 +182,7 @@ media-size-large = L
 # Timeline toolbar tooltips
 tt-add-track = Add track
 tt-pan = Pan tool (drag to scroll)
+tt-slide = Slide tool (drag to scrub playhead — pauses on press, resumes on release)
 tt-magnetic = Magnetic timeline
 tt-ripple-move = Ripple move (shift later clips)
 tt-snap = Snap to clips
