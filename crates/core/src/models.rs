@@ -365,10 +365,10 @@ impl Default for ModelRegistry {
                     "Face restoration — sharpens blurry/distorted AI-generated faces while keeping expression and speech motion. Runs during export.",
                 )
                 .with_url(
-                    "https://huggingface.co/hacksider/deep-live-cam/resolve/main/GFPGANv1.4.onnx",
+                    "https://huggingface.co/neurobytemind/GFPGANv1.4.onnx/resolve/main/GFPGANv1.4.onnx",
                 )
                 .with_sha256(
-                    "8da8739d5aa38e015dfaf687d7ce0ca8c0d3e9ca295a43401432c7ce527dfa57",
+                    "cd7311b8d9e13cdb1e208b12363182da58c7bf45e26d1aa67bbeac4751aae92e",
                 )
                 .with_filename("GFPGANv1.4.onnx"),
                 // --- Object Segmentation (MobileSAM) ---
