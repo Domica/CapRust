@@ -1,5 +1,6 @@
 # Rust
 /target
+/target-bench/
 **/*.rs.bk
 Cargo.lock.orig
 

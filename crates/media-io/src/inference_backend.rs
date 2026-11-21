@@ -9,8 +9,11 @@
 
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use tract_onnx::prelude::*;
+
+#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+use std::sync::Mutex;
 
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 use ort::environment::Environment;
@@ -160,6 +163,7 @@ impl InferenceBackend for TractBackend {
 pub struct OrtBackend {
     session: Mutex<Session>,
     input_name: String,
+    #[allow(dead_code)]
     output_count: usize,
 }
 
