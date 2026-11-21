@@ -29,6 +29,9 @@ whisper-rs = { version = "0.14", default-features = false }
 # Pure-Rust ONNX runtime for YuNet face detection (Phase P2).
 tract-onnx = { workspace = true }
 
+# ONNX Runtime with optional GPU execution providers (CUDA/DirectML).
+ort = { workspace = true, optional = true }
+
 [dependencies.ffmpeg-next]
 workspace = true
 optional = true
@@ -48,6 +51,9 @@ optional = true
 default = []
 ffmpeg = ["dep:ffmpeg-next"]
 clap = ["dep:clack-host", "dep:clack-extensions"]
+# GPU acceleration for ONNX inference (GFPGAN, SCRFD, etc.)
+gpu-cuda = ["ort/cuda"]
+gpu-directml = ["ort/directml"]
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

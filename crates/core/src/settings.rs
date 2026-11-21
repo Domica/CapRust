@@ -226,12 +226,18 @@ pub struct AppSettings {
     /// built-in arrangement. View -> Modern zones -> Save panel state.
     #[serde(default)]
     pub remember_panel_state: bool,
-    /// Serialized `ModernState` (the four zone tab stacks). Stored as
-    /// JSON so the core crate does not depend on the UI crate's `Tab`
-    /// enum, the same trick `dock_layout` uses. `None` or an
-    /// unparseable value falls back to the built-in arrangement.
-    #[serde(default)]
-    pub modern_panel_state: Option<String>,
+/// Serialized `ModernState` (the four zone tab stacks). Stored as
+/// JSON so the core crate does not depend on the UI crate's `Tab`
+/// enum, the same trick `dock_layout` uses. `None` or an
+/// unparseable value falls back to the built-in arrangement.
+#[serde(default)]
+pub modern_panel_state: Option<String>,
+/// ONNX inference backend for AI models (GFPGAN, SCRFD, etc.).
+/// "cpu" = tract-onnx (always available), "cuda" = NVIDIA GPU via
+/// ONNX Runtime, "directml" = AMD GPU via ONNX Runtime.
+/// Falls back to CPU if the requested GPU backend cannot load.
+#[serde(default = "default_ai_backend")]
+pub ai_inference_backend: String,
 }
 
 /// Autosave cadence in minutes. Every 5 minutes is short enough that
@@ -239,6 +245,10 @@ pub struct AppSettings {
 /// felt while dragging clips.
 fn default_autosave_minutes() -> Option<u64> {
     Some(5)
+}
+
+fn default_ai_backend() -> String {
+    "auto".to_string()
 }
 
 fn default_true() -> bool {
@@ -398,6 +408,7 @@ impl Default for AppSettings {
             modern_panel_state: None,
             mobile_sam_encoder_path: None,
             mobile_sam_decoder_path: None,
+            ai_inference_backend: default_ai_backend(),
         }
     }
 }

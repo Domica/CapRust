@@ -508,7 +508,7 @@ struct ModelGroupOutcome {
 fn show_models(
     ui: &mut Ui,
     models: &mut ModelRegistry,
-    settings: &AppSettings,
+    settings: &mut AppSettings,
 ) -> ModelGroupOutcome {
     // Backfill registry entries added since this project was saved,
     // so a model introduced in a later build appears in Settings
@@ -573,6 +573,37 @@ fn show_models(
     ui.add_space(space::L);
     ui.label(egui::RichText::new(tr("set-models-inpainter")).strong());
     outcome.merge(show_model_group(ui, models, ModelKind::Inpainter));
+
+    // AI inference backend (CPU / CUDA / DirectML / Auto)
+    ui.add_space(space::L);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("set-ai-backend-heading")).strong());
+    ui.add_space(space::XS);
+    ui.horizontal(|ui| {
+        ui.label(tr("set-ai-backend-label"));
+        let backends = [
+            ("auto", tr("set-ai-backend-auto")),
+            ("cpu", tr("set-ai-backend-cpu")),
+            ("cuda", tr("set-ai-backend-cuda")),
+            ("directml", tr("set-ai-backend-directml")),
+        ];
+        let selected = backends
+            .iter()
+            .position(|(v, _)| *v == settings.ai_inference_backend)
+            .unwrap_or(0);
+        let labels: Vec<_> = backends.iter().map(|(_, l)| l.clone()).collect();
+        let (_, clicked) = segmented_control::segmented_control(ui, &labels, selected);
+        if let Some(i) = clicked {
+            if i != selected {
+                settings.ai_inference_backend = backends[i].0.to_string();
+            }
+        }
+    });
+    ui.label(
+        egui::RichText::new(tr("set-ai-backend-hint"))
+            .small()
+            .color(egui::Color32::from_gray(140)),
+    );
 
     outcome
 }

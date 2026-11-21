@@ -1,4 +1,4 @@
-//! GFPGAN v1.4 face restoration via tract-onnx.
+//! GFPGAN v1.4 face restoration via tract-onnx (CPU) or ONNX Runtime (GPU).
 //!
 //! Pure-Rust inference for the GFPGAN v1.4 ONNX model. Takes a full
 //! frame (or face crop), restores facial detail while preserving
@@ -25,10 +25,10 @@
 //! is intentionally not part of this module so the restorer stays
 //! frame-agnostic.
 
-use crate::onnx_common::{first_output, load_typed_pinned, TypedRunnableModel as RunnableModel};
+use crate::inference_backend::{BackendType, InferenceSession};
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tract_onnx::prelude::*;
+use tract_onnx::prelude::tract_ndarray;
 
 /// Fixed input resolution of the GFPGAN v1.4 ONNX model.
 pub const GFPGAN_INPUT_SIZE: u32 = 512;
@@ -36,24 +36,25 @@ pub const GFPGAN_INPUT_SIZE: u32 = 512;
 /// Loaded GFPGAN model. Construct once and reuse across frames --
 /// `load` parses and optimizes the ONNX graph, which is slow relative
 /// to a single inference pass.
-#[derive(Debug)]
 pub struct GfpganRestorer {
-    model: RunnableModel,
+    session: InferenceSession,
 }
 
 impl GfpganRestorer {
     /// Load and optimize a GFPGAN ONNX model from disk.
     ///
-    /// Pins the input shape to `[1, 3, 512, 512]` so tract can resolve
-    /// any Resize nodes that were exported with a computed `size` input.
-    pub fn load(model_path: &Path) -> Result<Self> {
-        let model = load_typed_pinned(
+    /// `backend` selects the inference backend: CPU (tract-onnx),
+    /// CUDA (NVIDIA GPU via ONNX Runtime), or DirectML (AMD GPU via
+    /// ONNX Runtime). Falls back to CPU if the GPU backend cannot load.
+    pub fn load(model_path: &Path, backend: BackendType) -> Result<Self> {
+        let session = InferenceSession::load(
             model_path,
-            "GFPGAN v1.4",
             [1, 3, GFPGAN_INPUT_SIZE as i64, GFPGAN_INPUT_SIZE as i64],
+            "GFPGAN v1.4",
+            backend,
         )?;
-        tracing::info!("gfpgan: loaded {}", model_path.display());
-        Ok(Self { model })
+        tracing::info!("gfpgan: loaded {} on {:?} backend", model_path.display(), backend);
+        Ok(Self { session })
     }
 
     /// Restore faces in an RGB frame at `width x height`.
@@ -81,15 +82,10 @@ impl GfpganRestorer {
         let tensor = self.preprocess(rgb, width, height)?;
 
         // 2. Run inference.
-        let input: Tensor = tensor.into();
-        let outputs = self
-            .model
-            .run(tvec!(input.into()))
-            .map_err(|e| anyhow!("GFPGAN inference: {e:?}"))?;
+        let output_flat = self.session.run_array_single(&tensor)?;
 
-        // 3. Postprocess: first output is restored RGB [1, 3, 512, 512].
-        let output = first_output(outputs, "GFPGAN")?.into_tensor();
-        self.postprocess(&output)
+        // 3. Postprocess: output is [1, 3, 512, 512] BGR in NCHW order.
+        self.postprocess(&output_flat)
     }
 
     /// Preprocess RGB into a (1, 3, 512, 512) CHW tensor, BGR channel
@@ -126,24 +122,33 @@ impl GfpganRestorer {
         Ok(arr)
     }
 
-    /// Postprocess output tensor to RGB bytes at 512x512.
+    /// Postprocess flat output to RGB bytes at 512x512.
     ///
-    /// Converts from BGR CHW to RGB HWC and maps -1..1 -> 0..255.
-    fn postprocess(&self, output: &Tensor) -> Result<Vec<u8>> {
-        let output = output.to_plain_array_view::<f32>()?;
-        let output = output.into_dimensionality::<tract_ndarray::Ix4>()?;
-        // Shape: [1, 3, 512, 512] BGR.
+    /// Input is flat `Vec<f32>` in NCHW order `[1, 3, 512, 512]`, BGR
+    /// channels. Converts to RGB HWC and maps -1..1 -> 0..255.
+    fn postprocess(&self, output: &[f32]) -> Result<Vec<u8>> {
+        let size = GFPGAN_INPUT_SIZE as usize;
+        let expected = 1 * 3 * size * size;
+        if output.len() != expected {
+            return Err(anyhow!(
+                "GFPGAN output length {} != expected {}",
+                output.len(),
+                expected
+            ));
+        }
 
-        let mut result = vec![0u8; (GFPGAN_INPUT_SIZE * GFPGAN_INPUT_SIZE * 3) as usize];
+        let mut result = vec![0u8; size * size * 3];
 
         // Convert BGR CHW -> RGB HWC, map -1..1 -> 0..255.
-        for c in 0..3 {
+        // output layout: [c][y][x] where c=0 is B, c=1 is G, c=2 is R.
+        for c in 0..3usize {
             let rgb_channel = 2 - c; // BGR 0,1,2 -> RGB 2,1,0
-            for y in 0..GFPGAN_INPUT_SIZE as usize {
-                for x in 0..GFPGAN_INPUT_SIZE as usize {
-                    let val = output[[0, c, y, x]];
+            for y in 0..size {
+                for x in 0..size {
+                    let idx = (c * size + y) * size + x;
+                    let val = output[idx];
                     let byte = ((val + 1.0) * 127.5).clamp(0.0, 255.0).round() as u8;
-                    let dst_idx = (y * GFPGAN_INPUT_SIZE as usize + x) * 3 + rgb_channel;
+                    let dst_idx = (y * size + x) * 3 + rgb_channel;
                     result[dst_idx] = byte;
                 }
             }
@@ -167,7 +172,7 @@ mod tests {
     #[test]
     fn load_missing_file_names_model_and_label() {
         let path = std::path::Path::new("definitely-not-a-real-gfpgan.onnx");
-        let err = GfpganRestorer::load(path).unwrap_err().to_string();
+        let err = GfpganRestorer::load(path, BackendType::Cpu).unwrap_err().to_string();
         assert!(err.contains("GFPGAN v1.4"), "error must name label: {err}");
         assert!(err.contains("not found"), "error must explain: {err}");
     }
@@ -180,7 +185,7 @@ mod tests {
         if !path.is_file() {
             return;
         }
-        let restorer = GfpganRestorer::load(path).unwrap();
+        let restorer = GfpganRestorer::load(path, BackendType::Cpu).unwrap();
         let rgb = vec![128u8; 64 * 64 * 3];
         let out = restorer.restore(&rgb, 64, 64).unwrap();
         assert_eq!(out.len(), 512 * 512 * 3);

@@ -979,7 +979,10 @@ fn run_reframe_job(
     let samples = if req.model_is_scrfd {
         let key = req.model_path.to_string_lossy().into_owned();
         let detector = model_get_or_load(&SCRFD_CACHE, key, file_mtime(&req.model_path), || {
-            caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
+            caprust_media_io::scrfd::ScrfdDetector::load(
+                &req.model_path,
+                caprust_media_io::inference_backend::BackendType::Cpu,
+            )
                 .map_err(|e| format!("load SCRFD: {e}"))
         })?;
         let mut out = Vec::with_capacity(frames.len());
@@ -1757,7 +1760,10 @@ fn run_anon_inner(
     let mtime = file_mtime(&req.model_path);
     let detector = if req.use_scrfd {
         let d = model_get_or_load(&SCRFD_CACHE, key, mtime, || {
-            caprust_media_io::scrfd::ScrfdDetector::load(&req.model_path)
+            caprust_media_io::scrfd::ScrfdDetector::load(
+                &req.model_path,
+                caprust_media_io::inference_backend::BackendType::Cpu,
+            )
                 .map_err(|e| format!("load SCRFD: {e}"))
         })?;
         Detector::Scrfd(d)
@@ -2232,6 +2238,9 @@ pub struct GfpganRequest {
     pub output_path: PathBuf,
     pub max_side: u32,
     pub cancel: CancellationToken,
+    /// Inference backend: CPU (tract-onnx), CUDA (NVIDIA GPU), or
+    /// DirectML (AMD GPU). Defaults to CPU.
+    pub backend: caprust_media_io::inference_backend::BackendType,
 }
 
 #[derive(Debug)]
@@ -2404,7 +2413,11 @@ fn run_gfpgan_inner(
         req.restorer_path.to_string_lossy()
     );
     let restorer = model_get_or_load(&GFPGAN_CACHE, key, file_mtime(&req.restorer_path), || {
-        caprust_media_io::face_restore::FaceRestorer::load(&req.detector_path, &req.restorer_path)
+        caprust_media_io::face_restore::FaceRestorer::load(
+            &req.detector_path,
+            &req.restorer_path,
+            req.backend,
+        )
             .map_err(|e| format!("load GFPGAN: {e}"))
     })?;
     let restorer = restorer.as_ref();

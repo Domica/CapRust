@@ -61,6 +61,11 @@ tracing-appender = "0.2"
 # is 1.91, pinned via rust-toolchain.toml.
 tract-onnx = { version = "0.23", default-features = false }
 
+# ONNX Runtime with optional GPU execution providers. Used as GPU
+# alternative to tract-onnx for AI inference (GFPGAN, SCRFD, etc.).
+# CUDA for NVIDIA, DirectML for AMD, CPU fallback otherwise.
+ort = { version = "=2.0.0-rc.15" }
+
 # Audio playback (preview)
 cpal = "0.15"
 ringbuf = "0.4"

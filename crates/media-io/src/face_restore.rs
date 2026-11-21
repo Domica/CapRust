@@ -11,6 +11,7 @@
 //! once per frame in a cancellable background job — never in preview.
 
 use crate::gfpgan::{GfpganRestorer, GFPGAN_INPUT_SIZE};
+use crate::inference_backend::BackendType;
 use crate::onnx_common::bilinear_rgb;
 use crate::scrfd::{ScrfdDetector, ScrfdFace};
 use anyhow::{anyhow, Result};
@@ -108,10 +109,10 @@ pub struct FaceRestorer {
 }
 
 impl FaceRestorer {
-    pub fn load(detector_path: &Path, gfpgan_path: &Path) -> Result<Self> {
+    pub fn load(detector_path: &Path, gfpgan_path: &Path, backend: BackendType) -> Result<Self> {
         Ok(Self {
-            detector: ScrfdDetector::load(detector_path)?,
-            gfpgan: GfpganRestorer::load(gfpgan_path)?,
+            detector: ScrfdDetector::load(detector_path, backend)?,
+            gfpgan: GfpganRestorer::load(gfpgan_path, backend)?,
         })
     }
 
@@ -267,6 +268,27 @@ mod tests {
         assert_eq!(feather(1.0, 1.0), 0.0);
         let mid = feather(0.95, 0.5);
         assert!(mid > 0.0 && mid < 1.0);
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_gfpgan_inference() {
+        let path = std::path::Path::new(r"F:\Minimax H3\Git NEW APP\Models\gfpgan-v1.4.onnx");
+        if !path.is_file() {
+            return;
+        }
+        let restorer = GfpganRestorer::load(path).unwrap();
+        let rgb = vec![128u8; 64 * 64 * 3];
+        // Warm up once.
+        let _ = restorer.restore(&rgb, 64, 64).unwrap();
+        let start = std::time::Instant::now();
+        for _ in 0..3 {
+            let _ = restorer.restore(&rgb, 64, 64).unwrap();
+        }
+        eprintln!(
+            "GFPGAN inference: {:.2}s per 512x512 frame",
+            start.elapsed().as_secs_f64() / 3.0
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! SCRFD-500M face detection (Phase P2c alt).
 //!
-//! InsightFace's deployed detector. The graph is verified tract-onnx
-//! compatible (Codeberg `face-detection-api`, plakat's scrfd port).
+//! InsightFace's deployed detector. Works with both tract-onnx (CPU)
+//! and ONNX Runtime (CUDA/DirectML GPU) backends via `InferenceSession`.
 //!
 //! Input:  [1, 3, 640, 640] f32, RGB, normalized (x - 127.5) / 128.0.
 //!         Top-left letterbox pad: resize preserving aspect, then
@@ -24,10 +24,11 @@
 //!
 //! Confidence: raw cls output (the model applies sigmoid internally).
 
-use crate::onnx_common::{bilinear_rgb, load_typed_pinned, TypedRunnableModel as RunnableModel};
+use crate::inference_backend::BackendType;
+use crate::onnx_common::bilinear_rgb;
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tract_onnx::prelude::*;
+use tract_onnx::prelude::tract_ndarray;
 
 pub const INPUT_SIZE: u32 = 640;
 pub const STRIDES: [u32; 3] = [8, 16, 32];
@@ -58,18 +59,19 @@ impl ScrfdFace {
 }
 
 pub struct ScrfdDetector {
-    model: RunnableModel,
+    session: crate::inference_backend::InferenceSession,
 }
 
 impl ScrfdDetector {
-    pub fn load(model_path: &Path) -> Result<Self> {
-        let model = load_typed_pinned(
+    pub fn load(model_path: &Path, backend: BackendType) -> Result<Self> {
+        let session = crate::inference_backend::InferenceSession::load(
             model_path,
-            "SCRFD",
             [1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64],
+            "SCRFD",
+            backend,
         )?;
-        tracing::info!("scrfd: loaded {}", model_path.display());
-        Ok(Self { model })
+        tracing::info!("scrfd: loaded {} on {:?} backend", model_path.display(), backend);
+        Ok(Self { session })
     }
 
     /// `rgb` is a tightly packed RGB buffer (`w * h * 3`). Returns
@@ -88,14 +90,17 @@ impl ScrfdDetector {
         }
 
         let tensor = self.preprocess(rgb, width, height);
-        let input: Tensor = tensor.into();
-        let outputs = self
-            .model
-            .run(tvec!(input.into()))
-            .map_err(|e| anyhow!("SCRFD inference: {e:?}"))?;
+
+        // SCRFD produces 9 output tensors; run_array returns all of them
+        // as flat Vec<f32> slices in order: cls_s8, cls_s16, cls_s32,
+        // reg_s8, reg_s16, reg_s32, kps_s8, kps_s16, kps_s32.
+        let outputs = self.session.run_array(&tensor)?;
 
         if outputs.len() != 9 {
-            return Err(anyhow!("SCRFD expected 9 outputs, got {}", outputs.len()));
+            return Err(anyhow!(
+                "SCRFD expected 9 outputs, got {}",
+                outputs.len()
+            ));
         }
 
         let (scale, pad_x, pad_y) = letterbox_params(width, height);
@@ -104,11 +109,11 @@ impl ScrfdDetector {
         // cls_s32, reg_s8, reg_s16, reg_s32, kps_s8, kps_s16, kps_s32.
         let mut raw: Vec<ScrfdFace> = Vec::new();
         for (i, stride) in STRIDES.iter().copied().enumerate() {
-            let cls = outputs[i].to_plain_array_view::<f32>()?;
-            let reg = outputs[i + 3].to_plain_array_view::<f32>()?;
-            let kps = outputs[i + 6].to_plain_array_view::<f32>()?;
+            let cls = &outputs[i];
+            let reg = &outputs[i + 3];
+            let kps = &outputs[i + 6];
             decode_stride(
-                stride, &cls, &reg, &kps, scale, pad_x, pad_y, width, height, &mut raw,
+                stride, cls, reg, kps, scale, pad_x, pad_y, width, height, &mut raw,
             )?;
         }
 
@@ -151,12 +156,16 @@ fn letterbox_params(width: u32, height: u32) -> (f32, u32, u32) {
     (scale, 0, 0)
 }
 
+/// Decode one stride's outputs from flat `Vec<f32>` slices.
+///
+/// `cls` has shape [n_anchors, 1], `reg` has [n_anchors, 4],
+/// `kps` has [n_anchors, 10]. All are row-major flat arrays.
 #[allow(clippy::too_many_arguments)]
 fn decode_stride(
     stride: u32,
-    cls: &tract_ndarray::ArrayViewD<f32>,
-    reg: &tract_ndarray::ArrayViewD<f32>,
-    kps: &tract_ndarray::ArrayViewD<f32>,
+    cls: &[f32],
+    reg: &[f32],
+    kps: &[f32],
     scale: f32,
     pad_x: u32,
     pad_y: u32,
@@ -169,7 +178,7 @@ fn decode_stride(
     let n_anchors = n_cells * ANCHORS_PER_LOCATION;
 
     for i in 0..n_anchors {
-        let conf = cls[[i, 0]];
+        let conf = cls[i];
         if conf < CONFIDENCE_THRESHOLD {
             continue;
         }
@@ -180,10 +189,10 @@ fn decode_stride(
         let cx = (gx as f32 + 0.5) * stride as f32;
         let cy = (gy as f32 + 0.5) * stride as f32;
 
-        let dx = reg[[i, 0]] * stride as f32;
-        let dy = reg[[i, 1]] * stride as f32;
-        let dw = reg[[i, 2]] * stride as f32;
-        let dh = reg[[i, 3]] * stride as f32;
+        let dx = reg[i * 4] * stride as f32;
+        let dy = reg[i * 4 + 1] * stride as f32;
+        let dw = reg[i * 4 + 2] * stride as f32;
+        let dh = reg[i * 4 + 3] * stride as f32;
 
         let x1 = cx - dx;
         let y1 = cy - dy;
@@ -205,8 +214,8 @@ fn decode_stride(
         // units. Same un-letterbox + normalization as the box.
         let mut landmarks = [[0.0f32; 2]; 5];
         for (k, point) in landmarks.iter_mut().enumerate() {
-            let px = cx + kps[[i, k * 2]] * stride as f32;
-            let py = cy + kps[[i, k * 2 + 1]] * stride as f32;
+            let px = cx + kps[i * 10 + k * 2] * stride as f32;
+            let py = cy + kps[i * 10 + k * 2 + 1] * stride as f32;
             point[0] = (px - pad_x as f32) / scale / img_w as f32;
             point[1] = (py - pad_y as f32) / scale / img_h as f32;
         }
@@ -317,7 +326,7 @@ mod tests {
             Ok(p) => std::path::PathBuf::from(p),
             Err(_) => return,
         };
-        let det = ScrfdDetector::load(&path).expect("load SCRFD");
+        let det = ScrfdDetector::load(&path, BackendType::Cpu).expect("load SCRFD");
         let black = vec![0u8; 640 * 640 * 3];
         let faces = det.detect(&black, 640, 640).expect("inference");
         assert!(faces.is_empty(), "black frame must not contain faces");
