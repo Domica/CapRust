@@ -3,5 +3,5 @@
 # need for the pytorch_half_pixel Resize mode that u2netp (and most
 # PyTorch-exported ONNX models) use.
 [toolchain]
-channel = "1.91.0"
+channel = "1.92.0"
 components = ["rustfmt", "clippy", "rust-analyzer"]

@@ -9,7 +9,19 @@
 
 use anyhow::{anyhow, Result};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use tract_onnx::prelude::*;
+
+#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+use ort::environment::Environment;
+#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+use ort::session::Session;
+#[cfg(feature = "gpu-cuda")]
+use ort::ep::CUDA;
+#[cfg(feature = "gpu-directml")]
+use ort::ep::DirectML;
+#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+use ort::value::TensorValueType;
 
 /// Which backend to use for AI inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,28 +41,29 @@ impl BackendType {
     /// Tries CUDA (NVIDIA), then DirectML (AMD), falls back to CPU.
     /// Result is cached after first detection.
     pub fn auto_detect() -> Self {
-        static DETECTED: std::sync::OnceLock<BackendType> = std::sync::OnceLock::new();
+        static DETECTED: OnceLock<BackendType> = OnceLock::new();
         *DETECTED.get_or_init(|| {
-            #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+            #[cfg(feature = "gpu-cuda")]
             {
-                // Try CUDA first (NVIDIA)
-                if let Ok(env) = ort::Environment::builder()
-                    .with_name("caprust-detect-cuda")
-                    .build()
-                {
-                    if let Ok(mut builder) = ort::SessionBuilder::new(&env) {
-                        if builder.with_cuda_provider().is_ok() {
+                if let Ok(env) = ort_env() {
+                    if let Ok(builder) = Session::builder(env) {
+                        if builder
+                            .with_execution_providers([CUDA::default().build()])
+                            .is_ok()
+                        {
                             return BackendType::Cuda;
                         }
                     }
                 }
-                // Try DirectML (AMD)
-                if let Ok(env) = ort::Environment::builder()
-                    .with_name("caprust-detect-directml")
-                    .build()
-                {
-                    if let Ok(mut builder) = ort::SessionBuilder::new(&env) {
-                        if builder.with_directml_provider().is_ok() {
+            }
+            #[cfg(feature = "gpu-directml")]
+            {
+                if let Ok(env) = ort_env() {
+                    if let Ok(builder) = Session::builder(env) {
+                        if builder
+                            .with_execution_providers([DirectML::default().build()])
+                            .is_ok()
+                        {
                             return BackendType::DirectML;
                         }
                     }
@@ -59,6 +72,16 @@ impl BackendType {
             BackendType::Cpu
         })
     }
+}
+
+/// Returns a shared ONNX Runtime environment. Only one environment is
+/// allowed per process, so we cache it in a `OnceLock`.
+#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
+fn ort_env() -> Result<&'static Environment> {
+    static ENV: OnceLock<Result<Environment, ort::Error>> = OnceLock::new();
+    ENV.get_or_init(|| ort::init().with_name("caprust").build())
+        .as_ref()
+        .map_err(|e| anyhow!("ort environment: {e:?}"))
 }
 
 /// Trait implemented by both tract and ort backends.
@@ -131,12 +154,11 @@ impl InferenceBackend for TractBackend {
 /// Wraps an ONNX Runtime Session as an `InferenceBackend`.
 ///
 /// Compiled only when `gpu-cuda` or `gpu-directml` feature is enabled.
-/// Holds both `Environment` and `Session` because `Tensor::from_array`
-/// needs an `&Environment`.
+/// The `Session` is wrapped in a `Mutex` because `Session::run` takes
+/// `&mut self`.
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 pub struct OrtBackend {
-    env: ort::Environment,
-    session: ort::Session,
+    session: Mutex<Session>,
     input_name: String,
     output_count: usize,
 }
@@ -144,35 +166,59 @@ pub struct OrtBackend {
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 impl OrtBackend {
     pub fn load(path: &Path, shape: [i64; 4], label: &str, backend: BackendType) -> Result<Self> {
-        let env = ort::Environment::builder()
-            .with_name(label)
-            .build()
-            .map_err(|e| anyhow!("ort environment: {e:?}"))?;
+        let _ = shape;
+        let _ = label;
+        let env = ort_env()?;
 
         let mut builder =
-            ort::SessionBuilder::new(&env).map_err(|e| anyhow!("ort session builder: {e:?}"))?;
+            Session::builder(env).map_err(|e| anyhow!("ort session builder: {e:?}"))?;
 
         match backend {
             BackendType::Cuda => {
-                builder = builder
-                    .with_cuda_provider()
-                    .map_err(|e| anyhow!("ort CUDA provider: {e:?}"))?;
+                #[cfg(feature = "gpu-cuda")]
+                {
+                    builder = builder
+                        .with_execution_providers([CUDA::default().build()])
+                        .map_err(|e| anyhow!("ort CUDA provider: {e:?}"))?;
+                }
+                #[cfg(not(feature = "gpu-cuda"))]
+                return Err(anyhow!(
+                    "CUDA backend requested but gpu-cuda feature not compiled in"
+                ));
             }
             BackendType::DirectML => {
-                builder = builder
-                    .with_directml_provider()
-                    .map_err(|e| anyhow!("ort DirectML provider: {e:?}"))?;
+                #[cfg(feature = "gpu-directml")]
+                {
+                    builder = builder
+                        .with_execution_providers([DirectML::default().build()])
+                        .map_err(|e| anyhow!("ort DirectML provider: {e:?}"))?;
+                }
+                #[cfg(not(feature = "gpu-directml"))]
+                return Err(anyhow!(
+                    "DirectML backend requested but gpu-directml feature not compiled in"
+                ));
             }
             BackendType::Cpu => {
                 // CPU is the default; no provider needed.
             }
+            BackendType::Auto => {
+                unreachable!("Auto is resolved to a concrete backend before OrtBackend::load is called")
+            }
         }
 
         let session = builder
-            .with_model_file(path)
+            .commit_from_file(path)
             .map_err(|e| anyhow!("ort load model {}: {e:?}", path.display()))?;
 
-        let output_count = session.output_names.len();
+        let output_count = session.outputs().len();
+
+        let input_name = session
+            .inputs()
+            .iter()
+            .next()
+            .ok_or_else(|| anyhow!("ort model {} has no inputs", path.display()))?
+            .name()
+            .to_string();
 
         tracing::info!(
             "ort: loaded {} on {:?} backend, {} output(s)",
@@ -182,14 +228,8 @@ impl OrtBackend {
         );
 
         Ok(Self {
-            env,
-            session,
-            input_name: session
-                .input_names
-                .iter()
-                .next()
-                .ok_or_else(|| anyhow!("ort model {} has no inputs", path.display()))?
-                .to_string(),
+            session: Mutex::new(session),
+            input_name,
             output_count,
         })
     }
@@ -198,22 +238,35 @@ impl OrtBackend {
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 impl InferenceBackend for OrtBackend {
     fn run(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<Vec<f32>>> {
-        let dims: Vec<i64> = shape.to_vec();
+        let arr = tract_ndarray::Array4::<f32>::from_shape_vec(
+            (
+                shape[0] as usize,
+                shape[1] as usize,
+                shape[2] as usize,
+                shape[3] as usize,
+            ),
+            input.to_vec(),
+        )
+        .map_err(|e| anyhow!("reshape ort input: {e:?}"))?;
 
-        let input_tensor = ort::value::Tensor::from_array(&self.env, input, &dims)
+        let input_tensor = ort::value::Tensor::from_array(arr)
             .map_err(|e| anyhow!("ort create input tensor: {e:?}"))?;
 
-        let outputs = self
-            .session
-            .run(ort::inputs![self.input_name => input_tensor])
+        let mut session = self.session.lock()
+            .map_err(|e| anyhow!("ort session lock poisoned: {e}"))?;
+        let outputs = session
+            .run(ort::inputs![self.input_name.clone() => input_tensor])
             .map_err(|e| anyhow!("ort inference: {e:?}"))?;
 
         let mut result = Vec::with_capacity(outputs.len());
-        for output in outputs.iter() {
-            let array = output
-                .extract_array::<f32>()
+        for (_, value) in outputs.into_iter() {
+            let tensor: ort::value::Tensor<f32> = value
+                .downcast::<TensorValueType<f32>>()
+                .map_err(|e| anyhow!("ort downcast output: {e:?}"))?;
+            let array = tensor
+                .try_extract_array::<f32>()
                 .map_err(|e| anyhow!("ort extract output: {e:?}"))?;
-            result.push(array.into_owned().into_raw_vec());
+            result.push(array.into_owned().into_raw_vec_and_offset().0);
         }
         Ok(result)
     }

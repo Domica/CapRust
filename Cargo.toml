@@ -58,7 +58,8 @@ tracing-appender = "0.2"
 # tract-onnx 0.23 is pure Rust (no libonnxruntime dependency). It
 # added support for the pytorch_half_pixel Resize coordinate mode,
 # which u2netp (and most PyTorch-exported ONNX models) rely on. MSRV
-# is 1.91, pinned via rust-toolchain.toml.
+# is 1.91 for tract-onnx; toolchain pinned to 1.92.0 to also support
+# ort 2.0.0-rc.15 (requires rustc 1.92+).
 tract-onnx = { version = "0.23", default-features = false }
 
 # ONNX Runtime with optional GPU execution providers. Used as GPU
