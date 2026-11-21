@@ -5632,7 +5632,7 @@ impl CapRustApp {
             if !info.enabled || info.status != caprust_core::ModelStatus::Ready {
                 return None;
             }
-            let p = caprust_core::models::ModelRegistry::local_path_static(
+            let p = caprust_core::models::ModelRegistry::local_path_existing(
                 &self.project.models().models,
                 &models_dir,
                 id,

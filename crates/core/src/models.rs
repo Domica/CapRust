@@ -730,6 +730,31 @@ impl ModelRegistry {
         models_dir.join(filename)
     }
 
+    /// Like `local_path_static`, but honours filenames used by earlier
+    /// releases. Older builds saved GFPGAN as `gfpgan-v1.4.onnx`; the
+    /// registry now expects `GFPGANv1.4.onnx`. Without this alias an
+    /// already-downloaded 350 MB file would look missing and users would
+    /// be asked to download it again.
+    pub fn local_path_existing(
+        models: &[ModelInfo],
+        models_dir: &std::path::Path,
+        id: &str,
+    ) -> std::path::PathBuf {
+        let canonical = Self::local_path_static(models, models_dir, id);
+        if canonical.is_file() {
+            return canonical;
+        }
+        let legacy = match id {
+            "gfpgan-v1.4" => "gfpgan-v1.4.onnx",
+            _ => return canonical,
+        };
+        let alias = models_dir.join(legacy);
+        if alias.is_file() {
+            return alias;
+        }
+        canonical
+    }
+
     /// Verify a single model against the filesystem and update its status.
     /// Call on app startup so previously-downloaded models are marked
     /// Ready without hitting the network.
@@ -738,7 +763,7 @@ impl ModelRegistry {
         let paths: Vec<std::path::PathBuf> = self
             .models
             .iter()
-            .map(|m| Self::local_path_static(&self.models, models_dir, &m.id))
+            .map(|m| Self::local_path_existing(&self.models, models_dir, &m.id))
             .collect();
         for (m, path) in self.models.iter_mut().zip(paths) {
             let exists = path.is_file() && path.metadata().map(|md| md.len() > 0).unwrap_or(false);

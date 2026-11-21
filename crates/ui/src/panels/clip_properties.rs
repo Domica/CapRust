@@ -1758,13 +1758,15 @@ fn show_video(
                 .map(|m| m.status == ModelStatus::Ready && m.enabled)
                 .unwrap_or(false)
         };
-        let gfpgan_ready = model_ready("gfpgan-v1.4") && model_ready("scrfd-face");
+        let gfpgan_ready = model_ready("gfpgan-v1.4");
+        let scrfd_ready = model_ready("scrfd-face");
+        let both_ready = gfpgan_ready && scrfd_ready;
         let has_result = clip.face_restore_video.is_some();
         let busy = gfpgan_rx.is_some();
         let mut gfpgan_enabled = has_result || busy;
         ui.horizontal(|ui| {
             if ui
-                .add_enabled_ui(gfpgan_ready && !busy, |ui| {
+                .add_enabled_ui(both_ready && !busy, |ui| {
                     ui.checkbox(&mut gfpgan_enabled, tr("props-face-restore-enable"))
                         .on_hover_text(tr("props-face-restore-enable-hint"))
                 })
@@ -1794,9 +1796,16 @@ fn show_video(
                     .color(egui::Color32::from_rgb(100, 200, 100)),
             );
         }
-        if !gfpgan_ready {
+        if !both_ready {
+            let missing = if !gfpgan_ready && !scrfd_ready {
+                tr("props-face-restore-needs-both")
+            } else if !gfpgan_ready {
+                tr("props-face-restore-needs-gfpgan")
+            } else {
+                tr("props-face-restore-needs-scrfd")
+            };
             ui.label(
-                egui::RichText::new(tr("props-face-restore-needs-model"))
+                egui::RichText::new(missing)
                     .small()
                     .color(egui::Color32::from_rgb(200, 100, 100)),
             );
