@@ -48,7 +48,7 @@ version = "0.2"
 optional = true
 
 [features]
-default = []
+default = ["gpu-cuda"]
 ffmpeg = ["dep:ffmpeg-next"]
 clap = ["dep:clack-host", "dep:clack-extensions"]
 # GPU acceleration for ONNX inference (GFPGAN, SCRFD, etc.)
