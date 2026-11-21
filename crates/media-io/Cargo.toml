@@ -54,6 +54,11 @@ clap = ["dep:clack-host", "dep:clack-extensions"]
 # NOT default — enables CUDA (NVIDIA) or DirectML (AMD) execution providers.
 # Build with `--features gpu-cuda` or `--features gpu-directml` to include GPU support.
 # Without any GPU feature, CPU tract-onnx is used (smaller EXE, no GPU).
+#
+# Release plan: three installers —
+#   1. Standard (no GPU feature, CPU tract-onnx fallback, works everywhere incl. integrated graphics)
+#   2. CUDA build (cargo build --release --features gpu-cuda, for NVIDIA GPUs)
+#   3. DirectML build (cargo build --release --features gpu-directml, for AMD GPUs)
 gpu-cuda = ["ort/cuda"]
 gpu-directml = ["ort/directml"]
 
