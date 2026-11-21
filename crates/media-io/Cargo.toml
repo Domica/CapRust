@@ -51,13 +51,11 @@ optional = true
 ffmpeg = ["dep:ffmpeg-next"]
 clap = ["dep:clack-host", "dep:clack-extensions"]
 # GPU acceleration for ONNX inference (GFPGAN, SCRFD, etc.)
+# NOT default — enables CUDA (NVIDIA) or DirectML (AMD) execution providers.
+# Build with `--features gpu-cuda` or `--features gpu-directml` to include GPU support.
+# Without any GPU feature, CPU tract-onnx is used (smaller EXE, no GPU).
 gpu-cuda = ["ort/cuda"]
 gpu-directml = ["ort/directml"]
-
-# Enable CUDA by default on all targets except Android (no CUDA prebuilt
-# binaries exist for aarch64-linux-android; ort-sys would fail to download them).
-[target.'cfg(not(target_os = "android"))'.features]
-default = ["gpu-cuda"]
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
