@@ -92,6 +92,34 @@ impl BackendType {
     }
 }
 
+/// Returns `true` if this EXE was compiled with CUDA support
+/// (`--features gpu-cuda`). When true, CUDA is already built in and no
+/// external plugin download is needed.
+pub fn has_builtin_cuda() -> bool {
+    #[cfg(feature = "gpu-cuda")]
+    {
+        true
+    }
+    #[cfg(not(feature = "gpu-cuda"))]
+    {
+        false
+    }
+}
+
+/// Returns `true` if this EXE was compiled with DirectML support
+/// (`--features gpu-directml`). When true, DirectML is already built in
+/// and no external plugin download is needed.
+pub fn has_builtin_directml() -> bool {
+    #[cfg(feature = "gpu-directml")]
+    {
+        true
+    }
+    #[cfg(not(feature = "gpu-directml"))]
+    {
+        false
+    }
+}
+
 /// Returns a shared ONNX Runtime environment. Only one environment is
 /// allowed per process, so we cache it in a `OnceLock`.
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]

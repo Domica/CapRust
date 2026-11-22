@@ -1708,14 +1708,28 @@ fn show_gpu(
     // CUDA plugin row
     let cuda_label = tr("set-gpu-provider-cuda");
     let cuda_hint = tr("set-gpu-cuda-hint");
-    show_gpu_provider_row(ui, "cuda", &cuda_label, &cuda_hint, ev);
+    show_gpu_provider_row(
+        ui,
+        "cuda",
+        &cuda_label,
+        &cuda_hint,
+        caprust_media_io::inference_backend::has_builtin_cuda(),
+        ev,
+    );
 
     ui.add_space(space::L);
 
     // DirectML plugin row
     let dml_label = tr("set-gpu-provider-directml");
     let dml_hint = tr("set-gpu-directml-hint");
-    show_gpu_provider_row(ui, "directml", &dml_label, &dml_hint, ev);
+    show_gpu_provider_row(
+        ui,
+        "directml",
+        &dml_label,
+        &dml_hint,
+        caprust_media_io::inference_backend::has_builtin_directml(),
+        ev,
+    );
 
     ui.add_space(space::L);
     ui.separator();
@@ -1727,11 +1741,15 @@ fn show_gpu(
 }
 
 /// Renders one GPU provider row: label, hint, status, download button.
+///
+/// `has_builtin` indicates whether this provider is compiled into the
+/// running EXE. When true, no external plugin download is offered.
 fn show_gpu_provider_row(
     ui: &mut Ui,
     provider: &str,
     label: &str,
     hint: &str,
+    has_builtin: bool,
     ev: &mut SettingsEvents,
 ) {
     let installed = match provider {
@@ -1757,7 +1775,12 @@ fn show_gpu_provider_row(
         });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if installed {
+            if has_builtin {
+                ui.label(
+                    egui::RichText::new(tr("set-gpu-status-builtin"))
+                        .color(egui::Color32::from_rgb(80, 200, 120)),
+                );
+            } else if installed {
                 ui.label(
                     egui::RichText::new(tr("set-gpu-status-installed"))
                         .color(egui::Color32::from_rgb(80, 200, 120)),

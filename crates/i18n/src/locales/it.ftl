@@ -1232,6 +1232,7 @@ set-gpu-heading = Accelerazione GPU
 set-gpu-hint = L'EXE standard rimane piccolo (~27 MB, solo CPU). L'accelerazione GPU è un download opzionale separato da GitHub Releases.
 set-gpu-provider-cuda = NVIDIA CUDA
 set-gpu-provider-directml = AMD DirectML
+set-gpu-status-builtin = Integrato
 set-gpu-status-installed = Installato
 set-gpu-status-not-installed = Non installato
 set-gpu-status-downloading = Download in corso…

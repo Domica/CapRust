@@ -554,6 +554,7 @@ set-gpu-heading = GPU ubrzanje
 set-gpu-hint = Standard EXE ostaje mali (~27 MB, samo CPU). GPU ubrzanje je opcionalni zasebni preuzimanje s GitHub Releasesa.
 set-gpu-provider-cuda = NVIDIA CUDA
 set-gpu-provider-directml = AMD DirectML
+set-gpu-status-builtin = Ugrađeno
 set-gpu-status-installed = Instalirano
 set-gpu-status-not-installed = Nije instalirano
 set-gpu-status-downloading = Preuzimanje…
