@@ -183,7 +183,7 @@ impl FaceDetector {
         let mut raw: Vec<FaceBox> = Vec::new();
         for (i, stride) in STRIDES.iter().copied().enumerate() {
             decode_stride(
-                stride, &cls[i], &obj[i], &bbox[i], scale, pad_x, pad_y, width, height, &mut raw,
+                stride, cls[i], obj[i], bbox[i], scale, pad_x, pad_y, width, height, &mut raw,
             );
         }
 
@@ -264,8 +264,8 @@ fn decode_3_output(
         // tensor shape, so just log element counts as a proxy.
         tracing::info!("YuNet 2022mar output[{}] = {} f32 elements", i, out.len());
         let n_log = out.len().min(3);
-        for j in 0..n_log {
-            tracing::info!("  output[{}] [{}] = {:.4}", i, j, out[j]);
+        for (j, item) in out.iter().enumerate().take(n_log) {
+            tracing::info!("  output[{i}] [{j}] = {:.4}", item);
         }
     }
     let msg = format!(

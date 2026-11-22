@@ -579,7 +579,7 @@ impl OrtBackend {
 
         let output_count = session.outputs().len();
 
-        let input_name = session
+        let _input_name = session
             .inputs()
             .iter()
             .next()
@@ -659,8 +659,12 @@ impl InferenceBackend for OrtBackend {
         let named_inputs: Vec<(String, ort::value::Tensor<f32>)> = inputs
             .iter()
             .map(|(name, data, shape)| {
-                let arr = tract_ndarray::ArrayD::<f32>::from_shape_vec(shape, data.to_vec())
-                    .map_err(|e| anyhow!("reshape ort multi input '{}': {e:?}", name))?;
+                let shape_vec: Vec<usize> = shape.iter().map(|&v| v as usize).collect();
+                let arr = tract_ndarray::ArrayD::<f32>::from_shape_vec(
+                    tract_ndarray::IxDyn(&shape_vec),
+                    data.to_vec(),
+                )
+                .map_err(|e| anyhow!("reshape ort multi input '{}': {e:?}", name))?;
                 let tensor = ort::value::Tensor::from_array(arr)
                     .map_err(|e| anyhow!("ort create multi input tensor '{}': {e:?}", name))?;
                 Ok((name.to_string(), tensor))
@@ -670,7 +674,7 @@ impl InferenceBackend for OrtBackend {
         // `ort::Session::run` accepts anything implementing `NamedInputs`.
         // `&[(String, Tensor<f32>)]` implements it in ort 2.x.
         let outputs = session
-            .run(named_inputs.as_slice())
+            .run(named_inputs)
             .map_err(|e| anyhow!("ort multi-input inference: {e:?}"))?;
 
         let mut result = Vec::with_capacity(outputs.len());
