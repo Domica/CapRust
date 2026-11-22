@@ -8,12 +8,12 @@
 //! Pre/post-processing stays in the individual model modules.
 
 use anyhow::{anyhow, Result};
-use std::path::Path;
-use std::sync::OnceLock;
+use serde_json;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::sync::{Mutex, OnceLock};
 use tract_onnx::prelude::*;
-
-#[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
-use std::sync::Mutex;
 
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 use ort::environment::Environment;
@@ -26,16 +26,28 @@ use ort::session::Session;
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 use ort::value::TensorValueType;
 
+use crate::gpu_plugin;
+
 /// Which backend to use for AI inference.
+///
+/// `ExternalCuda` / `ExternalDirectML` use a separately downloaded GPU
+/// plugin binary (installed to %LOCALAPPDATA%\CapRust\gpu\). They keep
+/// the standard EXE small (~27 MB) while letting users opt into GPU
+/// acceleration on demand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendType {
     /// Pure CPU via tract-onnx (always available, no GPU needed).
     Cpu,
-    /// NVIDIA GPU via ONNX Runtime CUDA execution provider.
+    /// NVIDIA GPU via ONNX Runtime CUDA execution provider (built into EXE).
     Cuda,
-    /// AMD GPU via ONNX Runtime DirectML execution provider.
+    /// AMD GPU via ONNX Runtime DirectML execution provider (built into EXE).
     DirectML,
+    /// NVIDIA GPU via externally downloaded plugin binary.
+    ExternalCuda,
+    /// AMD GPU via externally downloaded plugin binary.
+    ExternalDirectML,
     /// Auto-detect: try CUDA (NVIDIA), then DirectML (AMD), fall back to CPU.
+    /// Does NOT select external backends — those require manual install.
     Auto,
 }
 
@@ -43,6 +55,9 @@ impl BackendType {
     /// Auto-detect the best available GPU backend.
     /// Tries CUDA (NVIDIA), then DirectML (AMD), falls back to CPU.
     /// Result is cached after first detection.
+    ///
+    /// Does NOT select `ExternalCuda` / `ExternalDirectML` — those
+    /// require the user to manually install the plugin first.
     pub fn auto_detect() -> Self {
         static DETECTED: OnceLock<BackendType> = OnceLock::new();
         *DETECTED.get_or_init(|| {
@@ -151,6 +166,194 @@ impl InferenceBackend for TractBackend {
             result.push(arr_view.into_raw_vec_and_offset().0);
         }
         Ok(result)
+    }
+}
+
+/// Wraps an external GPU plugin binary as an `InferenceBackend`.
+///
+/// The binary lives in %LOCALAPPDATA%\CapRust\gpu\ (installed by
+/// `gpu_plugin::install`) and speaks a line-based protocol over
+/// stdin/stdout:
+///   `LOAD <model_path> <shape_json>`   -> `OK` | `ERR <msg>`
+///   `RUN <input_path> <output_path>`   -> `OK` | `ERR <msg>`
+///   `QUIT`                              -> process exits
+///
+/// The model is loaded once when the backend is created. Each `run()`
+/// writes the input tensor to a temp file, sends `RUN`, and reads the
+/// output tensor from a temp file.
+///
+/// Compiled without any GPU feature — it only shells out to an external
+/// process, so it works even in the standard CPU-only build.
+pub struct ExternalBackend {
+    inner: Mutex<ExternalBackendInner>,
+}
+
+struct ExternalBackendInner {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    #[allow(dead_code)]
+    model_path: PathBuf,
+    shape: [i64; 4],
+}
+
+impl ExternalBackend {
+    /// Launch the plugin binary and load the model into it.
+    pub fn load(
+        binary_path: &Path,
+        model_path: &Path,
+        shape: [i64; 4],
+        label: &str,
+    ) -> Result<Self> {
+        let mut cmd = gpu_plugin::plugin_command(binary_path, model_path, shape);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow!("failed to spawn GPU plugin binary: {e}"))?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture plugin stdin"))?;
+        let stdout = BufReader::new(
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("failed to capture plugin stdout"))?,
+        );
+
+        let mut inner = ExternalBackendInner {
+            child,
+            stdin,
+            stdout,
+            model_path: model_path.to_path_buf(),
+            shape,
+        };
+
+        // Send LOAD command and wait for OK.
+        let shape_json = serde_json::to_string(&shape)?;
+        inner.send_command(&format!("LOAD {} {}\n", model_path.display(), shape_json))?;
+        let response = inner.read_response()?;
+        if response != "OK" {
+            return Err(anyhow!(
+                "GPU plugin failed to load {label} model: {response}"
+            ));
+        }
+
+        tracing::info!(
+            "external GPU plugin: loaded {} on {}",
+            model_path.display(),
+            binary_path.display()
+        );
+
+        Ok(Self {
+            inner: Mutex::new(inner),
+        })
+    }
+}
+
+impl InferenceBackend for ExternalBackend {
+    fn run(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<Vec<f32>>> {
+        if shape != self.inner.lock().unwrap().shape {
+            return Err(anyhow!(
+                "external GPU backend: input shape {:?} != configured shape {:?}",
+                shape,
+                self.inner.lock().unwrap().shape
+            ));
+        }
+
+        let mut inner = self.inner.lock().unwrap();
+
+        // Write input tensor to a temp file.
+        let input_temp = std::env::temp_dir().join(format!(
+            "caprust-gpu-input-{}-{}.bin",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let input_path = input_temp.as_path();
+        {
+            let mut file = std::fs::File::create(input_path)
+                .map_err(|e| anyhow!("failed to open input temp file: {e}"))?;
+            let bytes: Vec<u8> = input
+                .iter()
+                .flat_map(|&f| f.to_le_bytes())
+                .collect();
+            file.write_all(&bytes)
+                .map_err(|e| anyhow!("failed to write input temp file: {e}"))?;
+        }
+
+        let output_temp = std::env::temp_dir().join(format!(
+            "caprust-gpu-output-{}-{}.bin",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let output_path = output_temp.as_path();
+
+        // Send RUN command.
+        inner.send_command(&format!(
+            "RUN {} {}\n",
+            input_path.display(),
+            output_path.display()
+        ))?;
+        let response = inner.read_response()?;
+        if response != "OK" {
+            return Err(anyhow!("external GPU inference failed: {response}"));
+        }
+
+        // Read output tensor from temp file.
+        let output_data = std::fs::read(output_path)
+            .map_err(|e| anyhow!("failed to read output temp file: {e}"))?;
+        if output_data.len() % 4 != 0 {
+            return Err(anyhow!(
+                "external GPU plugin returned invalid output size: {} bytes",
+                output_data.len()
+            ));
+        }
+        let output_f32: Vec<f32> = output_data
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect();
+
+        Ok(vec![output_f32])
+    }
+}
+
+impl Drop for ExternalBackend {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            let _ = inner.stdin.write_all(b"QUIT\n");
+            let _ = inner.stdin.flush();
+            let _ = inner.child.wait();
+        }
+    }
+}
+
+impl ExternalBackendInner {
+    fn send_command(&mut self, cmd: &str) -> Result<()> {
+        self.stdin
+            .write_all(cmd.as_bytes())
+            .map_err(|e| anyhow!("failed to send command to GPU plugin: {e}"))?;
+        self.stdin.flush().map_err(|e| {
+            anyhow!("failed to flush command to GPU plugin: {e}")
+        })?;
+        Ok(())
+    }
+
+    fn read_response(&mut self) -> Result<String> {
+        let mut response = String::new();
+        self.stdout
+            .read_line(&mut response)
+            .map_err(|e| anyhow!("failed to read response from GPU plugin: {e}"))?;
+        Ok(response.trim().to_string())
     }
 }
 
@@ -320,6 +523,33 @@ impl InferenceSession {
                         backend
                     );
                     Box::new(TractBackend::load(path, shape, label)?)
+                }
+            }
+            BackendType::ExternalCuda | BackendType::ExternalDirectML => {
+                let binary_path = match backend {
+                    BackendType::ExternalCuda => gpu_plugin::cuda_binary_path(),
+                    BackendType::ExternalDirectML => gpu_plugin::directml_binary_path(),
+                    _ => unreachable!(),
+                };
+                match binary_path {
+                    Some(bin) => match ExternalBackend::load(&bin, path, shape, label) {
+                        Ok(b) => Box::new(b),
+                        Err(e) => {
+                            tracing::warn!(
+                                "External GPU backend {:?} failed to load {}, falling back to CPU: {e}",
+                                backend,
+                                path.display()
+                            );
+                            Box::new(TractBackend::load(path, shape, label)?)
+                        }
+                    },
+                    None => {
+                        tracing::warn!(
+                            "External GPU backend {:?} requested but plugin not installed, falling back to CPU",
+                            backend
+                        );
+                        Box::new(TractBackend::load(path, shape, label)?)
+                    }
                 }
             }
             BackendType::Auto => {

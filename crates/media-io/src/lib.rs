@@ -15,6 +15,7 @@ pub mod ffprobe;
 pub mod filter_script;
 pub mod frame_extract;
 pub mod gfpgan;
+pub mod gpu_plugin;
 pub mod inference_backend;
 pub mod lama;
 pub mod mask_gen;

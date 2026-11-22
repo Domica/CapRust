@@ -71,6 +71,44 @@ jobs:
           path: installer\staging\*
           retention-days: 14
 
+  build-gpu-plugins:
+    name: GPU plugin binaries (optional download)
+    runs-on: windows-latest
+    # continue-on-error: CUDA/DirectML prebuilt libs may not be
+    # available on every runner; don't block nightly if they fail.
+    continue-on-error: true
+    env:
+      CMAKE_ARGS: -DGGML_NATIVE=OFF
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build GPU plugin binaries (CUDA + DirectML)
+        shell: pwsh
+        run: |
+          $variants = @(
+            @{ name = "cuda"; features = "--no-default-features --features gpu-cuda"; exeName = "caprust-gpu-cuda.exe" },
+            @{ name = "directml"; features = "--no-default-features --features gpu-directml"; exeName = "caprust-gpu-directml.exe" }
+          )
+          New-Item -ItemType Directory -Force -Path gpu-staging | Out-Null
+          foreach ($var in $variants) {
+            Write-Host "=== Building GPU plugin $($var.name) ==="
+            cargo build --release -p caprust-app $($var.features)
+            Copy-Item "target\release\caprust-app.exe" "gpu-staging\$($var.exeName)" -Force
+            Compress-Archive -Path "gpu-staging\$($var.exeName)" -DestinationPath "gpu-staging\caprust-gpu-$($var.name).zip" -CompressionLevel Optimal
+            Get-Item "gpu-staging\caprust-gpu-$($var.name).zip" | ForEach-Object {
+              Write-Host "  $($var.name): $($_.Length) bytes"
+            }
+          }
+
+      - name: Upload GPU plugin artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: caprust-nightly-gpu-plugins
+          path: gpu-staging\*
+          retention-days: 14
+
   build-linux:
     name: Linux nightly
     # Pinned to 22.04, not ubuntu-latest: the label floats, and a newer

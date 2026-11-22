@@ -19,6 +19,7 @@ zip = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 blake3 = { workspace = true }
+sha2 = { workspace = true }
 
 # Whisper.cpp bindings for AI captions (Phase F2).
 # default-features = false disables Vulkan/CUDA/Metal backends; the
