@@ -1648,7 +1648,9 @@ impl CapRustApp {
             playhead_ms: 0,
             timeline_zoom: 1.0,
             settings_tab: Default::default(),
-            detected_gpu_backend: Some(caprust_media_io::inference_backend::BackendType::auto_detect()),
+            detected_gpu_backend: Some(
+                caprust_media_io::inference_backend::BackendType::auto_detect(),
+            ),
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
@@ -5695,9 +5697,7 @@ impl CapRustApp {
             backend: match self.settings.ai_inference_backend.as_str() {
                 "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
                 "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
-                "external-cuda" => {
-                    caprust_media_io::inference_backend::BackendType::ExternalCuda
-                }
+                "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
                 "external-directml" => {
                     caprust_media_io::inference_backend::BackendType::ExternalDirectML
                 }
@@ -6734,11 +6734,7 @@ impl CapRustApp {
                 }
                 Ok(Err(msg)) => {
                     tracing::error!("GPU plugin {} download failed: {}", provider, msg);
-                    self.toast_error(format!(
-                        "{}: {}",
-                        tr("set-gpu-download-failed"),
-                        msg
-                    ));
+                    self.toast_error(format!("{}: {}", tr("set-gpu-download-failed"), msg));
                     keep = false;
                     break;
                 }

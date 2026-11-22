@@ -347,10 +347,8 @@ fn gpu_plugin_mode(args: &[String]) -> eframe::Result<()> {
                         let _ = writeln!(out, "ERR model produced no outputs");
                     } else {
                         // Write first output tensor as raw little-endian f32
-                        let output_bytes: Vec<u8> = outputs[0]
-                            .iter()
-                            .flat_map(|&f| f.to_le_bytes())
-                            .collect();
+                        let output_bytes: Vec<u8> =
+                            outputs[0].iter().flat_map(|&f| f.to_le_bytes()).collect();
                         match std::fs::write(output_path, &output_bytes) {
                             Ok(_) => {
                                 let _ = writeln!(out, "OK");

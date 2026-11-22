@@ -90,15 +90,13 @@ pub fn install(provider: &str, version: &str, sha256: &str) -> Result<PathBuf> {
 
     // Download the zip.
     tracing::info!("downloading GPU plugin from {}", zip_url);
-    let resp = ureq::get(&zip_url).call().map_err(|e| {
-        anyhow!("failed to download GPU plugin from {zip_url}: {e}")
-    })?;
-    let mut file = fs::File::create(&zip_path).map_err(|e| {
-        anyhow!("failed to create {}: {e}", zip_path.display())
-    })?;
-    copy(&mut resp.into_reader(), &mut file).map_err(|e| {
-        anyhow!("failed to write GPU plugin zip: {e}")
-    })?;
+    let resp = ureq::get(&zip_url)
+        .call()
+        .map_err(|e| anyhow!("failed to download GPU plugin from {zip_url}: {e}"))?;
+    let mut file = fs::File::create(&zip_path)
+        .map_err(|e| anyhow!("failed to create {}: {e}", zip_path.display()))?;
+    copy(&mut resp.into_reader(), &mut file)
+        .map_err(|e| anyhow!("failed to write GPU plugin zip: {e}"))?;
     drop(file);
 
     // Verify SHA-256 before unpacking (skip when sha256 is empty).
@@ -115,16 +113,14 @@ pub fn install(provider: &str, version: &str, sha256: &str) -> Result<PathBuf> {
     }
 
     // Unpack.
-    let file = fs::File::open(&zip_path).map_err(|e| {
-        anyhow!("failed to open {}: {e}", zip_path.display())
-    })?;
-    let mut archive = ZipArchive::new(file).map_err(|e| {
-        anyhow!("failed to open zip archive: {e}")
-    })?;
+    let file = fs::File::open(&zip_path)
+        .map_err(|e| anyhow!("failed to open {}: {e}", zip_path.display()))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| anyhow!("failed to open zip archive: {e}"))?;
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| {
-            anyhow!("failed to read zip entry {i}: {e}")
-        })?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| anyhow!("failed to read zip entry {i}: {e}"))?;
         if let Some(out_path) = entry.enclosed_name() {
             let out_path = dir.join(out_path);
             if entry.is_dir() {
@@ -133,12 +129,10 @@ pub fn install(provider: &str, version: &str, sha256: &str) -> Result<PathBuf> {
                 if let Some(parent) = out_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let mut out = fs::File::create(&out_path).map_err(|e| {
-                    anyhow!("failed to create {}: {e}", out_path.display())
-                })?;
-                copy(&mut entry, &mut out).map_err(|e| {
-                    anyhow!("failed to write {}: {e}", out_path.display())
-                })?;
+                let mut out = fs::File::create(&out_path)
+                    .map_err(|e| anyhow!("failed to create {}: {e}", out_path.display()))?;
+                copy(&mut entry, &mut out)
+                    .map_err(|e| anyhow!("failed to write {}: {e}", out_path.display()))?;
             }
         }
     }
@@ -161,14 +155,12 @@ pub fn install(provider: &str, version: &str, sha256: &str) -> Result<PathBuf> {
 
 /// Compute SHA-256 hex digest of a file.
 fn sha256_file(path: &Path) -> Result<String> {
-    let file = fs::File::open(path).map_err(|e| {
-        anyhow!("failed to open {}: {e}", path.display())
-    })?;
+    let file =
+        fs::File::open(path).map_err(|e| anyhow!("failed to open {}: {e}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
-    copy(&mut reader, &mut hasher).map_err(|e| {
-        anyhow!("failed to hash {}: {e}", path.display())
-    })?;
+    copy(&mut reader, &mut hasher)
+        .map_err(|e| anyhow!("failed to hash {}: {e}", path.display()))?;
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -207,10 +199,7 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir();
         let path = dir.join("caprust-gpu-plugin-test-empty.bin");
-        fs::File::create(&path)
-            .unwrap()
-            .write_all(b"")
-            .unwrap();
+        fs::File::create(&path).unwrap().write_all(b"").unwrap();
         let hash = sha256_file(&path).unwrap();
         assert_eq!(
             hash,

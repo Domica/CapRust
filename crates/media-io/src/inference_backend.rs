@@ -280,10 +280,7 @@ impl InferenceBackend for ExternalBackend {
         {
             let mut file = std::fs::File::create(input_path)
                 .map_err(|e| anyhow!("failed to open input temp file: {e}"))?;
-            let bytes: Vec<u8> = input
-                .iter()
-                .flat_map(|&f| f.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = input.iter().flat_map(|&f| f.to_le_bytes()).collect();
             file.write_all(&bytes)
                 .map_err(|e| anyhow!("failed to write input temp file: {e}"))?;
         }
@@ -342,9 +339,9 @@ impl ExternalBackendInner {
         self.stdin
             .write_all(cmd.as_bytes())
             .map_err(|e| anyhow!("failed to send command to GPU plugin: {e}"))?;
-        self.stdin.flush().map_err(|e| {
-            anyhow!("failed to flush command to GPU plugin: {e}")
-        })?;
+        self.stdin
+            .flush()
+            .map_err(|e| anyhow!("failed to flush command to GPU plugin: {e}"))?;
         Ok(())
     }
 
@@ -409,9 +406,7 @@ impl OrtBackend {
                 // CPU is the default; no provider needed.
             }
             BackendType::ExternalCuda | BackendType::ExternalDirectML => {
-                return Err(anyhow!(
-                    "OrtBackend does not support external backends"
-                ));
+                return Err(anyhow!("OrtBackend does not support external backends"));
             }
             BackendType::Auto => {
                 unreachable!(

@@ -605,10 +605,7 @@ fn show_models(
             backends.push(("external-cuda", tr("set-ai-backend-external-cuda")));
         }
         if gpu_plugin::directml_binary_path().is_some() {
-            backends.push((
-                "external-directml",
-                tr("set-ai-backend-external-directml"),
-            ));
+            backends.push(("external-directml", tr("set-ai-backend-external-directml")));
         }
         let selected = backends
             .iter()
@@ -1676,7 +1673,12 @@ fn logs_dir() -> std::path::PathBuf {
 /// buttons. The actual download runs in app.rs (this panel cannot
 /// spawn threads), so it reports `gpu_download_requested` and lets
 /// the app layer own the background thread and status transitions.
-fn show_gpu(ui: &mut Ui, _settings: &mut AppSettings, ev: &mut SettingsEvents, status: &SettingsStatus) {
+fn show_gpu(
+    ui: &mut Ui,
+    _settings: &mut AppSettings,
+    ev: &mut SettingsEvents,
+    status: &SettingsStatus,
+) {
     ui.label(egui::RichText::new(tr("set-gpu-heading")).strong());
     ui.add_space(space::XS);
     ui.label(
@@ -1754,26 +1756,23 @@ fn show_gpu_provider_row(
             );
         });
 
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                if installed {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if installed {
+                ui.label(
+                    egui::RichText::new(tr("set-gpu-status-installed"))
+                        .color(egui::Color32::from_rgb(80, 200, 120)),
+                );
+                if let Some(p) = bin_path {
                     ui.label(
-                        egui::RichText::new(tr("set-gpu-status-installed"))
-                            .color(egui::Color32::from_rgb(80, 200, 120)),
+                        egui::RichText::new(p.to_string_lossy().to_string())
+                            .small()
+                            .monospace()
+                            .color(egui::Color32::from_gray(140)),
                     );
-                    if let Some(p) = bin_path {
-                        ui.label(
-                            egui::RichText::new(p.to_string_lossy().to_string())
-                                .small()
-                                .monospace()
-                                .color(egui::Color32::from_gray(140)),
-                        );
-                    }
-                } else if button::primary(ui, tr("set-gpu-download")).clicked() {
-                    ev.gpu_download_requested = Some(provider.to_string());
                 }
-            },
-        );
+            } else if button::primary(ui, tr("set-gpu-download")).clicked() {
+                ev.gpu_download_requested = Some(provider.to_string());
+            }
+        });
     });
 }
