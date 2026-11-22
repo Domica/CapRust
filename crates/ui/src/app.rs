@@ -5714,8 +5714,19 @@ impl CapRustApp {
         self.gfpgan_rx = Some(rx);
         self.gfpgan_cancel = Some(cancel);
         self.gfpgan_clip_id = Some(clip_id);
-        self.toast(tr("toast-face-restore-started"));
-        tracing::info!("gfpgan: started pre-pass for clip {clip_id}");
+        let backend_label = match self.settings.ai_inference_backend.as_str() {
+            "cuda" => "CUDA",
+            "directml" => "DirectML",
+            "external-cuda" => "CUDA (external plugin)",
+            "external-directml" => "DirectML (external plugin)",
+            _ => "Auto (CPU fallback if GPU unavailable)",
+        };
+        self.toast(format!(
+            "{}: {} backend",
+            tr("toast-face-restore-started"),
+            backend_label
+        ));
+        tracing::info!("gfpgan: started pre-pass for clip {clip_id} on {backend_label} backend");
     }
 
     fn drain_gfpgan_job(&mut self) {
