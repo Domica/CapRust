@@ -9,6 +9,7 @@ use crate::widgets::segmented_control;
 use crate::widgets::switch;
 use caprust_core::models::{ModelKind, ModelStatus};
 use caprust_core::{detect_ffmpeg, AppSettings, FfmpegStatus, ModelRegistry};
+use caprust_media_io::gpu_plugin;
 use egui::Ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -22,6 +23,7 @@ pub enum SettingsTab {
     Audio,
     Autosave,
     Translation,
+    Gpu,
     About,
 }
 
@@ -51,6 +53,10 @@ pub struct SettingsEvents {
     /// User clicked "Load theme" at the bottom of Appearance. app.rs
     /// opens a pick dialog and replaces the Theme from JSON.
     pub theme_import_requested: bool,
+    /// GPU plugin provider whose Download button was clicked this frame,
+    /// if any. Value is "cuda" or "directml". app.rs consumes this by
+    /// calling `gpu_plugin::install` in a background thread.
+    pub gpu_download_requested: Option<String>,
     /// Mint a fresh pairing code for the remote-control token.
     pub remote_pair_requested: bool,
     /// Forget the token and kill every live remote session.
@@ -99,6 +105,7 @@ pub fn show(
         import_requested: false,
         theme_export_requested: false,
         theme_import_requested: false,
+        gpu_download_requested: None,
         remote_pair_requested: false,
         remote_revoke_requested: false,
         layout_preset_requested: None,
@@ -114,6 +121,7 @@ pub fn show(
         ui.selectable_value(tab, SettingsTab::Audio, tr("set-tab-audio"));
         ui.selectable_value(tab, SettingsTab::Autosave, tr("set-tab-autosave"));
         ui.selectable_value(tab, SettingsTab::Translation, tr("set-tab-translation"));
+        ui.selectable_value(tab, SettingsTab::Gpu, tr("set-tab-gpu"));
         ui.selectable_value(tab, SettingsTab::About, tr("set-tab-about"));
     });
     ui.separator();
@@ -142,6 +150,7 @@ pub fn show(
             SettingsTab::Audio => show_audio(ui, settings),
             SettingsTab::Autosave => show_autosave(ui, settings, &mut status.autosave_applied),
             SettingsTab::Translation => show_translation(ui, settings),
+            SettingsTab::Gpu => show_gpu(ui, settings, &mut ev),
             SettingsTab::About => show_about(ui, settings),
         });
 
@@ -574,19 +583,30 @@ fn show_models(
     ui.label(egui::RichText::new(tr("set-models-inpainter")).strong());
     outcome.merge(show_model_group(ui, models, ModelKind::Inpainter));
 
-    // AI inference backend (CPU / CUDA / DirectML / Auto)
+    // AI inference backend (CPU / CUDA / DirectML / Auto / External CUDA / External DirectML)
     ui.add_space(space::L);
     ui.separator();
     ui.label(egui::RichText::new(tr("set-ai-backend-heading")).strong());
     ui.add_space(space::XS);
     ui.horizontal(|ui| {
         ui.label(tr("set-ai-backend-label"));
-        let backends = [
+        let mut backends: Vec<(&str, String)> = vec![
             ("auto", tr("set-ai-backend-auto")),
             ("cpu", tr("set-ai-backend-cpu")),
-            ("cuda", tr("set-ai-backend-cuda")),
-            ("directml", tr("set-ai-backend-directml")),
         ];
+        // Built-in GPU backends are always listed (they fall back to CPU if unavailable).
+        backends.push(("cuda", tr("set-ai-backend-cuda")));
+        backends.push(("directml", tr("set-ai-backend-directml")));
+        // External backends only appear when the plugin is actually installed.
+        if gpu_plugin::cuda_binary_path().is_some() {
+            backends.push(("external-cuda", tr("set-ai-backend-external-cuda")));
+        }
+        if gpu_plugin::directml_binary_path().is_some() {
+            backends.push((
+                "external-directml",
+                tr("set-ai-backend-external-directml"),
+            ));
+        }
         let selected = backends
             .iter()
             .position(|(v, _)| *v == settings.ai_inference_backend)
@@ -600,9 +620,13 @@ fn show_models(
         }
     });
     ui.label(
-        egui::RichText::new(tr("set-ai-backend-hint"))
-            .small()
-            .color(egui::Color32::from_gray(140)),
+        egui::RichText::new(if settings.ai_inference_backend.starts_with("external") {
+            tr("set-ai-backend-external-hint")
+        } else {
+            tr("set-ai-backend-hint")
+        })
+        .small()
+        .color(egui::Color32::from_gray(140)),
     );
 
     outcome
@@ -1637,4 +1661,99 @@ fn logs_dir() -> std::path::PathBuf {
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".into());
     std::path::Path::new(&base).join("CapRust").join("logs")
+}
+
+// ---------------------------------------------------------------------------
+// GPU plugin management (Settings -> GPU)
+// ---------------------------------------------------------------------------
+
+/// GPU plugin management panel: Settings -> GPU.
+///
+/// Shows install status for CUDA and DirectML plugins and download
+/// buttons. The actual download runs in app.rs (this panel cannot
+/// spawn threads), so it reports `gpu_download_requested` and lets
+/// the app layer own the background thread and status transitions.
+fn show_gpu(ui: &mut Ui, _settings: &mut AppSettings, ev: &mut SettingsEvents) {
+    ui.label(egui::RichText::new(tr("set-gpu-heading")).strong());
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(tr("set-gpu-hint"))
+            .small()
+            .color(egui::Color32::from_gray(140)),
+    );
+    ui.add_space(space::M);
+
+    // CUDA plugin row
+    let cuda_label = tr("set-gpu-provider-cuda");
+    let cuda_hint = tr("set-gpu-cuda-hint");
+    show_gpu_provider_row(ui, "cuda", &cuda_label, &cuda_hint, ev);
+
+    ui.add_space(space::L);
+
+    // DirectML plugin row
+    let dml_label = tr("set-gpu-provider-directml");
+    let dml_hint = tr("set-gpu-directml-hint");
+    show_gpu_provider_row(ui, "directml", &dml_label, &dml_hint, ev);
+
+    ui.add_space(space::L);
+    ui.separator();
+    ui.label(
+        egui::RichText::new(tr("set-ai-backend-external-hint"))
+            .small()
+            .color(egui::Color32::from_gray(140)),
+    );
+}
+
+/// Renders one GPU provider row: label, hint, status, download button.
+fn show_gpu_provider_row(
+    ui: &mut Ui,
+    provider: &str,
+    label: &str,
+    hint: &str,
+    ev: &mut SettingsEvents,
+) {
+    let installed = match provider {
+        "cuda" => gpu_plugin::cuda_binary_path().is_some(),
+        "directml" => gpu_plugin::directml_binary_path().is_some(),
+        _ => false,
+    };
+
+    let bin_path = match provider {
+        "cuda" => gpu_plugin::cuda_binary_path(),
+        "directml" => gpu_plugin::directml_binary_path(),
+        _ => None,
+    };
+
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(label).strong());
+            ui.label(
+                egui::RichText::new(hint)
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
+        });
+
+        ui.with_layout(
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                if installed {
+                    ui.label(
+                        egui::RichText::new(tr("set-gpu-status-installed"))
+                            .color(egui::Color32::from_rgb(80, 200, 120)),
+                    );
+                    if let Some(p) = bin_path {
+                        ui.label(
+                            egui::RichText::new(p.to_string_lossy().to_string())
+                                .small()
+                                .monospace()
+                                .color(egui::Color32::from_gray(140)),
+                        );
+                    }
+                } else if button::primary(ui, tr("set-gpu-download")).clicked() {
+                    ev.gpu_download_requested = Some(provider.to_string());
+                }
+            },
+        );
+    });
 }

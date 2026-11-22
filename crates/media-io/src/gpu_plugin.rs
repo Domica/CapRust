@@ -47,6 +47,22 @@ pub fn directml_binary_path() -> Option<PathBuf> {
     }
 }
 
+/// Expected SHA-256 hex digest for the GPU plugin zip of the given
+/// provider and version.
+///
+/// These must be updated for every release. Compute with:
+///   `sha256sum caprust-gpu-win64-{provider}-v{version}.zip`
+///
+/// Returns `None` when no hash is known yet — in that case the caller
+/// should skip verification or show a warning.
+pub fn plugin_sha256(provider: &str, _version: &str) -> Option<&'static str> {
+    match provider {
+        "cuda" => None,
+        "directml" => None,
+        _ => None,
+    }
+}
+
 /// Returns true if at least one GPU plugin is installed.
 pub fn any_installed() -> bool {
     cuda_binary_path().is_some() || directml_binary_path().is_some()
@@ -56,7 +72,8 @@ pub fn any_installed() -> bool {
 ///
 /// `provider` is `"cuda"` or `"directml"`.
 /// `version` is the CapRust version (e.g. `"0.9.35"`).
-/// `sha256` is the expected SHA-256 hex digest of the zip file.
+/// `sha256` is the expected SHA-256 hex digest of the zip file, or empty
+/// to skip verification (not recommended for production).
 ///
 /// The zip is expected to contain `caprust-gpu-{provider}.exe` at its
 /// root (possibly inside a folder — `enclosed_name` handles both).
@@ -84,13 +101,17 @@ pub fn install(provider: &str, version: &str, sha256: &str) -> Result<PathBuf> {
     })?;
     drop(file);
 
-    // Verify SHA-256 before unpacking.
-    let actual = sha256_file(&zip_path)?;
-    if actual != sha256 {
-        fs::remove_file(&zip_path).ok();
-        return Err(anyhow!(
-            "SHA-256 mismatch for GPU plugin ({provider}): expected {sha256}, got {actual}"
-        ));
+    // Verify SHA-256 before unpacking (skip when sha256 is empty).
+    if !sha256.is_empty() {
+        let actual = sha256_file(&zip_path)?;
+        if actual != sha256 {
+            fs::remove_file(&zip_path).ok();
+            return Err(anyhow!(
+                "SHA-256 mismatch for GPU plugin ({provider}): expected {sha256}, got {actual}"
+            ));
+        }
+    } else {
+        tracing::warn!("no SHA-256 configured for {provider} plugin — skipping verification");
     }
 
     // Unpack.

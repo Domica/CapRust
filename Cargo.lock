@@ -552,9 +552,11 @@ dependencies = [
 name = "caprust-app"
 version = "0.9.34"
 dependencies = [
+ "caprust-media-io",
  "caprust-ui",
  "eframe",
  "image",
+ "serde_json",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -622,6 +624,7 @@ dependencies = [
  "ringbuf",
  "serde",
  "serde_json",
+ "sha2",
  "tar",
  "tokio",
  "tracing",

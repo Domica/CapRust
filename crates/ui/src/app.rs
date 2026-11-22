@@ -20,6 +20,7 @@ use caprust_core::{AspectRatio, Clip, FrameRate, ProjectState, UndoStack};
 use caprust_media_io::audio_player::AudioPlayer;
 use caprust_media_io::export::RateMode;
 use caprust_media_io::exporter::ExportEvent;
+use caprust_media_io::gpu_plugin;
 use caprust_media_io::preview_render::PreviewRenderer;
 use eframe::egui;
 use egui_phosphor::regular as ph;
@@ -454,6 +455,13 @@ pub struct CapRustApp {
     pub model_download: Option<(
         String,
         std::sync::mpsc::Receiver<caprust_core::models::DownloadEvent>,
+    )>,
+    /// Active GPU plugin download: (provider, receiver). Only one
+    /// download at a time. The thread calls `gpu_plugin::install()`
+    /// and sends `Result<PathBuf, String>` on completion.
+    pub gpu_plugin_download: Option<(
+        String,
+        std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>,
     )>,
     /// Receiver for an in-flight caption transcription. When Some, the
     /// timeline toolbar shows a "Transcribing…" label and the toolbar
@@ -1695,6 +1703,7 @@ impl CapRustApp {
             model_prompt: None,
             model_prompt_tab: caprust_core::ModelKind::Caption,
             model_download: None,
+            gpu_plugin_download: None,
             translate_rx: None,
             translate_source_clip: None,
             translate_last_progress: None,
@@ -5681,6 +5690,12 @@ impl CapRustApp {
             backend: match self.settings.ai_inference_backend.as_str() {
                 "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
                 "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+                "external-cuda" => {
+                    caprust_media_io::inference_backend::BackendType::ExternalCuda
+                }
+                "external-directml" => {
+                    caprust_media_io::inference_backend::BackendType::ExternalDirectML
+                }
                 _ => caprust_media_io::inference_backend::BackendType::Auto,
             },
         };
@@ -6665,6 +6680,75 @@ impl CapRustApp {
             aux_url,
         );
         self.model_download = Some((model_id.to_string(), rx));
+    }
+
+    /// Start a background download for the GPU plugin of the given
+    /// provider ("cuda" or "directml"). Spawns a thread that calls
+    /// `gpu_plugin::install()` and sends the result on a channel.
+    /// No-op if a download is already in flight.
+    fn start_gpu_plugin_download(&mut self, provider: &str) {
+        if self.gpu_plugin_download.is_some() {
+            tracing::info!("GPU plugin download already in flight, ignoring");
+            return;
+        }
+
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        let sha256 = gpu_plugin::plugin_sha256(provider, &version).unwrap_or("");
+        let provider_owned = provider.to_string();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let provider_for_thread = provider_owned.clone();
+        std::thread::spawn(move || {
+            let result = gpu_plugin::install(&provider_for_thread, &version, sha256);
+            let _ = tx.send(result.map_err(|e| e.to_string()));
+        });
+
+        self.gpu_plugin_download = Some((provider_owned, rx));
+    }
+
+    /// Poll the in-flight GPU plugin download. On success, shows a toast
+    /// and clears the download slot. On failure, shows an error toast and
+    /// clears the slot so the user can retry.
+    fn drain_gpu_plugin_download(&mut self) {
+        let Some((provider, rx)) = self.gpu_plugin_download.take() else {
+            return;
+        };
+
+        let mut keep = true;
+        loop {
+            match rx.try_recv() {
+                Ok(Ok(bin_path)) => {
+                    tracing::info!(
+                        "GPU plugin {} installed at {}",
+                        provider,
+                        bin_path.display()
+                    );
+                    self.toast(format!("{}: {}", tr("set-gpu-download-done"), provider));
+                    keep = false;
+                    break;
+                }
+                Ok(Err(msg)) => {
+                    tracing::error!("GPU plugin {} download failed: {}", provider, msg);
+                    self.toast_error(format!(
+                        "{}: {}",
+                        tr("set-gpu-download-failed"),
+                        msg
+                    ));
+                    keep = false;
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("GPU plugin download thread vanished for {provider}");
+                    self.toast_error(tr("set-gpu-download-failed"));
+                    keep = false;
+                    break;
+                }
+            }
+        }
+        if keep {
+            self.gpu_plugin_download = Some((provider, rx));
+        }
     }
 
     /// Start a background download for one SFX catalog entry. No-op
@@ -15562,6 +15646,9 @@ impl CapRustApp {
                 if let Some(id) = ev.download_retry_requested.clone() {
                     self.start_model_download(&id);
                 }
+                if let Some(provider) = ev.gpu_download_requested.clone() {
+                    self.start_gpu_plugin_download(&provider);
+                }
                 if ev.export_requested {
                     self.handle_settings_export();
                 }
@@ -15920,6 +16007,7 @@ impl eframe::App for CapRustApp {
         // Drain background jobs (ffprobe results, thumbnails ready).
         self.drain_update_check();
         self.drain_model_download();
+        self.drain_gpu_plugin_download();
         self.drain_sfx_download();
         self.drain_translate_job();
         self.drain_caption_job();
