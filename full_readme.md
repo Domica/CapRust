@@ -13,7 +13,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 [![CI](https://github.com/Domica/CapRust/actions/workflows/ci.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/ci.yml)
 [![Nightly](https://github.com/Domica/CapRust/actions/workflows/nightly.yml/badge.svg)](https://github.com/Domica/CapRust/actions/workflows/nightly.yml)
 [![Downloads](https://img.shields.io/github/downloads-pre/Domica/CapRust/total?label=downloads&color=blue)](https://github.com/Domica/CapRust/releases)
-[![Version](https://img.shields.io/badge/version-0.9.34-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.35-blue.svg)](CHANGELOG.md)
 [![Website](https://img.shields.io/badge/website-caprust-4ade80)](https://domica.github.io/CapRust/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org/)
@@ -27,7 +27,7 @@ This is the full readme. For the short overview, see [README.md](README.md).
 **Windows 10 / 11, 64-bit.** Grab the latest installer from the
 [Releases page](https://github.com/Domica/CapRust/releases/latest):
 
-1. Run `CapRust-0.9.34-win64-setup.exe`.
+1. Run `CapRust-0.9.35-win64-setup.exe`.
 2. The wizard installs per-user by default (no UAC prompt). Pick
    "Install for all users" if you prefer Program Files.
 3. Launch CapRust from the Start Menu.
@@ -417,7 +417,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full per-release notes.
 
 | Version | Date | Highlights |
 |---|---|---|
-| **0.9.34** | 2026-11-21 | Real GFPGAN v1.4 face restoration: SCRFD landmark detection, 512x512 face alignment, ONNX inference and feathered paste-back; per-clip FFV1 cache used in preview and export; corrected GFPGAN tensor normalization and BGR output order |
+| **0.9.35** | 2026-11-22 | MobileSAM and LaMa ported to `InferenceSession` with CUDA/DirectML GPU backends; three Windows variants (standard/cuda/directml); backend toasts + Properties panel display; CI `--target-dir` fix so GPU variants actually include GPU support |
 | **0.9.33** | 2026-11-21 | Slide (scrub) tool + ruler drag-to-seek; Face Restore fallback (smartblur + hqdn3d) now actually applies — full GFPGAN ONNX restore still in implementation; corrected GFPGAN model URL + SHA-256 so the model downloads |
 | **0.9.32** | 2026-11-20 | Bug fixes: downloaded file no longer vanishes on SHA-256 mismatch (.part kept for inspection, error toast reports actual vs expected hash); stranded Downloading status self-heals on restart when neither .onnx nor .part exists; Cancel/Retry buttons in Settings → AI Models |
 | **0.9.31** | 2026-11-20 | GFPGAN face restore/enhance (new `gfpgan-v1.4` model), export cancel button, model download progress in jobs bar, six new visual effects (halftone, solarize, emboss, gfpgan, ai_enhance, sticker float/pulse), cargo fmt CI fix |

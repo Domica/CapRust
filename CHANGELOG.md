@@ -4,6 +4,16 @@ All notable changes to CapRust. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.9.35] - 2026-11-22
+
+### Added
+- MobileSAM (object removal) and LaMa (inpainting) ported to the unified `InferenceSession` abstraction with opt-in CUDA and DirectML GPU backends.
+- Three Windows variants released: **standard** (CPU, ~27 MB), **CUDA** (NVIDIA, ~50 MB), and **DirectML** (AMD, ~50 MB) — each a separate portable EXE, Inno Setup installer, and ZIP.
+- Segment/inpaint backend toasts and Properties panel display showing the active inference backend (CPU / CUDA / DirectML / external variants / Auto).
+
+### Fixed
+- CI nightly/release builds produced three identical CPU-only EXEs because all variants shared one `target/` dir. Each variant now builds into its own `--target-dir`, so CUDA/DirectML variants actually include GPU execution providers.
+
 ## [0.9.34] - 2026-11-21
 
 ### Added
