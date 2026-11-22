@@ -276,6 +276,10 @@ pub struct CapRustApp {
     pub playhead_ms: u64,
     pub timeline_zoom: f32,
     pub settings_tab: crate::panels::settings_dialog::SettingsTab,
+    /// GPU backend auto-detected at startup (CUDA / DirectML / CPU).
+    /// `None` until the first update tick runs detection so app startup
+    /// isn't blocked by ort initialization.
+    pub detected_gpu_backend: Option<caprust_media_io::inference_backend::BackendType>,
     /// First-run FFmpeg prompt state. Opened on startup when no
     /// ffmpeg/ffprobe is on PATH and not previously dismissed. See
     /// `show_ffmpeg_prompt_window`.
@@ -1644,6 +1648,7 @@ impl CapRustApp {
             playhead_ms: 0,
             timeline_zoom: 1.0,
             settings_tab: Default::default(),
+            detected_gpu_backend: Some(caprust_media_io::inference_backend::BackendType::auto_detect()),
             ffmpeg_prompt: Default::default(),
             ffmpeg_prompt_open: false,
             ffmpeg_prompt_checked: false,
@@ -15613,6 +15618,9 @@ impl CapRustApp {
             .min_height(700.0)
             .default_pos(ctx.screen_rect().center())
             .show(ctx, |ui| {
+                // Publish auto-detected GPU backend so the settings panel
+                // can show detected hardware info.
+                self.settings_status.detected_gpu_backend = self.detected_gpu_backend;
                 let ev = crate::panels::settings_dialog::show(
                     ui,
                     &mut self.theme,

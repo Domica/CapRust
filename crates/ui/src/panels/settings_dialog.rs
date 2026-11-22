@@ -84,6 +84,9 @@ pub struct SettingsStatus {
     /// Live remote-control pairing code. `None` when none has been
     /// issued or the one that was has expired.
     pub remote_pair_code: Option<String>,
+    /// GPU backend auto-detected at app startup. `None` until detection
+    /// completes, then `Some(Cuda / DirectML / Cpu)`.
+    pub detected_gpu_backend: Option<caprust_media_io::inference_backend::BackendType>,
 }
 
 pub fn show(
@@ -150,7 +153,7 @@ pub fn show(
             SettingsTab::Audio => show_audio(ui, settings),
             SettingsTab::Autosave => show_autosave(ui, settings, &mut status.autosave_applied),
             SettingsTab::Translation => show_translation(ui, settings),
-            SettingsTab::Gpu => show_gpu(ui, settings, &mut ev),
+            SettingsTab::Gpu => show_gpu(ui, settings, &mut ev, status),
             SettingsTab::About => show_about(ui, settings),
         });
 
@@ -1673,7 +1676,7 @@ fn logs_dir() -> std::path::PathBuf {
 /// buttons. The actual download runs in app.rs (this panel cannot
 /// spawn threads), so it reports `gpu_download_requested` and lets
 /// the app layer own the background thread and status transitions.
-fn show_gpu(ui: &mut Ui, _settings: &mut AppSettings, ev: &mut SettingsEvents) {
+fn show_gpu(ui: &mut Ui, _settings: &mut AppSettings, ev: &mut SettingsEvents, status: &SettingsStatus) {
     ui.label(egui::RichText::new(tr("set-gpu-heading")).strong());
     ui.add_space(space::XS);
     ui.label(
@@ -1682,6 +1685,23 @@ fn show_gpu(ui: &mut Ui, _settings: &mut AppSettings, ev: &mut SettingsEvents) {
             .color(egui::Color32::from_gray(140)),
     );
     ui.add_space(space::M);
+
+    // Detected hardware info
+    if let Some(backend) = status.detected_gpu_backend {
+        let detected_label = match backend {
+            caprust_media_io::inference_backend::BackendType::Cuda => tr("set-gpu-detected-cuda"),
+            caprust_media_io::inference_backend::BackendType::DirectML => {
+                tr("set-gpu-detected-directml")
+            }
+            caprust_media_io::inference_backend::BackendType::Cpu => tr("set-gpu-detected-cpu"),
+            _ => tr("set-gpu-detected-unknown"),
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr("set-gpu-detected")).strong());
+            ui.label(egui::RichText::new(detected_label).monospace());
+        });
+        ui.add_space(space::M);
+    }
 
     // CUDA plugin row
     let cuda_label = tr("set-gpu-provider-cuda");
