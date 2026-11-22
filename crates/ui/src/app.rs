@@ -6773,36 +6773,27 @@ impl CapRustApp {
             return;
         };
 
-        let mut keep = true;
-        loop {
-            match rx.try_recv() {
-                Ok(Ok(bin_path)) => {
-                    tracing::info!(
-                        "GPU plugin {} installed at {}",
-                        provider,
-                        bin_path.display()
-                    );
-                    self.toast(format!("{}: {}", tr("set-gpu-download-done"), provider));
-                    keep = false;
-                    break;
-                }
-                Ok(Err(msg)) => {
-                    tracing::error!("GPU plugin {} download failed: {}", provider, msg);
-                    self.toast_error(format!("{}: {}", tr("set-gpu-download-failed"), msg));
-                    keep = false;
-                    break;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    tracing::warn!("GPU plugin download thread vanished for {provider}");
-                    self.toast_error(tr("set-gpu-download-failed"));
-                    keep = false;
-                    break;
-                }
+        match rx.try_recv() {
+            Ok(Ok(bin_path)) => {
+                tracing::info!(
+                    "GPU plugin {} installed at {}",
+                    provider,
+                    bin_path.display()
+                );
+                self.toast(format!("{}: {}", tr("set-gpu-download-done"), provider));
             }
-        }
-        if keep {
-            self.gpu_plugin_download = Some((provider, rx));
+            Ok(Err(msg)) => {
+                tracing::error!("GPU plugin {} download failed: {}", provider, msg);
+                self.toast_error(format!("{}: {}", tr("set-gpu-download-failed"), msg));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Still in flight — put it back so it can complete next tick.
+                self.gpu_plugin_download = Some((provider, rx));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::warn!("GPU plugin download thread vanished for {provider}");
+                self.toast_error(tr("set-gpu-download-failed"));
+            }
         }
     }
 

@@ -35,7 +35,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path installer\staging | Out-Null
           foreach ($var in $variants) {
             Write-Host "=== Building $($var.name) ==="
-            cargo build --release -p caprust-app $($var.features)
+            cargo build --release -p caprust-app ($var.features -split ' ')
             Copy-Item "target\release\caprust-app.exe" "installer\staging\$($var.exeName)" -Force
             # Build the installer for this variant
             $iscc = @(
@@ -94,7 +94,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path gpu-staging | Out-Null
           foreach ($var in $variants) {
             Write-Host "=== Building GPU plugin $($var.name) ==="
-            cargo build --release -p caprust-app $($var.features)
+            cargo build --release -p caprust-app ($var.features -split ' ')
             Copy-Item "target\release\caprust-app.exe" "gpu-staging\$($var.exeName)" -Force
             Compress-Archive -Path "gpu-staging\$($var.exeName)" -DestinationPath "gpu-staging\caprust-gpu-$($var.name).zip" -CompressionLevel Optimal
             Get-Item "gpu-staging\caprust-gpu-$($var.name).zip" | ForEach-Object {
