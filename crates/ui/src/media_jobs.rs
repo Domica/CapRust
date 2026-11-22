@@ -1043,7 +1043,10 @@ fn run_reframe_job(
 #[derive(Debug)]
 pub enum BgRemovalEvent {
     /// Emitted after probe + extraction, before the per-frame loop.
-    Started { total_frames: usize, backend: BackendType },
+    Started {
+        total_frames: usize,
+        backend: BackendType,
+    },
     /// Emitted every N frames (see PROGRESS_STRIDE) so the UI does not
     /// repaint on every single frame.
     Progress { done: usize, total: usize },
@@ -1250,7 +1253,10 @@ fn run_bg_removal_inner(
 #[derive(Debug)]
 pub enum SegmentEvent {
     /// Emitted after probe + extraction, before the per-frame loop.
-    Started { total_frames: usize, backend: BackendType },
+    Started {
+        total_frames: usize,
+        backend: BackendType,
+    },
     /// Emitted every N frames (see PROGRESS_STRIDE).
     Progress { done: usize, total: usize },
     /// Terminal success. `mask_path` is the FFV1 MKV on disk.
@@ -1454,7 +1460,10 @@ fn run_segment_inner(
 #[derive(Debug)]
 pub enum InpaintEvent {
     /// Emitted after probe + extraction, before the per-frame loop.
-    Started { total_frames: usize, backend: BackendType },
+    Started {
+        total_frames: usize,
+        backend: BackendType,
+    },
     /// Emitted every N frames (see PROGRESS_STRIDE).
     Progress { done: usize, total: usize },
     /// Terminal success. `output_path` is the inpainted video on disk.

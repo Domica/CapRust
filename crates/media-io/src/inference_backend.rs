@@ -143,11 +143,10 @@ pub trait InferenceBackend: Send + Sync {
     /// (e.g. LaMa: image + mask; MobileSAM decoder: embedding + points).
     /// Default implementation returns an error — single-input backends
     /// (tract-onnx) don't support this.
-    fn run_multi(
-        &self,
-        _inputs: &[(&str, &[f32], &[i64])],
-    ) -> Result<Vec<Vec<f32>>> {
-        Err(anyhow!("multi-input inference not supported by this backend"))
+    fn run_multi(&self, _inputs: &[(&str, &[f32], &[i64])]) -> Result<Vec<Vec<f32>>> {
+        Err(anyhow!(
+            "multi-input inference not supported by this backend"
+        ))
     }
 
     /// Convenience: return only the first output as a flat `Vec<f32>`.
@@ -214,10 +213,7 @@ impl InferenceBackend for TractBackend {
         Ok(result)
     }
 
-    fn run_multi(
-        &self,
-        inputs: &[(&str, &[f32], &[i64])],
-    ) -> Result<Vec<Vec<f32>>> {
+    fn run_multi(&self, inputs: &[(&str, &[f32], &[i64])]) -> Result<Vec<Vec<f32>>> {
         let _ = inputs[0].0; // names are ignored by tract (positional inputs)
         let tensors: Result<Vec<Tensor>, anyhow::Error> = inputs
             .iter()
@@ -298,10 +294,7 @@ impl InferenceBackend for TractInferenceBackend {
         Ok(result)
     }
 
-    fn run_multi(
-        &self,
-        inputs: &[(&str, &[f32], &[i64])],
-    ) -> Result<Vec<Vec<f32>>> {
+    fn run_multi(&self, inputs: &[(&str, &[f32], &[i64])]) -> Result<Vec<Vec<f32>>> {
         let _ = inputs[0].0; // names are ignored by tract (positional inputs)
         let tensors: Result<Vec<Tensor>, anyhow::Error> = inputs
             .iter()
@@ -657,10 +650,7 @@ impl InferenceBackend for OrtBackend {
         Ok(result)
     }
 
-    fn run_multi(
-        &self,
-        inputs: &[(&str, &[f32], &[i64])],
-    ) -> Result<Vec<Vec<f32>>> {
+    fn run_multi(&self, inputs: &[(&str, &[f32], &[i64])]) -> Result<Vec<Vec<f32>>> {
         let mut session = self
             .session
             .lock()
@@ -825,10 +815,7 @@ impl InferenceSession {
     /// its own shape slice. Returns all outputs as flat `Vec<f32>` slices.
     /// Falls back to the single-input `run` when there's only one input
     /// and the backend is tract-onnx (which doesn't support `run_multi`).
-    pub fn run_multi(
-        &self,
-        inputs: &[(&str, &[f32], &[i64])],
-    ) -> Result<Vec<Vec<f32>>> {
+    pub fn run_multi(&self, inputs: &[(&str, &[f32], &[i64])]) -> Result<Vec<Vec<f32>>> {
         if inputs.len() == 1 {
             let (name, data, shape) = &inputs[0];
             let _ = name;

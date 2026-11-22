@@ -71,13 +71,23 @@ impl MobileSam {
 
         let encoder = InferenceSession::load(
             encoder_path,
-            [1, 3, MOBILE_SAM_INPUT_SIZE as i64, MOBILE_SAM_INPUT_SIZE as i64],
+            [
+                1,
+                3,
+                MOBILE_SAM_INPUT_SIZE as i64,
+                MOBILE_SAM_INPUT_SIZE as i64,
+            ],
             "MobileSAM encoder",
             backend,
         )?;
         let decoder = InferenceSession::load(
             decoder_path,
-            [1, MOBILE_SAM_EMBED_DIM as i64, MOBILE_SAM_EMBED_HW as i64, MOBILE_SAM_EMBED_HW as i64],
+            [
+                1,
+                MOBILE_SAM_EMBED_DIM as i64,
+                MOBILE_SAM_EMBED_HW as i64,
+                MOBILE_SAM_EMBED_HW as i64,
+            ],
             "MobileSAM decoder",
             backend,
         )?;
@@ -121,8 +131,7 @@ impl MobileSam {
         let image_embedding = self.encode_image(rgb, width, height)?;
 
         // 2. Prepare point prompt
-        let (point_coords, point_labels) =
-            self.prepare_point_prompt(point_x, point_y)?;
+        let (point_coords, point_labels) = self.prepare_point_prompt(point_x, point_y)?;
 
         // 3. Decode mask
         let mask_logits = self.decode_mask(&image_embedding, &point_coords, &point_labels)?;
@@ -140,12 +149,7 @@ impl MobileSam {
     }
 
     /// Run image encoder on RGB input. Returns the flat image embedding.
-    fn encode_image(
-        &self,
-        rgb: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<f32>> {
+    fn encode_image(&self, rgb: &[u8], width: u32, height: u32) -> Result<Vec<f32>> {
         let input_arr = self.preprocess_image(rgb, width, height)?;
         let flat: Vec<f32> = input_arr.iter().copied().collect();
         let outputs = self.encoder.run(&flat)?;
@@ -156,11 +160,7 @@ impl MobileSam {
     }
 
     /// Prepare point prompt for decoder.
-    fn prepare_point_prompt(
-        &self,
-        point_x: f32,
-        point_y: f32,
-    ) -> Result<(Vec<f32>, Vec<f32>)> {
+    fn prepare_point_prompt(&self, point_x: f32, point_y: f32) -> Result<(Vec<f32>, Vec<f32>)> {
         // MobileSAM expects point coordinates in 1024x1024 input space
         let x = point_x * MOBILE_SAM_INPUT_SIZE as f32;
         let y = point_y * MOBILE_SAM_INPUT_SIZE as f32;

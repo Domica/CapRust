@@ -112,12 +112,7 @@ impl BackgroundRemover {
     }
 
     /// Resize + normalize into a (1, 3, 320, 320) CHW tensor.
-    fn preprocess(
-        &self,
-        rgb: &[u8],
-        width: u32,
-        height: u32,
-    ) -> tract_ndarray::Array4<f32> {
+    fn preprocess(&self, rgb: &[u8], width: u32, height: u32) -> tract_ndarray::Array4<f32> {
         let mut arr =
             tract_ndarray::Array4::<f32>::zeros((1, 3, INPUT_SIZE as usize, INPUT_SIZE as usize));
 

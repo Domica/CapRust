@@ -5339,38 +5339,38 @@ impl CapRustApp {
         let mut still_live = true;
         loop {
             match rx.try_recv() {
-        Ok(crate::media_jobs::SegmentEvent::Started {
-            total_frames,
-            backend,
-        }) => {
-            let backend_label = match backend {
-                caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
-                caprust_media_io::inference_backend::BackendType::DirectML => "DirectML",
-                caprust_media_io::inference_backend::BackendType::ExternalCuda => {
-                    "CUDA (external)"
+                Ok(crate::media_jobs::SegmentEvent::Started {
+                    total_frames,
+                    backend,
+                }) => {
+                    let backend_label = match backend {
+                        caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
+                        caprust_media_io::inference_backend::BackendType::DirectML => "DirectML",
+                        caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                            "CUDA (external)"
+                        }
+                        caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                            "DirectML (external)"
+                        }
+                        _ => "CPU",
+                    };
+                    tracing::info!(
+                        "segment: started, {total_frames} frames on {backend_label} backend"
+                    );
+                    self.segment_active_backend = Some(backend);
+                    self.properties.segment_active_backend = Some(backend);
+                    self.toast(format!(
+                        "{}: {} backend",
+                        tr("toast-object-removal-mask-ready"),
+                        backend_label
+                    ));
+                    if let Some(id) = self.segment_job_id {
+                        // Stay indeterminate until the first Progress
+                        // event: in debug builds frame 1/N can take
+                        // minutes, and a 0 percent bar reads as stuck.
+                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+                    }
                 }
-                caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
-                    "DirectML (external)"
-                }
-                _ => "CPU",
-            };
-            tracing::info!(
-                "segment: started, {total_frames} frames on {backend_label} backend"
-            );
-            self.segment_active_backend = Some(backend);
-            self.properties.segment_active_backend = Some(backend);
-            self.toast(format!(
-                "{}: {} backend",
-                tr("toast-object-removal-mask-ready"),
-                backend_label
-            ));
-            if let Some(id) = self.segment_job_id {
-                // Stay indeterminate until the first Progress
-                // event: in debug builds frame 1/N can take
-                // minutes, and a 0 percent bar reads as stuck.
-                self.update_job_progress(id, BackgroundJob::INDETERMINATE);
-            }
-        }
                 Ok(crate::media_jobs::SegmentEvent::Progress { done, total }) => {
                     let p = if total == 0 {
                         0.0
