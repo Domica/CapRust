@@ -63,8 +63,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           foreach ($var in $variants) {
             Write-Host "=== Building $($var.name) ==="
-            cargo build --release -p caprust-app $($var.features)
-            Copy-Item "target\release\caprust-app.exe" "installer\staging\$($var.exeName)" -Force
+            # Use a variant-specific target dir so cargo doesn't reuse
+            # artifacts from a previous variant's build (which would
+            # produce identical CPU-only EXEs for all three).
+            $targetDir = "target\release-$($var.name)"
+            cargo build --release -p caprust-app --target-dir $targetDir ($var.features -split ' ')
+            Copy-Item "$targetDir\release\caprust-app.exe" "installer\staging\$($var.exeName)" -Force
             # Build the installer for this variant
             $iscc = @(
               "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
