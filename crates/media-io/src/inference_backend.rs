@@ -408,6 +408,11 @@ impl OrtBackend {
             BackendType::Cpu => {
                 // CPU is the default; no provider needed.
             }
+            BackendType::ExternalCuda | BackendType::ExternalDirectML => {
+                return Err(anyhow!(
+                    "OrtBackend does not support external backends"
+                ));
+            }
             BackendType::Auto => {
                 unreachable!(
                     "Auto is resolved to a concrete backend before OrtBackend::load is called"

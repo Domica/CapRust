@@ -10,11 +10,20 @@ path = "src/main.rs"
 
 [dependencies]
 caprust-ui = { path = "../ui" }
+caprust-media-io = { path = "../media-io" }
 eframe = { workspace = true }
 image = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
+
+[features]
+# GPU acceleration features propagate to caprust-media-io (which has
+# ort/cuda and ort/directml). Enabling either on caprust-app builds
+# the --gpu-plugin mode into the binary.
+gpu-cuda = ["caprust-media-io/gpu-cuda"]
+gpu-directml = ["caprust-media-io/gpu-directml"]
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
