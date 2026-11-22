@@ -563,6 +563,16 @@ pub struct CapRustApp {
     /// job (after Auto resolution and any CPU fallback). Used to show
     /// diagnostics in Properties panel.
     pub gfpgan_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
+    /// The inference backend actually in use for the current background-removal
+    /// job (after Auto resolution and any CPU fallback). Used to show
+    /// diagnostics in Properties panel.
+    pub bg_removal_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
+    /// The inference backend actually in use for the current object
+    /// segmentation (MobileSAM) job.
+    pub segment_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
+    /// The inference backend actually in use for the current inpainting
+    /// (LaMa) job.
+    pub inpaint_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -1749,6 +1759,9 @@ impl CapRustApp {
             gfpgan_cancel: None,
             gfpgan_clip_id: None,
             gfpgan_active_backend: None,
+            bg_removal_active_backend: None,
+            segment_active_backend: None,
+            inpaint_active_backend: None,
             inpaint_job_id: None,
             inpaint_cancel: None,
             inpaint_clip_id: None,
@@ -4344,6 +4357,16 @@ impl CapRustApp {
             }
         };
 
+        let backend = match self.settings.ai_inference_backend.as_str() {
+            "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
+            "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+            "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
+            "external-directml" => {
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML
+            }
+            _ => caprust_media_io::inference_backend::BackendType::Auto,
+        };
+
         let req = crate::media_jobs::ReframeRequest {
             clip_id,
             source_path,
@@ -4354,6 +4377,7 @@ impl CapRustApp {
             model_is_scrfd,
             sample_fps: 4.0,
             max_side: 480,
+            backend,
         };
         let rx = crate::media_jobs::spawn_reframe_job(
             std::path::PathBuf::from(ffmpeg),
@@ -4381,12 +4405,32 @@ impl CapRustApp {
         let mut still_live = true;
         loop {
             match rx.try_recv() {
-                Ok(crate::media_jobs::BgRemovalEvent::Started { total_frames }) => {
-                    tracing::info!("bg-removal: started, {total_frames} frames to process");
+                Ok(crate::media_jobs::BgRemovalEvent::Started {
+                    total_frames,
+                    backend,
+                }) => {
+                    let backend_label = match backend {
+                        caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
+                        caprust_media_io::inference_backend::BackendType::DirectML => "DirectML",
+                        caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                            "CUDA (external)"
+                        }
+                        caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                            "DirectML (external)"
+                        }
+                        _ => "CPU",
+                    };
+                    tracing::info!(
+                        "bg-removal: started, {total_frames} frames on {backend_label} backend"
+                    );
+                    self.bg_removal_active_backend = Some(backend);
+                    self.properties.bg_removal_active_backend = Some(backend);
+                    self.toast(format!(
+                        "{}: {} backend",
+                        tr("toast-bg-removal-started"),
+                        backend_label
+                    ));
                     if let Some(id) = self.bg_removal_job_id {
-                        // Stay indeterminate until the first Progress
-                        // event: in debug builds frame 1/N can take
-                        // minutes, and a 0 percent bar reads as stuck.
                         self.update_job_progress(id, BackgroundJob::INDETERMINATE);
                     }
                 }
@@ -4443,6 +4487,8 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.bg_removal_cancel = None;
+                    self.bg_removal_active_backend = None;
+                    self.properties.bg_removal_active_backend = None;
                     still_live = false;
                 }
                 Ok(crate::media_jobs::BgRemovalEvent::Failed(msg)) => {
@@ -4453,6 +4499,8 @@ impl CapRustApp {
                     }
                     self.bg_removal_rel_path = None;
                     self.bg_removal_cancel = None;
+                    self.bg_removal_active_backend = None;
+                    self.properties.bg_removal_active_backend = None;
                     still_live = false;
                 }
                 Ok(crate::media_jobs::BgRemovalEvent::Cancelled { clip_id }) => {
@@ -4463,6 +4511,8 @@ impl CapRustApp {
                     }
                     self.bg_removal_rel_path = None;
                     self.bg_removal_cancel = None;
+                    self.bg_removal_active_backend = None;
+                    self.properties.bg_removal_active_backend = None;
                     still_live = false;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -4472,6 +4522,9 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.bg_removal_rel_path = None;
+                    self.bg_removal_cancel = None;
+                    self.bg_removal_active_backend = None;
+                    self.properties.bg_removal_active_backend = None;
                     still_live = false;
                     break;
                 }
@@ -4668,6 +4721,15 @@ impl CapRustApp {
         let rel = format!("cache/masks/{clip_id}.mkv");
         let abs = caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
 
+        let backend = match self.settings.ai_inference_backend.as_str() {
+            "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
+            "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+            "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
+            "external-directml" => {
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML
+            }
+            _ => caprust_media_io::inference_backend::BackendType::Auto,
+        };
         let cancel = crate::media_jobs::CancellationToken::new();
         let req = crate::media_jobs::BgRemovalRequest {
             clip_id,
@@ -4678,6 +4740,7 @@ impl CapRustApp {
             model_path,
             mask_output: abs,
             max_side: 480,
+            backend,
             cancel: cancel.clone(),
         };
         let rx = crate::media_jobs::spawn_bg_removal_job(
@@ -4852,6 +4915,16 @@ impl CapRustApp {
             }
         };
 
+        let backend = match self.settings.ai_inference_backend.as_str() {
+            "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
+            "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+            "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
+            "external-directml" => {
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML
+            }
+            _ => caprust_media_io::inference_backend::BackendType::Auto,
+        };
+
         // Mask output path
         let mask_output =
             caprust_core::cache::mask_path(std::path::Path::new(&project_path), clip_id);
@@ -4873,6 +4946,7 @@ impl CapRustApp {
             click_x: 0.5, // Will be updated from preview click
             click_y: 0.5,
             max_side: 480,
+            backend,
             cancel: segment_cancel.clone(),
         };
         let segment_rx = crate::media_jobs::spawn_segment_job(
@@ -4893,6 +4967,7 @@ impl CapRustApp {
             mask_path: mask_output,
             output_path: inpaint_output,
             max_side: 512,
+            backend,
             cancel: inpaint_cancel.clone(),
         };
         let inpaint_rx = crate::media_jobs::spawn_inpaint_job(
@@ -5021,6 +5096,15 @@ impl CapRustApp {
         let abs = caprust_core::cache::anon_path(std::path::Path::new(&project_path), clip_id);
 
         let cancel = crate::media_jobs::CancellationToken::new();
+        let backend = match self.settings.ai_inference_backend.as_str() {
+            "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
+            "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+            "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
+            "external-directml" => {
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML
+            }
+            _ => caprust_media_io::inference_backend::BackendType::Auto,
+        };
         let req = crate::media_jobs::AnonRequest {
             clip_id,
             source_path,
@@ -5031,6 +5115,7 @@ impl CapRustApp {
             use_scrfd,
             mask_output: abs,
             max_side: 480,
+            backend,
             cancel: cancel.clone(),
         };
         let rx = crate::media_jobs::spawn_anon_job(
@@ -5254,15 +5339,38 @@ impl CapRustApp {
         let mut still_live = true;
         loop {
             match rx.try_recv() {
-                Ok(crate::media_jobs::SegmentEvent::Started { total_frames }) => {
-                    tracing::info!("segment: started, {total_frames} frames to process");
-                    if let Some(id) = self.segment_job_id {
-                        // Stay indeterminate until the first Progress
-                        // event: in debug builds frame 1/N can take
-                        // minutes, and a 0 percent bar reads as stuck.
-                        self.update_job_progress(id, BackgroundJob::INDETERMINATE);
-                    }
+        Ok(crate::media_jobs::SegmentEvent::Started {
+            total_frames,
+            backend,
+        }) => {
+            let backend_label = match backend {
+                caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
+                caprust_media_io::inference_backend::BackendType::DirectML => "DirectML",
+                caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                    "CUDA (external)"
                 }
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                    "DirectML (external)"
+                }
+                _ => "CPU",
+            };
+            tracing::info!(
+                "segment: started, {total_frames} frames on {backend_label} backend"
+            );
+            self.segment_active_backend = Some(backend);
+            self.properties.segment_active_backend = Some(backend);
+            self.toast(format!(
+                "{}: {} backend",
+                tr("toast-object-removal-mask-ready"),
+                backend_label
+            ));
+            if let Some(id) = self.segment_job_id {
+                // Stay indeterminate until the first Progress
+                // event: in debug builds frame 1/N can take
+                // minutes, and a 0 percent bar reads as stuck.
+                self.update_job_progress(id, BackgroundJob::INDETERMINATE);
+            }
+        }
                 Ok(crate::media_jobs::SegmentEvent::Progress { done, total }) => {
                     let p = if total == 0 {
                         0.0
@@ -5340,6 +5448,8 @@ impl CapRustApp {
                     if let Some(id) = self.segment_job_id.take() {
                         self.finish_job(id);
                     }
+                    self.segment_active_backend = None;
+                    self.properties.segment_active_backend = None;
                     self.segment_cancel = None;
                     still_live = false;
                 }
@@ -5351,6 +5461,8 @@ impl CapRustApp {
                     }
                     self.segment_job_clip_id = None;
                     self.segment_job_click = None;
+                    self.segment_active_backend = None;
+                    self.properties.segment_active_backend = None;
                     self.segment_cancel = None;
                     still_live = false;
                 }
@@ -5362,6 +5474,8 @@ impl CapRustApp {
                     }
                     self.segment_job_clip_id = None;
                     self.segment_job_click = None;
+                    self.segment_active_backend = None;
+                    self.properties.segment_active_backend = None;
                     self.segment_cancel = None;
                     still_live = false;
                 }
@@ -5462,6 +5576,16 @@ impl CapRustApp {
             }
         };
 
+        let backend = match self.settings.ai_inference_backend.as_str() {
+            "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
+            "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+            "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
+            "external-directml" => {
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML
+            }
+            _ => caprust_media_io::inference_backend::BackendType::Auto,
+        };
+
         // Output path for inpainted video
         let output_path =
             caprust_core::cache::inpaint_path(std::path::Path::new(&project_path), clip_id);
@@ -5477,6 +5601,7 @@ impl CapRustApp {
             mask_path,
             output_path,
             max_side: 512, // LaMa runs at 512x512 internally
+            backend,
             cancel: cancel.clone(),
         };
         let rx = crate::media_jobs::spawn_inpaint_job(
@@ -5502,8 +5627,31 @@ impl CapRustApp {
         let mut still_live = true;
         loop {
             match rx.try_recv() {
-                Ok(crate::media_jobs::InpaintEvent::Started { total_frames }) => {
-                    tracing::info!("inpaint: started, {total_frames} frames to process");
+                Ok(crate::media_jobs::InpaintEvent::Started {
+                    total_frames,
+                    backend,
+                }) => {
+                    let backend_label = match backend {
+                        caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
+                        caprust_media_io::inference_backend::BackendType::DirectML => "DirectML",
+                        caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                            "CUDA (external)"
+                        }
+                        caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                            "DirectML (external)"
+                        }
+                        _ => "CPU",
+                    };
+                    tracing::info!(
+                        "inpaint: started, {total_frames} frames on {backend_label} backend"
+                    );
+                    self.inpaint_active_backend = Some(backend);
+                    self.properties.inpaint_active_backend = Some(backend);
+                    self.toast(format!(
+                        "{}: {} backend",
+                        tr("toast-inpaint-started"),
+                        backend_label
+                    ));
                     if let Some(id) = self.inpaint_job_id {
                         self.update_job_progress(id, BackgroundJob::INDETERMINATE);
                     }
@@ -5551,6 +5699,8 @@ impl CapRustApp {
                     if let Some(id) = self.inpaint_job_id.take() {
                         self.finish_job(id);
                     }
+                    self.inpaint_active_backend = None;
+                    self.properties.inpaint_active_backend = None;
                     self.inpaint_cancel = None;
                     // Clear mask overlay
                     self.preview_player.clear_mask();
@@ -5564,6 +5714,8 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.inpaint_clip_id = None;
+                    self.inpaint_active_backend = None;
+                    self.properties.inpaint_active_backend = None;
                     self.inpaint_cancel = None;
                     // Clear mask overlay on failure too
                     self.preview_player.clear_mask();
@@ -5577,6 +5729,8 @@ impl CapRustApp {
                         self.finish_job(id);
                     }
                     self.inpaint_clip_id = None;
+                    self.inpaint_active_backend = None;
+                    self.properties.inpaint_active_backend = None;
                     self.inpaint_cancel = None;
                     self.preview_player.clear_mask();
                     self.segment_mask_frame = None;
@@ -13549,6 +13703,16 @@ impl CapRustApp {
                                         }
                                     };
 
+                                    let backend = match self.settings.ai_inference_backend.as_str() {
+                                        "cuda" => caprust_media_io::inference_backend::BackendType::Cuda,
+                                        "directml" => caprust_media_io::inference_backend::BackendType::DirectML,
+                                        "external-cuda" => caprust_media_io::inference_backend::BackendType::ExternalCuda,
+                                        "external-directml" => {
+                                            caprust_media_io::inference_backend::BackendType::ExternalDirectML
+                                        }
+                                        _ => caprust_media_io::inference_backend::BackendType::Auto,
+                                    };
+
                                     let segment_cancel =
                                         crate::media_jobs::CancellationToken::new();
                                     let req = crate::media_jobs::SegmentRequest {
@@ -13563,6 +13727,7 @@ impl CapRustApp {
                                         click_x,
                                         click_y,
                                         max_side: 480,
+                                        backend,
                                         cancel: segment_cancel.clone(),
                                     };
 

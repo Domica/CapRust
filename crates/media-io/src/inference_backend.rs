@@ -138,6 +138,18 @@ fn ort_env() -> Result<&'static Environment> {
 pub trait InferenceBackend: Send + Sync {
     fn run(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<Vec<f32>>>;
 
+    /// Run with multiple named inputs, each a flat `f32` slice with its
+    /// own shape slice (any rank). Used by models with multiple inputs
+    /// (e.g. LaMa: image + mask; MobileSAM decoder: embedding + points).
+    /// Default implementation returns an error — single-input backends
+    /// (tract-onnx) don't support this.
+    fn run_multi(
+        &self,
+        _inputs: &[(&str, &[f32], &[i64])],
+    ) -> Result<Vec<Vec<f32>>> {
+        Err(anyhow!("multi-input inference not supported by this backend"))
+    }
+
     /// Convenience: return only the first output as a flat `Vec<f32>`.
     fn run_single(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<f32>> {
         let outputs = self.run(input, shape)?;
@@ -145,6 +157,12 @@ pub trait InferenceBackend: Send + Sync {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("model produced no outputs"))
+    }
+
+    /// Names of the model's inputs (ort only; tract backends return empty).
+    /// Used by multi-input callers to build named input bindings.
+    fn input_names(&self) -> &[String] {
+        &[]
     }
 }
 
@@ -184,6 +202,125 @@ impl InferenceBackend for TractBackend {
             .model
             .run(tvec!(input_tensor.into()))
             .map_err(|e| anyhow!("tract inference: {e:?}"))?;
+
+        let mut result = Vec::with_capacity(outputs.len());
+        for output in outputs.into_iter() {
+            let arr_view = output
+                .into_tensor()
+                .into_plain_array::<f32>()
+                .map_err(|e| anyhow!("convert tract output: {e:?}"))?;
+            result.push(arr_view.into_raw_vec_and_offset().0);
+        }
+        Ok(result)
+    }
+
+    fn run_multi(
+        &self,
+        inputs: &[(&str, &[f32], &[i64])],
+    ) -> Result<Vec<Vec<f32>>> {
+        let _ = inputs[0].0; // names are ignored by tract (positional inputs)
+        let tensors: Result<Vec<Tensor>, anyhow::Error> = inputs
+            .iter()
+            .map(|(_, data, shape)| -> Result<Tensor, anyhow::Error> {
+                let shape_vec: Vec<usize> = shape.iter().map(|&v| v as usize).collect();
+                let arr = tract_ndarray::ArrayD::<f32>::from_shape_vec(
+                    tract_ndarray::IxDyn(&shape_vec),
+                    data.to_vec(),
+                )
+                .map_err(|e| anyhow!("reshape tract multi input: {e:?}"))?;
+                Ok(arr.into())
+            })
+            .collect();
+        let tensors = tensors?;
+        let tvec: TVec<TValue> = tensors.into_iter().map(|t| t.into()).collect();
+        let outputs = self
+            .model
+            .run(tvec)
+            .map_err(|e| anyhow!("tract multi inference: {e:?}"))?;
+
+        let mut result = Vec::with_capacity(outputs.len());
+        for output in outputs.into_iter() {
+            let arr_view = output
+                .into_tensor()
+                .into_plain_array::<f32>()
+                .map_err(|e| anyhow!("convert tract output: {e:?}"))?;
+            result.push(arr_view.into_raw_vec_and_offset().0);
+        }
+        Ok(result)
+    }
+}
+
+/// Wraps a tract-onnx `InferenceSimplePlan` as an `InferenceBackend`.
+///
+/// Used by models that export as `InferenceFact` rather than `TypedFact`
+/// (currently u2netp / background_removal). `InferenceSimplePlan` does
+/// not require input shape pinning because its Resize nodes already
+/// have concrete dimensions.
+pub struct TractInferenceBackend {
+    model: std::sync::Arc<tract_onnx::prelude::InferenceSimplePlan>,
+}
+
+impl TractInferenceBackend {
+    pub fn load(path: &Path, label: &str) -> Result<Self> {
+        use crate::onnx_common::load_inference;
+        let model = load_inference(path, label)?;
+        Ok(Self { model })
+    }
+}
+
+impl InferenceBackend for TractInferenceBackend {
+    fn run(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<Vec<f32>>> {
+        let arr = tract_ndarray::Array4::<f32>::from_shape_vec(
+            (
+                shape[0] as usize,
+                shape[1] as usize,
+                shape[2] as usize,
+                shape[3] as usize,
+            ),
+            input.to_vec(),
+        )
+        .map_err(|e| anyhow!("reshape tract input: {e:?}"))?;
+
+        let input_tensor: Tensor = arr.into();
+        let outputs = self
+            .model
+            .run(tvec!(input_tensor.into()))
+            .map_err(|e| anyhow!("tract inference: {e:?}"))?;
+
+        let mut result = Vec::with_capacity(outputs.len());
+        for output in outputs.into_iter() {
+            let arr_view = output
+                .into_tensor()
+                .into_plain_array::<f32>()
+                .map_err(|e| anyhow!("convert tract output: {e:?}"))?;
+            result.push(arr_view.into_raw_vec_and_offset().0);
+        }
+        Ok(result)
+    }
+
+    fn run_multi(
+        &self,
+        inputs: &[(&str, &[f32], &[i64])],
+    ) -> Result<Vec<Vec<f32>>> {
+        let _ = inputs[0].0; // names are ignored by tract (positional inputs)
+        let tensors: Result<Vec<Tensor>, anyhow::Error> = inputs
+            .iter()
+            .map(|(_, data, shape)| -> Result<Tensor, anyhow::Error> {
+                let shape_vec: Vec<usize> = shape.iter().map(|&v| v as usize).collect();
+                let arr = tract_ndarray::ArrayD::<f32>::from_shape_vec(
+                    tract_ndarray::IxDyn(&shape_vec),
+                    data.to_vec(),
+                )
+                .map_err(|e| anyhow!("reshape tract multi input: {e:?}"))?;
+                Ok(arr.into())
+            })
+            .collect();
+        let tensors = tensors?;
+        let tvec: TVec<TValue> = tensors.into_iter().map(|t| t.into()).collect();
+        let outputs = self
+            .model
+            .run(tvec)
+            .map_err(|e| anyhow!("tract multi inference: {e:?}"))?;
 
         let mut result = Vec::with_capacity(outputs.len());
         for output in outputs.into_iter() {
@@ -390,7 +527,7 @@ impl ExternalBackendInner {
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 pub struct OrtBackend {
     session: Mutex<Session>,
-    input_name: String,
+    input_names: Vec<String>,
     #[allow(dead_code)]
     output_count: usize,
 }
@@ -457,6 +594,12 @@ impl OrtBackend {
             .name()
             .to_string();
 
+        let input_names: Vec<String> = session
+            .inputs()
+            .iter()
+            .map(|i| i.name().to_string())
+            .collect();
+
         tracing::info!(
             "ort: loaded {} on {:?} backend, {} output(s)",
             path.display(),
@@ -466,7 +609,7 @@ impl OrtBackend {
 
         Ok(Self {
             session: Mutex::new(session),
-            input_name,
+            input_names,
             output_count,
         })
     }
@@ -474,6 +617,10 @@ impl OrtBackend {
 
 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
 impl InferenceBackend for OrtBackend {
+    fn input_names(&self) -> &[String] {
+        &self.input_names
+    }
+
     fn run(&self, input: &[f32], shape: [i64; 4]) -> Result<Vec<Vec<f32>>> {
         let arr = tract_ndarray::Array4::<f32>::from_shape_vec(
             (
@@ -494,8 +641,47 @@ impl InferenceBackend for OrtBackend {
             .lock()
             .map_err(|e| anyhow!("ort session lock poisoned: {e}"))?;
         let outputs = session
-            .run(ort::inputs![self.input_name.clone() => input_tensor])
+            .run(ort::inputs![self.input_names[0].clone() => input_tensor])
             .map_err(|e| anyhow!("ort inference: {e:?}"))?;
+
+        let mut result = Vec::with_capacity(outputs.len());
+        for (_, value) in outputs.into_iter() {
+            let tensor: ort::value::Tensor<f32> = value
+                .downcast::<TensorValueType<f32>>()
+                .map_err(|e| anyhow!("ort downcast output: {e:?}"))?;
+            let array = tensor
+                .try_extract_array::<f32>()
+                .map_err(|e| anyhow!("ort extract output: {e:?}"))?;
+            result.push(array.into_owned().into_raw_vec_and_offset().0);
+        }
+        Ok(result)
+    }
+
+    fn run_multi(
+        &self,
+        inputs: &[(&str, &[f32], &[i64])],
+    ) -> Result<Vec<Vec<f32>>> {
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|e| anyhow!("ort session lock poisoned: {e}"))?;
+
+        let named_inputs: Vec<(String, ort::value::Tensor<f32>)> = inputs
+            .iter()
+            .map(|(name, data, shape)| {
+                let arr = tract_ndarray::ArrayD::<f32>::from_shape_vec(shape, data.to_vec())
+                    .map_err(|e| anyhow!("reshape ort multi input '{}': {e:?}", name))?;
+                let tensor = ort::value::Tensor::from_array(arr)
+                    .map_err(|e| anyhow!("ort create multi input tensor '{}': {e:?}", name))?;
+                Ok((name.to_string(), tensor))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // `ort::Session::run` accepts anything implementing `NamedInputs`.
+        // `&[(String, Tensor<f32>)]` implements it in ort 2.x.
+        let outputs = session
+            .run(named_inputs.as_slice())
+            .map_err(|e| anyhow!("ort multi-input inference: {e:?}"))?;
 
         let mut result = Vec::with_capacity(outputs.len());
         for (_, value) in outputs.into_iter() {
@@ -515,6 +701,9 @@ impl InferenceBackend for OrtBackend {
 pub struct InferenceSession {
     backend: Box<dyn InferenceBackend>,
     input_shape: [i64; 4],
+    /// Names of the model's inputs (populated from the ort backend;
+    /// empty for tract/external backends where names are ignored).
+    input_names: Vec<String>,
     /// The backend type that was actually selected (after Auto resolution
     /// and any CPU fallback). Exposed so callers can report diagnostics.
     backend_type: BackendType,
@@ -530,7 +719,14 @@ impl InferenceSession {
             other => other,
         };
         let backend_obj: Box<dyn InferenceBackend> = match backend {
-            BackendType::Cpu => Box::new(TractBackend::load(path, shape, label)?),
+            BackendType::Cpu => {
+                // Try TypedRunnableModel first (face_detect, scrfd, lama, mobile_sam),
+                // fall back to InferenceSimplePlan (u2netp / background_removal).
+                match TractBackend::load(path, shape, label) {
+                    Ok(b) => Box::new(b),
+                    Err(_) => Box::new(TractInferenceBackend::load(path, label)?),
+                }
+            }
             BackendType::Cuda | BackendType::DirectML => {
                 #[cfg(any(feature = "gpu-cuda", feature = "gpu-directml"))]
                 {
@@ -588,9 +784,12 @@ impl InferenceSession {
             }
         };
 
+        let input_names = backend_obj.input_names().to_vec();
+
         Ok(Self {
             backend: backend_obj,
             input_shape: shape,
+            input_names,
             backend_type: backend,
         })
     }
@@ -622,6 +821,28 @@ impl InferenceSession {
             .ok_or_else(|| anyhow!("model produced no outputs"))
     }
 
+    /// Run multi-input inference. Each input is a flat `f32` slice with
+    /// its own shape slice. Returns all outputs as flat `Vec<f32>` slices.
+    /// Falls back to the single-input `run` when there's only one input
+    /// and the backend is tract-onnx (which doesn't support `run_multi`).
+    pub fn run_multi(
+        &self,
+        inputs: &[(&str, &[f32], &[i64])],
+    ) -> Result<Vec<Vec<f32>>> {
+        if inputs.len() == 1 {
+            let (name, data, shape) = &inputs[0];
+            let _ = name;
+            // Convert &[i64] shape to [i64; 4] for the single-input path.
+            // This only works for 4D inputs; callers with non-4D inputs
+            // must use a backend that supports run_multi (ort).
+            if shape.len() == 4 {
+                let s: [i64; 4] = [shape[0], shape[1], shape[2], shape[3]];
+                return self.backend.run(data, s);
+            }
+        }
+        self.backend.run_multi(inputs)
+    }
+
     pub fn shape(&self) -> [i64; 4] {
         self.input_shape
     }
@@ -630,6 +851,13 @@ impl InferenceSession {
     /// and any CPU fallback).
     pub fn backend_type(&self) -> BackendType {
         self.backend_type
+    }
+
+    /// Returns the names of the model's inputs (ort backend only;
+    /// empty for tract/external backends). Used by multi-input callers
+    /// to build named input bindings for `run_multi`.
+    pub fn input_names(&self) -> &[String] {
+        &self.input_names
     }
 }
 

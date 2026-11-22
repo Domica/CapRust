@@ -1,6 +1,7 @@
 //! YuNet face detection for auto-reframe (Phase P2b).
 //!
-//! Pure-Rust inference via tract-onnx. The model file is downloaded
+//! Inference via `InferenceSession` which supports tract-onnx (CPU)
+//! or ONNX Runtime (CUDA / DirectML GPU). The model file is downloaded
 //! on demand from the registry (`ModelKind::FaceDetector`) and lives
 //! next to the Whisper and Piper models.
 //!
@@ -18,10 +19,11 @@
 //! frame, so downstream code can crop without knowing the source
 //! resolution.
 
-use crate::onnx_common::{bilinear_rgb, load_typed_pinned, TypedRunnableModel as RunnableModel};
+use crate::inference_backend::{BackendType, InferenceSession};
+use crate::onnx_common::bilinear_rgb;
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tract_onnx::prelude::*;
+use tract_onnx::prelude::tract_ndarray;
 
 /// Fixed input resolution of the YuNet 2023mar ONNX model.
 pub const INPUT_SIZE: u32 = 320;
@@ -65,24 +67,48 @@ impl FaceBox {
 /// `load` parses and optimizes the ONNX graph, which is slow relative
 /// to a single inference pass.
 pub struct FaceDetector {
-    model: RunnableModel,
+    session: InferenceSession,
+}
+
+impl std::fmt::Debug for FaceDetector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FaceDetector")
+            .field("input_shape", &self.session.shape())
+            .field("backend", &self.session.backend_type())
+            .finish()
+    }
 }
 
 impl FaceDetector {
     /// Load and optimize a YuNet ONNX model from disk.
-    pub fn load(model_path: &Path) -> Result<Self> {
+    ///
+    /// `backend` selects the inference backend: CPU (tract-onnx),
+    /// CUDA (NVIDIA GPU via ONNX Runtime), or DirectML (AMD GPU via
+    /// ONNX Runtime). Falls back to CPU if the GPU backend cannot load.
+    pub fn load(model_path: &Path, backend: BackendType) -> Result<Self> {
         // Pin the input shape so tract can resolve Resize nodes that
         // were exported with a computed 'size' input. Without this,
         // tract's symbolic evaluator leaves the size unresolved and
         // fails at graph optimization with
         // 'Clashing resolution for expression. N != 320'.
-        let model = load_typed_pinned(
+        let session = InferenceSession::load(
             model_path,
-            "YuNet face",
             [1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64],
+            "YuNet face",
+            backend,
         )?;
-        tracing::info!("face_detect: loaded {}", model_path.display());
-        Ok(Self { model })
+        tracing::info!(
+            "face_detect: loaded {} on {:?} backend",
+            model_path.display(),
+            session.backend_type()
+        );
+        Ok(Self { session })
+    }
+
+    /// Returns the inference backend actually in use for face detection
+    /// (after Auto resolution and any CPU fallback).
+    pub fn backend_type(&self) -> BackendType {
+        self.session.backend_type()
     }
 
     /// Run detection on a tightly packed RGB buffer of length
@@ -106,15 +132,9 @@ impl FaceDetector {
 
         let tensor = self.preprocess(rgb, width, height);
 
-        // tract 0.22 expects a TValue, not a Tensor. Two conversions:
-        // Array4<f32> -> Tensor (From impl), then Tensor -> TValue
-        // (another From impl). The compiler guides this -- `tvec!`
-        // wants TValue specifically.
-        let input: Tensor = tensor.into();
-        let outputs = self
-            .model
-            .run(tvec!(input.into()))
-            .map_err(|e| anyhow!("YuNet inference: {e:?}"))?;
+        // `InferenceSession::run_array` takes an Array4<f32> and returns
+        // all output tensors as flat Vec<f32> slices in ONNX output order.
+        let outputs = self.session.run_array(&tensor)?;
 
         // YuNet ships in two graph layouts:
         //   2023mar: 12 outputs (cls, obj, bbox, kps per stride).
@@ -139,15 +159,22 @@ impl FaceDetector {
         // ONNX output order (see module docs). Indexing is explicit on
         // purpose -- a silent shape mismatch would be far worse than
         // the readability cost.
-        let cls_8 = outputs[0].to_plain_array_view::<f32>()?;
-        let cls_16 = outputs[1].to_plain_array_view::<f32>()?;
-        let cls_32 = outputs[2].to_plain_array_view::<f32>()?;
-        let obj_8 = outputs[3].to_plain_array_view::<f32>()?;
-        let obj_16 = outputs[4].to_plain_array_view::<f32>()?;
-        let obj_32 = outputs[5].to_plain_array_view::<f32>()?;
-        let bbox_8 = outputs[6].to_plain_array_view::<f32>()?;
-        let bbox_16 = outputs[7].to_plain_array_view::<f32>()?;
-        let bbox_32 = outputs[8].to_plain_array_view::<f32>()?;
+        //
+        // Each output is already a flat Vec<f32>:
+        //   cls_8: [grid8*grid8] = [1600]  (per-anchor cls scores)
+        //   obj_8: [grid8*grid8] = [1600]
+        //   bbox_8: [grid8*grid8*4] = [6400]
+        // etc. Per stride, idx-th detection reads cls[idx], obj[idx],
+        // bbox[idx*4..idx*4+4].
+        let cls_8 = &outputs[0];
+        let cls_16 = &outputs[1];
+        let cls_32 = &outputs[2];
+        let obj_8 = &outputs[3];
+        let obj_16 = &outputs[4];
+        let obj_32 = &outputs[5];
+        let bbox_8 = &outputs[6];
+        let bbox_16 = &outputs[7];
+        let bbox_32 = &outputs[8];
 
         let cls = [cls_8, cls_16, cls_32];
         let obj = [obj_8, obj_16, obj_32];
@@ -168,7 +195,7 @@ impl FaceDetector {
         Ok(self.detect(rgb, width, height)?.into_iter().next())
     }
 
-    /// Letterbox RGB into a (1, 3, 320, 320) CHW tensor, BGR channel
+    /// Preprocess RGB into a (1, 3, 320, 320) CHW tensor, BGR channel
     /// order, values in 0..255, no normalization.
     fn preprocess(&self, rgb: &[u8], width: u32, height: u32) -> tract_ndarray::Array4<f32> {
         // Direct resize (stretch), not letterbox. The YuNet demos use
@@ -204,6 +231,15 @@ impl FaceDetector {
 /// Returns `(scale, pad_x, pad_y)` where `scale` is the linear scale
 /// applied to the source, and `(pad_x, pad_y)` is the zero-padding
 /// applied on the left and top of the resized image.
+fn letterbox_params(width: u32, height: u32) -> (f32, u32, u32) {
+    let scale = (INPUT_SIZE as f32 / width as f32).min(INPUT_SIZE as f32 / height as f32);
+    let new_w = (width as f32 * scale).round() as u32;
+    let new_h = (height as f32 * scale).round() as u32;
+    let pad_x = (INPUT_SIZE.saturating_sub(new_w)) / 2;
+    let pad_y = (INPUT_SIZE.saturating_sub(new_h)) / 2;
+    (scale, pad_x, pad_y)
+}
+
 /// Decode the 3-output YuNet layout (2022mar). Each output is one
 /// stride's detections. Layout is expected to be [1, N, 15]:
 ///   [x, y, w, h, lm1x, lm1y, ..., lm5x, lm5y, score]
@@ -216,7 +252,7 @@ impl FaceDetector {
 /// "success, no faces" and silently disabled auto-reframe for every
 /// 2022mar user (1.3) -- an error is surfaced to the caller instead.
 fn decode_3_output(
-    outputs: &[TValue],
+    outputs: &[Vec<f32>],
     _scale: f32,
     _pad_x: u32,
     _pad_y: u32,
@@ -224,41 +260,16 @@ fn decode_3_output(
     _img_h: u32,
 ) -> Result<Vec<FaceBox>> {
     for (i, out) in outputs.iter().enumerate() {
-        let view = out
-            .to_plain_array_view::<f32>()
-            .map_err(|e| anyhow!("YuNet 2022mar output[{i}] read: {e:?}"))?;
-        let shape = view.shape();
-        tracing::info!("YuNet 2022mar output[{}] shape = {:?}", i, shape);
-        match shape.len() {
-            // Most common export: [N, C]. Log a couple of rows so we
-            // can see whether the third column is a score, whether
-            // coordinates are absolute or normalized, etc.
-            2 => {
-                let n_log = shape[0].min(3);
-                let cols = shape[1];
-                for j in 0..n_log {
-                    let mut row = Vec::with_capacity(cols);
-                    for k in 0..cols {
-                        row.push(format!("{:.4}", view[[j, k]]));
-                    }
-                    tracing::info!("  output[{}] row[{}] = [{}]", i, j, row.join(", "));
-                }
-            }
-            // [1, N, C] layout.
-            3 => {
-                let n_log = shape[1].min(3);
-                let cols = shape[2];
-                for j in 0..n_log {
-                    let mut row = Vec::with_capacity(cols);
-                    for k in 0..cols {
-                        row.push(format!("{:.4}", view[[0, j, k]]));
-                    }
-                    tracing::info!("  output[{}] row[{}] = [{}]", i, j, row.join(", "));
-                }
-            }
-            n => {
-                tracing::warn!("  output[{i}] unexpected rank {n}");
-            }
+        // We can't reshape a flat Vec without knowing the original
+        // tensor shape, so just log element counts as a proxy.
+        tracing::info!(
+            "YuNet 2022mar output[{}] = {} f32 elements",
+            i,
+            out.len()
+        );
+        let n_log = out.len().min(3);
+        for j in 0..n_log {
+            tracing::info!("  output[{}] [{}] = {:.4}", i, j, out[j]);
         }
     }
     let msg = format!(
@@ -270,27 +281,21 @@ fn decode_3_output(
     Err(anyhow!(msg))
 }
 
-fn letterbox_params(width: u32, height: u32) -> (f32, u32, u32) {
-    let scale = (INPUT_SIZE as f32 / width as f32).min(INPUT_SIZE as f32 / height as f32);
-    let new_w = (width as f32 * scale).round() as u32;
-    let new_h = (height as f32 * scale).round() as u32;
-    let pad_x = (INPUT_SIZE.saturating_sub(new_w)) / 2;
-    let pad_y = (INPUT_SIZE.saturating_sub(new_h)) / 2;
-    (scale, pad_x, pad_y)
-}
-
 /// Decode one YuNet stride head into normalized boxes.
 ///
 /// For stride `s` the feature map is `(INPUT_SIZE / s)^2` cells. Each
 /// cell `(row, col)` has an anchor at `((col + 0.5) * s, (row + 0.5) * s)`
 /// in the 320x320 padded input. The bbox head predicts `(dx, dy, dw, dh)`
 /// in units of `s`; center + exp(scale) decode follows the YuNet paper.
+///
+/// `cls` and `obj` are flat [n_det] slices (one score per detection).
+/// `bbox` is a flat [n_det * 4] slice (dx, dy, dw, dh per detection).
 #[allow(clippy::too_many_arguments)]
 fn decode_stride(
     stride: u32,
-    cls: &tract_ndarray::ArrayViewD<f32>,
-    obj: &tract_ndarray::ArrayViewD<f32>,
-    bbox: &tract_ndarray::ArrayViewD<f32>,
+    cls: &[f32],
+    obj: &[f32],
+    bbox: &[f32],
     scale: f32,
     pad_x: u32,
     pad_y: u32,
@@ -302,8 +307,8 @@ fn decode_stride(
     let n = (grid * grid) as usize;
 
     for idx in 0..n {
-        let c = cls[[0, idx, 0]];
-        let o = obj[[0, idx, 0]];
+        let c = cls[idx];
+        let o = obj[idx];
         let conf = (c.max(0.0) * o.max(0.0)).sqrt();
         if conf < CONFIDENCE_THRESHOLD {
             continue;
@@ -314,10 +319,10 @@ fn decode_stride(
         let ax = (col as f32 + 0.5) * stride as f32;
         let ay = (row as f32 + 0.5) * stride as f32;
 
-        let dx = bbox[[0, idx, 0]];
-        let dy = bbox[[0, idx, 1]];
-        let dw = bbox[[0, idx, 2]];
-        let dh = bbox[[0, idx, 3]];
+        let dx = bbox[idx * 4];
+        let dy = bbox[idx * 4 + 1];
+        let dw = bbox[idx * 4 + 2];
+        let dh = bbox[idx * 4 + 3];
 
         let cx_320 = ax + dx * stride as f32;
         let cy_320 = ay + dy * stride as f32;
@@ -452,12 +457,7 @@ mod tests {
     /// an empty Vec that looks like "no faces found" (1.3).
     #[test]
     fn decode_3_output_reports_unsupported_layout() {
-        let mk = || -> TValue {
-            let arr = tract_ndarray::Array2::<f32>::zeros((2, 15));
-            let tensor: Tensor = arr.into();
-            tensor.into()
-        };
-        let outputs = vec![mk(), mk(), mk()];
+        let outputs = vec![vec![0.0f32; 30], vec![0.0f32; 30], vec![0.0f32; 30]];
         let err = decode_3_output(&outputs, 1.0, 0, 0, 320, 320)
             .expect_err("3-output layout is not supported yet");
         let text = err.to_string();
@@ -482,7 +482,7 @@ mod tests {
                 return;
             }
         };
-        let det = FaceDetector::load(&path).expect("load YuNet");
+        let det = FaceDetector::load(&path, BackendType::Cpu).expect("load YuNet");
         let black = vec![0u8; 320 * 320 * 3];
         let boxes = det.detect(&black, 320, 320).expect("inference");
         assert!(

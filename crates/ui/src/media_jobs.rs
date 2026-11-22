@@ -1,6 +1,7 @@
 //! Background jobs: ffprobe + thumbnail extraction after import.
 
 use caprust_core::media::{MediaItem, MediaKind};
+use caprust_media_io::inference_backend::BackendType;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -834,6 +835,8 @@ pub struct ReframeRequest {
     /// 480 gives it a little more detail than a bare 320 without
     /// dominating the job.
     pub max_side: u32,
+    /// Inference backend: CPU, CUDA, DirectML, etc.
+    pub backend: BackendType,
 }
 
 /// Result of an auto-reframe analysis job.
@@ -996,7 +999,7 @@ fn run_reframe_job(
     } else {
         let key = req.model_path.to_string_lossy().into_owned();
         let detector = model_get_or_load(&YUNET_CACHE, key, file_mtime(&req.model_path), || {
-            caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+            caprust_media_io::face_detect::FaceDetector::load(&req.model_path, req.backend)
                 .map_err(|e| format!("load YuNet: {e}"))
         })?;
         caprust_media_io::auto_reframe::detect_face_centers(&frames, &detector)
@@ -1040,7 +1043,7 @@ fn run_reframe_job(
 #[derive(Debug)]
 pub enum BgRemovalEvent {
     /// Emitted after probe + extraction, before the per-frame loop.
-    Started { total_frames: usize },
+    Started { total_frames: usize, backend: BackendType },
     /// Emitted every N frames (see PROGRESS_STRIDE) so the UI does not
     /// repaint on every single frame.
     Progress { done: usize, total: usize },
@@ -1085,6 +1088,8 @@ pub struct BgRemovalRequest {
     /// than a bare 320 without dominating memory (30 s / 30 fps at
     /// 480p is ~350 MB of frame buffers).
     pub max_side: u32,
+    /// Inference backend: CPU, CUDA, DirectML, etc.
+    pub backend: BackendType,
     /// Cooperative cancellation flag. The UI keeps a clone and can stop
     /// the frame loop early (1.5).
     pub cancel: CancellationToken,
@@ -1173,9 +1178,6 @@ fn run_bg_removal_inner(
     if total == 0 {
         return Err("no frames extracted".into());
     }
-    let _ = tx.send(BgRemovalEvent::Started {
-        total_frames: total,
-    });
     tracing::info!(
         "bg-removal: clip {} -- {} frames to process",
         req.clip_id,
@@ -1185,9 +1187,17 @@ fn run_bg_removal_inner(
     // 3. Load the model once, cached across jobs by path + mtime.
     let key = req.model_path.to_string_lossy().into_owned();
     let model = model_get_or_load(&BG_CACHE, key, file_mtime(&req.model_path), || {
-        caprust_media_io::background_removal::BackgroundRemover::load(&req.model_path)
+        caprust_media_io::background_removal::BackgroundRemover::load(&req.model_path, req.backend)
             .map_err(|e| format!("load u2netp: {e}"))
     })?;
+
+    // Emit Started now that we know the actual backend (after CPU fallback).
+    let _ = tx.send(BgRemovalEvent::Started {
+        total_frames: total,
+        backend: model.backend_type(),
+    });
+
+    // 4. Open the FFV1 writer on the output path.
 
     // 4. Open the FFV1 writer on the output path.
     let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
@@ -1240,7 +1250,7 @@ fn run_bg_removal_inner(
 #[derive(Debug)]
 pub enum SegmentEvent {
     /// Emitted after probe + extraction, before the per-frame loop.
-    Started { total_frames: usize },
+    Started { total_frames: usize, backend: BackendType },
     /// Emitted every N frames (see PROGRESS_STRIDE).
     Progress { done: usize, total: usize },
     /// Terminal success. `mask_path` is the FFV1 MKV on disk.
@@ -1282,6 +1292,8 @@ pub struct SegmentRequest {
     /// Downscale the longer side of each extracted frame to at most
     /// this before running inference.
     pub max_side: u32,
+    /// Inference backend: CPU, CUDA, DirectML, etc.
+    pub backend: BackendType,
     /// Cooperative cancellation flag (1.5).
     pub cancel: CancellationToken,
 }
@@ -1355,9 +1367,6 @@ fn run_segment_inner(
     if total == 0 {
         return Err("no frames extracted".into());
     }
-    let _ = tx.send(SegmentEvent::Started {
-        total_frames: total,
-    });
     tracing::info!(
         "segment: clip {} -- {} frames to process",
         req.clip_id,
@@ -1378,9 +1387,15 @@ fn run_segment_inner(
     let encoder_path = req.encoder_path.clone();
     let decoder_path = req.decoder_path.clone();
     let model = model_get_or_load(&SAM_CACHE, sam_key, sam_mtime, || {
-        caprust_media_io::mobile_sam::MobileSam::load(&encoder_path, &decoder_path)
+        caprust_media_io::mobile_sam::MobileSam::load(&encoder_path, &decoder_path, req.backend)
             .map_err(|e| format!("load MobileSAM: {e}"))
     })?;
+
+    // Emit Started now that we know the actual backend (after CPU fallback).
+    let _ = tx.send(SegmentEvent::Started {
+        total_frames: total,
+        backend: model.backend_type(),
+    });
 
     // 4. Open the FFV1 writer on the output path.
     let mut writer = spawn_mask_writer(ffmpeg, &req.mask_output, &frames[0], req.fps)?;
@@ -1439,7 +1454,7 @@ fn run_segment_inner(
 #[derive(Debug)]
 pub enum InpaintEvent {
     /// Emitted after probe + extraction, before the per-frame loop.
-    Started { total_frames: usize },
+    Started { total_frames: usize, backend: BackendType },
     /// Emitted every N frames (see PROGRESS_STRIDE).
     Progress { done: usize, total: usize },
     /// Terminal success. `output_path` is the inpainted video on disk.
@@ -1477,6 +1492,8 @@ pub struct InpaintRequest {
     /// this before running inference. LaMa runs at 512x512
     /// internally.
     pub max_side: u32,
+    /// Inference backend: CPU, CUDA, DirectML, etc.
+    pub backend: BackendType,
     /// Cooperative cancellation flag (1.5).
     pub cancel: CancellationToken,
 }
@@ -1569,9 +1586,6 @@ fn run_inpaint_inner(
             mask_frames.len()
         ));
     }
-    let _ = tx.send(InpaintEvent::Started {
-        total_frames: total,
-    });
     tracing::info!(
         "inpaint: clip {} -- {} frames to process",
         req.clip_id,
@@ -1581,10 +1595,15 @@ fn run_inpaint_inner(
     // 4. Load the LaMa model once, cached across jobs by path + mtime.
     let key = req.model_path.to_string_lossy().into_owned();
     let model = model_get_or_load(&LAMA_CACHE, key, file_mtime(&req.model_path), || {
-        caprust_media_io::lama::Lama::load(&req.model_path).map_err(|e| format!("load LaMa: {e}"))
+        caprust_media_io::lama::Lama::load(&req.model_path, req.backend)
+            .map_err(|e| format!("load LaMa: {e}"))
     })?;
 
-    // 5. Open the video writer for inpainted output.
+    // Emit Started now that we know the actual backend (after CPU fallback).
+    let _ = tx.send(InpaintEvent::Started {
+        total_frames: total,
+        backend: model.backend_type(),
+    });
     let mut writer = spawn_video_writer(ffmpeg, &req.output_path, &frames[0], req.fps)?;
 
     // 6. Per-frame inpainting + write.
@@ -1657,6 +1676,8 @@ pub struct AnonRequest {
     /// internally, so 480 keeps box precision without dominating
     /// memory.
     pub max_side: u32,
+    /// Inference backend: CPU, CUDA, DirectML, etc.
+    pub backend: BackendType,
     /// Cooperative cancellation flag (1.5).
     pub cancel: CancellationToken,
 }
@@ -1769,7 +1790,7 @@ fn run_anon_inner(
         Detector::Scrfd(d)
     } else {
         let d = model_get_or_load(&YUNET_CACHE, key, mtime, || {
-            caprust_media_io::face_detect::FaceDetector::load(&req.model_path)
+            caprust_media_io::face_detect::FaceDetector::load(&req.model_path, req.backend)
                 .map_err(|e| format!("load YuNet: {e}"))
         })?;
         Detector::YuNet(d)

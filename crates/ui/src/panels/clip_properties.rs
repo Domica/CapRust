@@ -9,6 +9,7 @@ use caprust_core::{
     models::{ModelRegistry, ModelStatus},
     AppSettings, Clip, ClipType, ProjectState,
 };
+use caprust_media_io::inference_backend::BackendType;
 use egui::Ui;
 use egui_phosphor::regular as ph;
 use uuid::Uuid;
@@ -73,6 +74,15 @@ pub struct PropertiesState {
     /// The inference backend actually in use for the current face-restore
     /// job (after Auto resolution and any CPU fallback).
     pub gfpgan_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
+    /// The inference backend actually in use for the current background-removal
+    /// job (after Auto resolution and any CPU fallback).
+    pub bg_removal_active_backend: Option<BackendType>,
+    /// The inference backend actually in use for the current object
+    /// segmentation (MobileSAM) job.
+    pub segment_active_backend: Option<BackendType>,
+    /// The inference backend actually in use for the current inpainting
+    /// (LaMa) job.
+    pub inpaint_active_backend: Option<BackendType>,
     /// Cached list of clips for the current frame, so dropdowns that
     /// need project-wide candidates (duck-against) do not have to
     /// re-borrow the project while state is mutably borrowed.
@@ -1841,6 +1851,93 @@ fn show_video(
             .monospace()
             .color(egui::Color32::from_gray(140)),
         );
+
+        // Background removal backend
+        if let Some(backend) = state.bg_removal_active_backend {
+            let backend_label = match backend {
+                caprust_media_io::inference_backend::BackendType::Cuda => {
+                    tr("props-bg-removal-backend-cuda")
+                }
+                caprust_media_io::inference_backend::BackendType::DirectML => {
+                    tr("props-bg-removal-backend-directml")
+                }
+                caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                    tr("props-bg-removal-backend-external-cuda")
+                }
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                    tr("props-bg-removal-backend-external-directml")
+                }
+                _ => tr("props-bg-removal-backend-auto"),
+            };
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}: {}",
+                    tr("props-bg-removal-backend"),
+                    backend_label
+                ))
+                .small()
+                .monospace()
+                .color(egui::Color32::from_gray(140)),
+            );
+        }
+
+        // Object segmentation (MobileSAM) backend
+        if let Some(backend) = state.segment_active_backend {
+            let backend_label = match backend {
+                caprust_media_io::inference_backend::BackendType::Cuda => {
+                    tr("props-segment-backend-cuda")
+                }
+                caprust_media_io::inference_backend::BackendType::DirectML => {
+                    tr("props-segment-backend-directml")
+                }
+                caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                    tr("props-segment-backend-external-cuda")
+                }
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                    tr("props-segment-backend-external-directml")
+                }
+                _ => tr("props-segment-backend-auto"),
+            };
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}: {}",
+                    tr("props-segment-backend"),
+                    backend_label
+                ))
+                .small()
+                .monospace()
+                .color(egui::Color32::from_gray(140)),
+            );
+        }
+
+        // Inpainting (LaMa) backend
+        if let Some(backend) = state.inpaint_active_backend {
+            let backend_label = match backend {
+                caprust_media_io::inference_backend::BackendType::Cuda => {
+                    tr("props-inpaint-backend-cuda")
+                }
+                caprust_media_io::inference_backend::BackendType::DirectML => {
+                    tr("props-inpaint-backend-directml")
+                }
+                caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                    tr("props-inpaint-backend-external-cuda")
+                }
+                caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                    tr("props-inpaint-backend-external-directml")
+                }
+                _ => tr("props-inpaint-backend-auto"),
+            };
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}: {}",
+                    tr("props-inpaint-backend"),
+                    backend_label
+                ))
+                .small()
+                .monospace()
+                .color(egui::Color32::from_gray(140)),
+            );
+        }
 
         ui.add_space(space::M_PLUS);
         ui.separator();

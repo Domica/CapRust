@@ -4,35 +4,51 @@
 //! that fills masked regions naturally. It's used for object removal
 //! by filling the masked area with contextually appropriate content.
 //!
+//! Inference via `InferenceSession` which supports tract-onnx (CPU)
+//! or ONNX Runtime (CUDA / DirectML). The model takes an image and a
+//! binary mask, and produces an inpainted image where the masked region
+//! is filled in naturally.
+//!
 //! Input:  [1, 3, 512, 512] f32, RGB + [1, 1, 512, 512] f32 mask
 //! Output: [1, 3, 512, 512] f32 inpainted RGB
-//!
-//! The model takes an image and a binary mask, and produces an inpainted
-//! image where the masked region is filled in naturally.
 
+use crate::inference_backend::{BackendType, InferenceSession};
+use crate::onnx_common::{bilinear_rgb, MEAN, STD};
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use tract_onnx::prelude::*;
-
-use crate::onnx_common::{
-    bilinear_rgb, first_output, load_typed, TypedRunnableModel as RunnableModel, MEAN, STD,
-};
 
 /// Fixed input resolution of the LaMa ONNX model.
 pub const LAMA_INPUT_SIZE: u32 = 512;
 
 /// Loaded LaMa model. Construct once and reuse.
 pub struct Lama {
-    model: RunnableModel,
+    session: InferenceSession,
+}
+
+impl std::fmt::Debug for Lama {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Lama")
+            .field("input_shape", &self.session.shape())
+            .field("backend", &self.session.backend_type())
+            .finish()
+    }
 }
 
 impl Lama {
     /// Load and optimize LaMa ONNX model from disk.
     /// Expects file: lama.onnx
-    pub fn load(model_path: &Path) -> Result<Self> {
-        let model = load_typed(model_path, "LaMa", "")?;
-
-        tracing::info!("LaMa: loaded {}", model_path.display());
+    pub fn load(model_path: &Path, backend: BackendType) -> Result<Self> {
+        let session = InferenceSession::load(
+            model_path,
+            [1, 3, LAMA_INPUT_SIZE as i64, LAMA_INPUT_SIZE as i64],
+            "LaMa",
+            backend,
+        )?;
+        tracing::info!(
+            "LaMa: loaded {} on {:?} backend",
+            model_path.display(),
+            session.backend_type()
+        );
 
         if cfg!(debug_assertions) {
             tracing::warn!(
@@ -43,7 +59,13 @@ impl Lama {
             );
         }
 
-        Ok(Self { model })
+        Ok(Self { session })
+    }
+
+    /// Returns the inference backend actually in use for LaMa
+    /// (after Auto resolution and any CPU fallback).
+    pub fn backend_type(&self) -> BackendType {
+        self.session.backend_type()
     }
 
     /// Run inpainting on an image with a mask.
@@ -74,10 +96,10 @@ impl Lama {
         }
 
         // 1. Preprocess image and mask
-        let (image_tensor, mask_tensor) = self.preprocess(rgb, mask, width, height)?;
+        let (image_data, mask_data) = self.preprocess(rgb, mask, width, height)?;
 
         // 2. Run inference
-        let output = self.infer(&image_tensor, &mask_tensor)?;
+        let output = self.infer(&image_data, &mask_data)?;
 
         // 3. Post-process: convert to RGB at original resolution
         let result = self.postprocess(&output, width, height)?;
@@ -85,45 +107,58 @@ impl Lama {
         Ok(result)
     }
 
-    /// Run inpainting inference.
-    fn infer(&self, image_tensor: &Tensor, mask_tensor: &Tensor) -> Result<Tensor> {
-        let outputs = self
-            .model
-            .run(tvec!(
-                image_tensor.clone().into(),
-                mask_tensor.clone().into()
-            ))
-            .map_err(|e| anyhow!("LaMa inference: {:?}", e))?;
-
-        // First output is inpainted image [1, 3, 512, 512]
-        let output = first_output(outputs, "LaMa")?.into_tensor();
-        Ok(output)
+    /// Run inpainting inference with two named inputs (image + mask).
+    /// Falls back to positional inputs for tract-onnx (names ignored).
+    fn infer(&self, image_data: &[f32], mask_data: &[f32]) -> Result<Vec<f32>> {
+        let input_names = self.session.input_names();
+        let hw = LAMA_INPUT_SIZE as i64;
+        let image_shape: &[i64] = &[1, 3, hw, hw];
+        let mask_shape: &[i64] = &[1, 1, hw, hw];
+        let inputs = if input_names.len() >= 2 {
+            // ort backend: use actual input names from the loaded model
+            vec![
+                (input_names[0].as_str(), image_data, image_shape),
+                (input_names[1].as_str(), mask_data, mask_shape),
+            ]
+        } else {
+            // tract-onnx backend: names are ignored, inputs are positional
+            vec![
+                ("input_0", image_data, image_shape),
+                ("input_1", mask_data, mask_shape),
+            ]
+        };
+        let outputs = self.session.run_multi(&inputs[..])?;
+        outputs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("LaMa produced no outputs"))
     }
 
-    /// Post-process output tensor to RGB bytes at target resolution.
+    /// Post-process output flat Vec to RGB bytes at target resolution.
+    ///
+    /// `output` is CHW layout: [1, 3, 512, 512] = channel-major.
     fn postprocess(
         &self,
-        output: &Tensor,
+        output: &[f32],
         target_width: u32,
         target_height: u32,
     ) -> Result<Vec<u8>> {
-        let output = output.to_plain_array_view::<f32>()?;
-        let output = output.into_dimensionality::<tract_ndarray::Ix4>()?;
-        // Shape: [1, 3, 512, 512]
-
         // Denormalize: (x * std + mean) * 255
         let mut result = vec![0u8; (target_width * target_height * 3) as usize];
 
+        let hw = LAMA_INPUT_SIZE as usize;
+        let plane = hw * hw;
+
         // Convert from CHW to HWC and denormalize
         for c in 0..3 {
-            for y in 0..LAMA_INPUT_SIZE as usize {
-                for x in 0..LAMA_INPUT_SIZE as usize {
-                    let val = output[[0, c, y, x]];
+            for y in 0..hw {
+                for x in 0..hw {
+                    let val = output[c * plane + y * hw + x];
                     let denorm = val * STD[c] + MEAN[c];
                     let byte = (denorm * 255.0).clamp(0.0, 255.0).round() as u8;
 
                     // Convert from CHW to HWC
-                    let dst_idx = (y * LAMA_INPUT_SIZE as usize + x) * 3 + c;
+                    let dst_idx = (y * hw + x) * 3 + c;
                     result[dst_idx] = byte;
                 }
             }
@@ -144,26 +179,19 @@ impl Lama {
     }
 
     /// Preprocess image and mask for LaMa inference.
+    /// Returns flat CHW `Vec<f32>` slices for image and mask.
     fn preprocess(
         &self,
         rgb: &[u8],
         mask: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(Tensor, Tensor)> {
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
         // Preprocess image: resize to 512x512, normalize
-        let mut image_arr = tract_ndarray::Array4::<f32>::zeros((
-            1,
-            3,
-            LAMA_INPUT_SIZE as usize,
-            LAMA_INPUT_SIZE as usize,
-        ));
-        let mut mask_arr = tract_ndarray::Array4::<f32>::zeros((
-            1,
-            1,
-            LAMA_INPUT_SIZE as usize,
-            LAMA_INPUT_SIZE as usize,
-        ));
+        let hw = LAMA_INPUT_SIZE as usize;
+        let plane = hw * hw;
+        let mut image_data = vec![0.0f32; 3 * plane];
+        let mut mask_data = vec![0.0f32; plane];
 
         let sx = width as f32 / LAMA_INPUT_SIZE as f32;
         let sy = height as f32 / LAMA_INPUT_SIZE as f32;
@@ -175,19 +203,16 @@ impl Lama {
                 let (r, g, b) = bilinear_rgb(rgb, width, height, src_x, src_y);
                 let m = bilinear_mask(mask, width, height, src_x, src_y);
 
-                let dy_usize = dy as usize;
-                let dx_usize = dx as usize;
-                image_arr[[0, 0, dy_usize, dx_usize]] = (r / 255.0 - MEAN[0]) / STD[0];
-                image_arr[[0, 1, dy_usize, dx_usize]] = (g / 255.0 - MEAN[1]) / STD[1];
-                image_arr[[0, 2, dy_usize, dx_usize]] = (b / 255.0 - MEAN[2]) / STD[2];
-                mask_arr[[0, 0, dy_usize, dx_usize]] = m;
+                let base = dy as usize * hw + dx as usize;
+                // CHW layout: channel c at offset c*H*W + y*W + x
+                image_data[base] = (r / 255.0 - MEAN[0]) / STD[0];
+                image_data[plane + base] = (g / 255.0 - MEAN[1]) / STD[1];
+                image_data[2 * plane + base] = (b / 255.0 - MEAN[2]) / STD[2];
+                mask_data[base] = m;
             }
         }
 
-        let image_tensor: Tensor = image_arr.into();
-        let mask_tensor: Tensor = mask_arr.into();
-
-        Ok((image_tensor, mask_tensor))
+        Ok((image_data, mask_data))
     }
 }
 
