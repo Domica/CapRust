@@ -70,6 +70,9 @@ pub struct PropertiesState {
     /// Last playhead value the panel saw, so "+ Add at playhead" knows
     /// where to drop a new keyframe.
     pub last_playhead_ms: u64,
+    /// The inference backend actually in use for the current face-restore
+    /// job (after Auto resolution and any CPU fallback).
+    pub gfpgan_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
     /// Cached list of clips for the current frame, so dropdowns that
     /// need project-wide candidates (duck-against) do not have to
     /// re-borrow the project while state is mutably borrowed.
@@ -1810,6 +1813,34 @@ fn show_video(
                     .color(egui::Color32::from_rgb(200, 100, 100)),
             );
         }
+
+        // Show which inference backend is in use so the user can tell
+        // whether GPU (CUDA/DirectML) is active or CPU fallback.
+        let backend_label = match state.gfpgan_active_backend {
+            Some(caprust_media_io::inference_backend::BackendType::Cuda) => {
+                tr("props-face-restore-backend-cuda")
+            }
+            Some(caprust_media_io::inference_backend::BackendType::DirectML) => {
+                tr("props-face-restore-backend-directml")
+            }
+            Some(caprust_media_io::inference_backend::BackendType::ExternalCuda) => {
+                tr("props-face-restore-backend-external-cuda")
+            }
+            Some(caprust_media_io::inference_backend::BackendType::ExternalDirectML) => {
+                tr("props-face-restore-backend-external-directml")
+            }
+            Some(_) | None => tr("props-face-restore-backend-auto"),
+        };
+        ui.label(
+            egui::RichText::new(format!(
+                "{}: {}",
+                tr("props-face-restore-backend"),
+                backend_label
+            ))
+            .small()
+            .monospace()
+            .color(egui::Color32::from_gray(140)),
+        );
 
         ui.add_space(space::M_PLUS);
         ui.separator();

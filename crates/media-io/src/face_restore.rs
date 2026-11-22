@@ -106,14 +106,26 @@ impl Similarity {
 pub struct FaceRestorer {
     detector: ScrfdDetector,
     gfpgan: GfpganRestorer,
+    /// The backend type actually in use for GFPGAN (after Auto resolution
+    /// and any CPU fallback). Exposed for diagnostics in the UI.
+    backend_type: BackendType,
 }
 
 impl FaceRestorer {
     pub fn load(detector_path: &Path, gfpgan_path: &Path, backend: BackendType) -> Result<Self> {
+        let gfpgan = GfpganRestorer::load(gfpgan_path, backend)?;
+        let backend_type = gfpgan.backend_type();
         Ok(Self {
             detector: ScrfdDetector::load(detector_path, backend)?,
-            gfpgan: GfpganRestorer::load(gfpgan_path, backend)?,
+            gfpgan,
+            backend_type,
         })
+    }
+
+    /// Returns the inference backend actually in use for face restore
+    /// (after Auto resolution and any CPU fallback).
+    pub fn backend_type(&self) -> BackendType {
+        self.backend_type
     }
 
     /// Restore all detected faces in an RGB frame. Returns a new RGB

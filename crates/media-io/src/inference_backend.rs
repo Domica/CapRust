@@ -487,6 +487,9 @@ impl InferenceBackend for OrtBackend {
 pub struct InferenceSession {
     backend: Box<dyn InferenceBackend>,
     input_shape: [i64; 4],
+    /// The backend type that was actually selected (after Auto resolution
+    /// and any CPU fallback). Exposed so callers can report diagnostics.
+    backend_type: BackendType,
 }
 
 impl InferenceSession {
@@ -560,6 +563,7 @@ impl InferenceSession {
         Ok(Self {
             backend: backend_obj,
             input_shape: shape,
+            backend_type: backend,
         })
     }
 
@@ -592,6 +596,12 @@ impl InferenceSession {
 
     pub fn shape(&self) -> [i64; 4] {
         self.input_shape
+    }
+
+    /// Returns the backend type actually in use (after Auto resolution
+    /// and any CPU fallback).
+    pub fn backend_type(&self) -> BackendType {
+        self.backend_type
     }
 }
 

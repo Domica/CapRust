@@ -559,6 +559,10 @@ pub struct CapRustApp {
     pub gfpgan_job_id: Option<u64>,
     pub gfpgan_cancel: Option<crate::media_jobs::CancellationToken>,
     pub gfpgan_clip_id: Option<uuid::Uuid>,
+    /// The inference backend actually in use for the current face-restore
+    /// job (after Auto resolution and any CPU fallback). Used to show
+    /// diagnostics in Properties panel.
+    pub gfpgan_active_backend: Option<caprust_media_io::inference_backend::BackendType>,
     /// Modal state for entering narration text.
     pub narration_input: crate::panels::narration_input::NarrationInputState,
     /// Result of the last update check, if a newer version was found.
@@ -1744,6 +1748,7 @@ impl CapRustApp {
             gfpgan_job_id: None,
             gfpgan_cancel: None,
             gfpgan_clip_id: None,
+            gfpgan_active_backend: None,
             inpaint_job_id: None,
             inpaint_cancel: None,
             inpaint_clip_id: None,
@@ -5736,11 +5741,45 @@ impl CapRustApp {
         let mut live = true;
         loop {
             match rx.try_recv() {
-                Ok(crate::media_jobs::GfpganEvent::Started { total_frames }) => {
-                    tracing::info!("gfpgan: started, {total_frames} frames");
+                Ok(crate::media_jobs::GfpganEvent::Started {
+                    total_frames,
+                    backend,
+                }) => {
+                    let backend_label = match backend {
+                        caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
+                        caprust_media_io::inference_backend::BackendType::DirectML => "DirectML",
+                        caprust_media_io::inference_backend::BackendType::ExternalCuda => {
+                            "CUDA (external)"
+                        }
+                        caprust_media_io::inference_backend::BackendType::ExternalDirectML => {
+                            "DirectML (external)"
+                        }
+                        _ => "CPU",
+                    };
+                    tracing::info!(
+                        "gfpgan: started, {total_frames} frames on {backend_label} backend"
+                    );
                     if let Some(id) = self.gfpgan_job_id {
                         self.update_job_progress(id, BackgroundJob::INDETERMINATE);
                     }
+                    self.gfpgan_active_backend = Some(backend);
+                    self.properties.gfpgan_active_backend = Some(backend);
+                }
+                Ok(crate::media_jobs::GfpganEvent::FallbackToCpu { requested }) => {
+                    tracing::warn!(
+                        "gfpgan: requested {:?} backend but fell back to CPU",
+                        requested
+                    );
+                    self.toast(format!(
+                        "{}: {} (CPU fallback)",
+                        tr("toast-face-restore-started"),
+                        match requested {
+                            caprust_media_io::inference_backend::BackendType::Cuda => "CUDA",
+                            caprust_media_io::inference_backend::BackendType::DirectML =>
+                                "DirectML",
+                            _ => "GPU",
+                        }
+                    ));
                 }
                 Ok(crate::media_jobs::GfpganEvent::Progress { done, total }) => {
                     let p = if total == 0 {
@@ -5781,6 +5820,8 @@ impl CapRustApp {
                     }
                     self.gfpgan_clip_id = None;
                     self.gfpgan_cancel = None;
+                    self.gfpgan_active_backend = None;
+                    self.properties.gfpgan_active_backend = None;
                     live = false;
                 }
                 Ok(crate::media_jobs::GfpganEvent::Failed(reason)) => {
@@ -5791,6 +5832,8 @@ impl CapRustApp {
                     }
                     self.gfpgan_clip_id = None;
                     self.gfpgan_cancel = None;
+                    self.gfpgan_active_backend = None;
+                    self.properties.gfpgan_active_backend = None;
                     live = false;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,

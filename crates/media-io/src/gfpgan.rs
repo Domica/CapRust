@@ -69,6 +69,12 @@ impl GfpganRestorer {
         Ok(Self { session })
     }
 
+    /// Returns the inference backend actually in use for GFPGAN
+    /// (after Auto resolution and any CPU fallback).
+    pub fn backend_type(&self) -> BackendType {
+        self.session.backend_type()
+    }
+
     /// Restore faces in an RGB frame at `width x height`.
     ///
     /// Resizes to 512x512 via bilinear sampling, runs GFPGAN inference,

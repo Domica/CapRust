@@ -2247,6 +2247,9 @@ pub struct GfpganRequest {
 pub enum GfpganEvent {
     Started {
         total_frames: usize,
+        /// The inference backend actually in use (after Auto resolution
+        /// and any CPU fallback).
+        backend: caprust_media_io::inference_backend::BackendType,
     },
     Progress {
         done: usize,
@@ -2258,6 +2261,12 @@ pub enum GfpganEvent {
         frame_count: usize,
     },
     Failed(String),
+    /// Emitted when the requested GPU backend failed to load and the job
+    /// fell back to CPU. Helps users understand why GPU acceleration
+    /// appears inactive.
+    FallbackToCpu {
+        requested: caprust_media_io::inference_backend::BackendType,
+    },
 }
 
 pub fn spawn_gfpgan_job(
@@ -2403,10 +2412,6 @@ fn run_gfpgan_inner(
     if total == 0 {
         return Err("no frames extracted".into());
     }
-    let _ = tx.send(GfpganEvent::Started {
-        total_frames: total,
-    });
-
     let key = format!(
         "{}|{}",
         req.detector_path.to_string_lossy(),
@@ -2421,6 +2426,24 @@ fn run_gfpgan_inner(
         .map_err(|e| format!("load GFPGAN: {e}"))
     })?;
     let restorer = restorer.as_ref();
+
+    // Report which backend is actually in use (may differ from requested
+    // if CUDA/DirectML failed to load and fell back to CPU).
+    let _ = tx.send(GfpganEvent::Started {
+        total_frames: total,
+        backend: restorer.backend_type(),
+    });
+
+    // Warn if the requested backend was not actually used (CPU fallback).
+    if restorer.backend_type() != req.backend {
+        let _ = tx.send(GfpganEvent::FallbackToCpu {
+            requested: req.backend,
+        });
+        tracing::warn!(
+            "gfpgan: requested {:?} backend but fell back to CPU",
+            req.backend
+        );
+    }
 
     let (fw, fh) = (frames[0].width, frames[0].height);
     let mut writer = spawn_rgb_writer(ffmpeg, &req.output_path, fw, fh, req.fps)?;
