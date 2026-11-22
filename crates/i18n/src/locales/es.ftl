@@ -1225,3 +1225,40 @@ welcome-point-shape = Elige un diseño: Clásico (reorganizable) o Moderno (zona
 menu-view-layout-basic = Básico (Vista previa + Línea de tiempo)
 
 update-toast-install = Descargar e instalar
+
+set-tab-gpu = GPU
+
+set-gpu-heading = Aceleración por GPU
+set-gpu-hint = El EXE estándar se mantiene pequeño (~27 MB, solo CPU). La aceleración por GPU es una descarga opcional independiente desde GitHub Releases.
+set-gpu-provider-cuda = NVIDIA CUDA
+set-gpu-provider-directml = AMD DirectML
+set-gpu-status-installed = Instalado
+set-gpu-status-not-installed = No instalado
+set-gpu-status-downloading = Descargando…
+set-gpu-status-error = Error
+set-gpu-download = Descargar
+set-gpu-downloading = Descargando…
+set-gpu-retry = Reintentar
+set-gpu-version = Versión
+set-gpu-install-path = Ruta de instalación
+set-gpu-cuda-hint = Para GPUs NVIDIA. Requiere controladores NVIDIA y GPU compatible con CUDA.
+set-gpu-directml-hint = Para GPUs AMD. Requiere GPU y controladores compatibles con DirectML.
+set-gpu-download-done = El plugin de GPU se instaló correctamente.
+set-gpu-download-failed = La descarga del plugin de GPU falló: { $err }
+set-gpu-check-failed = No se pudo comprobar el estado del plugin de GPU: { $err }
+set-gpu-detected = GPU detectada:
+set-gpu-detected-cuda = NVIDIA CUDA
+set-gpu-detected-directml = AMD DirectML
+set-gpu-detected-cpu = Solo CPU (no se detectó GPU)
+set-gpu-detected-unknown = Desconocido
+
+props-face-restore-backend = Backend de inferencia:
+props-face-restore-backend-cuda = NVIDIA CUDA
+props-face-restore-backend-directml = AMD DirectML
+props-face-restore-backend-external-cuda = CUDA (plugin externo)
+props-face-restore-backend-external-directml = DirectML (plugin externo)
+props-face-restore-backend-auto = Auto (GPU si está disponible, si no CPU)
+
+set-ai-backend-external-cuda = NVIDIA CUDA (plugin externo)
+set-ai-backend-external-directml = AMD DirectML (plugin externo)
+set-ai-backend-external-hint = Los plugins externos se descargan por separado desde GitHub Releases. Instálalos primero en Ajustes -> GPU.

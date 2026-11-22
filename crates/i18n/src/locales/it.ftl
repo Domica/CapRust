@@ -1225,3 +1225,40 @@ welcome-point-shape = Scegli un layout: Classico (riorganizzabile) o Moderno (zo
 menu-view-layout-basic = Base (Anteprima + Timeline)
 
 update-toast-install = Scarica e installa
+
+set-tab-gpu = GPU
+
+set-gpu-heading = Accelerazione GPU
+set-gpu-hint = L'EXE standard rimane piccolo (~27 MB, solo CPU). L'accelerazione GPU è un download opzionale separato da GitHub Releases.
+set-gpu-provider-cuda = NVIDIA CUDA
+set-gpu-provider-directml = AMD DirectML
+set-gpu-status-installed = Installato
+set-gpu-status-not-installed = Non installato
+set-gpu-status-downloading = Download in corso…
+set-gpu-status-error = Errore
+set-gpu-download = Scarica
+set-gpu-downloading = Download in corso…
+set-gpu-retry = Riprova
+set-gpu-version = Versione
+set-gpu-install-path = Percorso di installazione
+set-gpu-cuda-hint = Per GPU NVIDIA. Richiede driver NVIDIA e GPU compatibile con CUDA.
+set-gpu-directml-hint = Per GPU AMD. Richiede GPU e driver compatibili con DirectML.
+set-gpu-download-done = Plugin GPU installato con successo.
+set-gpu-download-failed = Download del plugin GPU non riuscito: { $err }
+set-gpu-check-failed = Impossibile verificare lo stato del plugin GPU: { $err }
+set-gpu-detected = GPU rilevata:
+set-gpu-detected-cuda = NVIDIA CUDA
+set-gpu-detected-directml = AMD DirectML
+set-gpu-detected-cpu = Solo CPU (nessuna GPU rilevata)
+set-gpu-detected-unknown = Sconosciuto
+
+props-face-restore-backend = Backend di inferenza:
+props-face-restore-backend-cuda = NVIDIA CUDA
+props-face-restore-backend-directml = AMD DirectML
+props-face-restore-backend-external-cuda = CUDA (plugin esterno)
+props-face-restore-backend-external-directml = DirectML (plugin esterno)
+props-face-restore-backend-auto = Auto (GPU se disponibile, altrimenti CPU)
+
+set-ai-backend-external-cuda = NVIDIA CUDA (plugin esterno)
+set-ai-backend-external-directml = AMD DirectML (plugin esterno)
+set-ai-backend-external-hint = I plugin esterni vengono scaricati separatamente da GitHub Releases. Installarli prima in Impostazioni -> GPU.

@@ -1225,3 +1225,40 @@ welcome-point-shape = Wähle ein Layout: Klassisch (verschiebbar) oder Modern (f
 menu-view-layout-basic = Basis (Vorschau + Zeitleiste)
 
 update-toast-install = Herunterladen und installieren
+
+set-tab-gpu = GPU
+
+set-gpu-heading = GPU-Beschleunigung
+set-gpu-hint = Standard-EXE bleibt klein (~27 MB, nur CPU). GPU-Beschleunigung ist ein optionaler separater Download von GitHub Releases.
+set-gpu-provider-cuda = NVIDIA CUDA
+set-gpu-provider-directml = AMD DirectML
+set-gpu-status-installed = Installiert
+set-gpu-status-not-installed = Nicht installiert
+set-gpu-status-downloading = Wird heruntergeladen…
+set-gpu-status-error = Fehler
+set-gpu-download = Herunterladen
+set-gpu-downloading = Wird heruntergeladen…
+set-gpu-retry = Wiederholen
+set-gpu-version = Version
+set-gpu-install-path = Installationspfad
+set-gpu-cuda-hint = Für NVIDIA-GPUs. Erfordert NVIDIA-Treiber und CUDA-fähige GPU.
+set-gpu-directml-hint = Für AMD-GPUs. Erfordert DirectML-fähige GPU und Treiber.
+set-gpu-download-done = GPU-Plugin erfolgreich installiert.
+set-gpu-download-failed = Download des GPU-Plugins fehlgeschlagen: { $err }
+set-gpu-check-failed = GPU-Plugin-Status konnte nicht geprüft werden: { $err }
+set-gpu-detected = Erfasste GPU:
+set-gpu-detected-cuda = NVIDIA CUDA
+set-gpu-detected-directml = AMD DirectML
+set-gpu-detected-cpu = Nur CPU (keine GPU erkannt)
+set-gpu-detected-unknown = Unbekannt
+
+props-face-restore-backend = Inferenz-Backend:
+props-face-restore-backend-cuda = NVIDIA CUDA
+props-face-restore-backend-directml = AMD DirectML
+props-face-restore-backend-external-cuda = CUDA (externes Plugin)
+props-face-restore-backend-external-directml = DirectML (externes Plugin)
+props-face-restore-backend-auto = Auto (GPU falls verfügbar, sonst CPU)
+
+set-ai-backend-external-cuda = NVIDIA CUDA (externes Plugin)
+set-ai-backend-external-directml = AMD DirectML (externes Plugin)
+set-ai-backend-external-hint = Externe Plugins werden separat von GitHub Releases heruntergeladen. Zuerst unter Einstellungen -> GPU installieren.
