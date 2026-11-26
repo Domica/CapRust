@@ -7,9 +7,11 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -21,39 +23,56 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * CapRust on the phone.
+ * CapRust on the phone — standalone editor.
  *
- * A real editor, not a remote control: the engine runs on the phone
- * (see [Daemon]) and this screen asks it questions. The wire format
- * is the one the companion already speaks, so the `Client` class is
- * the same one, unchanged.
+ * The engine runs on the phone (see [Daemon]) and this activity drives it.
+ * On first launch the user sees a Home screen with "New project" and
+ * "Recent projects". Creating or opening a project switches to the Editor
+ * screen: preview, timeline, add media, export.
  *
- * The first screen does the four things a Story needs: bring a file
- * in, put it on the timeline, look at a frame of it, render it.
+ * The wire format the engine speaks is the same JSON-RPC the desktop MCP
+ * server uses, so the [Client] class is shared with the remote companion.
  */
 class EditorActivity : Activity() {
 
     companion object {
         private const val TAG = "CapRustEditor"
         private const val REQUEST_PICK = 41
+        private const val REQUEST_PICK_FOLDER = 42
     }
+
+    /** Which screen is showing. */
+    private enum class Screen { Home, New, Editor }
+
+    private var current = Screen.Home
 
     private lateinit var client: Client
     private lateinit var daemon: Daemon
-    private lateinit var status: TextView
-    private lateinit var preview: ImageView
-    private lateinit var timeline: LinearLayout
-    private lateinit var exportProgress: TextView
+    private var status: TextView? = null
 
     /** Where the picked file was copied to. The engine reads paths. */
     private var imported: File? = null
+
+    /** New-project form fields. */
+    private var newName: EditText? = null
+    private var newLocation: EditText? = null
+    private var newResolution: Int = 1080
+    private var newFpsLabel: String = "30 fps"
+
+    /** Folder picked via the system folder picker, if any. */
+    private var pickedFolderUri: Uri? = null
+
+    /** Preview + timeline views (built once, reused). */
+    private lateinit var preview: ImageView
+    private lateinit var timeline: LinearLayout
+    private lateinit var exportProgress: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         client = Client(this)
         daemon = Daemon(this)
-        build()
         startEngine()
+        show(current)
     }
 
     override fun onDestroy() {
@@ -63,18 +82,521 @@ class EditorActivity : Activity() {
         super.onDestroy()
     }
 
-    // ---- the screen -------------------------------------------------
+    // ---- navigation -----------------------------------------------------
 
-    private fun build() {
+    /** Rebuild the content view for [screen]. */
+    private fun show(screen: Screen) {
+        current = screen
+        setContentView(
+            when (screen) {
+                Screen.Home -> buildHome()
+                Screen.New -> buildNewProject()
+                Screen.Editor -> buildEditor()
+            },
+        )
+        if (screen == Screen.Editor) {
+            refresh()
+            previewTicker.post(previewRunnable)
+        }
+    }
+
+    private fun backToHome() {
+        show(Screen.Home)
+    }
+
+    // ---- home screen ----------------------------------------------------
+
+    /** Root menu: New project or Recent projects. */
+    private fun buildHome(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setBackgroundColor(0xFF101014.toInt())
+            gravity = Gravity.CENTER
+        }
+
+        val title = TextView(this).apply {
+            text = getString(R.string.editor_home_title)
+            textSize = 32f
+            setTypeface(android.graphics.Typeface.BOLD)
+            setTextColor(0xFFE8EAED.toInt())
+        }
+        root.addView(title)
+
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_ready)
+                textSize = 14f
+                setTextColor(0xFF9AA0A6.toInt())
+                setPadding(0, dp(8), 0, dp(24))
+            },
+        )
+
+        val newBtn = Button(this).apply {
+            text = getString(R.string.editor_btn_new_project)
+            textSize = 18f
+            setAllCaps(false)
+            setPadding(0, dp(16), 0, dp(16))
+            setOnClickListener { show(Screen.New) }
+        }
+        root.addView(newBtn, LinearLayout.LayoutParams(dp(220), dp(52)))
+
+        root.addView(
+            TextView(this).apply {
+                setPadding(0, dp(12), 0, dp(12))
+            },
+        )
+
+        val recentBtn = Button(this).apply {
+            text = getString(R.string.editor_btn_recent)
+            textSize = 18f
+            setAllCaps(false)
+            setPadding(0, dp(16), 0, dp(16))
+            setOnClickListener { showRecent() }
+        }
+        root.addView(recentBtn, LinearLayout.LayoutParams(dp(220), dp(52)))
+
+        return root
+    }
+
+    /** Show recent projects — inline on the Home screen for now. */
+    private fun showRecent() {
+        val prefs = getSharedPreferences("caprust_editor", Activity.MODE_PRIVATE)
+        val recent = prefs.getString("recent_projects", "[]") ?: "[]"
+        val arr = try {
+            org.json.JSONArray(recent)
+        } catch (_: Exception) {
+            org.json.JSONArray()
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            setBackgroundColor(0xFF101014.toInt())
+        }
+
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_recent_title)
+                textSize = 22f
+                setTypeface(android.graphics.Typeface.BOLD)
+                setTextColor(0xFFE8EAED.toInt())
+                setPadding(0, dp(4), 0, dp(16))
+            },
+        )
+
+        if (arr.length() == 0) {
+            root.addView(
+                TextView(this).apply {
+                    text = getString(R.string.editor_no_recent)
+                    textSize = 15f
+                    setTextColor(0xFF9AA0A6.toInt())
+                    setPadding(0, dp(8), 0, dp(8))
+                },
+            )
+        } else {
+            for (i in 0 until arr.length()) {
+                val entry = arr.optJSONObject(i) ?: continue
+                val name = entry.optString("name", "?")
+                val path = entry.optString("path", "")
+                val res = entry.optInt("resolution", 1080)
+                val fps = entry.optString("fps", "30 fps")
+
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+                row.addView(
+                    Button(this).apply {
+                        text = "$name   ($res px, $fps)"
+                        textSize = 16f
+                        setAllCaps(false)
+                        setPadding(0, dp(12), 0, dp(12))
+                        setOnClickListener {
+                            openRecent(name, path)
+                        }
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(52),
+                    ),
+                )
+                root.addView(row)
+                root.addView(
+                    TextView(this).apply {
+                        text = path
+                        textSize = 11f
+                        setTextColor(0xFF6A6F76.toInt())
+                        setPadding(0, dp(2), 0, dp(10))
+                    },
+                )
+            }
+        }
+
+        root.addView(
+            TextView(this).apply {
+                setPadding(0, dp(16), 0, dp(16))
+            },
+        )
+
+        root.addView(
+            Button(this).apply {
+                text = getString(R.string.editor_back)
+                textSize = 16f
+                setAllCaps(false)
+                setPadding(0, dp(16), 0, dp(16))
+                setOnClickListener { show(Screen.Home) }
+            },
+            LinearLayout.LayoutParams(dp(160), dp(52)),
+        )
+
+        setContentView(root)
+        current = Screen.Home // keep logical state on Home
+    }
+
+    /** Open a recent project and switch to the editor. */
+    private fun openRecent(name: String, path: String) {
+        val prefs = getSharedPreferences("caprust_editor", Activity.MODE_PRIVATE)
+        prefs.edit()
+            .putString("project_name", name)
+            .putString("project_path", path)
+            .apply()
+        status?.text = "Opened: $name"
+        show(Screen.Editor)
+    }
+
+    // ---- new project screen ---------------------------------------------
+
+    /** Create-project form: name, location, resolution, FPS. */
+    private fun buildNewProject(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            setBackgroundColor(0xFF101014.toInt())
+        }
+
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_new_title)
+                textSize = 22f
+                setTypeface(android.graphics.Typeface.BOLD)
+                setTextColor(0xFFE8EAED.toInt())
+                setPadding(0, dp(4), 0, dp(16))
+            },
+        )
+
+        // Name
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_field_name)
+                textSize = 14f
+                setTextColor(0xFF9AA0A6.toInt())
+                setPadding(0, dp(6), 0, dp(2))
+            },
+        )
+        newName = EditText(this).apply {
+            hint = "My project"
+            setTextColor(0xFFE8EAED.toInt())
+            setHintTextColor(0xFF6A6F76.toInt())
+        }
+        root.addView(
+            newName,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48),
+            ),
+        )
+
+        root.addView(
+            TextView(this).apply {
+                setPadding(0, dp(10), 0, dp(2))
+            },
+        )
+
+        // Location
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_field_location)
+                textSize = 14f
+                setTextColor(0xFF9AA0A6.toInt())
+                setPadding(0, dp(6), 0, dp(2))
+            },
+        )
+        val locRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        newLocation = EditText(this).apply {
+            hint = getExternalFilesDir(null)?.absolutePath ?: ""
+            setTextColor(0xFFE8EAED.toInt())
+            setHintTextColor(0xFF6A6F76.toInt())
+        }
+        locRow.addView(
+            newLocation,
+            LinearLayout.LayoutParams(0, dp(48), 1f),
+        )
+        locRow.addView(
+            Button(this).apply {
+                text = getString(R.string.editor_btn_browse)
+                textSize = 14f
+                setAllCaps(false)
+                setPadding(0, dp(10), 0, dp(10))
+                setOnClickListener {
+                    val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+                    startActivityForResult(i, REQUEST_PICK_FOLDER)
+                }
+            },
+            LinearLayout.LayoutParams(dp(96), dp(48)),
+        )
+        root.addView(locRow)
+
+        root.addView(
+            TextView(this).apply {
+                setPadding(0, dp(10), 0, dp(2))
+            },
+        )
+
+        // Resolution
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_field_resolution)
+                textSize = 14f
+                setTextColor(0xFF9AA0A6.toInt())
+                setPadding(0, dp(6), 0, dp(2))
+            },
+        )
+        val resRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        resRow.addView(
+            TextView(this).apply {
+                text = "$newResolution px"
+                textSize = 14f
+                setTextColor(0xFFE8EAED.toInt())
+            },
+            LinearLayout.LayoutParams(dp(80), dp(48)),
+        )
+        resRow.addView(
+            Button(this).apply {
+                text = "-"
+                textSize = 20f
+                setAllCaps(false)
+                setPadding(0, dp(8), 0, dp(8))
+                setOnClickListener {
+                    if (newResolution > 480) {
+                        newResolution -= 120
+                        (resRow.getChildAt(0) as TextView).text = "$newResolution px"
+                    }
+                },
+            },
+            LinearLayout.LayoutParams(dp(44), dp(44)),
+        )
+        resRow.addView(
+            Button(this).apply {
+                text = "+"
+                textSize = 20f
+                setAllCaps(false)
+                setPadding(0, dp(8), 0, dp(8))
+                setOnClickListener {
+                    if (newResolution < 2160) {
+                        newResolution += 120
+                        (resRow.getChildAt(0) as TextView).text = "$newResolution px"
+                    }
+                },
+            },
+            LinearLayout.LayoutParams(dp(44), dp(44)),
+        )
+        root.addView(resRow)
+
+        root.addView(
+            TextView(this).apply {
+                setPadding(0, dp(10), 0, dp(2))
+            },
+        )
+
+        // FPS
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.editor_field_fps)
+                textSize = 14f
+                setTextColor(0xFF9AA0A6.toInt())
+                setPadding(0, dp(6), 0, dp(2))
+            },
+        )
+        val fpsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fpsRow.addView(
+            TextView(this).apply {
+                text = newFpsLabel
+                textSize = 14f
+                setTextColor(0xFFE8EAED.toInt())
+            },
+            LinearLayout.LayoutParams(dp(80), dp(48)),
+        )
+        val fpsOptions = listOf("24 fps", "30 fps", "60 fps")
+        var fpsIdx = fpsOptions.indexOf(newFpsLabel)
+        fpsRow.addView(
+            Button(this).apply {
+                text = "<"
+                textSize = 20f
+                setAllCaps(false)
+                setPadding(0, dp(8), 0, dp(8))
+                setOnClickListener {
+                    fpsIdx = (fpsIdx - 1 + fpsOptions.size) % fpsOptions.size
+                    newFpsLabel = fpsOptions[fpsIdx]
+                    (fpsRow.getChildAt(0) as TextView).text = newFpsLabel
+                },
+            },
+            LinearLayout.LayoutParams(dp(44), dp(44)),
+        )
+        fpsRow.addView(
+            Button(this).apply {
+                text = ">"
+                textSize = 20f
+                setAllCaps(false)
+                setPadding(0, dp(8), 0, dp(8))
+                setOnClickListener {
+                    fpsIdx = (fpsIdx + 1) % fpsOptions.size
+                    newFpsLabel = fpsOptions[fpsIdx]
+                    (fpsRow.getChildAt(0) as TextView).text = newFpsLabel
+                },
+            },
+            LinearLayout.LayoutParams(dp(44), dp(44)),
+        )
+        root.addView(fpsRow)
+
+        root.addView(
+            TextView(this).apply {
+                setPadding(0, dp(16), 0, dp(16))
+            },
+        )
+
+        // Buttons
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        btnRow.addView(
+            Button(this).apply {
+                text = getString(R.string.editor_btn_create)
+                textSize = 16f
+                setAllCaps(false)
+                setPadding(0, dp(16), 0, dp(16))
+                setOnClickListener { doCreateProject() }
+            },
+            LinearLayout.LayoutParams(0, dp(52), 1f),
+        )
+        btnRow.addView(
+            TextView(this).apply {
+                setPadding(0, dp(8), 0, dp(8))
+            },
+        )
+        btnRow.addView(
+            Button(this).apply {
+                text = getString(R.string.editor_btn_cancel)
+                textSize = 16f
+                setAllCaps(false)
+                setPadding(0, dp(16), 0, dp(16))
+                setOnClickListener { show(Screen.Home) }
+            },
+            LinearLayout.LayoutParams(0, dp(52), 1f),
+        )
+        root.addView(btnRow)
+
+        return root
+    }
+
+    /** Validate and create the project, then switch to the editor. */
+    private fun doCreateProject() {
+        val name = newName?.text?.toString()?.trim() ?: ""
+        if (name.isEmpty()) {
+            Toast.makeText(this, R.string.editor_btn_create_hint, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // Use the picked folder if one was chosen, otherwise the text field.
+        val location = pickedFolderUri?.lastPathSegment
+            ?: newLocation?.text?.toString()?.trim() ?: ""
+        if (location.isEmpty()) {
+            Toast.makeText(this, R.string.editor_btn_create_hint, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val projectFolder = File(location, name).apply { mkdirs() }
+        val prefs = getSharedPreferences("caprust_editor", Activity.MODE_PRIVATE)
+        prefs.edit()
+            .putString("project_name", name)
+            .putString("project_path", projectFolder.absolutePath)
+            .putInt("project_resolution", newResolution)
+            .putString("project_fps", newFpsLabel)
+            .putString("project_folder_uri", pickedFolderUri?.toString() ?: "")
+            .apply()
+
+        // Add to recent projects
+        addToRecent(name, projectFolder.absolutePath)
+
+        status?.text = "Created: $name"
+        show(Screen.Editor)
+    }
+
+    /** Remember this project under "recent". */
+    private fun addToRecent(name: String, path: String) {
+        val prefs = getSharedPreferences("caprust_editor", Activity.MODE_PRIVATE)
+        val existing = prefs.getString("recent_projects", "[]") ?: "[]"
+        val arr = try {
+            org.json.JSONArray(existing)
+        } catch (_: Exception) {
+            org.json.JSONArray()
+        }
+        // Remove duplicate if present
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i)
+            if (o != null && o.optString("path") == path) {
+                arr.remove(i)
+                break
+            }
+        }
+        val entry = org.json.JSONObject()
+            .put("name", name)
+            .put("path", path)
+            .put("resolution", newResolution)
+            .put("fps", newFpsLabel)
+        arr.put(entry)
+        // Keep only the last 10
+        while (arr.length() > 10) {
+            arr.remove(0)
+        }
+        prefs.edit().putString("recent_projects", arr.toString()).apply()
+    }
+
+    // ---- editor screen --------------------------------------------------
+
+    /** The main editor: preview, timeline, add media, export. */
+    private fun buildEditor(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setBackgroundColor(0xFF101014.toInt())
         }
 
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(8))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(
+            Button(this).apply {
+                text = getString(R.string.editor_back)
+                textSize = 14f
+                setAllCaps(false)
+                setPadding(0, dp(10), 0, dp(10))
+                setOnClickListener { backToHome() }
+            },
+        )
+        header.addView(
+            TextView(this).apply {
+                text = projectTitle()
+                textSize = 17f
+                setTypeface(android.graphics.Typeface.BOLD)
+                setTextColor(0xFFE8EAED.toInt())
+                setPadding(dp(8), 0, 0, 0)
+            },
+        )
+        root.addView(header)
+
         status = TextView(this).apply {
-            setText(getString(R.string.editor_starting))
-            setTextColor(0xFF9AA0A6.toInt())
+            text = getString(R.string.editor_ready)
+            textColor = 0xFF9AA0A6.toInt()
             textSize = 13f
         }
         root.addView(status)
@@ -109,7 +631,7 @@ class EditorActivity : Activity() {
         root.addView(buttons)
 
         exportProgress = TextView(this).apply {
-            setTextColor(0xFF8AB4F8.toInt())
+            textColor = 0xFF8AB4F8.toInt()
             textSize = 13f
         }
         root.addView(exportProgress)
@@ -129,8 +651,16 @@ class EditorActivity : Activity() {
             ),
         )
 
-        setContentView(root)
+        return root
     }
+
+    /** Project name for the header, from preferences. */
+    private fun projectTitle(): String {
+        val prefs = getSharedPreferences("caprust_editor", Activity.MODE_PRIVATE)
+        return prefs.getString("project_name", getString(R.string.title_project)) ?: getString(R.string.title_project)
+    }
+
+    // ---- buttons --------------------------------------------------------
 
     private fun button(label: Int, onClick: () -> Unit): Button =
         Button(this).apply {
@@ -140,26 +670,24 @@ class EditorActivity : Activity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    // ---- the engine -------------------------------------------------
+    // ---- engine ---------------------------------------------------------
 
     private fun startEngine() {
         daemon.start { ok, why, port, token ->
             runOnUiThread {
                 if (!ok) {
-                    status.text = getString(R.string.editor_engine_failed, why)
+                    status?.text = getString(R.string.editor_engine_failed, why)
                     return@runOnUiThread
                 }
-                status.text = getString(R.string.editor_listening, port)
+                status?.text = getString(R.string.editor_listening, port)
                 client.setToken(token)
-                client.connect("127.0.0.1", port) { connected, err ->
+                client.connect("[IP_ADDRESS]", port) { connected, err ->
                     runOnUiThread {
                         if (!connected) {
-                            status.text = getString(R.string.editor_engine_failed, err)
+                            status?.text = getString(R.string.editor_engine_failed, err)
                             return@runOnUiThread
                         }
-                        status.text = getString(R.string.editor_ready)
-                        refresh()
-                        previewTicker.post(previewRunnable)
+                        status?.text = getString(R.string.editor_ready)
                     }
                 }
             }
@@ -180,7 +708,7 @@ class EditorActivity : Activity() {
             runOnUiThread {
                 timeline.removeAllViews()
                 if (!ok) {
-                    status.text = getString(R.string.editor_call_failed, text)
+                    status?.text = getString(R.string.editor_call_failed, text)
                     return@runOnUiThread
                 }
                 val clips = try {
@@ -190,7 +718,7 @@ class EditorActivity : Activity() {
                 }
                 for (i in 0 until clips.length()) {
                     val clip = clips.optJSONObject(i) ?: continue
-                    val labelStr = (clip.optString("name").ifEmpty { clip.optString("path", "?") }) + " (" + (clip.optLong("duration_ms", 5000)/1000) + "s)";
+                    val labelStr = (clip.optString("name").ifEmpty { clip.optString("path", "?") }) + " (" + (clip.optLong("duration_ms", 5000) / 1000) + "s)";
                     val tv = TextView(this).apply {
                         setText(labelStr + " │ " + (if (clip.optString("transition_in").isNotEmpty()) "→" else "") + (if (clip.optString("transition_out").isNotEmpty()) "←" else ""))
                         setTextColor(0xFFE8EAED.toInt())
@@ -242,16 +770,29 @@ class EditorActivity : Activity() {
     @Deprecated("the platform asks for it this way")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+
+        // Folder picker result: user picked a directory (Downloads, Movies, etc.)
+        if (requestCode == REQUEST_PICK_FOLDER) {
+            if (resultCode == RESULT_OK) {
+                data?.data?.let { uri ->
+                    // Hold on to this URI across restarts
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    )
+                    pickedFolderUri = uri
+                    // Show a friendly name: last path segment, or the URI itself
+                    val display = uri.lastPathSegment ?: uri.toString()
+                    newLocation?.setText(display)
+                    status?.text = getString(R.string.editor_folder_picked, display)
+                }
+            }
+            return
+        }
+
         if (requestCode != REQUEST_PICK || resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
 
-        // The engine reads files by path, and a content URI is not a
-        // path. The file is copied into the app's own directory, which
-        // is also where the export goes.
-        //
-        // The name comes with it. The engine works out what a file is
-        // from its name -- a file called "import-1759000000" is a
-        // file of no known kind, and the import is refused.
         val mediaDir = File(filesDir, "media").apply { mkdirs() }
         val target = File(mediaDir, nameFor(uri))
         try {
@@ -266,14 +807,6 @@ class EditorActivity : Activity() {
         imported = target
 
         val args = JSONObject().put("path", target.absolutePath)
-        // The kind goes with it. The engine works out what a file is
-        // from its name, and a picker's name is not always a name: on
-        // some devices the query for it comes back empty, and a file
-        // called "import-1759000000.bin" is a file of no known kind.
-        //
-        // The type the picker reports is the first answer. If it does
-        // not say anything useful, the file is asked itself: every
-        // format has a few bytes at the front that say what it is.
         val kind = kindFor(uri) ?: sniffKind(target)
         kind?.let { args.put("kind", it) }
         client.call("add_media", args) { ok, text ->
@@ -282,8 +815,6 @@ class EditorActivity : Activity() {
                     Toast.makeText(this, text, Toast.LENGTH_LONG).show()
                     return@runOnUiThread
                 }
-                // The media is added; now put it on the timeline so
-                // refresh() shows it. add_media returns media_id.
                 val mediaId = try { org.json.JSONObject(text).optString("media_id") } catch (e: Exception) { "" }
                 if (mediaId.isNotEmpty()) {
                     val clipArgs = org.json.JSONObject()
@@ -307,13 +838,6 @@ class EditorActivity : Activity() {
         }
     }
 
-    /**
-     * What the picker says the file is: "video", "audio" or "image".
-     *
-     * The type is more dependable than the name. A picker's name is
-     * sometimes empty, and the engine needs to know what a file is
-     * before it will take it.
-     */
     private fun kindFor(uri: Uri): String? {
         val type = try {
             contentResolver.getType(uri)
@@ -328,14 +852,6 @@ class EditorActivity : Activity() {
         }
     }
 
-    /**
-     * A name for the copied file that keeps its kind.
-     *
-     * The extension is what the engine looks at, so it has to be
-     * there: "clip.mp4" is a video, "clip" is nothing. The picker's
-     * name is used when it has one, and the type fills in the
-     * extension when it does not.
-     */
     private fun nameFor(uri: Uri): String {
         val name = try {
             contentResolver
@@ -351,10 +867,6 @@ class EditorActivity : Activity() {
             ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
             ?.takeIf { it.isNotBlank() }
         val dot = clean?.lastIndexOf('.') ?: -1
-        // Kotlin cannot smart-cast a nullable val captured from a
-        // nullable chain, so split on the non-null case instead of
-        // asserting with `!!`. `dot > 0` already implies `clean != null`,
-        // but spelling it out keeps the invariant checkable.
         val stem: String
         val ext: String
         if (clean != null && dot > 0) {
@@ -367,12 +879,6 @@ class EditorActivity : Activity() {
         return "${System.currentTimeMillis()}-$stem$ext"
     }
 
-    /**
-     * What the file says it is, from its first bytes.
-     *
-     * Every format has a few bytes at the front that say what it is,
-     * and the file is right about itself more often than a picker is.
-     */
     private fun sniffKind(file: File): String? {
         val head = try {
             file.inputStream().use { input ->
@@ -393,29 +899,21 @@ class EditorActivity : Activity() {
             return magic.withIndex().all { (i, b) -> (head[offset + i].toInt() and 0xff) == b }
         }
         return when {
-            // MP4/MOV: 4-byte box size, then "ftyp" at offset 4.
             startsAt(4, 0x66, 0x74, 0x79, 0x70) -> "video"
-            // WebM/MKV: EBML header at offset 0.
             starts(0x1a, 0x45, 0xdf, 0xa3) -> "video"
-            // RIFF: avi or webm.
             starts(0x52, 0x49, 0x46, 0x46) -> "video"
-            // Ogg container.
             starts(0x4f, 0x67, 0x67, 0x53) -> "audio"
-            // MP3.
             starts(0x49, 0x44, 0x33) -> "audio"
             starts(0xff, 0xfb) || starts(0xff, 0xf3) -> "audio"
-            // FLAC.
             starts(0x66, 0x4c, 0x61, 0x43) -> "audio"
-            // Images.
-            starts(0x89, 0x50, 0x4e, 0x47) -> "image"        // PNG
-            starts(0xff, 0xd8) -> "image"                      // JPEG
-            starts(0x47, 0x49, 0x46, 0x38) -> "image"        // GIF
-            starts(0x42, 0x4d) -> "image"                     // BMP
+            starts(0x89, 0x50, 0x4e, 0x47) -> "image"
+            starts(0xff, 0xd8) -> "image"
+            starts(0x47, 0x49, 0x46, 0x38) -> "image"
+            starts(0x42, 0x4d) -> "image"
             else -> null
         }
     }
 
-    /** The extension the type implies, when the name has none. */
     private fun extensionFor(uri: Uri): String {
         val type = try {
             contentResolver.getType(uri)
@@ -428,24 +926,24 @@ class EditorActivity : Activity() {
 
     /** Render one frame and show it. */
     private fun renderPreview() {
-        status.text = getString(R.string.editor_rendering)
+        status?.text = getString(R.string.editor_rendering)
         client.call("preview_frame", JSONObject().put("width", 540)) { ok, text ->
             runOnUiThread {
                 if (!ok || text.isNullOrEmpty()) {
-                    status.text = getString(R.string.editor_call_failed, text)
+                    status?.text = getString(R.string.editor_call_failed, text)
                     return@runOnUiThread
                 }
                 try {
                     val bytes = Base64.decode(text, Base64.DEFAULT)
                     val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     if (bitmap == null) {
-                        status.text = getString(R.string.editor_no_frame)
+                        status?.text = getString(R.string.editor_no_frame)
                         return@runOnUiThread
                     }
                     preview.setImageBitmap(bitmap)
-                    status.text = getString(R.string.editor_ready)
+                    status?.text = getString(R.string.editor_ready)
                 } catch (e: Exception) {
-                    status.text = getString(R.string.editor_call_failed, e.message ?: "")
+                    status?.text = getString(R.string.editor_call_failed, e.message ?: "")
                 }
             }
         }
@@ -509,22 +1007,12 @@ class EditorActivity : Activity() {
             }
             startActivity(Intent.createChooser(i, getString(R.string.editor_share)))
         } catch (e: Exception) {
-            // No gallery, no share sheet: the file is on the device and
-            // the path is in the log.
             Log.e(TAG, "could not share ${file.absolutePath}", e)
             Toast.makeText(this, file.absolutePath, Toast.LENGTH_LONG).show()
         }
     }
 
-    /**
-     * Put the video in the gallery and return where it went.
-     *
-     * A `file://` URI cannot be shared since Android 7 -- it throws
-     * instead -- so the video goes into the gallery first and the
-     * share sheet gets a URI the receiving app is allowed to read. The
-     * gallery is also where a Story has to end up anyway.
-     */
-    private fun putInTheGallery(file: File): Uri? {
+    private fun putInTheGallery(file: File): android.net.Uri? {
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, file.name)
             put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")

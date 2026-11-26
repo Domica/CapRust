@@ -146,6 +146,24 @@
     <string name="msg_removed">Removed %1$s</string>
     <string name="msg_no_duration">Project length is not known yet</string>
 
+    <!-- New / Recent project screens -->
+    <string name="editor_home_title">CapRust</string>
+    <string name="editor_btn_new_project">New project</string>
+    <string name="editor_btn_recent">Recent projects</string>
+    <string name="editor_new_title">New project</string>
+    <string name="editor_field_name">Name</string>
+    <string name="editor_field_location">Location</string>
+    <string name="editor_field_resolution">Resolution</string>
+    <string name="editor_field_fps">Frame rate</string>
+    <string name="editor_btn_browse">Browse</string>
+    <string name="editor_btn_create">Create</string>
+    <string name="editor_btn_cancel">Cancel</string>
+    <string name="editor_btn_create_hint">Enter a name and pick a location first</string>
+    <string name="editor_folder_picked">Folder: %1$s</string>
+    <string name="editor_recent_title">Recent projects</string>
+    <string name="editor_no_recent">No recent projects yet</string>
+    <string name="editor_back">Back</string>
+
     <!-- The editor: the phone runs the engine itself. -->
     <string name="editor_name">CapRust</string>
     <string name="editor_starting">Starting the engine…</string>
