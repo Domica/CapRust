@@ -57,8 +57,8 @@ pub fn directml_binary_path() -> Option<PathBuf> {
 /// should skip verification or show a warning.
 pub fn plugin_sha256(provider: &str, _version: &str) -> Option<&'static str> {
     match provider {
-        "cuda" => None,
-        "directml" => None,
+        "cuda" => Some("6665824c7e3a50779489330d65f80118ea71a19124a1aecebea04b21a38cd8fb"),
+        "directml" => Some("c81992335bc8d84cec784046c10b8b0d9fbe108b9bc1f22c6c95c80e285f8257"),
         _ => None,
     }
 }
