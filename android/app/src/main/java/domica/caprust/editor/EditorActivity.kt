@@ -118,7 +118,7 @@ class EditorActivity : Activity() {
         val title = TextView(this).apply {
             text = getString(R.string.editor_home_title)
             textSize = 32f
-            setTypeface(android.graphics.Typeface.BOLD)
+            setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
             setTextColor(0xFFE8EAED.toInt())
         }
         root.addView(title)
@@ -179,7 +179,7 @@ class EditorActivity : Activity() {
             TextView(this).apply {
                 text = getString(R.string.editor_recent_title)
                 textSize = 22f
-                setTypeface(android.graphics.Typeface.BOLD)
+                setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
                 setTextColor(0xFFE8EAED.toInt())
                 setPadding(0, dp(4), 0, dp(16))
             },
@@ -277,7 +277,7 @@ class EditorActivity : Activity() {
             TextView(this).apply {
                 text = getString(R.string.editor_new_title)
                 textSize = 22f
-                setTypeface(android.graphics.Typeface.BOLD)
+                setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
                 setTextColor(0xFFE8EAED.toInt())
                 setPadding(0, dp(4), 0, dp(16))
             },
@@ -587,7 +587,7 @@ class EditorActivity : Activity() {
             TextView(this).apply {
                 text = projectTitle()
                 textSize = 17f
-                setTypeface(android.graphics.Typeface.BOLD)
+                setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
                 setTextColor(0xFFE8EAED.toInt())
                 setPadding(dp(8), 0, 0, 0)
             },
@@ -596,7 +596,7 @@ class EditorActivity : Activity() {
 
         status = TextView(this).apply {
             text = getString(R.string.editor_ready)
-            textColor = 0xFF9AA0A6.toInt()
+            setTextColor(0xFF9AA0A6.toInt())
             textSize = 13f
         }
         root.addView(status)
@@ -631,7 +631,7 @@ class EditorActivity : Activity() {
         root.addView(buttons)
 
         exportProgress = TextView(this).apply {
-            textColor = 0xFF8AB4F8.toInt()
+            setTextColor(0xFF8AB4F8.toInt())
             textSize = 13f
         }
         root.addView(exportProgress)
