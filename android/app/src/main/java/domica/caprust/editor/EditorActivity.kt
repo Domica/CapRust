@@ -3,6 +3,7 @@ package domica.caprust.editor
 import android.app.Activity
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
@@ -381,7 +382,7 @@ class EditorActivity : Activity() {
                         newResolution -= 120
                         (resRow.getChildAt(0) as TextView).text = "$newResolution px"
                     }
-                },
+                }
             },
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
@@ -396,7 +397,7 @@ class EditorActivity : Activity() {
                         newResolution += 120
                         (resRow.getChildAt(0) as TextView).text = "$newResolution px"
                     }
-                },
+                }
             },
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
@@ -438,7 +439,7 @@ class EditorActivity : Activity() {
                     fpsIdx = (fpsIdx - 1 + fpsOptions.size) % fpsOptions.size
                     newFpsLabel = fpsOptions[fpsIdx]
                     (fpsRow.getChildAt(0) as TextView).text = newFpsLabel
-                },
+                }
             },
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
@@ -452,7 +453,7 @@ class EditorActivity : Activity() {
                     fpsIdx = (fpsIdx + 1) % fpsOptions.size
                     newFpsLabel = fpsOptions[fpsIdx]
                     (fpsRow.getChildAt(0) as TextView).text = newFpsLabel
-                },
+                }
             },
             LinearLayout.LayoutParams(dp(44), dp(44)),
         )
