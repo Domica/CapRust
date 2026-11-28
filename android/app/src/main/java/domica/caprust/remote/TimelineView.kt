@@ -88,22 +88,22 @@ class TimelineView(context: Context) : View(context) {
         blockIds.clear()
 
         val rows = trackCount()
-        val usable = (width - labelWidth).coerceAtLeast(1f)
+        val usable = (width.toFloat() - labelWidth).coerceAtLeast(1f)
         // Seconds per pixel, so a 30s project and a 10-minute one both
         // fit the screen. Reading the shape never requires zooming.
-        val msPerPx = totalMs / usable
+        val msPerPx = totalMs.toFloat() / usable
 
         // Horizontal grid every second, labelled every ten.
         val stepMs = if (msPerPx * 1000f < 40f) 10_000L else 1_000L
         var t = 0L
         while (t <= totalMs) {
-            val x = labelWidth + t / msPerPx
-            canvas.drawLine(x, 0f, x, rows * (rowHeight + gap), gridPaint)
+            val x = labelWidth + t.toFloat() / msPerPx
+            canvas.drawLine(x, 0f, x, rows.toFloat() * (rowHeight + gap), gridPaint)
             t += stepMs
         }
 
         for (row in 0 until rows) {
-            val top = row * (rowHeight + gap)
+            val top = row.toFloat() * (rowHeight + gap)
             canvas.drawRect(labelWidth, top, width.toFloat(), top + rowHeight, trackPaint)
             canvas.drawText("V$row", 4f, top + rowHeight * 0.7f, textPaint)
 
@@ -112,8 +112,8 @@ class TimelineView(context: Context) : View(context) {
                 if (c.optInt("track_index", 0) != row) continue
                 val start = c.optLong("start_time_ms")
                 val dur = c.optLong("duration_ms", 1)
-                val left = labelWidth + start / msPerPx
-                val right = labelWidth + (start + dur) / msPerPx
+                val left = labelWidth + start.toFloat() / msPerPx
+                val right = labelWidth + (start + dur).toFloat() / msPerPx
                 // Never narrower than a few pixels: a one-frame clip at
                 // a ten-minute zoom would vanish, and "I cannot see it"
                 // reads as "it is not there".
@@ -153,7 +153,7 @@ class TimelineView(context: Context) : View(context) {
     /** Height the view needs, so the layout can reserve it. */
     fun desiredHeight(px: Int): Int {
         val rows = max(trackCount(), 1)
-        return (rows * (rowHeight + gap)).toInt() + 8
+        return (rows.toFloat() * (rowHeight + gap)).toInt() + 8
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
