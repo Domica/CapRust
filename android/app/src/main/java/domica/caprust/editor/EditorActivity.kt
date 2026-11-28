@@ -343,7 +343,7 @@ class EditorActivity : Activity() {
                     try {
                         startActivityForResult(i, REQUEST_PICK_FOLDER)
                     } catch (e: Exception) {
-                        Toast.makeText(this, R.string.editor_no_picker, Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, getString(R.string.editor_no_picker), Toast.LENGTH_LONG).show()
                     }
                 }
             },
