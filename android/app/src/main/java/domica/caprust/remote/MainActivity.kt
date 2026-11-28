@@ -406,6 +406,9 @@ class MainActivity : android.app.Activity() {
      *  needs it; a desktop without it is older, not broken. */
     private var hasRemoveEffect = false
 
+    /** UI typeface, shared by headers and section titles. */
+    private val typeface = android.graphics.Typeface.DEFAULT
+
     /**
      * Remember the screen across a rotation.
      *
