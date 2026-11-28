@@ -340,7 +340,11 @@ class EditorActivity : Activity() {
                     val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                     }
-                    startActivityForResult(i, REQUEST_PICK_FOLDER)
+                    try {
+                        startActivityForResult(i, REQUEST_PICK_FOLDER)
+                    } catch (e: Exception) {
+                        Toast.makeText(this, R.string.editor_no_picker, Toast.LENGTH_LONG).show()
+                    }
                 }
             },
             LinearLayout.LayoutParams(dp(96), dp(48)),
