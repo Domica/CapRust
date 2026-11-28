@@ -723,7 +723,7 @@ class EditorActivity : Activity() {
                 }
                 for (i in 0 until clips.length()) {
                     val clip = clips.optJSONObject(i) ?: continue
-                    val labelStr = (clip.optString("name").ifEmpty { clip.optString("path", "?") }) + " (" + (clip.optLong("duration_ms", 5000) / 1000) + "s)";
+                    val labelStr = (clip.optString("name").ifEmpty { clip.optString("path", "?") }) + " (" + (clip.optLong("duration_ms", 5000) / 1000L) + "s)";
                     val tv = TextView(this).apply {
                         setText(labelStr + " │ " + (if (clip.optString("transition_in").isNotEmpty()) "→" else "") + (if (clip.optString("transition_out").isNotEmpty()) "←" else ""))
                         setTextColor(0xFFE8EAED.toInt())

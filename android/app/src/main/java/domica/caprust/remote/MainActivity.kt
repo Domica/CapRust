@@ -1302,7 +1302,7 @@ private var logOn: Boolean
     private fun projectRow(p: JSONObject): View {
         val name = p.optString("name", "?")
         val clips = p.optInt("clip_count")
-        val secs = p.optLong("duration_ms") / 1000
+        val secs = p.optLong("duration_ms") / 1000L
         val path = p.optString("path")
 
         val col = LinearLayout(this).apply {
@@ -1755,8 +1755,8 @@ private var logOn: Boolean
 
     /** milliseconds as m:ss.d -- a duration, not a clock. */
     private fun formatTime(ms: Long): String {
-        val total = ms / 1000
-        return "%d:%02d.%d".format(total / 60, total % 60, (ms % 1000) / 100)
+        val total = ms / 1000L
+        return "%d:%02d.%d".format(total / 60L, total % 60L, (ms % 1000L) / 100L)
     }
 
     /**
@@ -2285,7 +2285,7 @@ private fun seekToFraction(v: View, frac: Float) {
             append(" clips, ")
             append(j.optInt("media_count"))
             append(" media, ")
-            append(j.optLong("total_duration_ms") / 1000)
+            append(j.optLong("total_duration_ms") / 1000L)
             append("s")
         }
     } catch (_: Exception) {
@@ -2332,7 +2332,7 @@ private fun seekToFraction(v: View, frac: Float) {
             // display name. Both were wrong in the first version of
             // this screen, which showed an empty row per clip.
             val kind = c.optString("kind", "clip")
-            val startSec = c.optLong("start_time_ms") / 1000
+            val startSec = c.optLong("start_time_ms") / 1000L
             val label = "$kind  @${startSec}s"
             clipNames[id] = label
             clipInfo[id] = c
@@ -2343,7 +2343,7 @@ private fun seekToFraction(v: View, frac: Float) {
                 // Split is still one tap for the common case while
                 // staying adjustable.
                 if (::timeBox.isInitialized) {
-                    val mid = (c.optLong("start_time_ms") + c.optLong("duration_ms") / 2)
+                    val mid = (c.optLong("start_time_ms") + c.optLong("duration_ms") / 2L)
                     timeBox.setText(mid.toString())
                 }
                 selectedView?.text = describe(id, c)
@@ -2436,7 +2436,7 @@ private fun seekToFraction(v: View, frac: Float) {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for (ms in longArrayOf(500L, 1000L, 2000L)) {
             row.addView(
-                chip("${ms / 1000}s") { setTransitionLength(clipId, ms) },
+                chip("${ms / 1000L}s") { setTransitionLength(clipId, ms) },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
         }
