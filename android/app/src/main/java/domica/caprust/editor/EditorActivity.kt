@@ -505,7 +505,7 @@ class EditorActivity : Activity() {
     private fun doCreateProject() {
         val name = newName?.text?.toString()?.trim() ?: ""
         if (name.isEmpty()) {
-            Toast.makeText(this, R.string.editor_btn_create_hint, Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.editor_btn_create_hint), Toast.LENGTH_LONG).show()
             return
         }
 
@@ -513,7 +513,7 @@ class EditorActivity : Activity() {
         val location = pickedFolderUri?.lastPathSegment
             ?: newLocation?.text?.toString()?.trim() ?: ""
         if (location.isEmpty()) {
-            Toast.makeText(this, R.string.editor_btn_create_hint, Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.editor_btn_create_hint), Toast.LENGTH_LONG).show()
             return
         }
 
@@ -768,7 +768,7 @@ class EditorActivity : Activity() {
         try {
             startActivityForResult(i, REQUEST_PICK)
         } catch (e: Exception) {
-            Toast.makeText(this, R.string.editor_no_picker, Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.editor_no_picker), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -806,7 +806,7 @@ class EditorActivity : Activity() {
             } ?: return
         } catch (e: Exception) {
             Log.e(TAG, "could not read the picked file", e)
-            Toast.makeText(this, R.string.editor_import_failed, Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.editor_import_failed), Toast.LENGTH_LONG).show()
             return
         }
         imported = target
@@ -831,12 +831,12 @@ class EditorActivity : Activity() {
                             if (!ok2) {
                                 Toast.makeText(this, text2, Toast.LENGTH_LONG).show()
                             }
-                            Toast.makeText(this, R.string.editor_imported, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, getString(R.string.editor_imported), Toast.LENGTH_SHORT).show()
                             refresh()
                         }
                     }
                 } else {
-                    Toast.makeText(this, R.string.editor_imported, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.editor_imported), Toast.LENGTH_SHORT).show()
                     refresh()
                 }
             }
